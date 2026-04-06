@@ -563,6 +563,17 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   );
   isProcessingSyntheticData;
 
+  // Reset row selection when dataset changes or component unmounts (tab switch)
+  useEffect(() => {
+    useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+    useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    gridApiRef.current?.api?.deselectAll();
+    return () => {
+      useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+      useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    };
+  }, [dataset]);
+
   useEffect(() => {
     const dataSource = getDataSource(
       queryClient,
