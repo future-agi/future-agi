@@ -71,14 +71,12 @@ export default function NodeDrawer({
     formState: { isDirty },
   } = methods;
 
-  // Sync dirty state to the store so ensureDraft() can show a discard dialog
-  // before creating a draft. Only tracked when the drawer is open on an active
-  // version — on drafts or when closed, the flag is always false.
-  const isActiveVersion = !currentAgent?.is_draft;
+  // Sync dirty state to the store so callers (ensureDraft, handleRunWorkflow)
+  // can detect unsaved form changes. Tracked whenever the drawer is open.
   useEffect(() => {
-    setNodeFormDirty(open && isActiveVersion && isDirty);
+    setNodeFormDirty(open && isDirty);
     return () => setNodeFormDirty(false);
-  }, [open, isDirty, isActiveVersion, setNodeFormDirty]);
+  }, [open, isDirty, setNodeFormDirty]);
 
   // After draft creation, the version ID changes and node IDs are remapped.
   // Sync activeNode to the remapped node by matching on label so that
