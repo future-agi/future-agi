@@ -1521,14 +1521,58 @@ const PathStepNode = React.memo(({ data }) => {
     <Tooltip
       arrow
       placement="top"
+      // Give the tooltip a solid surface (instead of MUI's translucent
+      // grey). Works for both dark and light themes: background matches
+      // the drawer's paper color, border uses divider, and all three
+      // text rows use primary / secondary / primary-ish tones rather
+      // than "text.disabled" (which renders as muddy grey on grey in
+      // dark mode and is what made the prompt text unreadable). Same
+      // fix applies to the voice drawer — `PathStepNode` is shared.
+      componentsProps={{
+        tooltip: {
+          sx: {
+            bgcolor: "background.paper",
+            color: "text.primary",
+            border: "1px solid",
+            borderColor: "divider",
+            boxShadow: (theme) =>
+              theme.palette.mode === "dark"
+                ? "0 6px 20px rgba(0,0,0,0.5)"
+                : "0 4px 12px rgba(0,0,0,0.12)",
+            p: 1,
+            maxWidth: 320,
+          },
+        },
+        arrow: {
+          sx: {
+            color: "background.paper",
+            "&::before": {
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            },
+          },
+        },
+      }}
       title={
         <Box sx={{ maxWidth: 280 }}>
-          <Typography sx={{ fontSize: 11, fontWeight: 700 }}>
+          <Typography
+            sx={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "text.primary",
+            }}
+          >
             {data?.name}
           </Typography>
           {opener && (
             <Typography
-              sx={{ fontSize: 10, mt: 0.25, color: "text.secondary" }}
+              sx={{
+                fontSize: 10,
+                mt: 0.5,
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
             >
               “{opener.slice(0, 160)}
               {opener.length > 160 ? "…" : ""}”
@@ -1537,10 +1581,11 @@ const PathStepNode = React.memo(({ data }) => {
           {prompt && (
             <Typography
               sx={{
-                fontSize: 9.5,
+                fontSize: 10,
                 mt: 0.5,
-                color: "text.disabled",
+                color: "text.secondary",
                 fontStyle: "italic",
+                lineHeight: 1.4,
               }}
             >
               {prompt.slice(0, 180)}

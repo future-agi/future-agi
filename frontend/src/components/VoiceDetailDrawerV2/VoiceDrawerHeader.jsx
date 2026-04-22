@@ -93,6 +93,11 @@ const VoiceDrawerHeader = ({
   onOpenNewTab,
   onDownload,
   onShare,
+  // Customizes the ID row label (e.g. "Call ID" for voice, "Chat ID"
+  // for chat). Defaults to "Call ID" so existing callers don't change.
+  idLabel = "Call ID",
+  copyTooltip = "Copy Call ID",
+  copyToastMessage = "Call ID copied",
 }) => {
   // Keyboard: ArrowUp = previous call, ArrowDown = next call.
   // Arrows (not j/k) because TranscriptView owns j/k for turn-level nav inside a call.
@@ -124,7 +129,7 @@ const VoiceDrawerHeader = ({
   const handleCopy = () => {
     if (!callId) return;
     navigator.clipboard.writeText(callId).then(() => {
-      enqueueSnackbar("Call ID copied", {
+      enqueueSnackbar(copyToastMessage, {
         variant: "info",
         autoHideDuration: 1500,
       });
@@ -168,7 +173,7 @@ const VoiceDrawerHeader = ({
               whiteSpace: "nowrap",
             }}
           >
-            Call ID :
+            {idLabel} :
           </Typography>
           <Typography
             noWrap
@@ -181,7 +186,7 @@ const VoiceDrawerHeader = ({
           >
             {callId || "-"}
           </Typography>
-          <Tooltip title="Copy Call ID" arrow placement="bottom">
+          <Tooltip title={copyTooltip} arrow placement="bottom">
             <Box
               component="button"
               onClick={handleCopy}
@@ -295,6 +300,9 @@ VoiceDrawerHeader.propTypes = {
   onOpenNewTab: PropTypes.func,
   onDownload: PropTypes.func,
   onShare: PropTypes.func,
+  idLabel: PropTypes.string,
+  copyTooltip: PropTypes.string,
+  copyToastMessage: PropTypes.string,
 };
 
 export default React.memo(VoiceDrawerHeader);
