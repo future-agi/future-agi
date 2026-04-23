@@ -1,0 +1,62 @@
+# Labels applied automatically based on changed file paths.
+# See https://github.com/actions/labeler
+
+# ── Backend ──
+backend:
+  - changed-files:
+      - any-glob-to-any-file: 'futureagi/**'
+
+# ── Frontend ──
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: 'frontend/**'
+
+# ── Gateway ──
+gateway:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'futureagi/agentcc-gateway/**'
+          - 'futureagi/agentcc/**'
+
+# ── Evaluations ──
+evaluations:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'futureagi/agentic_eval/**'
+          - 'futureagi/evaluations/**'
+
+# ── Tracing ──
+tracing:
+  - changed-files:
+      - any-glob-to-any-file: 'futureagi/tracer/**'
+
+# ── Simulate ──
+simulate:
+  - changed-files:
+      - any-glob-to-any-file: 'futureagi/simulate/**'
+
+# ── Accounts / Auth ──
+auth:
+  - changed-files:
+      - any-glob-to-any-file: 'futureagi/accounts/**'
+
+# ── Datasets / Model Hub ──
+datasets:
+  - changed-files:
+      - any-glob-to-any-file: 'futureagi/model_hub/**'
+
+# ── Infrastructure ──
+infra:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'futureagi/docker-compose*'
+          - 'futureagi/Dockerfile*'
+          - 'futureagi/tfc/**'
+          - '.github/**'
+
+# ── Documentation ──
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
