@@ -670,10 +670,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // grids/queries omit project_id so the backend scopes by org.
   const observeId = isUserMode ? null : routeObserveId;
 
+  // User mode: sessions routes back out to /dashboard/users/:id — users
+  // self-nav is suppressed (we're already on the user). Project mode:
+  // cross-nav into observe routes.
   const handleGroupByChange = useCallback(
     (groupKey) => {
-      // In user mode we're not in a project context, so the cross-route
-      // navigation cases are no-ops.
       switch (groupKey) {
         case "none":
         case "trace":
@@ -686,13 +687,27 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           if (!isUserMode) navigate(`/dashboard/observe/${observeId}/users`);
           break;
         case "sessions":
-          if (!isUserMode) navigate(`/dashboard/observe/${observeId}/sessions`);
+          if (isUserMode) {
+            navigate({
+              pathname: `/dashboard/users/${encodeURIComponent(
+                userIdForUserMode,
+              )}`,
+              search: `?${new URLSearchParams({ userTab: "sessions" })}`,
+            });
+          } else {
+            navigate(`/dashboard/observe/${observeId}/sessions`);
+          }
           break;
         default:
           break;
       }
     },
-    [observeId, navigate, setSelectedTab, isUserMode],
+    [observeId, navigate, setSelectedTab, isUserMode, userIdForUserMode],
+  );
+
+  const hiddenGroupByOptions = useMemo(
+    () => (isUserMode ? ["users"] : []),
+    [isUserMode],
   );
 
   const [_loading, setLoading] = useState(false);
@@ -2836,6 +2851,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               }
               filterDefinition={primaryFilterDefinition}
               filterFields={toolbarFilterFields}
+              tab={selectedTab}
               defaultFilter={defaultFilterBase}
               columns={columns[columnKey]}
               onColumnVisibilityChange={(e) => {
@@ -2871,6 +2887,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               }
               groupBy={groupBy}
               onGroupByChange={handleGroupByChange}
+              hiddenGroupByOptions={hiddenGroupByOptions}
               rowCount={currentGridRef.current?.api?.totalRowCount}
               onCompareToggle={() => setShowCompare(!showCompare)}
               isCompareActive={showCompare}

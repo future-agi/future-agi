@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router";
@@ -45,6 +45,16 @@ const UserDetailPageBody = () => {
   const [subTab, setSubTab] = useState(
     activeTab === "traces" ? "traces" : "sessions",
   );
+
+  // Keep the mounted sub-view in sync with the URL for the two simple
+  // keys ("traces" / "sessions") so group-by navigation from inside the
+  // heavy views lands on the right one. Saved-view keys ("view-<id>")
+  // are handled by handleTabChange which sets both activeTab and subTab
+  // together — we skip them here so this effect never clobbers that.
+  useEffect(() => {
+    if (activeTab !== "traces" && activeTab !== "sessions") return;
+    setSubTab((prev) => (prev === activeTab ? prev : activeTab));
+  }, [activeTab]);
 
   const { setActiveViewConfig } = useObserveHeader();
 

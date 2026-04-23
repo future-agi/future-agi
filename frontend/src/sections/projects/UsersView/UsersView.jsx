@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, CircularProgress, Typography } from "@mui/material";
-import { useParams, useLocation } from "react-router";
+import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
@@ -113,6 +113,7 @@ const noopExtraProperties = () => ({});
 const UsersView = ({ savedViewApiRef = null }) => {
   const { observeId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const isObservePath = location.pathname.includes("observe");
 
   const {
@@ -437,10 +438,26 @@ const UsersView = ({ savedViewApiRef = null }) => {
         onGroupByChange={
           observeId
             ? (key) => {
-                if (key === "trace" || key === "none") {
-                  window.location.href = `/dashboard/observe/${observeId}/llm-tracing`;
-                } else if (key === "sessions") {
-                  window.location.href = `/dashboard/observe/${observeId}/sessions`;
+                switch (key) {
+                  case "none":
+                  case "trace":
+                    navigate(`/dashboard/observe/${observeId}/llm-tracing`);
+                    break;
+                  case "span": {
+                    const params = new URLSearchParams({
+                      selectedTab: "spans",
+                    });
+                    navigate({
+                      pathname: `/dashboard/observe/${observeId}/llm-tracing`,
+                      search: `?${params}`,
+                    });
+                    break;
+                  }
+                  case "sessions":
+                    navigate(`/dashboard/observe/${observeId}/sessions`);
+                    break;
+                  default:
+                    break;
                 }
               }
             : undefined

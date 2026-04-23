@@ -45,7 +45,7 @@ import { QueryInput } from "src/components/filter-panel";
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
 // ---------------------------------------------------------------------------
-const TRACE_FILTER_FIELDS = [
+const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
   {
     value: "status",
@@ -74,6 +74,32 @@ const TRACE_FILTER_FIELDS = [
   { value: "span_kind", label: "Span Kind", type: "string" },
   { value: "tag", label: "Tag", type: "string" },
 ];
+
+const TRACE_ID_FIELD = {
+  value: "trace_id",
+  label: "Trace ID",
+  type: "string",
+};
+
+const SPAN_ID_FIELD = {
+  value: "span_id",
+  label: "Span ID",
+  type: "string",
+};
+
+// Prepend id filters based on which LLM Tracing tab the filter panel
+// renders in:
+//   `tab` === "trace"  → Trace ID
+//   `tab` === "spans"  → Trace ID + Span ID
+//   otherwise          → no id fields (preserves behavior for non-LLMTracing
+//                        consumers such as sessions/users).
+// Exported for direct unit testing.
+export const getTraceFilterFields = (tab) => {
+  if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
+  if (tab === "spans")
+    return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
+  return BASE_TRACE_FILTER_FIELDS;
+};
 
 // ---------------------------------------------------------------------------
 // Category config for dashboard-style property picker
@@ -1306,6 +1332,7 @@ const TraceFilterPanel = ({
   onApply,
   filterFields,
   source = "traces",
+  tab = null,
   projectId: projectIdProp,
   properties: propertiesOverride,
   ValuePickerOverride,
@@ -1327,8 +1354,10 @@ const TraceFilterPanel = ({
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
     if (propertiesOverride) return propertiesOverride;
-    // Start with static trace fields (trace_name, status, model, etc.)
-    const staticProps = TRACE_FILTER_FIELDS.map((f) => ({
+    // Start with static trace fields (trace_name, status, model, etc.) —
+    // prepend trace_id / span_id when rendered inside the LLM Tracing
+    // trace or span tab.
+    const staticProps = getTraceFilterFields(tab).map((f) => ({
       id: f.value,
       name: f.label,
       category: "system",
@@ -1349,7 +1378,7 @@ const TraceFilterPanel = ({
         type: f.type || "string",
       }));
     return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride]);
+  }, [dynamicProperties, filterFields, propertiesOverride, tab]);
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
   const effectiveCategories = categoriesOverride ?? CATEGORIES;
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
@@ -1730,6 +1759,7 @@ TraceFilterPanel.propTypes = {
   onApply: PropTypes.func.isRequired,
   filterFields: PropTypes.array,
   source: PropTypes.string,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   projectId: PropTypes.string,
   properties: PropTypes.array,
   ValuePickerOverride: PropTypes.elementType,

@@ -58,6 +58,9 @@ const ObserveToolbar = ({
   onApplyExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
+  // prepends the matching id filter(s) to its property picker.
+  tab,
   // Columns
   columns,
   onColumnVisibilityChange,
@@ -82,6 +85,7 @@ const ObserveToolbar = ({
   onToggleNonAnnotated,
   // Group
   groupBy,
+  hiddenGroupByOptions,
   onGroupByChange,
   // Grid
   rowCount,
@@ -381,6 +385,7 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
+            tab={tab}
             isSimulator={isSimulator}
             source={
               mode === "sessions"
@@ -531,6 +536,7 @@ const ObserveToolbar = ({
             onToggleNonAnnotated={onToggleNonAnnotated}
             groupBy={groupBy}
             onGroupByChange={onGroupByChange}
+            hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
@@ -596,6 +602,7 @@ ObserveToolbar.propTypes = {
   showNonAnnotated: PropTypes.bool,
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onGroupByChange: PropTypes.func,
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
@@ -611,6 +618,7 @@ ObserveToolbar.propTypes = {
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
