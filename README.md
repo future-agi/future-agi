@@ -30,7 +30,7 @@
 **The open-source platform for shipping self-improving AI agents.** Evaluations, tracing, simulations, guardrails, gateway, optimization. Everything runs on one platform and one feedback loop, from first prototype to live deployment.
 
 <p>
-  <a href="https://github.com/future-agi/future-agi-temp/blob/dev/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
+  <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
   <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm" alt="npm"></a>
   <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
@@ -69,7 +69,7 @@
 
 ## Why Future AGI?
 
-AI agents don't fail at launch. They fail in production, and most teams fight that with a stitched-together stack of evals, observability, and guardrails that never close the loop.
+Most AI agents fail in production, and teams end up stitching together evals, observability, and guardrails that never close the loop.
 FutureAGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
 The result: agents that don't just get monitored, they self-improve.
 
@@ -128,8 +128,7 @@ pip install ai-evaluation
 **One command, full stack.**
 
 ```bash
-git clone \
-  https://github.com/future-agi/future-agi
+git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 cp futureagi/.env.example futureagi/.env
 docker compose up -d
@@ -296,10 +295,10 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
            → platform (simulate · eval · monitor · optimize) → data layer.
   Size:    ~1400w, vector SVG (existing file 1200×760 in dark palette).
 -->
-<picture>
+<!-- <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture.svg">
   <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
-</picture>
+</picture> -->
 
 **Runtime:** Python 3.11+ (Django 4.2 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
 **Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
