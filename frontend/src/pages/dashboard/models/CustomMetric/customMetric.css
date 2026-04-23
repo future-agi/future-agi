@@ -1,0 +1,7 @@
+.custom-metric-action-cell{
+  display: none;
+}
+
+.MuiDataGrid-row:hover .custom-metric-action-cell {
+  display: block;
+}

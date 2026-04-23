@@ -1,0 +1,35 @@
+name: Branch name check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch name
+        run: |
+          BRANCH="${{ github.head_ref }}"
+
+          # Skip validation for release branches and dependabot
+          if [[ "$BRANCH" =~ ^(main|dev|release/.+|dependabot/.+)$ ]]; then
+            echo "✅ Skipping validation for $BRANCH"
+            exit 0
+          fi
+
+          # Enforce type/short-description pattern
+          PATTERN="^(feat|fix|chore|docs|refactor|test|perf)/[a-z0-9][a-z0-9._-]+$"
+
+          if [[ "$BRANCH" =~ $PATTERN ]]; then
+            echo "✅ Branch name '$BRANCH' follows convention"
+          else
+            echo "❌ Branch name '$BRANCH' does not follow the naming convention."
+            echo ""
+            echo "Expected: type/short-description"
+            echo "  Types: feat, fix, chore, docs, refactor, test, perf"
+            echo "  Example: fix/session-list-pagination"
+            echo ""
+            echo "See CONTRIBUTING.md for details."
+            exit 1
+          fi
