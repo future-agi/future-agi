@@ -4,6 +4,8 @@ export const NODE_X_OFFSET = 450;
 export const NODE_TYPES = {
   LLM_PROMPT: "llm_prompt",
   AGENT: "agent",
+  HTTP_REQUEST: "http_request",
+  CONDITIONAL: "conditional",
 };
 
 export const AGENT_NODE = {
@@ -23,6 +25,20 @@ export const NODE_TYPE_CONFIG = {
     color: "orange.500",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
+  [NODE_TYPES.HTTP_REQUEST]: {
+    id: NODE_TYPES.HTTP_REQUEST,
+    title: "HTTP Request",
+    description: "Make an HTTP request to any external API",
+    iconSrc: "/assets/icons/ic_agent_flow.svg",
+    color: "blue.500",
+  },
+  [NODE_TYPES.CONDITIONAL]: {
+    id: NODE_TYPES.CONDITIONAL,
+    title: "Conditional",
+    description: "Route workflow based on a condition",
+    iconSrc: "/assets/icons/ic_branch.svg",
+    color: "purple.500",
+  },
 };
 
 export const AGENT_PLAYGROUND_TABS = [
