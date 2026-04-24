@@ -250,6 +250,12 @@ const EvalFeedbackTab = ({ templateId }) => {
   React.useEffect(() => {
     if (detailIndex === null) return;
     const handler = (e) => {
+      const tag = e.target?.tagName;
+      const isEditable =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        e.target?.isContentEditable;
+      if (isEditable) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
