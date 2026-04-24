@@ -25,7 +25,7 @@ function normalizeEmail(email) {
  *
  * Attribution between the marketing site (futureagi.com) and this app relies
  * on Twitter's first-party cookies being re-set when the pixel loads here,
- * plus hashed email matching on the Signup event.
+ * plus the normalized email passed on the Signup event.
  *
  * No-ops unless VITE_TWITTER_ADS_ENABLED === "true" and VITE_TWITTER_PIXEL_ID is set.
  */
@@ -36,26 +36,21 @@ export function initTwitter() {
 
   // Twitter's standard UWT loader
   (function (e, t, n) {
-    let s, u, a;
     if (e.twq) return;
-    s = e.twq = function () {
-      // eslint-disable-next-line prefer-rest-params
-      s.exe
-        ? // eslint-disable-next-line prefer-rest-params
-          s.exe.apply(s, arguments)
-        : // eslint-disable-next-line prefer-rest-params
-          s.queue.push(arguments);
-    };
+    const s = (e.twq = function (...args) {
+      return s.exe ? s.exe.apply(s, args) : s.queue.push(args);
+    });
     s.version = "1.1";
     s.queue = [];
-    u = t.createElement(n);
+    const u = t.createElement(n);
     u.async = true;
     u.src = "https://static.ads-twitter.com/uwt.js";
-    a = t.getElementsByTagName(n)[0];
+    const a = t.getElementsByTagName(n)[0];
     a.parentNode.insertBefore(u, a);
   })(window, document, "script");
 
   window.twq("config", TWITTER_PIXEL_ID);
+  window.twq("track", "PageView");
 
   initialized = true;
 }
@@ -64,8 +59,10 @@ export function initTwitter() {
  * Fire a Twitter signup conversion with email matching.
  * Called after a real account is created (email or OAuth/SSO).
  *
- * `conversion_id` dedupes repeats server-side on Twitter's end.
- * `email_address` is hashed by Twitter for match-back against their user graph.
+ * `conversion_id` is the userId when available (falls back to email) so
+ * Twitter can dedupe repeat signups on their end.
+ * `email_address` is the normalized (trim + lowercase) email, used by Twitter
+ * as a match signal against their user graph.
  */
 export function trackTwitterSignup({ email, method = "email", userId } = {}) {
   if (!twqReady()) return;

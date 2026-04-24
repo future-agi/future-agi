@@ -162,13 +162,11 @@ export default function JwtRegisterView() {
             userId: response?.result?.user_id,
           });
         }
-        if (typeof window.twq === "function") {
-          trackTwitterSignup({
-            email: data.email,
-            method: "email",
-            userId: response?.result?.user_id,
-          });
-        }
+        trackTwitterSignup({
+          email: data.email,
+          method: "email",
+          userId: response?.result?.user_id,
+        });
 
         // Always navigate to login after registration
         // navigate(paths.auth.jwt.login);
