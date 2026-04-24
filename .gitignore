@@ -129,6 +129,7 @@ frontend/build/
 frontend/.next/
 frontend/out/
 frontend/storybook-static/
+frontend/src/components/icon-gallery/icon-manifest.json
 .vite/
 
 # Vite dev-server cache artifacts
