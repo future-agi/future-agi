@@ -1,12 +1,13 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { PromptNodeForm, EvalsNodeForm, AgentNodeForm } from "./forms";
+import { PromptNodeForm, EvalsNodeForm, AgentNodeForm, ConditionalNodeForm } from "./forms";
 import { NODE_TYPES } from "../../utils/constants";
 
 const FORM_COMPONENTS = {
   [NODE_TYPES.LLM_PROMPT]: PromptNodeForm,
   eval: EvalsNodeForm,
   [NODE_TYPES.AGENT]: AgentNodeForm,
+  [NODE_TYPES.CONDITIONAL]: ConditionalNodeForm,
 };
 
 export default function NodeConfigurationForm({ nodeType, nodeId }) {
@@ -20,7 +21,7 @@ export default function NodeConfigurationForm({ nodeType, nodeId }) {
 }
 
 NodeConfigurationForm.propTypes = {
-  nodeType: PropTypes.oneOf([NODE_TYPES.LLM_PROMPT, "eval", NODE_TYPES.AGENT])
+  nodeType: PropTypes.oneOf([NODE_TYPES.LLM_PROMPT, "eval", NODE_TYPES.AGENT, NODE_TYPES.CONDITIONAL])
     .isRequired,
   nodeId: PropTypes.string.isRequired,
 };
