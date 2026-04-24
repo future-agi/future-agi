@@ -401,6 +401,111 @@ class TestDashboardQueryBuilder:
         sql, _, _ = queries[0]
         assert "output_bool" in sql
 
+    def test_system_metric_sum_aggregation(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "cost",
+                    "name": "cost",
+                    "type": "system_metric",
+                    "aggregation": "sum",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "sum(cost)" in sql
+
+    def test_system_metric_median_aggregation(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "latency",
+                    "name": "latency",
+                    "type": "system_metric",
+                    "aggregation": "median",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "quantile(0.5)(latency_ms)" in sql
+
+    def test_system_metric_count_distinct_aggregation(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "model",
+                    "name": "model",
+                    "type": "system_metric",
+                    "aggregation": "count_distinct",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "uniq(model)" in sql
+
+    def test_eval_metric_pass_rate_aggregation(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e_pass_rate",
+                    "name": "accuracy",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "PASS_FAIL",
+                    "aggregation": "pass_rate",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "countIf(" in sql
+        assert "/ nullIf(count(), 0)" in sql
+
+    def test_eval_metric_fail_count_aggregation(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e_fail_count",
+                    "name": "accuracy",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "PASS_FAIL",
+                    "aggregation": "fail_count",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "countIf(" in sql
+        assert "AS value" in sql
+
     def test_annotation_metric_query(self):
         config = {
             "project_ids": ["proj1"],
@@ -688,9 +793,9 @@ class TestDashboardQueryBuilderFormatResults:
         series = result["metrics"][0]["series"]
         assert len(series) == 1
         assert series[0]["name"] == "total"
-        # All buckets filled with 0 (Jan 1, 2, 3)
+        # All buckets filled with null (Jan 1, 2, 3)
         assert len(series[0]["data"]) == 3
-        assert all(d["value"] == 0 for d in series[0]["data"])
+        assert all(d["value"] is None for d in series[0]["data"])
 
     def test_format_with_data(self):
         config = {
@@ -726,10 +831,10 @@ class TestDashboardQueryBuilderFormatResults:
         series = metrics[0]["series"]
         assert len(series) == 1
         assert series[0]["name"] == "total"
-        # 4 day buckets (Jan 1-4), 2 with data + 2 filled with 0
+        # 4 day buckets (Jan 1-4), 2 with data + 2 filled with null
         assert len(series[0]["data"]) == 4
-        non_zero = [d for d in series[0]["data"] if d["value"] != 0]
-        assert len(non_zero) == 2
+        non_null = [d for d in series[0]["data"] if d["value"] is not None]
+        assert len(non_null) == 2
         assert metrics[0]["unit"] == "ms"
 
     def test_format_with_breakdown(self):
@@ -895,6 +1000,28 @@ class TestDashboardQueryExecution:
         assert response.status_code == 200
 
     @pytest.mark.django_db
+    def test_query_action_missing_project_ids_still_works(self, auth_client):
+        """Query endpoint accepts requests without project_ids (unified picker)."""
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                        "source": "traces",
+                    }
+                ],
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
     def test_query_action_project_breakdown_uses_longer_timeout(
         self, mock_analytics_cls, auth_client, observe_project
@@ -986,28 +1113,6 @@ class TestDashboardTraceTimeoutSelection:
         )
         assert timeout == 30000
 
-    @pytest.mark.django_db
-    def test_query_action_missing_project_ids_still_works(self, auth_client):
-        """Query endpoint accepts requests without project_ids (unified picker)."""
-        response = auth_client.post(
-            "/tracer/dashboard/query/",
-            {
-                "granularity": "day",
-                "time_range": {"preset": "7D"},
-                "metrics": [
-                    {
-                        "id": "latency",
-                        "name": "latency",
-                        "type": "system_metric",
-                        "aggregation": "avg",
-                        "source": "traces",
-                    }
-                ],
-            },
-            format="json",
-        )
-        assert response.status_code == 200
-
 
 # ===========================================================================
 # Widget Query Execution (mocked ClickHouse)
@@ -1091,8 +1196,6 @@ class TestWidgetQueryExecution:
             format="json",
         )
         assert response.status_code == 200
-        data = response.json()["result"]
-        assert "metrics" in data
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -1135,6 +1238,8 @@ class TestWidgetQueryExecution:
         assert response.status_code == 200
         _, kwargs = mock_client.execute_read.call_args
         assert kwargs["timeout_ms"] == 30000
+        data = response.json()["result"]
+        assert "metrics" in data
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -1649,11 +1754,11 @@ class TestFrontendPayloadSimulation:
         assert result["metrics"][0]["unit"] == "ms"
         assert result["metrics"][1]["name"] == "cost"
         assert result["metrics"][1]["unit"] == "$"
-        # 3 day buckets (Jan 1-3), 2 with data + 1 filled with 0
+        # 3 day buckets (Jan 1-3), 2 with data + 1 filled with null
         data = result["metrics"][0]["series"][0]["data"]
         assert len(data) == 3
-        non_zero = [d for d in data if d["value"] != 0]
-        assert len(non_zero) == 2
+        non_null = [d for d in data if d["value"] is not None]
+        assert len(non_null) == 2
 
 
 # ===========================================================================

@@ -1901,15 +1901,33 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if not col_expr:
                     return self._gm.success_response({"values": []})
 
-                sql = (
-                    f"SELECT DISTINCT {col_expr} AS val "
-                    f"FROM model_hub_cell AS c FINAL "
-                    f"WHERE c._peerdb_is_deleted = 0 "
-                    f"AND dictGet('dataset_dict', 'workspace_id', c.dataset_id) = toUUID(%(workspace_id)s) "
-                    f"AND {col_expr} != '' "
-                    f"ORDER BY val "
-                    f"LIMIT 500"
-                )
+                if metric_name == "dataset":
+                    sql = (
+                        "SELECT DISTINCT name AS val "
+                        "FROM model_hub_dataset FINAL "
+                        "WHERE _peerdb_is_deleted = 0 "
+                        "AND deleted = 0 "
+                        "AND workspace_id = toUUID(%(workspace_id)s) "
+                        "AND name != '' "
+                        "ORDER BY val "
+                        "LIMIT 500"
+                    )
+                else:
+                    sql = (
+                        f"SELECT DISTINCT {col_expr} AS val "
+                        f"FROM model_hub_cell AS c FINAL "
+                        f"WHERE c._peerdb_is_deleted = 0 "
+                        f"AND c.dataset_id IN ("
+                        f"SELECT id FROM model_hub_dataset FINAL "
+                        f"WHERE _peerdb_is_deleted = 0 "
+                        f"AND deleted = 0 "
+                        f"AND workspace_id = toUUID(%(workspace_id)s)"
+                        f") "
+                        f"AND {col_expr} != '' "
+                        f"ORDER BY val "
+                        f"LIMIT 500"
+                    )
+
                 result = analytics.execute_ch_query(
                     sql, {"workspace_id": workspace_id}, timeout_ms=5000
                 )

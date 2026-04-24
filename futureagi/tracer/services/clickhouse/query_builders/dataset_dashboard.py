@@ -98,7 +98,7 @@ DATASET_AGGREGATIONS: Dict[str, str] = {
 
 # Breakdown dimensions for dataset workflow
 DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
-    "dataset": "dictGet('dataset_dict', 'name', c.dataset_id)",
+    "dataset": "toString(c.dataset_id)",
     "eval_template": "dictGet('column_dict', 'name', c.column_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
     "cell_status": "c.status",
@@ -106,7 +106,7 @@ DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
 
 # Filter dimensions for dataset workflow
 DATASET_FILTER_COLUMNS: Dict[str, str] = {
-    "dataset": "dictGet('dataset_dict', 'name', c.dataset_id)",
+    "dataset": "toString(c.dataset_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
     "column_source": "dictGet('column_dict', 'source', c.column_id)",
     "cell_status": "c.status",
@@ -497,6 +497,13 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
             return col
         return None
 
+    @staticmethod
+    def _dataset_scope_subquery() -> str:
+        return (
+            "SELECT id FROM model_hub_dataset FINAL "
+            "WHERE _peerdb_is_deleted = 0 AND deleted = 0"
+        )
+
     def _build_base_where(self, params: dict) -> List[str]:
         clauses = [
             "c._peerdb_is_deleted = 0",
@@ -505,7 +512,10 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         ]
         if self.workspace_id:
             clauses.append(
-                "dictGet('dataset_dict', 'workspace_id', c.dataset_id) = toUUID(%(workspace_id)s)"
+                "c.dataset_id IN ("
+                f"{self._dataset_scope_subquery()} "
+                "AND workspace_id = toUUID(%(workspace_id)s)"
+                ")"
             )
         if self.dataset_ids:
             clauses.append("c.dataset_id IN %(dataset_ids)s")
@@ -526,6 +536,35 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
 
             if f_type != "system_metric":
                 # Dataset filters only support system_metric dimensions for now
+                continue
+
+            if f_name == "dataset":
+                if op in ("is_set", "is_not_set"):
+                    clauses.append(
+                        "c.dataset_id IS NOT NULL"
+                        if op == "is_set"
+                        else "c.dataset_id IS NULL"
+                    )
+                    continue
+
+                if val is None or val == "" or val == []:
+                    continue
+
+                if op in ("between", "not_between"):
+                    continue
+
+                op_tpl = FILTER_OPERATORS.get(op)
+                if op_tpl:
+                    param_key = f"df_{idx}_val"
+                    op_sql = op_tpl.format(prefix="df_", idx=idx)
+                    clauses.append(
+                        "c.dataset_id IN ("
+                        f"{self._dataset_scope_subquery()} "
+                        f"AND name {op_sql}"
+                        ")"
+                    )
+                    params[param_key] = _coerce_filter_value(val, op)
+                    idx += 1
                 continue
 
             col = DATASET_FILTER_COLUMNS.get(f_name)
