@@ -119,7 +119,7 @@ class DashboardQueryBuilderBase:
                 elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 ts = ts.isoformat()
-            val = row.get("value", 0)
+            val = row.get("value")
             if isinstance(val, float):
                 val = round(val, 6)
             series_data[breakdown_key][ts] = val
@@ -175,7 +175,11 @@ class DashboardQueryBuilderBase:
                 filled.append(
                     {
                         "timestamp": bucket_ts,
-                        "value": data_map.get(bucket_ts, 0),
+                        # Preserve missing buckets as null so frontend can
+                        # distinguish "no data" from a real 0 value.
+                        "value": data_map[bucket_ts]
+                        if bucket_ts in data_map
+                        else None,
                     }
                 )
             series.append({"name": name, "data": filled})
