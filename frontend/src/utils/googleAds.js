@@ -3,6 +3,8 @@ import {
   GOOGLE_ADS_SIGNUP_LABEL,
   GOOGLE_ADS_ENABLED,
   GA_ID,
+  AD_CONVERSION_VALUE,
+  AD_CONVERSION_CURRENCY,
 } from "src/config-global";
 import logger from "src/utils/logger";
 
@@ -79,8 +81,8 @@ export function trackSignupConversion({ email, method = "email", userId } = {}) 
 
     window.gtag("event", "conversion", {
       send_to: `${GOOGLE_ADS_ID}/${GOOGLE_ADS_SIGNUP_LABEL}`,
-      value: 75.0,
-      currency: "USD",
+      value: AD_CONVERSION_VALUE,
+      currency: AD_CONVERSION_CURRENCY,
       transaction_id: `signup_completed_${userId || normalizedEmail}`,
       event_callback: () => {},
     });

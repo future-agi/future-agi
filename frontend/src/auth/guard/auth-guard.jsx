@@ -11,6 +11,7 @@ import { useAuthContext } from "../hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
+import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
 
 // ----------------------------------------------------------------------
@@ -120,6 +121,13 @@ function Container({ children }) {
         }
         if (typeof window.rdt === "function") {
           trackRedditSignup({
+            email: user.email,
+            method: provider,
+            userId: String(user.id),
+          });
+        }
+        if (typeof window.twq === "function") {
+          trackTwitterSignup({
             email: user.email,
             method: provider,
             userId: String(user.id),
