@@ -125,13 +125,11 @@ function Container({ children }) {
             userId: String(user.id),
           });
         }
-        if (typeof window.twq === "function") {
-          trackTwitterSignup({
-            email: user.email,
-            method: provider,
-            userId: String(user.id),
-          });
-        }
+        trackTwitterSignup({
+          email: user.email,
+          method: provider,
+          userId: String(user.id),
+        });
       }
 
       if (window.location.pathname !== paths.auth.jwt.org_removed) {
