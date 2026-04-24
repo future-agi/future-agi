@@ -1,0 +1,19 @@
+meta {
+  name: Get custom model by id
+  type: http
+  seq: 10
+}
+
+get {
+  url: http://localhost:8000/model-hub/custom-models/:model_id/
+  body: none
+  auth: bearer
+}
+
+params:path {
+  model_id: 87ad397e-eb3b-4069-a6f3-3be44fa6ed96
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
