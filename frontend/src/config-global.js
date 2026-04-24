@@ -35,6 +35,16 @@ export const GA_ID = import.meta.env.VITE_GA_ID;
 export const REDDIT_PIXEL_ID = import.meta.env.VITE_REDDIT_PIXEL_ID;
 export const REDDIT_ADS_ENABLED = import.meta.env.VITE_REDDIT_ADS_ENABLED;
 
+export const TWITTER_PIXEL_ID = import.meta.env.VITE_TWITTER_PIXEL_ID;
+export const TWITTER_ADS_ENABLED = import.meta.env.VITE_TWITTER_ADS_ENABLED;
+
+// Shared conversion value/currency for all ad platforms (Google, Reddit, Twitter).
+// Kept in env so the signup conversion value isn't hardcoded in this open-source repo.
+export const AD_CONVERSION_VALUE = import.meta.env.VITE_AD_CONVERSION_VALUE
+  ? Number(import.meta.env.VITE_AD_CONVERSION_VALUE)
+  : undefined;
+export const AD_CONVERSION_CURRENCY = import.meta.env.VITE_AD_CONVERSION_CURRENCY;
+
 export const FIREBASE_API = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,

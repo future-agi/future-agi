@@ -1,6 +1,8 @@
 import {
   REDDIT_PIXEL_ID,
   REDDIT_ADS_ENABLED,
+  AD_CONVERSION_VALUE,
+  AD_CONVERSION_CURRENCY,
 } from "src/config-global";
 import logger from "src/utils/logger";
 
@@ -63,7 +65,7 @@ export function initReddit() {
 }
 
 
-export function trackRedditSignup({ email, userId } = {}) {
+export function trackRedditSignup({ email, method = "email", userId } = {}) {
   if (!rdtReady()) return;
   if (!isEnabled()) return;
 
@@ -79,9 +81,11 @@ export function trackRedditSignup({ email, userId } = {}) {
     });
 
     window.rdt("track", "SignUp", {
-      currency: "USD",
-      value: 75.0,
-      conversionId: String(userId || normalizedEmail),
+      currency: AD_CONVERSION_CURRENCY,
+      value: AD_CONVERSION_VALUE,
+      transactionId: String(userId || normalizedEmail),
+      email: normalizedEmail,
+      customEventName: method,
     });
   } catch (err) {
     logger.error("Reddit signup conversion failed", err);
