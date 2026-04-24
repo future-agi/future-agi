@@ -362,6 +362,7 @@ const TaskConfigPanel = ({
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
+     
       const tplId = evalConfig.templateId || evalConfig.template_id;
       let finalEval = { ...evalConfig, template_id: tplId };
 
@@ -379,7 +380,7 @@ const TaskConfigPanel = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -398,7 +399,7 @@ const TaskConfigPanel = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -467,7 +468,7 @@ const TaskConfigPanel = ({
       customEvalConfigId: stored.customEvalConfigId || stored.id,
     };
   }, [editingIndex, configuredEvals]);
-
+console.log("Editing eval:", editingEval);
   const resolvedProjectName =
     initialProjectName ||
     projectsList?.find((p) => p.id === project)?.name ||
