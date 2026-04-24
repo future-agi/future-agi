@@ -102,8 +102,8 @@ db.sqlite3-journal
 *.pth
 *.gguf
 *.onnx
-models/
-model_cache/
+/models/
+/model_cache/
 embedding_cache/
 checkpoints/
 
