@@ -24,6 +24,7 @@ from tracer.serializers.dashboard import (
     DashboardSerializer,
     DashboardWidgetSerializer,
 )
+from tracer.views.dashboard import DashboardViewSet
 from tracer.services.clickhouse.query_builders.dashboard import (
     AGGREGATIONS,
     SYSTEM_METRICS,
@@ -894,6 +895,98 @@ class TestDashboardQueryExecution:
         assert response.status_code == 200
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_project_breakdown_uses_longer_timeout(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [
+            {
+                "time_bucket": "2025-01-01T00:00:00",
+                "breakdown_value": str(observe_project.id),
+                "value": 123.45,
+            }
+        ]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+                "breakdowns": [{"type": "system_metric", "name": "project"}],
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+        _, kwargs = mock_service.execute_ch_query.call_args
+        assert kwargs["timeout_ms"] == 30000
+
+
+class TestDashboardTraceTimeoutSelection:
+    def test_default_trace_timeout_is_short(self):
+        viewset = DashboardViewSet()
+        timeout = viewset._get_trace_query_timeout_ms(
+            {
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+                "breakdowns": [],
+            }
+        )
+        assert timeout == 10000
+
+    def test_project_breakdown_uses_longer_timeout(self):
+        viewset = DashboardViewSet()
+        timeout = viewset._get_trace_query_timeout_ms(
+            {
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+                "breakdowns": [{"type": "system_metric", "name": "project"}],
+            }
+        )
+        assert timeout == 30000
+
+    def test_eval_metric_uses_longer_timeout(self):
+        viewset = DashboardViewSet()
+        timeout = viewset._get_trace_query_timeout_ms(
+            {
+                "metrics": [
+                    {
+                        "id": "eval1",
+                        "name": "accuracy",
+                        "type": "eval_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+                "breakdowns": [],
+            }
+        )
+        assert timeout == 30000
+
+    @pytest.mark.django_db
     def test_query_action_missing_project_ids_still_works(self, auth_client):
         """Query endpoint accepts requests without project_ids (unified picker)."""
         response = auth_client.post(
@@ -1000,6 +1093,48 @@ class TestWidgetQueryExecution:
         assert response.status_code == 200
         data = response.json()["result"]
         assert "metrics" in data
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_preview_query_project_breakdown_uses_longer_timeout(
+        self, mock_get_client, mock_enabled, auth_client, dashboard, observe_project
+    ):
+        mock_client = MagicMock()
+        mock_client.execute_read.return_value = (
+            [(datetime(2025, 1, 1), str(observe_project.id), 50.0)],
+            [
+                ("time_bucket", "DateTime"),
+                ("breakdown_value", "String"),
+                ("value", "Float64"),
+            ],
+            3.0,
+        )
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/preview/",
+            {
+                "query_config": {
+                    "project_ids": [str(observe_project.id)],
+                    "granularity": "day",
+                    "time_range": {"preset": "7D"},
+                    "metrics": [
+                        {
+                            "id": "latency",
+                            "name": "latency",
+                            "type": "system_metric",
+                            "aggregation": "avg",
+                        }
+                    ],
+                    "breakdowns": [{"type": "system_metric", "name": "project"}],
+                }
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+        _, kwargs = mock_client.execute_read.call_args
+        assert kwargs["timeout_ms"] == 30000
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)

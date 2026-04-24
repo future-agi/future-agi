@@ -54,6 +54,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             return DashboardCreateUpdateSerializer
         return DashboardSerializer
 
+    def _get_trace_query_timeout_ms(self, trace_config):
+        """Use a longer timeout for high-cardinality or wide trace queries."""
+        has_eval_metrics = any(
+            m.get("type") == "eval_metric" for m in trace_config.get("metrics", [])
+        )
+        has_project_breakdown = any(
+            bd.get("name") == "project"
+            for bd in trace_config.get("breakdowns", [])
+            if bd.get("source", "traces") in ("traces", "both", "all", "")
+        )
+        return 30000 if has_eval_metrics or has_project_breakdown else 10000
+
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
@@ -231,8 +243,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 trace_config["workspace_id"] = str(request.workspace.id)
 
                 builder = DashboardQueryBuilder(trace_config)
-                # Eval metrics scan large tables — use longer timeout
-                query_timeout = 30000 if has_eval_metrics else 10000
+                query_timeout = self._get_trace_query_timeout_ms(trace_config)
                 for sql, params, metric_info in builder.build_all_queries():
                     metric_info["source"] = "traces"
                     result = analytics.execute_ch_query(
@@ -2303,9 +2314,12 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "Some project_ids are invalid or not in this workspace"
                     )
             builder = DashboardQueryBuilder(trace_config)
+            query_timeout = self._get_trace_query_timeout_ms(trace_config)
             for sql, params, metric_info in builder.build_all_queries():
                 metric_info["source"] = "traces"
-                rows, column_types, _ = ch_client.execute_read(sql, params)
+                rows, column_types, _ = ch_client.execute_read(
+                    sql, params, timeout_ms=query_timeout
+                )
                 col_names = [ct[0] for ct in column_types]
                 row_dicts = [dict(zip(col_names, row)) for row in rows]
                 metric_results.append((metric_info, row_dicts))
