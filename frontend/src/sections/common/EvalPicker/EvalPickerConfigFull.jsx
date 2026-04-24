@@ -1202,6 +1202,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   onTemplateFormatChange={setTemplateFormat}
                   datasetColumns={datasetColumns}
                   datasetJsonSchemas={datasetJsonSchemas}
+                  variableMapping={sourceMapping}
                   disabled={isInstructionsReadOnly}
                   modelSelectorDisabled={false}
                   mode={agentMode}

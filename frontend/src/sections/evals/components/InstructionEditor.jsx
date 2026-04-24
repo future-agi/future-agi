@@ -245,6 +245,10 @@ const InstructionEditor = ({
   onTemplateFormatChange,
   datasetColumns = [],
   datasetJsonSchemas = {},
+  // Variable mapping from the side panel: { [templateVar]: datasetColumn }.
+  // Variables present as keys here are considered valid even if their name
+  // doesn't match a dataset column directly.
+  variableMapping,
   // Pass-through ModelSelector lifted-state props — forwarded as-is so the
   // parent form can collect mode / internet / summary / connectors / KBs.
   mode,
@@ -318,6 +322,19 @@ const InstructionEditor = ({
     return s;
   }, [datasetColumns]);
 
+  // Lowercased set of template variable names the user has mapped in the
+  // side panel. A mapped variable is valid regardless of whether its name
+  // matches a dataset column directly (e.g. `input` → `Column 1`).
+  const mappedVarSet = useMemo(() => {
+    const s = new Set();
+    if (variableMapping && typeof variableMapping === "object") {
+      Object.entries(variableMapping).forEach(([k, v]) => {
+        if (k && v != null && String(v).length > 0) s.add(k.toLowerCase());
+      });
+    }
+    return s;
+  }, [variableMapping]);
+
   // Jinja-aware input variable set: only top-level inputs (not loop/set vars)
   const jinjaInputVarSet = useMemo(() => {
     if (templateFormat !== "jinja" || !value) return null;
@@ -342,22 +359,30 @@ const InstructionEditor = ({
       if (!hasDataset) return true; // No dataset → remaining vars are valid
 
       const lower = trimmed.toLowerCase();
+      // Mapped via the side panel (e.g. {{input}} → Column 1)
+      if (mappedVarSet.has(lower)) return true;
       // Direct column match
       if (validVarSet.has(lower)) return true;
-      // JSON path: check if base column is a JSON type column
+      // JSON path: check if base column is a JSON type column, or if the
+      // root name has been mapped to a JSON column via the side panel.
       const dotIdx = lower.indexOf(".");
       if (dotIdx > 0) {
         const base = lower.substring(0, dotIdx);
         if (jsonColumnNames.has(base)) return true;
+        if (mappedVarSet.has(base)) return true;
       }
       // Indexed access: col[0]
       const bracketMatch = lower.match(/^(.+?)\[\d+\]$/);
-      if (bracketMatch && validVarSet.has(bracketMatch[1])) return true;
+      if (bracketMatch) {
+        if (validVarSet.has(bracketMatch[1])) return true;
+        if (mappedVarSet.has(bracketMatch[1])) return true;
+      }
       return false;
     },
     [
       hasDataset,
       validVarSet,
+      mappedVarSet,
       jsonColumnNames,
       templateFormat,
       jinjaInputVarSet,
@@ -984,6 +1009,7 @@ InstructionEditor.propTypes = {
   onTemplateFormatChange: PropTypes.func,
   datasetColumns: PropTypes.array,
   datasetJsonSchemas: PropTypes.object,
+  variableMapping: PropTypes.object,
 };
 
 export default InstructionEditor;

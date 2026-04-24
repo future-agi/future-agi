@@ -777,6 +777,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onTemplateFormatChange={setTemplateFormat}
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
+                    variableMapping={sourceMapping}
                   />
                   {errors.instructions && (
                     <Typography variant="caption" color="error.main">
