@@ -318,6 +318,24 @@ const EvalsListView = () => {
     return Object.keys(f).length > 0 ? f : null;
   }, [filters]);
 
+  // Keep the filter-panel state as a single "Created By" field for display/edit
+  // even though backend-facing state may include both owner scope + created_by.
+  const panelFilters = useMemo(() => {
+    if (!filters) return null;
+    const f = { ...filters };
+
+    if (Array.isArray(filters.created_by) && filters.created_by.length > 0) {
+      f.owner = [...filters.created_by];
+    } else if (filters.owner === "system") {
+      f.owner = ["System"];
+    } else if (filters.owner === "user" || filters.owner === "all") {
+      delete f.owner;
+    }
+
+    delete f.created_by;
+    return f;
+  }, [filters]);
+
   // Map TanStack sorting to API params
   const sortBy = sorting[0]
     ? SORT_FIELD_MAP[sorting[0].id] || "updated_at"
@@ -642,10 +660,11 @@ const EvalsListView = () => {
   }, []);
 
   const activeFilterCount = useMemo(() => {
-    if (!filters) return 0;
-    return Object.keys(filters).filter((k) => k !== "_tokens" && filters[k])
-      .length;
-  }, [filters]);
+    if (!panelFilters) return 0;
+    return Object.keys(panelFilters).filter(
+      (k) => k !== "_tokens" && panelFilters[k],
+    ).length;
+  }, [panelFilters]);
 
   const handleCancelSelection = useCallback(() => {
     setRowSelection({});
@@ -881,7 +900,7 @@ const EvalsListView = () => {
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
         filterFields={filterFields}
-        currentFilters={filters}
+        currentFilters={panelFilters}
         onApply={(result) => {
           // FilterPanel Basic tab returns {field: [values]}, Query tab returns [{field, op, value}]
           if (!result) {

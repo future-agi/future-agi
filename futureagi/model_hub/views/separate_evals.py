@@ -1328,7 +1328,18 @@ class EvalTemplateListView(APIView):
                 else getattr(filters, "eval_type", None)
             )
             if eval_type_filter:
-                qs = qs.filter(eval_type__in=eval_type_filter)
+                # Keep list filtering aligned with UI display for composites:
+                # composite parent eval_type may be stale/default, but displayed
+                # type is derived from child templates.
+                non_composite_q = Q(eval_type__in=eval_type_filter) & ~Q(
+                    template_type="composite"
+                )
+                composite_q = Q(
+                    template_type="composite",
+                    composite_children__deleted=False,
+                    composite_children__child__eval_type__in=eval_type_filter,
+                )
+                qs = qs.filter(non_composite_q | composite_q).distinct()
 
             total = qs.count()
             page = req.get("page", 0)

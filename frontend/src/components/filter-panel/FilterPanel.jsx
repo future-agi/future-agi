@@ -1286,7 +1286,10 @@ const FilterPanel = ({
               filterFields={filterFields}
               fieldMap={fieldMap}
               onApply={handleApplyFromNlp}
-              initialTokens={[]}
+              initialTokens={rows.filter((r) => {
+                if (Array.isArray(r?.value)) return r.value.length > 0;
+                return Boolean(r?.value);
+              })}
             />
             <Typography
               variant="caption"

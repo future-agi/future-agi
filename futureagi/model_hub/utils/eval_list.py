@@ -345,12 +345,43 @@ def build_eval_list_queryset(
 
         # Output type filter
         if _f("output_type"):
-            reverse_map = {v: k for k, v in _OUTPUT_TYPE_MAP.items()}
-            output_values = [
-                reverse_map.get(ot) for ot in _f("output_type") if ot in reverse_map
-            ]
-            if output_values:
-                qs = qs.filter(config__output__in=output_values)
+            selected_output_types = set(_f("output_type"))
+
+            # Build raw output values from the canonical normalization map.
+            # Avoid JSONField __in here (can collapse/behave inconsistently);
+            # explicit OR keeps filtering predictable.
+            normalized_to_raw: dict[str, set[str]] = {}
+            for raw_value, normalized in _OUTPUT_TYPE_MAP.items():
+                normalized_to_raw.setdefault(normalized, set()).add(raw_value)
+
+            output_q = Q(output_type_normalized__in=list(selected_output_types))
+
+            raw_values = set()
+            for normalized in selected_output_types:
+                raw_values.update(normalized_to_raw.get(normalized, set()))
+            for raw_value in raw_values:
+                output_q |= Q(config__output=raw_value)
+
+            # Legacy rows may have empty output in config but render as percentage.
+            if "percentage" in selected_output_types:
+                output_q |= Q(config__output__isnull=True) | Q(config={})
+
+            # Composite rows derive output type from axis.
+            composite_axis_by_output = {
+                "pass_fail": ["pass_fail", "code"],
+                "percentage": ["percentage", ""],
+                "deterministic": ["choices"],
+            }
+            composite_axes = []
+            for normalized in selected_output_types:
+                composite_axes.extend(composite_axis_by_output.get(normalized, []))
+            if composite_axes:
+                output_q |= Q(
+                    template_type="composite",
+                    composite_child_axis__in=list(set(composite_axes)),
+                )
+
+            qs = qs.filter(output_q)
 
         # Tags filter
         if _f("tags"):
