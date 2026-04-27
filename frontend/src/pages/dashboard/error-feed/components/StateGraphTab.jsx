@@ -410,10 +410,11 @@ export default function StateGraphTab({ error }) {
     useGetTraceDetail(failTraceId);
   const { data: successData, isLoading: isSuccessLoading } =
     useGetTraceDetail(successTraceId);
-  const isLoading =
+  const isLoading = Boolean(
     isDetailLoading ||
-    (failTraceId && isFailLoading && !failData) ||
-    (successTraceId && isSuccessLoading && !successData);
+      (failTraceId && isFailLoading && !failData) ||
+      (successTraceId && isSuccessLoading && !successData),
+  );
   const failSteps = useMemo(
     () =>
       extractSteps(failData?.observation_spans || failData?.observationSpans),
