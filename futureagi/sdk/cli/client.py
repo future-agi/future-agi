@@ -209,16 +209,25 @@ class SimulateClient:
         url = f"{self._base_url}/simulate/run-tests/{test_id}/eval-summary/"
         params = {"execution_id": execution_id}
         raw = self._request("GET", url, params=params)
-        data = self._unwrap_envelope(raw)
+        payload = self._unwrap_envelope(raw)
 
-        evals = data.get("evals", data.get("results", []))
+        # Backend returns a list of template summaries, each with
+        # total_pass_rate (Pass/Fail), total_avg (score), or
+        # total_choices_avg (choices).  We treat this list as "evals".
+        if isinstance(payload, list):
+            evals = payload
+        elif isinstance(payload, dict):
+            evals = payload.get("evals", payload.get("results", []))
+        else:
+            evals = []
+
         aggregate_pass_rate = self._compute_aggregate_pass_rate(evals)
 
         return EvalSummary(
             execution_id=execution_id,
             evals=evals,
             aggregate_pass_rate=aggregate_pass_rate,
-            raw=data,
+            raw=raw,
         )
 
     def wait_for_completion(
@@ -348,25 +357,27 @@ class SimulateClient:
         raise CLIError("Request failed unexpectedly")  # pragma: no cover
 
     @staticmethod
-    def _unwrap_envelope(data: dict[str, Any]) -> dict[str, Any]:
+    def _unwrap_envelope(data: dict[str, Any]) -> Any:
         """Unwrap the FutureAGI API response envelope.
 
         The backend wraps all responses as::
 
             {"status": 0, "result": <actual_payload>}
 
+        The payload can be a **dict** (single object) or a **list**
+        (e.g. eval-summary returns a list of template summaries).
+
         This method extracts the inner payload. If the response does
-        not have the envelope structure, it returns the data as-is
-        (graceful fallback for direct responses like execute/).
+        not have the envelope structure, it returns the data as-is.
 
         Args:
             data: Raw parsed JSON response.
 
         Returns:
-            The unwrapped payload dictionary.
+            The unwrapped payload (dict or list).
         """
         if API_RESULT_ENVELOPE_KEY in data and isinstance(
-            data[API_RESULT_ENVELOPE_KEY], dict
+            data[API_RESULT_ENVELOPE_KEY], (dict, list)
         ):
             return data[API_RESULT_ENVELOPE_KEY]
         return data
@@ -377,6 +388,20 @@ class SimulateClient:
     ) -> float:
         """Compute the aggregate pass rate across all evaluations.
 
+        Handles two response formats:
+
+        1. **Backend template summaries** (from ``eval-summary``)::
+
+               {"name": "...", "output_type": "Pass/Fail",
+                "total_pass_rate": 85.0, "result": [...]}
+
+           In this format, ``total_pass_rate`` is already a percentage
+           (0-100); we normalise to 0.0-1.0.
+
+        2. **Simple per-eval dicts** (tests / generic)::
+
+               {"name": "...", "passed": 8, "total": 10}
+
         Args:
             evals: List of per-eval result dictionaries.
 
@@ -386,6 +411,34 @@ class SimulateClient:
         if not evals:
             return 0.0
 
+        # --- Format 1: backend template summaries ---
+        # Check if evals look like template summaries (have output_type).
+        if any("output_type" in e for e in evals):
+            pass_fail_evals = [
+                e for e in evals if e.get("output_type") == "Pass/Fail"
+            ]
+            if pass_fail_evals:
+                # total_pass_rate is 0-100, normalise to 0.0-1.0.
+                rates = [
+                    float(e.get("total_pass_rate", 0.0))
+                    for e in pass_fail_evals
+                ]
+                return sum(rates) / len(rates) / 100.0
+
+            # Score-based evals — use total_avg (also 0-100).
+            score_evals = [
+                e for e in evals if e.get("output_type") == "score"
+            ]
+            if score_evals:
+                avgs = [
+                    float(e.get("total_avg", 0.0)) for e in score_evals
+                ]
+                return sum(avgs) / len(avgs) / 100.0
+
+            # Choices or unknown — no meaningful pass rate.
+            return 0.0
+
+        # --- Format 2: simple per-eval dicts ---
         total_passed = 0
         total_count = 0
 
