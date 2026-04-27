@@ -396,7 +396,7 @@ def _run_protect(
         for rk in template_required_keys:
             if rk not in protect_inputs:
                 protect_inputs[rk] = input_text
-        protect_inputs["call_type"] = "protect"
+        protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
             user, eval_template, True, protect_inputs, workspace=workspace
@@ -408,6 +408,7 @@ def _run_protect(
                     eval_template=eval_template,
                     inputs=protect_inputs,
                     config_overrides=config or {},
+                    model="protect_flash" if protect_flash else None,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )
