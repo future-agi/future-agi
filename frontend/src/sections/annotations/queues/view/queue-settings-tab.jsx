@@ -211,10 +211,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                   name="status"
                   control={control}
                   render={({ field }) => {
-                    // Surface the activation gate as the field's helper text
-                    // so users see *why* they can't activate without opening
-                    // the dropdown. Only show it when the queue isn't already
-                    // active (otherwise it's a no-op nag).
+              
                     const currentStatus = queue?.status || field.value;
                     const labelGateBlocks =
                       currentStatus !== "active" &&
