@@ -1,0 +1,26 @@
+meta {
+  name: Create a ai model Copy
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{host}}:{{port}}/model-hub/ai_models/update-baseline/:model-id/
+  body: json
+  auth: bearer
+}
+
+params:path {
+  model-id: 6488a093-7091-49c1-99ac-718a08302ace
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+      "environment" : "Training",
+      "modelVersion" : "1.1"
+  }
+}

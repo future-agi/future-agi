@@ -44,6 +44,19 @@ function getApexType(chartType) {
   return map[chartType] || "line";
 }
 
+function getSeriesAverage(points = []) {
+  let total = 0;
+  let count = 0;
+  for (const pt of points) {
+    if (pt?.y == null) continue;
+    const y = Number(pt.y);
+    if (!Number.isFinite(y)) continue;
+    total += y;
+    count += 1;
+  }
+  return count > 0 ? total / count : null;
+}
+
 export default function WidgetChart({ widget, globalDateRange }) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
@@ -94,13 +107,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const pieChartRef = useRef(null);
   const [pieConnectors, setPieConnectors] = useState([]);
 
-  // Re-query whenever widget.id or globalDateRange changes
-  const queryKey = `${widget.id}-${globalDateRange?.start || "default"}`;
+  // Re-query whenever the effective query config changes (including
+  // metric aggregation/value type), or when global date override changes.
+  const querySignature = useMemo(
+    () => JSON.stringify(queryConfig || {}),
+    [queryConfig],
+  );
   useEffect(() => {
     if (queryConfig?.metrics?.length > 0) {
       queryMutation.mutate(queryConfig);
     }
-  }, [queryKey]);
+  }, [querySignature, queryConfig]);
 
   const result = queryMutation.data?.data?.result;
   const series = useMemo(() => {
@@ -306,15 +323,18 @@ export default function WidgetChart({ widget, globalDateRange }) {
         sx={{ width: "100%", height: "100%", minHeight: 0 }}
       >
         {series.map((s, i) => {
-          const total = s.data.reduce((sum, pt) => sum + (pt.y || 0), 0);
-          const avg = s.data.length ? total / s.data.length : 0;
+          const avg = getSeriesAverage(s.data);
           return (
             <Box key={i} sx={{ textAlign: "center" }}>
               <Typography
                 variant="h3"
                 sx={{ color: COLORS[i % COLORS.length] }}
               >
-                {avg >= 1000 ? `${(avg / 1000).toFixed(1)}K` : avg.toFixed(1)}
+                {avg == null
+                  ? "—"
+                  : avg >= 1000
+                    ? `${(avg / 1000).toFixed(1)}K`
+                    : avg.toFixed(1)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {s.name}
@@ -655,8 +675,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
   // Bar chart — horizontal bar table
   if (isHorizontal) {
     const barValues = chartSeries.map((s) => {
-      const total = s.data.reduce((sum, pt) => sum + (pt.y || 0), 0);
-      return s.data.length ? total / s.data.length : 0;
+      const avg = getSeriesAverage(s.data);
+      return avg == null ? 0 : avg;
     });
     const maxVal = Math.max(...barValues.map(Math.abs), 1);
     return (
@@ -1050,7 +1070,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       };
     })(),
     markers: {
-      size: 0,
+      size: apexType === "line" || apexType === "area" ? 4 : 0,
       strokeWidth: 2,
       strokeColors: isDark ? theme.palette.background.paper : "#fff",
       hover: { size: 6, sizeOffset: 3 },

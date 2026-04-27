@@ -947,7 +947,7 @@ class DashboardQueryBuilder:
                     elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
                     ts = ts.isoformat()
-                val = row.get("value", 0)
+                val = row.get("value")
                 if isinstance(val, float):
                     val = round(val, 6)
                 series_data[breakdown_key][ts] = val
@@ -966,7 +966,8 @@ class DashboardQueryBuilder:
                 )[:MAX_SERIES]
                 series_data = dict(ranked)
 
-            # Fill in missing time buckets with 0
+            # Fill in missing time buckets with null so consumers can
+            # distinguish missing values from real zeros.
             series = []
             for name in sorted(series_data.keys()):
                 data_map = series_data[name]
@@ -975,7 +976,9 @@ class DashboardQueryBuilder:
                     filled.append(
                         {
                             "timestamp": bucket_ts,
-                            "value": data_map.get(bucket_ts, 0),
+                            "value": data_map[bucket_ts]
+                            if bucket_ts in data_map
+                            else None,
                         }
                     )
                 series.append({"name": name, "data": filled})
@@ -1420,7 +1423,7 @@ def _generate_time_buckets(
     """Generate all time bucket ISO strings between *start* and *end*.
 
     Mirrors the ClickHouse ``toStartOf*`` bucketing so that the response
-    includes every expected bucket — even those with no data (filled with 0).
+    includes every expected bucket — even those with no data (filled with null).
     """
     buckets: List[str] = []
     if granularity == "minute":
