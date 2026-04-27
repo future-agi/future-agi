@@ -259,11 +259,11 @@ function extractKeysFromValue(raw) {
   const walk = (obj, prefix, depth) => {
     if (depth > 3 || !obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) {
-      keys.push(`${prefix}[]`);
+      keys.push(`${prefix}[0]`);
       // Walk first element to discover object keys inside arrays
       if (obj.length && obj[0] && typeof obj[0] === "object" && !Array.isArray(obj[0])) {
         for (const k of Object.keys(obj[0])) {
-          keys.push(`${prefix}[].${k}`);
+          keys.push(`${prefix}[0].${k}`);
         }
       }
       return;
