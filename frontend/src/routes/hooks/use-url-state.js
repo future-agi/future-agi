@@ -29,7 +29,15 @@ export function useUrlState(key, defaultValue) {
   // Flag to track if the URL change was triggered internally
   const isInternalUpdate = useRef(false);
 
-  // Update both state and URL
+  // Update both state and URL.
+  // Reads from `window.location.search` rather than the functional
+  // setSearchParams form because react-router's prev arg in the functional
+  // form doesn't reflect intermediate navigate() calls within the same
+  // synchronous tick — when multiple useUrlState setters fire back-to-back
+  // (e.g. setActiveTab → applyConfig → setCellHeight/etc), the later writes
+  // clobber the earlier ones. window.location.search IS updated
+  // synchronously by react-router's underlying history.replaceState, so
+  // each setter merges with the latest URL state correctly.
   const setValue = useCallback(
     (newValue, options = { replace: true }) => {
       setStateValue((currentValue) => {
@@ -38,17 +46,9 @@ export function useUrlState(key, defaultValue) {
 
         isInternalUpdate.current = true;
 
-        // Functional form merges with the latest URL params so concurrent
-        // setValue calls from different useUrlState hooks don't clobber each
-        // other's writes in the same tick.
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set(key, stringifyUrlValue(nextValue));
-            return next;
-          },
-          { replace: options.replace },
-        );
+        const newSearchParams = new URLSearchParams(window.location.search);
+        newSearchParams.set(key, stringifyUrlValue(nextValue));
+        setSearchParams(newSearchParams, { replace: options.replace });
 
         return nextValue;
       });
@@ -60,14 +60,9 @@ export function useUrlState(key, defaultValue) {
     (options = { replace: true }) => {
       isInternalUpdate.current = true;
 
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete(key);
-          return next;
-        },
-        { replace: options.replace },
-      );
+      const newSearchParams = new URLSearchParams(window.location.search);
+      newSearchParams.delete(key);
+      setSearchParams(newSearchParams, { replace: options.replace });
 
       setStateValue(defaultValue);
     },

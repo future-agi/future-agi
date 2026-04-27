@@ -33,6 +33,7 @@ const PrimaryGraph = lazy(
 
 // User-specific
 import useUsersStore from "./Store/usersStore";
+import { getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
@@ -111,7 +112,13 @@ const getDateLabel = (dateFilter) => {
 
 const noopExtraProperties = () => ({});
 
-const UsersView = ({ savedViewApiRef = null }) => {
+const UsersView = ({
+  savedViewApiRef = null,
+  // Optional override for activeViewConfig — used by callers (e.g. UserList)
+  // that don't wrap UsersView in ObserveHeaderProvider but still want
+  // canSaveView to reflect divergence from a saved view's baseline.
+  activeViewConfig: activeViewConfigProp,
+}) => {
   const { observeId } = useParams();
   const location = useLocation();
   const isObservePath = location.pathname.includes("observe");
@@ -183,10 +190,13 @@ const UsersView = ({ savedViewApiRef = null }) => {
   // Users tab.
   const {
     setHeaderConfig,
-    activeViewConfig,
+    activeViewConfig: activeViewConfigCtx,
     registerGetViewConfig,
     registerGetTabType,
   } = useObserveHeader();
+  // Prefer prop (set by UserList for /dashboard/users) over context
+  // (set by ObservePage for the Users fixed tab).
+  const activeViewConfig = activeViewConfigProp ?? activeViewConfigCtx;
 
   const refreshUsers = useCallback(() => {
     if (gridApi) {
@@ -299,6 +309,11 @@ const UsersView = ({ savedViewApiRef = null }) => {
       acc[col.id] = col.isVisible !== false;
       return acc;
     }, {});
+    // Capture full grid column state (widths, order, sort) so saved views
+    // restore the user's exact column layout. Stash inside `display` since
+    // the backend serializer's allowed_keys whitelists `display` for
+    // arbitrary subkeys but does not whitelist a separate `columnState`.
+    const columnState = gridApi?.getColumnState?.() ?? undefined;
     return {
       display: {
         cellHeight,
@@ -306,6 +321,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
         showNonAnnotated,
         hasEvalFilter,
         visibleColumns,
+        ...(columnState ? { columnState } : {}),
       },
       filters: {
         extraFilters,
@@ -320,7 +336,12 @@ const UsersView = ({ savedViewApiRef = null }) => {
     hasEvalFilter,
     extraFilters,
     dateFilter,
+    gridApi,
   ]);
+
+  // Pending column state from a saved view that arrived before the grid was
+  // ready. Drained by the effect below when gridApi becomes available.
+  const pendingColumnStateRef = useRef(null);
 
   const applyConfig = useCallback(
     (config) => {
@@ -332,6 +353,22 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setShowNonAnnotated(false);
         setHasEvalFilter(false);
         setDateFilter(getDefaultDateRange());
+        pendingColumnStateRef.current = null;
+        // Reset column visibility to the column-config defaults so going back
+        // to All Users from a saved view with limited columns shows everything
+        // again.
+        const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
+          (acc, col) => {
+            acc[col.field] = col.hide === undefined ? true : !col.hide;
+            return acc;
+          },
+          {},
+        );
+        if (Object.keys(defaultsVisibility).length > 0) {
+          updateColumnVisibility(defaultsVisibility);
+        }
+        // Reset AG Grid column state (widths/order/sort) to coldef defaults.
+        if (gridApi?.resetColumnState) gridApi.resetColumnState();
         return;
       }
       const display = config.display || {};
@@ -345,6 +382,16 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setHasEvalFilter(display.hasEvalFilter);
       if (display.visibleColumns && columns?.length) {
         updateColumnVisibility(display.visibleColumns);
+      }
+      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+        if (gridApi?.applyColumnState) {
+          gridApi.applyColumnState({
+            state: display.columnState,
+            applyOrder: true,
+          });
+        } else {
+          pendingColumnStateRef.current = display.columnState;
+        }
       }
       if (Array.isArray(filtersCfg.extraFilters)) {
         setExtraFilters(filtersCfg.extraFilters);
@@ -362,8 +409,20 @@ const UsersView = ({ savedViewApiRef = null }) => {
       setExtraFilters,
       updateColumnVisibility,
       columns,
+      gridApi,
     ],
   );
+
+  // Drain any column state queued before the grid was ready.
+  useEffect(() => {
+    if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
+      gridApi.applyColumnState({
+        state: pendingColumnStateRef.current,
+        applyOrder: true,
+      });
+      pendingColumnStateRef.current = null;
+    }
+  }, [gridApi]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -410,6 +469,28 @@ const UsersView = ({ savedViewApiRef = null }) => {
     ) {
       return true;
     }
+    // Column visibility: compare baseline visibleColumns dict against current
+    // columns Zustand state. Only check columns the baseline knows about —
+    // newly-added columns from a backend schema bump shouldn't mark dirty.
+    if (
+      baselineDisplay.visibleColumns &&
+      typeof baselineDisplay.visibleColumns === "object"
+    ) {
+      const currentVisibility = (columns || []).reduce((acc, col) => {
+        acc[col.id] = col.isVisible !== false;
+        return acc;
+      }, {});
+      for (const colId of Object.keys(baselineDisplay.visibleColumns)) {
+        const baselineVisible = baselineDisplay.visibleColumns[colId];
+        const currentVisible = currentVisibility[colId];
+        if (
+          currentVisible !== undefined &&
+          currentVisible !== baselineVisible
+        ) {
+          return true;
+        }
+      }
+    }
     return false;
   }, [
     activeViewConfig,
@@ -419,6 +500,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
     showErrors,
     showNonAnnotated,
     hasEvalFilter,
+    columns,
   ]);
 
   const canSaveViewDeferred = useDeferredValue(canSaveView);
@@ -641,6 +723,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
 
 UsersView.propTypes = {
   savedViewApiRef: PropTypes.shape({ current: PropTypes.any }),
+  activeViewConfig: PropTypes.object,
 };
 
 export default UsersView;

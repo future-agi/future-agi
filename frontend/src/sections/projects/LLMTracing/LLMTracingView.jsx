@@ -844,6 +844,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const primaryCallLogsGridRef = useRef(null);
   const compareCallLogsGridRef = useRef(null);
   const columnConfigureRef = useRef();
+  // Saved-view columnState queued before the active sub-tab's primary grid
+  // mounted. Drained by onGridReady on the primary grid.
+  const pendingColumnStateRef = useRef(null);
 
   const {
     setHeaderConfig,
@@ -1616,6 +1619,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       pendingCustomColumnsRef.current = display.customColumns;
     }
 
+    // Apply column state (widths/order/sort) to the active sub-tab's primary
+    // grid. If the grid isn't mounted yet, queue for the onGridReady callback.
+    if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      const activeApi =
+        selectedTab === "trace"
+          ? primaryTraceGridRef.current?.api
+          : primarySpanGridRef.current?.api;
+      if (activeApi?.applyColumnState) {
+        activeApi.applyColumnState({
+          state: display.columnState,
+          applyOrder: true,
+        });
+      } else {
+        pendingColumnStateRef.current = display.columnState;
+      }
+    }
+
     // Primary date filter — stored inside display for backend-whitelist compatibility.
     // Only apply if the saved view has one; old views without it keep the current date.
     if (display.dateFilter) {
@@ -1665,6 +1685,39 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
+
+  // Drain the queued saved-view columnState once the active sub-tab's primary
+  // grid mounts. TraceGrid is lazy-loaded so the AG Grid api may not exist
+  // when applyConfig runs — retry a handful of times to catch it.
+  useEffect(() => {
+    if (!pendingColumnStateRef.current) return;
+    let attempts = 0;
+    let timer = null;
+    const tryApply = () => {
+      const api =
+        selectedTab === "trace"
+          ? primaryTraceGridRef.current?.api
+          : primarySpanGridRef.current?.api;
+      if (
+        api?.applyColumnState &&
+        Array.isArray(pendingColumnStateRef.current)
+      ) {
+        api.applyColumnState({
+          state: pendingColumnStateRef.current,
+          applyOrder: true,
+        });
+        pendingColumnStateRef.current = null;
+        return;
+      }
+      if (attempts++ < 20) {
+        timer = setTimeout(tryApply, 100);
+      }
+    };
+    tryApply();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeViewConfig, selectedTab]);
 
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
@@ -1772,6 +1825,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Build the full saved view config payload
   const buildViewConfig = useCallback(() => {
+    // Capture current grid column state (widths/order/sort/visibility) of the
+    // active sub-tab's primary grid, so saved views restore the user's exact
+    // column layout. Stashed inside `display` because the backend serializer
+    // whitelists `display` for arbitrary subkeys.
+    const activeGridApi =
+      selectedTab === "trace"
+        ? primaryTraceGridRef.current?.api
+        : primarySpanGridRef.current?.api;
+    const columnState = activeGridApi?.getColumnState?.() ?? undefined;
     const currentDisplay = {
       viewMode,
       cellHeight,
@@ -1785,6 +1847,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         selectedTab === "trace"
           ? primaryTraceDateFilter
           : primarySpanDateFilter,
+      ...(columnState ? { columnState } : {}),
     };
     const mapFilters = (filters) =>
       (filters || []).map((f) => ({
@@ -2045,6 +2108,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     ) {
       return true;
     }
+    // Custom columns: did the user add/remove a custom column since the
+    // saved view? Compare by id, not deep shape.
+    const baselineCustom = Array.isArray(baselineDisplay.customColumns)
+      ? baselineDisplay.customColumns
+      : [];
+    const currentCustom = getCustomColumns() || [];
+    if (currentCustom.length !== baselineCustom.length) return true;
+    if (currentCustom.length > 0) {
+      const baselineIds = new Set(baselineCustom.map((c) => c?.id));
+      for (const col of currentCustom) {
+        if (!baselineIds.has(col?.id)) return true;
+      }
+    }
     return false;
   }, [
     activeViewConfig,
@@ -2060,6 +2136,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     showNonAnnotated,
     showCompare,
     hasEvalFilter,
+    getCustomColumns,
   ]);
 
   // Defer the visibility signal so it catches up with activeViewConfig

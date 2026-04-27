@@ -338,17 +338,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // Build a view-config snapshot that mirrors LLMTracingView's shape. dateFilter
   // stays inside `display` because the backend's saved-view serializer only
   // whitelists `display` for arbitrary sub-keys (no top-level `dateFilter`).
-  const buildViewConfig = useCallback(
-    () => ({
+  const buildViewConfig = useCallback(() => {
+    const columnState =
+      sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
+    return {
       display: {
         cellHeight,
         showCompare,
         dateFilter,
+        ...(columnState ? { columnState } : {}),
       },
       extraFilters: extraFilters || [],
-    }),
-    [cellHeight, showCompare, dateFilter, extraFilters],
-  );
+    };
+  }, [cellHeight, showCompare, dateFilter, extraFilters]);
 
   useEffect(() => {
     registerGetViewConfig(buildViewConfig);
@@ -360,6 +362,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetTabType(null);
   }, [registerGetTabType]);
 
+  // Pending column state queued before the grid was ready. Drain effect
+  // below applies it once `sessionGridApiRef.current.api` shows up.
+  const pendingColumnStateRef = useRef(null);
+
   // Apply a saved view's config to LOCAL state only. URL-synced state
   // (dateFilter / cellHeight / showCompare) is handled by seedUrlForView in
   // UserDetailTabBar — the URL is populated synchronously at click time, and
@@ -368,6 +374,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // loading flash.
   useEffect(() => {
     if (!activeViewConfig) return;
+    const display = activeViewConfig.display || {};
+    if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      const api = sessionGridApiRef.current?.api;
+      if (api?.applyColumnState) {
+        api.applyColumnState({
+          state: display.columnState,
+          applyOrder: true,
+        });
+      } else {
+        pendingColumnStateRef.current = display.columnState;
+      }
+    }
     const nextExtraFilters = activeViewConfig.extraFilters || [];
     setExtraFilters((prev) => {
       if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
@@ -543,6 +561,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     (params) => {
       sessionGridApiRef.current = params;
       setHeaderConfig((prev) => ({ ...prev, gridApi: params.api }));
+      // Drain any saved-view columnState that arrived before the grid mounted.
+      if (pendingColumnStateRef.current && params.api?.applyColumnState) {
+        params.api.applyColumnState({
+          state: pendingColumnStateRef.current,
+          applyOrder: true,
+        });
+        pendingColumnStateRef.current = null;
+      }
     },
     [setHeaderConfig],
   );
