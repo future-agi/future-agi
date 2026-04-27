@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect } from "react";
+import React, { useMemo, useCallback, useEffect, startTransition } from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -127,13 +127,16 @@ const ObservePage = React.memo(() => {
   // Handle tab change from ObserveTabBar
   const handleTabChange = useCallback(
     (tabKey) => {
-      setActiveTab(tabKey);
+      // setActiveTab is redundant here: navigate() below updates the URL and
+      // useUrlState's external-sync effect will update the state. Skipping
+      // the explicit call saves one setSearchParams round and the
+      // corresponding re-render cascade.
 
       // Set activeViewConfig from saved view data. Read from queryClient
       // directly rather than the `savedViewsData` closure, which can be stale
-      // immediately after an optimistic cache write (e.g., right after a new
-      // view is created — the closure hasn't re-rendered yet but the cache has).
+      // immediately after an optimistic cache write.
       let activeConfig = null;
+      let viewTabType = "traces";
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
         const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
@@ -142,44 +145,95 @@ const ObservePage = React.memo(() => {
           cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
-        setActiveViewConfig(activeConfig);
-      } else {
-        setActiveViewConfig(null);
+        viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
       }
+
+      // Apply effects (activeViewConfig → apply effect → many setters) aren't
+      // urgent for tab responsiveness. Defer via startTransition so the
+      // navigation and URL update feel snappy while the filter apply runs as
+      // a non-blocking transition.
+      startTransition(() => {
+        setActiveViewConfig(activeConfig);
+      });
 
       // Navigate to the appropriate route
       if (tabKey.startsWith("view-")) {
-        const basePath = `/dashboard/observe/${observeId}/llm-tracing`;
-        // Inline all URL-synced state from the saved view so useUrlState hooks
-        // read the correct values on this navigation (avoids a race where the
-        // apply effect would try to re-write the URL and lose params).
+        const isUsersView =
+          viewTabType === "users" || viewTabType === "user_detail";
+        const isSessionsView = viewTabType === "sessions";
+        let routeSegment = "llm-tracing";
+        if (isUsersView) routeSegment = "users";
+        else if (isSessionsView) routeSegment = "sessions";
+        const basePath = `/dashboard/observe/${observeId}/${routeSegment}`;
+
         const params = new URLSearchParams();
         params.set("tab", tabKey);
-        params.set("selectedTab", "trace");
-        if (activeConfig?.filters) {
-          params.set(
-            "primaryTraceFilter",
-            JSON.stringify(activeConfig.filters),
-          );
+
+        if (isUsersView) {
+          // Users-typed views use a different config schema (config.filters is
+          // an object, not an array) and its own URL-state key pair.
+          if (activeConfig?.filters?.dateFilter) {
+            params.set(
+              "userDateFilter",
+              JSON.stringify(activeConfig.filters.dateFilter),
+            );
+          }
+        } else if (isSessionsView) {
+          // Sessions uses sessionFilter / sessionDateFilter URL keys.
+          if (activeConfig?.filters) {
+            params.set(
+              "sessionFilter",
+              JSON.stringify(activeConfig.filters),
+            );
+          }
+          if (activeConfig?.display?.dateFilter) {
+            params.set(
+              "sessionDateFilter",
+              JSON.stringify(activeConfig.display.dateFilter),
+            );
+          }
+        } else {
+          // Trace / Span views — pick URL keys that match LLMTracingView's
+          // useLLMTracingFilters registrations.
+          const isSpans = viewTabType === "spans";
+          const selectedTabValue = isSpans ? "spans" : "trace";
+          const primaryFilterKey = isSpans
+            ? "primarySpanFilter"
+            : "primaryTraceFilter";
+          const primaryDateKey = isSpans
+            ? "primarySpanDateFilter"
+            : "primaryTraceDateFilter";
+          const compareFilterKey = isSpans
+            ? "compareSpansFilter"
+            : "compareTraceFilter";
+          const compareDateKey = isSpans
+            ? "compareSpansDateFilter"
+            : "compareTraceDateFilter";
+
+          params.set("selectedTab", selectedTabValue);
+          if (activeConfig?.filters) {
+            params.set(primaryFilterKey, JSON.stringify(activeConfig.filters));
+          }
+          if (activeConfig?.display?.dateFilter) {
+            params.set(
+              primaryDateKey,
+              JSON.stringify(activeConfig.display.dateFilter),
+            );
+          }
+          if (activeConfig?.compareFilters) {
+            params.set(
+              compareFilterKey,
+              JSON.stringify(activeConfig.compareFilters),
+            );
+          }
+          if (activeConfig?.compareDateFilter) {
+            params.set(
+              compareDateKey,
+              JSON.stringify(activeConfig.compareDateFilter),
+            );
+          }
         }
-        if (activeConfig?.display?.dateFilter) {
-          params.set(
-            "primaryTraceDateFilter",
-            JSON.stringify(activeConfig.display.dateFilter),
-          );
-        }
-        if (activeConfig?.compareFilters) {
-          params.set(
-            "compareTraceFilter",
-            JSON.stringify(activeConfig.compareFilters),
-          );
-        }
-        if (activeConfig?.compareDateFilter) {
-          params.set(
-            "compareTraceDateFilter",
-            JSON.stringify(activeConfig.compareDateFilter),
-          );
-        }
+
         navigate(`${basePath}?${params.toString()}`, {
           replace: true,
         });
@@ -194,13 +248,7 @@ const ObservePage = React.memo(() => {
         }
       }
     },
-    [
-      observeId,
-      navigate,
-      setActiveTab,
-      queryClient,
-      setActiveViewConfig,
-    ],
+    [observeId, navigate, queryClient, setActiveViewConfig],
   );
 
   // Legacy tabs for non-tab-system routes (sessions, evals, charts, etc.)

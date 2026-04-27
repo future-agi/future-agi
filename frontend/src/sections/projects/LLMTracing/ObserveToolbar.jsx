@@ -468,8 +468,8 @@ const ObserveToolbar = ({
             }}
           />
 
-          {/* Save view — appears when there's any savable state (traces only) */}
-          {isTraces && canSaveView && (
+          {/* Save view — appears when there's any savable state */}
+          {canSaveView && (
             <Button
               variant="outlined"
               size="small"
@@ -487,8 +487,9 @@ const ObserveToolbar = ({
                 borderColor: "primary.main",
                 color: "primary.main",
                 "&:hover": {
-                  bgcolor: "primary.lighter",
+                  bgcolor: "action.hover",
                   borderColor: "primary.main",
+                  color: "primary.main",
                 },
               }}
             >

@@ -28,6 +28,15 @@ const ObserveHeaderProvider = ({ children }) => {
     return typeof fn === "function" ? fn() : null;
   }, []);
 
+  const getTabTypeRef = useRef(null);
+  const registerGetTabType = useCallback((fn) => {
+    getTabTypeRef.current = typeof fn === "function" ? fn : null;
+  }, []);
+  const getTabType = useCallback(() => {
+    const fn = getTabTypeRef.current;
+    return typeof fn === "function" ? fn() : "traces";
+  }, []);
+
   return (
     <ObserveHeaderContext.Provider
       value={{
@@ -37,6 +46,8 @@ const ObserveHeaderProvider = ({ children }) => {
         setActiveViewConfig,
         registerGetViewConfig,
         getViewConfig,
+        registerGetTabType,
+        getTabType,
       }}
     >
       {children}

@@ -17,6 +17,7 @@ import React, {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -844,8 +845,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const compareCallLogsGridRef = useRef(null);
   const columnConfigureRef = useRef();
 
-  const { setHeaderConfig, activeViewConfig, registerGetViewConfig } =
-    useObserveHeader();
+  const {
+    setHeaderConfig,
+    activeViewConfig,
+    registerGetViewConfig,
+    registerGetTabType,
+  } = useObserveHeader();
 
   const { data: projectDetail } = useGetProjectDetails(observeId, !isUserMode);
   // In user mode the grid should behave like an OBSERVE project (no project
@@ -1832,6 +1837,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, buildViewConfig]);
 
+  useEffect(() => {
+    const getTabType = () => (selectedTab === "spans" ? "spans" : "traces");
+    registerGetTabType(getTabType);
+    return () => registerGetTabType(null);
+  }, [registerGetTabType, selectedTab]);
+
   // Auto-save display settings when they change
   const autoSaveTimerRef = useRef(null);
   useEffect(() => {
@@ -1974,35 +1985,88 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [extraFilters],
   );
 
-  // Whether there's any non-default filter state worth saving. Drives the
-  // "Save view" button visibility. Broader than hasActiveFilter because
-  // date changes and column filters are also savable state.
+  // "Save view" button is a convenience affordance for a custom saved view
+  // that has been modified. On a default tab, the "+" button alone handles
+  // save-as-new — we don't want Save view cluttering the toolbar there.
   const canSaveView = useMemo(() => {
-    if (extraFilters?.length > 0) return true;
+    if (!activeViewConfig) return false;
+
+    const baselineDisplay = activeViewConfig.display || {};
+    const baselineExtraLen = activeViewConfig.extraFilters?.length ?? 0;
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineColumnHas = (activeViewConfig.filters ?? []).some(
+      (f) => f?.columnId,
+    );
+
+    if ((extraFilters?.length ?? 0) !== baselineExtraLen) return true;
 
     const currentDate =
       selectedTab === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
-    if (
-      currentDate?.dateOption &&
-      currentDate.dateOption !== defaultDateFilter?.dateOption
-    ) {
-      return true;
-    }
+    if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
 
     const columnFilters =
       selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters;
-    if (columnFilters?.some((f) => f?.columnId)) return true;
+    const currentColumnHas = !!columnFilters?.some((f) => f?.columnId);
+    if (currentColumnHas !== baselineColumnHas) return true;
 
+    if (
+      baselineDisplay.viewMode !== undefined &&
+      baselineDisplay.viewMode !== viewMode
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.cellHeight !== undefined &&
+      baselineDisplay.cellHeight !== cellHeight
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showErrors !== undefined &&
+      baselineDisplay.showErrors !== showErrors
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showNonAnnotated !== undefined &&
+      baselineDisplay.showNonAnnotated !== showNonAnnotated
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showCompare !== undefined &&
+      baselineDisplay.showCompare !== showCompare
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.hasEvalFilter !== undefined &&
+      baselineDisplay.hasEvalFilter !== hasEvalFilter
+    ) {
+      return true;
+    }
     return false;
   }, [
+    activeViewConfig,
     extraFilters,
     selectedTab,
     primaryTraceDateFilter,
     primarySpanDateFilter,
     primaryTraceFilters,
     primarySpanFilters,
-    defaultDateFilter,
+    viewMode,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    showCompare,
+    hasEvalFilter,
   ]);
+
+  // Defer the visibility signal so it catches up with activeViewConfig
+  // (which updates inside startTransition). Without this, canSaveView briefly
+  // returns true on view-switch because filter state updates urgently while
+  // the baseline update trails by a render, which makes the button flicker.
+  const canSaveViewDeferred = useDeferredValue(canSaveView);
 
   const currentGridRef = useMemo(() => {
     if (selectedGraph === "primary" && selectedTab === "trace") {
@@ -2868,7 +2932,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   : setPrimarySpanDateFilter
               }
               hasActiveFilter={hasActiveFilter}
-              canSaveView={canSaveView}
+              canSaveView={canSaveViewDeferred}
               onFilterToggle={() => {
                 // Clear any chip/+ anchor so the popover re-anchors to the
                 // toolbar Filter button (avoids opening on a stale anchor).

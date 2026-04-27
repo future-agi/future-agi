@@ -2,6 +2,7 @@ import React, {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -180,7 +181,12 @@ const UsersView = ({ savedViewApiRef = null }) => {
   // Expose a refresh callback to the shared ObserveHeader so the refresh
   // button in the header triggers an ag-grid serverSide refresh on this
   // Users tab.
-  const { setHeaderConfig } = useObserveHeader();
+  const {
+    setHeaderConfig,
+    activeViewConfig,
+    registerGetViewConfig,
+    registerGetTabType,
+  } = useObserveHeader();
 
   const refreshUsers = useCallback(() => {
     if (gridApi) {
@@ -366,6 +372,83 @@ const UsersView = ({ savedViewApiRef = null }) => {
     }
   }, [savedViewApiRef, getConfig, applyConfig]);
 
+  // "Save view" surfaces only on a custom saved-view tab when the live state
+  // diverges from its saved baseline. UsersView's config nests dateFilter
+  // inside `filters` (not `display` like LLMTracingView/SessionsView).
+  const canSaveView = useMemo(() => {
+    if (!activeViewConfig) return false;
+
+    const baselineFilters = activeViewConfig.filters || {};
+    const baselineDisplay = activeViewConfig.display || {};
+    const baselineExtraLen = baselineFilters.extraFilters?.length ?? 0;
+    const baselineDateOption =
+      baselineFilters.dateFilter?.dateOption ?? null;
+
+    if ((extraFilters?.length ?? 0) !== baselineExtraLen) return true;
+    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (
+      baselineDisplay.cellHeight !== undefined &&
+      baselineDisplay.cellHeight !== cellHeight
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showErrors !== undefined &&
+      baselineDisplay.showErrors !== showErrors
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showNonAnnotated !== undefined &&
+      baselineDisplay.showNonAnnotated !== showNonAnnotated
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.hasEvalFilter !== undefined &&
+      baselineDisplay.hasEvalFilter !== hasEvalFilter
+    ) {
+      return true;
+    }
+    return false;
+  }, [
+    activeViewConfig,
+    extraFilters,
+    dateFilter,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    hasEvalFilter,
+  ]);
+
+  const canSaveViewDeferred = useDeferredValue(canSaveView);
+
+  // Register with ObserveHeaderContext so ObserveTabBar's "+" save flow can
+  // snapshot the current Users config when the user is on this fixed tab —
+  // without this, the save POSTs `config: {}` (TH-4578).
+  useEffect(() => {
+    registerGetViewConfig(getConfig);
+    return () => registerGetViewConfig(null);
+  }, [registerGetViewConfig, getConfig]);
+
+  useEffect(() => {
+    registerGetTabType(() => "users");
+    return () => registerGetTabType(null);
+  }, [registerGetTabType]);
+
+  // Apply a saved view's config when activeViewConfig changes. Reuses the
+  // existing applyConfig — handles extraFilters, dateFilter, display state,
+  // column visibility.
+  // Dep array intentionally only watches `activeViewConfig`. `applyConfig`'s
+  // identity changes whenever `columns` does, and `applyConfig` itself
+  // mutates `columns` via `updateColumnVisibility` — keeping it in deps
+  // creates an infinite re-apply loop.
+  useEffect(() => {
+    if (!activeViewConfig) return;
+    applyConfig(activeViewConfig);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewConfig]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -405,6 +488,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setDateFilter={setDateFilter}
         // Filter
         hasActiveFilter={hasActiveFilter}
+        canSaveView={canSaveViewDeferred}
         isFilterOpen={isFilterOpen}
         onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
         filterFields={USER_FILTER_FIELDS}

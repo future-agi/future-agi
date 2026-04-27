@@ -4,6 +4,7 @@ import React, {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -167,7 +168,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessionGridApiRef = useRef(null);
-  const { setHeaderConfig } = useObserveHeader();
+  const {
+    setHeaderConfig,
+    activeViewConfig,
+    registerGetViewConfig,
+    registerGetTabType,
+  } = useObserveHeader();
 
   // --- Filter & date state (reuse trace filter hook) ---
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
@@ -190,6 +196,39 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   );
 
   const hasActiveFilter = extraFilters.length > 0;
+
+  // "Save view" only surfaces on a custom saved view when the user has
+  // modified its state. On a default tab the "+" button handles save-as-new,
+  // so we keep Save view out of the toolbar there.
+  const canSaveView = useMemo(() => {
+    if (!activeViewConfig) return false;
+
+    const baselineExtraLen = activeViewConfig.extraFilters?.length ?? 0;
+    const baselineDisplay = activeViewConfig.display || {};
+    const baselineDateOption =
+      baselineDisplay.dateFilter?.dateOption ?? null;
+
+    if ((extraFilters?.length ?? 0) !== baselineExtraLen) return true;
+    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (
+      baselineDisplay.cellHeight !== undefined &&
+      baselineDisplay.cellHeight !== cellHeight
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showCompare !== undefined &&
+      baselineDisplay.showCompare !== showCompare
+    ) {
+      return true;
+    }
+    return false;
+  }, [activeViewConfig, extraFilters, dateFilter, cellHeight, showCompare]);
+
+  // Defer so the button doesn't flicker during the one-render gap between
+  // filter state updating urgently and activeViewConfig catching up from
+  // startTransition in the apply path.
+  const canSaveViewDeferred = useDeferredValue(canSaveView);
 
   const handleAddEvals = useCallback(() => {
     const url = buildAddEvalsDraft({
@@ -294,6 +333,57 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // --- Row height ---
   const [cellHeight, setCellHeight] = useUrlState("sessionCellHeight", "Short");
+
+  // --- Saved view capture + apply (TH-4578) ---
+  // Build a view-config snapshot that mirrors LLMTracingView's shape. dateFilter
+  // stays inside `display` because the backend's saved-view serializer only
+  // whitelists `display` for arbitrary sub-keys (no top-level `dateFilter`).
+  const buildViewConfig = useCallback(
+    () => ({
+      display: {
+        cellHeight,
+        showCompare,
+        dateFilter,
+      },
+      extraFilters: extraFilters || [],
+    }),
+    [cellHeight, showCompare, dateFilter, extraFilters],
+  );
+
+  useEffect(() => {
+    registerGetViewConfig(buildViewConfig);
+    return () => registerGetViewConfig(null);
+  }, [registerGetViewConfig, buildViewConfig]);
+
+  useEffect(() => {
+    registerGetTabType(() => "sessions");
+    return () => registerGetTabType(null);
+  }, [registerGetTabType]);
+
+  // Apply a saved view's config to LOCAL state only. URL-synced state
+  // (dateFilter / cellHeight / showCompare) is handled by seedUrlForView in
+  // UserDetailTabBar — the URL is populated synchronously at click time, and
+  // useUrlState reads it on first render. Writing those again from here
+  // would just trigger a second data refetch and the resulting header
+  // loading flash.
+  useEffect(() => {
+    if (!activeViewConfig) return;
+    const nextExtraFilters = activeViewConfig.extraFilters || [];
+    setExtraFilters((prev) => {
+      if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
+      if (prev.length === nextExtraFilters.length) {
+        const allSame = prev.every(
+          (f, i) =>
+            f?.column_id === nextExtraFilters[i]?.column_id &&
+            JSON.stringify(f?.filter_config) ===
+              JSON.stringify(nextExtraFilters[i]?.filter_config),
+        );
+        if (allSame) return prev;
+      }
+      return nextExtraFilters;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewConfig]);
 
   // --- Replay sessions ---
   const {
@@ -516,6 +606,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         setDateFilter={setDateFilter}
         // Filter
         hasActiveFilter={hasActiveFilter}
+        canSaveView={canSaveViewDeferred}
         isFilterOpen={isFilterOpen}
         onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
         filterFields={sessionFilterFields}

@@ -40,7 +40,32 @@ export const useCreateWorkspaceSavedView = (tabType) => {
   return useMutation({
     mutationFn: (data) =>
       axios.post(endpoints.savedViews.create, { ...data, tab_type: tabType }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const newView = response?.data?.result;
+      if (newView) {
+        queryClient.setQueryData(
+          [SAVED_VIEWS_KEY, "workspace", tabType],
+          (old) => {
+            if (!old) return old;
+            const currentResult = old.data?.result ?? {};
+            const currentList =
+              currentResult.custom_views ?? currentResult.customViews ?? [];
+            if (currentList.some((v) => v.id === newView.id)) return old;
+            const nextList = [...currentList, newView];
+            return {
+              ...old,
+              data: {
+                ...old.data,
+                result: {
+                  ...currentResult,
+                  custom_views: nextList,
+                  customViews: nextList,
+                },
+              },
+            };
+          },
+        );
+      }
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
       });

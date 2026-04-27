@@ -122,17 +122,36 @@ const ObserveTabBar = ({
   const [saveViewAnchor, setSaveViewAnchor] = useState(null);
   const [isSavingView, setIsSavingView] = useState(false);
   const { mutate: createSavedView } = useCreateSavedView(projectId);
-  const { getViewConfig } = useObserveHeader();
+  const { getViewConfig, getTabType } = useObserveHeader();
+
+  // Derive tab_type for a new saved view. Priority:
+  //  - on a saved view tab, inherit the view's tab_type.
+  //  - on the Users fixed tab, save as "users".
+  //  - on the Sessions fixed tab, save as "sessions".
+  //  - on the Traces fixed tab, fall back to LLMTracingView's registered
+  //    callback (distinguishes trace vs span sub-tab).
+  const resolveTabType = useCallback(() => {
+    if (activeTab === "users") return "users";
+    if (activeTab === "sessions") return "sessions";
+    if (activeTab === "traces") return getTabType?.() ?? "traces";
+    if (activeTab?.startsWith("view-")) {
+      const currentId = activeTab.replace("view-", "");
+      const current = customViews.find((v) => v.id === currentId);
+      return current?.tab_type ?? current?.tabType ?? "traces";
+    }
+    return "traces";
+  }, [activeTab, customViews, getTabType]);
 
   const handleSaveViewConfirm = useCallback(
     (name) => {
       setIsSavingView(true);
       const snapshot = getViewConfig?.() ?? null;
+      const tabType = resolveTabType();
       createSavedView(
         {
           project_id: projectId,
           name,
-          tab_type: "traces",
+          tab_type: tabType,
           config: snapshot ?? {},
         },
         {
@@ -150,7 +169,7 @@ const ObserveTabBar = ({
         },
       );
     },
-    [projectId, createSavedView, onTabChange, getViewConfig],
+    [projectId, createSavedView, onTabChange, getViewConfig, resolveTabType],
   );
 
   // DnD sensors — require 5px of movement before starting drag

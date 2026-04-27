@@ -6,7 +6,6 @@ import Iconify from "src/components/iconify";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import ObserveHeaderProvider from "src/sections/project/context/ObserveHeaderContextProvider";
-import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 
 import LLMTracingView from "../../LLMTracing/LLMTracingView";
 import SessionsView from "../../SessionsView/Sessions-view";
@@ -30,9 +29,6 @@ const CrossProjectUserDetailPage = () => (
   </ObserveHeaderProvider>
 );
 
-const TRACE_DISPLAY_KEY = (uid) => `user-display-${uid}`;
-const TRACE_FILTERS_KEY = (uid) => `user-filters-${uid}`;
-
 const UserDetailPageBody = () => {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -44,56 +40,6 @@ const UserDetailPageBody = () => {
   const [activeTab, setActiveTab] = useUrlState("userTab", "sessions");
   const [subTab, setSubTab] = useState(
     activeTab === "traces" ? "traces" : "sessions",
-  );
-
-  const { setActiveViewConfig } = useObserveHeader();
-
-  // -------------------------------------------------------------------------
-  // Saved-view capture + apply
-  // -------------------------------------------------------------------------
-  // Capture reads the inner view's current state:
-  //   - traces: namespaced localStorage (LLMTracingView already persists there)
-  //   - sessions: v1 only stores {sub_tab} — Sessions-view has no config
-  //     restore path yet (driven by URL state, not context)
-  const getConfigFor = useCallback(
-    (which) => {
-      if (which !== "traces") return {};
-      try {
-        const rawDisplay = localStorage.getItem(TRACE_DISPLAY_KEY(userId));
-        const rawFilters = localStorage.getItem(TRACE_FILTERS_KEY(userId));
-        const display = rawDisplay ? JSON.parse(rawDisplay) : null;
-        const filtersBlob = rawFilters ? JSON.parse(rawFilters) : null;
-        // LLMTracingView consumes activeViewConfig with shape
-        // { display, filters, extraFilters, compareFilters, ... }. Pass
-        // through what exists; missing keys are ignored by the consumer.
-        return {
-          ...(display ? { display } : {}),
-          ...(filtersBlob?.filters ? { filters: filtersBlob.filters } : {}),
-          ...(filtersBlob?.extraFilters
-            ? { extraFilters: filtersBlob.extraFilters }
-            : {}),
-          ...(filtersBlob?.dateFilter
-            ? { dateFilter: filtersBlob.dateFilter }
-            : {}),
-        };
-      } catch {
-        return {};
-      }
-    },
-    [userId],
-  );
-
-  // Apply:
-  //   - traces: push config into the ObserveHeader context — LLMTracingView's
-  //     existing `activeViewConfig` effect will restore display + filters
-  //   - sessions: no-op in v1 (just flips the sub-tab via onTabChange)
-  const applyConfigFor = useCallback(
-    (which, cfg) => {
-      if (which === "traces") {
-        setActiveViewConfig(cfg || null);
-      }
-    },
-    [setActiveViewConfig],
   );
 
   const handleTabChange = useCallback(
@@ -248,8 +194,6 @@ const UserDetailPageBody = () => {
             <UserDetailTabBar
               activeTab={activeTab}
               onTabChange={handleTabChange}
-              getConfigFor={getConfigFor}
-              applyConfigFor={applyConfigFor}
             />
             <Box
               sx={{

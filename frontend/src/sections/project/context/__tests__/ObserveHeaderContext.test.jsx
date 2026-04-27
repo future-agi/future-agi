@@ -41,3 +41,36 @@ describe("ObserveHeaderContext — getViewConfig register/read", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ObserveHeaderContext — getTabType register/read", () => {
+  it("getTabType returns 'traces' default when nothing is registered", () => {
+    const { result } = renderHook(() => useObserveHeader(), { wrapper });
+    expect(result.current.getTabType()).toBe("traces");
+  });
+
+  it("getTabType returns the registered callback's result", () => {
+    const { result } = renderHook(() => useObserveHeader(), { wrapper });
+    const fake = vi.fn(() => "spans");
+    act(() => result.current.registerGetTabType(fake));
+    expect(result.current.getTabType()).toBe("spans");
+    expect(fake).toHaveBeenCalledTimes(1);
+  });
+
+  it("getTabType reverts to default after unregister", () => {
+    const { result } = renderHook(() => useObserveHeader(), { wrapper });
+    act(() => result.current.registerGetTabType(() => "spans"));
+    act(() => result.current.registerGetTabType(null));
+    expect(result.current.getTabType()).toBe("traces");
+  });
+
+  it("latest registration wins when re-registered", () => {
+    const { result } = renderHook(() => useObserveHeader(), { wrapper });
+    const first = vi.fn(() => "traces");
+    const second = vi.fn(() => "spans");
+    act(() => result.current.registerGetTabType(first));
+    act(() => result.current.registerGetTabType(second));
+    expect(result.current.getTabType()).toBe("spans");
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+});
