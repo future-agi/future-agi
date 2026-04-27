@@ -259,7 +259,13 @@ function extractKeysFromValue(raw) {
   const walk = (obj, prefix, depth) => {
     if (depth > 3 || !obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) {
-      if (obj.length) { keys.push(`${prefix}[0]`); walk(obj[0], `${prefix}[0]`, depth + 1); }
+      keys.push(`${prefix}[]`);
+      // Walk first element to discover object keys inside arrays
+      if (obj.length && obj[0] && typeof obj[0] === "object" && !Array.isArray(obj[0])) {
+        for (const k of Object.keys(obj[0])) {
+          keys.push(`${prefix}[].${k}`);
+        }
+      }
       return;
     }
     for (const k of Object.keys(obj)) {
@@ -584,7 +590,11 @@ const DatasetTestMode = React.forwardRef(
         const cell = currentRow?.[c.id];
         const runtimePaths = cell ? extractKeysFromValue(cell?.cell_value ?? cell) : [];
         const allPaths = new Set([...schemaPaths, ...runtimePaths]);
-        allPaths.forEach((path) => add(`${c.name}.${path}`, `${c.id}.${path}`));
+        allPaths.forEach((path) => {
+          // Bracket paths: "col[0]" not "col.[0]"
+          const sep = path.startsWith("[") ? "" : ".";
+          add(`${c.name}${sep}${path}`, `${c.id}${sep}${path}`);
+        });
       });
       if (!extraColumns?.length) return { columnNames: names, nameToId: n2id };
       const extras = (extraColumns || [])
