@@ -6,6 +6,7 @@ import {
   Button,
   Chip,
   IconButton,
+  Skeleton,
   Stack,
   Tooltip,
   Typography,
@@ -1552,7 +1553,8 @@ export default function OverviewTab({ _error: currentError }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const clusterId = currentError?.clusterId;
-  const { data: overview } = useErrorFeedOverview(clusterId);
+  const { data: overview, isLoading: isOverviewLoading } =
+    useErrorFeedOverview(clusterId);
   const traces = useMemo(
     () => overview?.representativeTraces ?? [],
     [overview],
@@ -1758,7 +1760,30 @@ export default function OverviewTab({ _error: currentError }) {
 
       {/* ── RIGHT PANEL: trace detail ── */}
       <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-        {!trace ? (
+        {isOverviewLoading && !trace ? (
+          <Stack gap={1.5} sx={{ p: 1.75 }}>
+            <Skeleton
+              variant="rectangular"
+              height={56}
+              sx={{ borderRadius: "6px" }}
+            />
+            <Skeleton
+              variant="rectangular"
+              height={140}
+              sx={{ borderRadius: "8px" }}
+            />
+            <Skeleton
+              variant="rectangular"
+              height={260}
+              sx={{ borderRadius: "8px" }}
+            />
+            <Skeleton
+              variant="rectangular"
+              height={200}
+              sx={{ borderRadius: "8px" }}
+            />
+          </Stack>
+        ) : !trace ? (
           <Stack
             alignItems="center"
             justifyContent="center"

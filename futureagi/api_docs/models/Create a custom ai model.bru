@@ -1,0 +1,29 @@
+meta {
+  name: Create a custom ai model
+  type: http
+  seq: 9
+}
+
+post {
+  url: http://localhost:8000/model-hub/custom_models/create/
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+      "model_name" : "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "model_provider": "bedrock",
+      "input_token_cost": "5",
+      "output_token_cost": "2",
+      "config_json":{
+        "access_key_id": "{{aws_access_key_id}}",
+        "secret_access_key": "{{aws_secret_access_key}}",
+        "region_name": "us-east-1"
+      }
+  }
+}

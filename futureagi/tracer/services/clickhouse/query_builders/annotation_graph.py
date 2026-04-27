@@ -18,6 +18,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.expressions import (
+    annotation_numeric_value_expr,
+)
 
 
 class AnnotationGraphQueryBuilder(BaseQueryBuilder):
@@ -135,12 +138,12 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     def _build_float_query(self) -> Tuple[str, Dict[str, Any]]:
-        """avg(JSONExtractFloat(value, 'value')) per time bucket."""
+        """Average numeric/star annotation value per time bucket."""
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
         SELECT
             {bucket_fn}(created_at) AS time_bucket,
-            avg(JSONExtractFloat(value, 'value')) AS value
+            avg({annotation_numeric_value_expr()}) AS value
         FROM {self.TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
           AND label_id = toUUID(%(label_id)s)
@@ -197,7 +200,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             avg(
                 CASE
                     WHEN has(
-                        JSONExtract(JSONExtractString(value, 'selected'), 'Array(String)'),
+                        JSONExtract(value, 'selected', 'Array(String)'),
                         %(choice_value)s
                     ) THEN 100.0
                     ELSE 0.0

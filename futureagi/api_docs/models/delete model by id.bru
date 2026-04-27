@@ -1,0 +1,19 @@
+meta {
+  name: delete model by id
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{host}}:{{port}}/model-hub/ai-models/:model_id/
+  body: none
+  auth: bearer
+}
+
+params:path {
+  model_id: 299a5bd0-fb7d-4c11-bb3d-369242048a32
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
