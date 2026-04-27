@@ -486,4 +486,8 @@ class ErrorClusterTraces(BaseModel):
             models.Index(fields=["span"]),
             models.Index(fields=["scan_issue"]),
             models.Index(fields=["eval_logger"]),
+            models.Index(
+                fields=["cluster", "-created_at"],
+                name="tracer_ect_cluster_created_idx",
+            ),
         ]
