@@ -292,7 +292,9 @@ const EvalsListView = () => {
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
   // Derive API params
-  const ownerFilter = filters?.owner || "all";
+  const ownerFilter = filters?.owner_not
+    ? (filters.owner_not === "system" ? "user" : "system")
+    : (filters?.owner || "all");
   // `filters.name` from the dropdown is an exact-match list; a single typed
   // value falls back to `search` (fuzzy name__icontains). Multi-select is
   // sent as `filters.names` (name__in).
@@ -306,7 +308,9 @@ const EvalsListView = () => {
     if (!filters) return null;
     const f = {};
     if (filters.eval_type) f.eval_type = filters.eval_type;
+    if (filters.eval_type_not) f.eval_type_not = filters.eval_type_not;
     if (filters.output_type) f.output_type = filters.output_type;
+    if (filters.output_type_not) f.output_type_not = filters.output_type_not;
     if (filters.template_type) f.template_type = filters.template_type;
     if (filters.tags) f.tags = filters.tags;
     if (filters.created_by) f.created_by = filters.created_by;
@@ -919,12 +923,14 @@ const EvalsListView = () => {
                   : [];
               if (!val.length) continue;
               if (t.field === "owner") {
+                const isNeg = t.operator === "is_not" || t.operator === "not_equals";
+                const oKey = isNeg ? "owner_not" : "owner";
                 const hasSystem = val.some((v) => v.toLowerCase() === "system");
                 const userNames = val.filter(
                   (v) => v.toLowerCase() !== "system",
                 );
-                if (hasSystem && !userNames.length) flat.owner = "system";
-                else if (!hasSystem && userNames.length) flat.owner = "user";
+                if (hasSystem && !userNames.length) flat[oKey] = "system";
+                else if (!hasSystem && userNames.length) flat[oKey] = "user";
                 if (userNames.length) flat.created_by = userNames;
               } else if (t.field === "name") {
                 // Single free-text entry → fuzzy `search`; everything else
@@ -937,7 +943,9 @@ const EvalsListView = () => {
                   flat.name = val;
                 }
               } else {
-                flat[t.field] = val;
+                const isNeg = t.operator === "is_not" || t.operator === "not_equals";
+                const key = isNeg ? `${t.field}_not` : t.field;
+                flat[key] = val;
               }
             }
             setFilters(Object.keys(flat).length > 0 ? flat : null);
@@ -946,17 +954,20 @@ const EvalsListView = () => {
             // Leave `flat.name` alone (may be string or array) — `apiFilters`
             // decides between `names` (exact multi) and `search` (fuzzy one).
             const flat = { ...result };
-            if (flat.owner) {
-              const vals = Array.isArray(flat.owner)
-                ? flat.owner
-                : [flat.owner];
+            const oKey = flat.owner_not ? "owner_not" : "owner";
+            if (flat[oKey]) {
+              const vals = Array.isArray(flat[oKey]) ? flat[oKey] : [flat[oKey]];
               const hasSystem = vals.some((v) => v.toLowerCase() === "system");
-              const userNames = vals.filter(
-                (v) => v.toLowerCase() !== "system",
-              );
+              const userNames = vals.filter((v) => v.toLowerCase() !== "system");
               delete flat.owner;
-              if (hasSystem && !userNames.length) flat.owner = "system";
-              else if (!hasSystem && userNames.length) flat.owner = "user";
+              delete flat.owner_not;
+              if (oKey === "owner_not") {
+                if (hasSystem && !userNames.length) flat.owner_not = "system";
+                else if (!hasSystem && userNames.length) flat.owner_not = "user";
+              } else {
+                if (hasSystem && !userNames.length) flat.owner = "system";
+                else if (!hasSystem && userNames.length) flat.owner = "user";
+              }
               if (userNames.length) flat.created_by = userNames;
             }
             setFilters(Object.keys(flat).length > 0 ? flat : null);

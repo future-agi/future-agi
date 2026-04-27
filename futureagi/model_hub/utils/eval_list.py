@@ -383,6 +383,35 @@ def build_eval_list_queryset(
 
             qs = qs.filter(output_q)
 
+        # Output type negation filter
+        if _f("output_type_not"):
+            excluded = set(_f("output_type_not"))
+            normalized_to_raw_exc: dict[str, set[str]] = {}
+            for raw_value, normalized in _OUTPUT_TYPE_MAP.items():
+                normalized_to_raw_exc.setdefault(normalized, set()).add(raw_value)
+            exc_q = Q(output_type_normalized__in=list(excluded))
+            raw_vals = set()
+            for n in excluded:
+                raw_vals.update(normalized_to_raw_exc.get(n, set()))
+            for rv in raw_vals:
+                exc_q |= Q(config__output=rv)
+            if "percentage" in excluded:
+                exc_q |= Q(config__output__isnull=True) | Q(config={})
+            composite_axis_by_output = {
+                "pass_fail": ["pass_fail", "code"],
+                "percentage": ["percentage", ""],
+                "deterministic": ["choices"],
+            }
+            comp_axes = []
+            for n in excluded:
+                comp_axes.extend(composite_axis_by_output.get(n, []))
+            if comp_axes:
+                exc_q |= Q(
+                    template_type="composite",
+                    composite_child_axis__in=list(set(comp_axes)),
+                )
+            qs = qs.exclude(exc_q)
+
         # Tags filter
         if _f("tags"):
             qs = qs.filter(eval_tags__overlap=_f("tags"))

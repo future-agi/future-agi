@@ -1341,6 +1341,22 @@ class EvalTemplateListView(APIView):
                 )
                 qs = qs.filter(non_composite_q | composite_q).distinct()
 
+            eval_type_not_filter = (
+                filters.get("eval_type_not")
+                if isinstance(filters, dict)
+                else getattr(filters, "eval_type_not", None)
+            )
+            if eval_type_not_filter:
+                exc_non_composite = Q(eval_type__in=eval_type_not_filter) & ~Q(
+                    template_type="composite"
+                )
+                exc_composite = Q(
+                    template_type="composite",
+                    composite_children__deleted=False,
+                    composite_children__child__eval_type__in=eval_type_not_filter,
+                )
+                qs = qs.exclude(exc_non_composite | exc_composite).distinct()
+
             total = qs.count()
             page = req.get("page", 0)
             page_size = req.get("page_size", 25)

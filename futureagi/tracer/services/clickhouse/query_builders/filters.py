@@ -770,20 +770,15 @@ class ClickHouseFilterBuilder:
         param_cfg = self._next_param("eval_cfg")
         self._params[param_cfg] = tuple(config_ids)
 
-        op = self.OP_MAP.get(filter_op, "=")
         _fv = filter_value
         if isinstance(_fv, (list, tuple)):
             _fv = _fv[0] if _fv and _fv[0] not in (None, "") else _fv
 
-        # Exclude errored eval rows from all value-match filters — an errored
-        # eval has no meaningful Passed/Failed/score/choice value, so it
-        # should never match a specific value. Traces/spans without an eval
-        # row at all are naturally excluded by the outer IN subquery.
+        negate = filter_op in ("not_equals", "not_in", "!=", "is_not", "ne")
+        membership = "NOT IN" if negate else "IN"
+
         error_clause = "AND error = 0"
 
-        # Span-list mode: match the span whose ``id`` has the eval value.
-        # Trace-list mode: match any trace that has at least one span with
-        # the eval value (existing behaviour).
         if self.query_mode == self.QUERY_MODE_SPAN:
             outer_col = "id"
             inner_col = "observation_span_id"
@@ -792,14 +787,10 @@ class ClickHouseFilterBuilder:
             inner_col = "trace_id"
 
         if output_type == "PASS_FAIL":
-            # UI sends "Passed"/"Failed" — map to output_bool.
             bool_val = str(_fv).strip().lower() in ("passed", "pass", "true", "1")
-            if filter_op in ("not_equals", "ne", "!="):
-                cmp = f"output_bool != {1 if bool_val else 0}"
-            else:
-                cmp = f"output_bool = {1 if bool_val else 0}"
+            cmp = f"output_bool = {1 if bool_val else 0}"
             return (
-                f"{outer_col} IN ("
+                f"{outer_col} {membership} ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND _peerdb_is_deleted = 0 "
@@ -809,14 +800,12 @@ class ClickHouseFilterBuilder:
             )
 
         if output_type in ("CHOICE", "CHOICES"):
-            # output_str_list is a String column containing a serialized list;
-            # output_str holds the canonical single value. Match against both.
             param_like = self._next_param("eval_like")
             param_eq = self._next_param("eval_eq")
             self._params[param_like] = f"%{_fv}%"
             self._params[param_eq] = str(_fv)
             return (
-                f"{outer_col} IN ("
+                f"{outer_col} {membership} ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND _peerdb_is_deleted = 0 "
@@ -825,14 +814,24 @@ class ClickHouseFilterBuilder:
                 f")"
             )
 
-        # SCORE (default) — numeric on output_float. UI displays scores as
-        # 0-100, raw storage is 0-1; divide user-supplied value by 100.
+        # SCORE (default)
         param = self._next_param("eval")
         try:
             raw_val = float(_fv) if not isinstance(_fv, (int, float)) else _fv
             self._params[param] = raw_val / 100.0
         except (ValueError, TypeError):
             self._params[param] = filter_value
+        if negate:
+            return (
+                f"{outer_col} NOT IN ("
+                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
+                f"WHERE custom_eval_config_id IN %({param_cfg})s "
+                f"AND _peerdb_is_deleted = 0 "
+                f"{error_clause} "
+                f"AND output_float = %({param})s"
+                f")"
+            )
+        op = self.OP_MAP.get(filter_op, "=")
         return (
             f"{outer_col} IN ("
             f"SELECT {inner_col} FROM tracer_eval_logger FINAL "

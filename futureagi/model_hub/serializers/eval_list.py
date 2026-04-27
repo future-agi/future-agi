@@ -15,7 +15,19 @@ class EvalListFiltersSerializer(serializers.Serializer):
         required=False,
         allow_empty=True,
     )
+    eval_type_not = serializers.ListField(
+        child=serializers.ChoiceField(choices=["llm", "code", "agent"]),
+        required=False,
+        allow_empty=True,
+    )
     output_type = serializers.ListField(
+        child=serializers.ChoiceField(
+            choices=["pass_fail", "percentage", "deterministic"]
+        ),
+        required=False,
+        allow_empty=True,
+    )
+    output_type_not = serializers.ListField(
         child=serializers.ChoiceField(
             choices=["pass_fail", "percentage", "deterministic"]
         ),
