@@ -104,17 +104,20 @@ const ObservePage = React.memo(() => {
 
   // Derive active tab from URL on initial load / route changes
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get("tab");
+    // Saved-view tabs own the `tab` key — don't overwrite with the route
+    // default. Without this guard, a click on a sessions/users saved view
+    // would land on the route, this effect would fire, and `tab=view-<id>`
+    // would be replaced by `tab=sessions` (or `tab=users`), wiping the
+    // active-view-id needed by Save view.
+    if (tab && tab.startsWith("view-")) return;
     if (currentRouteSegment === "sessions") {
       setActiveTab("sessions");
     } else if (currentRouteSegment === "users") {
       setActiveTab("users");
     } else if (currentRouteSegment === "llm-tracing") {
-      const params = new URLSearchParams(location.search);
       const selectedTab = params.get("selectedTab");
-      const tab = params.get("tab");
-      // If it's a custom view tab, keep it
-      if (tab && tab.startsWith("view-")) return;
-      // Otherwise derive from selectedTab param
       if (selectedTab === "spans") {
         setActiveTab("spans");
       } else if (!tab || tab === "traces") {

@@ -286,6 +286,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [updateObj, setUpdateObj] = useState(initialVisibility);
   const [autoSizeOn, setAutoSizeOn] = useState(false);
 
+  // Snapshot of updateObj at the moment a saved view becomes active, so
+  // canSaveView can compare against this snapshot for views whose stored
+  // config doesn't include `display.visibleColumns` (older views saved
+  // before that field was being captured).
+  const viewLoadedUpdateObjRef = useRef(null);
+
   const { mutate: updateSessionListColumnVisibility } = useMutation({
     mutationFn: (data) =>
       axios.post(endpoints.project.updateSessionListColumnVisibility(), {
@@ -300,9 +306,21 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       setSessionColumns((cols) =>
         cols.map((col) => ({ ...col, isVisible: newUpdateObj[col.id] })),
       );
-      updateSessionListColumnVisibility(newUpdateObj);
+      // Only persist project-wide default visibility when actually scoped to
+      // a project (not user mode — observeId is null there, and the request
+      // 400s with "Project not found") and not on a saved view tab. On a
+      // saved view, the per-view config owns its own visibleColumns and gets
+      // persisted via the explicit Save view button.
+      // Inline URL parse rather than closing over activeViewTabId (declared
+      // further down in the file) to avoid a TDZ on the deps array.
+      const params = new URLSearchParams(window.location.search);
+      const tabKey = isUserMode ? params.get("userTab") : params.get("tab");
+      const onSavedView = tabKey?.startsWith("view-");
+      if (!isUserMode && !onSavedView) {
+        updateSessionListColumnVisibility(newUpdateObj);
+      }
     },
-    [updateSessionListColumnVisibility],
+    [updateSessionListColumnVisibility, isUserMode],
   );
 
   // --- Row height ---
@@ -333,8 +351,31 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     ) {
       return true;
     }
+    // Column visibility — prefer the saved baseline (`display.visibleColumns`),
+    // fall back to the snapshot taken when the view was loaded so older views
+    // that never persisted visibleColumns still detect toggles.
+    const baseline =
+      baselineDisplay.visibleColumns &&
+      typeof baselineDisplay.visibleColumns === "object"
+        ? baselineDisplay.visibleColumns
+        : viewLoadedUpdateObjRef.current;
+    if (baseline && updateObj && typeof updateObj === "object") {
+      for (const colId of Object.keys(baseline)) {
+        const cur = updateObj[colId];
+        if (cur !== undefined && cur !== baseline[colId]) {
+          return true;
+        }
+      }
+    }
     return false;
-  }, [activeViewConfig, extraFilters, dateFilter, cellHeight, showCompare]);
+  }, [
+    activeViewConfig,
+    extraFilters,
+    dateFilter,
+    cellHeight,
+    showCompare,
+    updateObj,
+  ]);
 
   // Defer so the button doesn't flicker during the one-render gap between
   // filter state updating urgently and activeViewConfig catching up from
@@ -345,19 +386,29 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // Build a view-config snapshot that mirrors LLMTracingView's shape. dateFilter
   // stays inside `display` because the backend's saved-view serializer only
   // whitelists `display` for arbitrary sub-keys (no top-level `dateFilter`).
+  // Note: in earlier versions this view skipped writing URL-synced state in
+  // the apply effect on the assumption that a click-time seedUrlForView
+  // would populate the URL. That's only true on UserDetailTabBar — the
+  // ObservePage tab-bar path doesn't seed sessionCellHeight / sessionShowCompare /
+  // sessionDateFilter, so display options never made it onto the page when
+  // selecting a sessions saved view from the project's tab bar. Now apply
+  // pushes them into URL state directly (matching UsersView / LLMTracingView).
   const buildViewConfig = useCallback(() => {
     const columnState =
       sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
+    // updateObj is the authoritative {col.id: isVisible} source.
+    const hasVisibility = updateObj && Object.keys(updateObj).length > 0;
     return {
       display: {
         cellHeight,
         showCompare,
         dateFilter,
+        ...(hasVisibility ? { visibleColumns: updateObj } : {}),
         ...(columnState ? { columnState } : {}),
       },
       extraFilters: extraFilters || [],
     };
-  }, [cellHeight, showCompare, dateFilter, extraFilters]);
+  }, [cellHeight, showCompare, dateFilter, extraFilters, updateObj]);
 
   useEffect(() => {
     registerGetViewConfig(buildViewConfig);
@@ -411,21 +462,60 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // below applies it once `sessionGridApiRef.current.api` shows up.
   const pendingColumnStateRef = useRef(null);
 
-  // Apply a saved view's config to LOCAL state only. URL-synced state
-  // (dateFilter / cellHeight / showCompare) is handled by seedUrlForView in
-  // UserDetailTabBar — the URL is populated synchronously at click time, and
-  // useUrlState reads it on first render. Writing those again from here
-  // would just trigger a second data refetch and the resulting header
-  // loading flash.
+  // Apply a saved view's config — push display options into URL-synced
+  // state (matches UsersView / LLMTracingView). UserDetailTabBar still
+  // pre-seeds the same URL keys at click time for snappiness; the writes
+  // here are idempotent for that path and are the only source of truth
+  // for the ObservePage tab-bar path, which doesn't pre-seed display.
   useEffect(() => {
     if (!activeViewConfig) {
       // Transitioning back to a default tab — clear local extraFilters so
       // chips from a prior custom view don't linger. (URL-synced state is
       // wiped by the parent's URL reset.)
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
+      viewLoadedUpdateObjRef.current = null;
       return;
     }
     const display = activeViewConfig.display || {};
+    if (display.cellHeight) setCellHeight(display.cellHeight);
+    if (typeof display.showCompare === "boolean") {
+      setShowCompare(display.showCompare);
+    }
+    if (display.dateFilter) {
+      setDateFilter(display.dateFilter);
+    }
+    // Apply visibleColumns dict — `updateObj` is the single source of truth
+    // for column visibility (drives the ColumnConfigure popover via
+    // displayColumns and is the authoritative {col.id: bool} dict). Push
+    // visibility into AG Grid directly when the api is available so the
+    // grid display matches without waiting for a re-render. Done before the
+    // snapshot below so canSaveView's baseline matches the just-applied state.
+    if (
+      display.visibleColumns &&
+      typeof display.visibleColumns === "object"
+    ) {
+      const next = { ...display.visibleColumns };
+      setUpdateObj(next);
+      const api = sessionGridApiRef.current?.api;
+      if (api?.setColumnsVisible) {
+        const toShow = [];
+        const toHide = [];
+        Object.entries(next).forEach(([colId, visible]) => {
+          (visible ? toShow : toHide).push(colId);
+        });
+        if (toShow.length) api.setColumnsVisible(toShow, true);
+        if (toHide.length) api.setColumnsVisible(toHide, false);
+      }
+    }
+    // Capture the visibility state at the moment this saved view is loaded,
+    // so canSaveView can compare any subsequent toggles against this
+    // snapshot — covers older views that didn't persist `visibleColumns`.
+    // Use the just-applied dict if it exists, otherwise current updateObj.
+    viewLoadedUpdateObjRef.current = display.visibleColumns
+      ? { ...display.visibleColumns }
+      : updateObj
+        ? { ...updateObj }
+        : null;
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
       const api = sessionGridApiRef.current?.api;
       if (api?.applyColumnState) {
@@ -822,7 +912,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         open={openColumnConfigure}
         onClose={() => setOpenColumnConfigure(false)}
         anchorEl={columnConfigureRef?.current}
-        columns={sessionColumns}
+        columns={displayColumns}
         onColumnVisibilityChange={onSessionVisibilityColumnChange}
         setColumns={setSessionColumns}
         defaultGrouping="Session Columns"
