@@ -56,11 +56,29 @@ LabelPicker.propTypes = {
 export default function LabelPicker({ selectedIds = [], onChange }) {
   const [search, setSearch] = useState("");
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  // Locally-cached labels that were just created from this picker. The
+  // unfiltered list refetch is async, so newly-created labels otherwise
+  // wouldn't render as a chip until the network responds — making it
+  // look like the create flow forgot to auto-select them.
+  const [extraLabels, setExtraLabels] = useState(
+    /** @type {Array<{ id: string; name?: string; type?: string }>} */ ([]),
+  );
   const { data, refetch } = useAnnotationLabelsList({ search, limit: 100 });
   // Also fetch all labels (no search) to resolve selected label names
-  const { data: allData } = useAnnotationLabelsList({ search: "", limit: 100 });
+  const { data: allData, refetch: refetchAll } = useAnnotationLabelsList({
+    search: "",
+    limit: 100,
+  });
   const allLabels = data?.results || [];
-  const allLabelsUnfiltered = useMemo(() => allData?.results || [], [allData]);
+  const allLabelsUnfiltered = useMemo(() => {
+    const server = allData?.results || [];
+    if (extraLabels.length === 0) return server;
+    const byId = new Map(server.map((l) => [l.id, l]));
+    for (const l of extraLabels) {
+      if (!byId.has(l.id)) byId.set(l.id, l);
+    }
+    return Array.from(byId.values());
+  }, [allData, extraLabels]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const handleToggle = (id) => {
@@ -193,6 +211,21 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
 
       <CreateLabelDrawer
         open={createDrawerOpen}
+        onSuccess={(newLabel) => {
+          setCreateDrawerOpen(false);
+          // Stash the freshly-created label so the chip renders immediately,
+          // before the server refetch returns. Without this, selectedIds
+          // contains the new id but `allLabelsUnfiltered` doesn't yet, so
+          // the chip row stays empty and the create flow looks broken.
+          setExtraLabels((prev) =>
+            prev.some((l) => l.id === newLabel.id) ? prev : [...prev, newLabel],
+          );
+          onChange([...selectedIds, newLabel.id]);
+          // Refresh both queries: the search-filtered list (for the
+          // checkbox row) and the unfiltered list (for chip resolution).
+          refetch();
+          refetchAll();
+        }}
         onClose={() => {
           setCreateDrawerOpen(false);
           refetch();
