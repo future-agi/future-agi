@@ -580,6 +580,12 @@ class AuthMonitoringMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # Bypass rate limiting + IP blocking entirely in DEBUG (local dev) so
+        # repeated test logins / typo'd passwords don't lock the developer out.
+        # Production (DEBUG=False) keeps the full protection.
+        if settings.DEBUG:
+            return self.get_response(request)
+
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):
