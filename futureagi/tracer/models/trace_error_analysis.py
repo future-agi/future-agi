@@ -276,6 +276,12 @@ class TraceErrorGroup(BaseModel):
             models.Index(fields=["project", "source"]),
             models.Index(fields=["project", "issue_group"]),
             models.Index(fields=["status"]),
+            models.Index(
+                fields=["project", "-last_seen"],
+                condition=models.Q(deleted=False),
+                name="tracer_teg_proj_last_seen_idx",
+            ),
+            models.Index(fields=["project", "fix_layer"]),
         ]
         constraints = [
             models.UniqueConstraint(
