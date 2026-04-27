@@ -722,8 +722,6 @@ const TestDetailSideDrawer = ({
     }));
   const handleClose = () => {
     removeRowIndex();
-    setTestDetailDrawerOpen(null);
-    setCompareReplay(false);
   };
 
   const isDrawerOpen =
@@ -737,6 +735,17 @@ const TestDetailSideDrawer = ({
       open={isDrawerOpen}
       onClose={handleClose}
       anchor="right"
+      SlideProps={{
+        // Clear store state only after the slide-out finishes. Doing it
+        // synchronously in handleClose makes the child re-render with
+        // data = null mid-animation; isVoiceCall flips to false and the
+        // non-voice branch (width: 90vw) mounts for one frame, producing
+        // the visible "expand to full width then close" flash.
+        onExited: () => {
+          setTestDetailDrawerOpen(null);
+          setCompareReplay(false);
+        },
+      }}
       PaperProps={{
         sx: {
           height: "100vh",
