@@ -78,7 +78,7 @@ const SyntheticDataDrawer = ({
   const navigate = useNavigate();
 
   const { data: knowledgeBaseList, refetch: refetchKnowledgeBaseList } =
-    useKnowledgeBaseList("", null, { status: true });
+    useKnowledgeBaseList("", { enabled: !!open }, { status: true });
 
   const knowledgeBaseOptions = useMemo(
     () =>
