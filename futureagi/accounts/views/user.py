@@ -105,24 +105,22 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             remember_me = request.data.get("remember_me", False)
             client_ip, _ = get_client_ip(request)
 
-            # Check if user is blocked. Skip the per-account block on local
-            # dev (DEBUG=True) so devs aren't locked out after a few typos.
+            # Check if user is blocked
             block_key = f"user_blocked_{email}"
-            if not settings.DEBUG:
-                block_data = cache.get(block_key)
-                if block_data:
-                    current_time = datetime.now().timestamp()
-                    block_expiry = block_data.get("expiry", 0)
+            block_data = cache.get(block_key)
+            if block_data:
+                current_time = datetime.now().timestamp()
+                block_expiry = block_data.get("expiry", 0)
 
-                    if current_time < block_expiry:
-                        minutes_left = int((block_expiry - current_time) / 60)
-                        return self._gm.bad_request(
-                            {
-                                "error": f"Account temporarily blocked. Please try again in {minutes_left} minutes.",
-                                "blocked": True,
-                                "block_time_remaining": int(block_expiry - current_time),
-                            }
-                        )
+                if current_time < block_expiry:
+                    minutes_left = int((block_expiry - current_time) / 60)
+                    return self._gm.bad_request(
+                        {
+                            "error": f"Account temporarily blocked. Please try again in {minutes_left} minutes.",
+                            "blocked": True,
+                            "block_time_remaining": int(block_expiry - current_time),
+                        }
+                    )
 
             # Get failed attempts
             attempts_key = f"login_attempts_{email}"
