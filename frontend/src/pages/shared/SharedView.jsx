@@ -368,8 +368,40 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          /* Shared dashboard view — render dashboard title and config */
+          <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
+            <Typography variant="h5" sx={{ mb: 1, fontWeight: 700 }}>
+              {shared?.data?.name || shared?.data?.name || "Untitled Dashboard"}
+            </Typography>
+            {shared?.data?.config ? (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Dashboard configuration:
+                </Typography>
+                <pre
+                  style={{
+                    fontSize: 12,
+                    fontFamily: "monospace",
+                    whiteSpace: "pre-wrap",
+                    background: "rgba(0,0,0,0.04)",
+                    padding: 16,
+                    borderRadius: 2,
+                    overflow: "auto",
+                    maxHeight: "60vh",
+                  }}
+                >
+                  {JSON.stringify(shared.data.config, null, 2)}
+                </pre>
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No configuration data available.
+              </Typography>
+            )}
+          </Box>
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Non-trace, non-dashboard resource — show raw data */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}
