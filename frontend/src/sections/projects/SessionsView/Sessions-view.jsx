@@ -469,11 +469,27 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // for the ObservePage tab-bar path, which doesn't pre-seed display.
   useEffect(() => {
     if (!activeViewConfig) {
-      // Transitioning back to a default tab — clear local extraFilters so
-      // chips from a prior custom view don't linger. (URL-synced state is
-      // wiped by the parent's URL reset.)
+      // Transitioning back to a default tab — wipe everything that was
+      // applied by the saved view. URL-synced display state (cellHeight,
+      // showCompare, dateFilter) reverts via useUrlState as the parent's
+      // navigate() drops those URL keys; everything else has to be reset
+      // here because it lives in plain useState or inside AG Grid.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       viewLoadedUpdateObjRef.current = null;
+      setUpdateObj(initialVisibility);
+      const api = sessionGridApiRef.current?.api;
+      if (api?.setColumnsVisible) {
+        const showIds = Object.keys(initialVisibility).filter(
+          (id) => initialVisibility[id],
+        );
+        const hideIds = Object.keys(initialVisibility).filter(
+          (id) => !initialVisibility[id],
+        );
+        if (showIds.length) api.setColumnsVisible(showIds, true);
+        if (hideIds.length) api.setColumnsVisible(hideIds, false);
+      }
+      if (api?.resetColumnState) api.resetColumnState();
+      pendingColumnStateRef.current = null;
       return;
     }
     const display = activeViewConfig.display || {};
@@ -904,6 +920,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           className={shouldDisable ? "ag-grid-disabled" : ""}
           onGridReady={onGridReady}
           pendingCustomColumnsRef={pendingCustomColumnsRef}
+          isOnSavedView={Boolean(activeViewConfig)}
         />
       </Box>
 

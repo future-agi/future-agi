@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router";
@@ -6,10 +6,14 @@ import Iconify from "src/components/iconify";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import ObserveHeaderProvider from "src/sections/project/context/ObserveHeaderContextProvider";
+import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { useGetWorkspaceSavedViews } from "src/api/project/saved-views";
 
 import LLMTracingView from "../../LLMTracing/LLMTracingView";
 import SessionsView from "../../SessionsView/Sessions-view";
 import UserDetailTabBar from "./UserDetailTabBar";
+
+const USER_DETAIL_TAB_TYPE = "user_detail";
 
 // Cross-project user detail page.
 // ---------------------------------------------------------------------------
@@ -49,6 +53,39 @@ const UserDetailPageBody = () => {
     },
     [setActiveTab, subTab],
   );
+
+  // Hydrate activeViewConfig + the rendered subTab on hard-refresh / direct
+  // URL load. UserDetailTabBar already reacts to activeTab changes via click,
+  // but a page reload mounts the heavy sub-view (SessionsView / LLMTracingView)
+  // before the tab bar's effect lands — leaving filters / column visibility /
+  // extraFilters stuck at defaults until the user clicks the tab again.
+  // Mirrors ObservePage's hydration pattern. Re-runs only when the URL tab
+  // key or the saved-views list changes; the value for `userTab=view-<id>`
+  // is stable across saved-views refetches so the apply effect doesn't
+  // churn on every mutation invalidate.
+  const { setActiveViewConfig } = useObserveHeader();
+  const { data: workspaceSavedViewsData } =
+    useGetWorkspaceSavedViews(USER_DETAIL_TAB_TYPE);
+  const lastHydratedTabRef = useRef(null);
+  useEffect(() => {
+    if (!activeTab || !activeTab.startsWith("view-")) {
+      lastHydratedTabRef.current = null;
+      return;
+    }
+    if (lastHydratedTabRef.current === activeTab) return;
+    const customViews =
+      workspaceSavedViewsData?.customViews ??
+      workspaceSavedViewsData?.custom_views ??
+      [];
+    if (!customViews.length) return;
+    const viewId = activeTab.slice(5);
+    const view = customViews.find((v) => v.id === viewId);
+    if (!view?.config) return;
+    lastHydratedTabRef.current = activeTab;
+    setActiveViewConfig(view.config);
+    const targetSubTab = view.config.sub_tab || view.config.subTab;
+    if (targetSubTab && targetSubTab !== subTab) setSubTab(targetSubTab);
+  }, [activeTab, workspaceSavedViewsData, setActiveViewConfig, subTab]);
 
   // Styles — match ObservePage exactly
   const containerStyles = useMemo(

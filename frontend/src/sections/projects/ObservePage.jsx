@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect, startTransition } from "react";
+import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -126,6 +126,31 @@ const ObservePage = React.memo(() => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRouteSegment]);
+
+  // Hydrate activeViewConfig on hard-refresh / direct URL load. handleTabChange
+  // sets it on click, but a page reload re-mounts with no in-memory state —
+  // children read activeViewConfig for extraFilters, visibleColumns, etc.,
+  // and without this all of those fall back to defaults until the user clicks
+  // the tab again. Re-runs only when the URL tab key or the saved-views list
+  // changes; the value for `tab=view-<id>` is stable across saved-views
+  // refetches so we don't churn the apply effect on every mutation invalidate.
+  const lastHydratedTabRef = useRef(null);
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get("tab");
+    if (!tab || !tab.startsWith("view-")) {
+      lastHydratedTabRef.current = null;
+      return;
+    }
+    if (lastHydratedTabRef.current === tab) return;
+    const customViews =
+      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    if (!customViews.length) return;
+    const view = customViews.find((v) => `view-${v.id}` === tab);
+    if (!view?.config) return;
+    lastHydratedTabRef.current = tab;
+    setActiveViewConfig(view.config);
+  }, [location.search, savedViewsData, setActiveViewConfig]);
 
   // Handle tab change from ObserveTabBar
   const handleTabChange = useCallback(
