@@ -9,6 +9,7 @@ import {
   Divider,
   Menu,
   MenuItem,
+  Skeleton,
   Stack,
   Tooltip,
   Typography,
@@ -1341,10 +1342,11 @@ export default function ErrorMetadataPanel({ error }) {
   const selectedTraceId = useErrorFeedStore(
     (s) => s.selectedTraceIdByCluster[error?.clusterId] ?? null,
   );
-  const { data: sidebar } = useErrorFeedSidebar(
+  const { data: sidebar, isLoading: isSidebarLoading } = useErrorFeedSidebar(
     error?.clusterId,
     selectedTraceId,
   );
+  const sidebarPending = isSidebarLoading && !sidebar;
   // Effective trace id (what the backend actually used) — hand to the
   // deep-analysis button so Re-run hits the same trace.
   const effectiveTraceId = sidebar?.aiMetadata?.traceId ?? null;
@@ -1562,28 +1564,66 @@ export default function ErrorMetadataPanel({ error }) {
         </Section>
 
         {/* ── Evaluations ── */}
-        {qualityScores.length > 0 && (
+        {sidebarPending ? (
           <Section title="Evaluations">
-            <Stack gap={0.5}>
-              {qualityScores.map((qs) => (
-                <EvalRow
-                  key={qs.label}
-                  label={qs.label}
-                  type={qs.type}
-                  result={qs.result}
-                  score={qs.score}
-                  value={qs.value}
-                />
+            <Stack gap={0.75}>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Stack
+                  key={i}
+                  direction="row"
+                  alignItems="center"
+                  gap={0.75}
+                >
+                  <Skeleton width={90} height={12} sx={{ borderRadius: "3px" }} />
+                  <Box sx={{ flex: 1 }} />
+                  <Skeleton width={36} height={12} sx={{ borderRadius: "3px" }} />
+                </Stack>
               ))}
             </Stack>
           </Section>
+        ) : (
+          qualityScores.length > 0 && (
+            <Section title="Evaluations">
+              <Stack gap={0.5}>
+                {qualityScores.map((qs) => (
+                  <EvalRow
+                    key={qs.label}
+                    label={qs.label}
+                    type={qs.type}
+                    result={qs.result}
+                    score={qs.score}
+                    value={qs.value}
+                  />
+                ))}
+              </Stack>
+            </Section>
+          )
         )}
 
         {/* ── Co-occurring Issues ── */}
-        {coOccurringIssues.length > 0 && (
+        {sidebarPending ? (
           <Section title="Co-occurring Issues">
-            <CoOccurringList issues={coOccurringIssues} />
+            <Stack gap={0.75}>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Stack
+                  key={i}
+                  direction="row"
+                  alignItems="center"
+                  gap={0.75}
+                >
+                  <Skeleton width="65%" height={12} sx={{ borderRadius: "3px" }} />
+                  <Box sx={{ flex: 1 }} />
+                  <Skeleton width={28} height={12} sx={{ borderRadius: "3px" }} />
+                </Stack>
+              ))}
+            </Stack>
           </Section>
+        ) : (
+          coOccurringIssues.length > 0 && (
+            <Section title="Co-occurring Issues">
+              <CoOccurringList issues={coOccurringIssues} />
+            </Section>
+          )
         )}
 
         {/* ── Activity ── */}
