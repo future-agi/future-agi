@@ -458,6 +458,44 @@ class TestDashboardQueryBuilder:
         sql, _, _ = queries[0]
         assert "uniq(model)" in sql
 
+    def test_project_metric_count_uses_distinct_projects(self):
+        config = {
+            "project_ids": ["proj1", "proj2"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "project",
+                    "name": "project",
+                    "type": "system_metric",
+                    "aggregation": "count",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "uniq(project_id)" in sql
+
+    def test_latency_metric_uses_root_spans_only(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "latency",
+                    "name": "latency",
+                    "type": "system_metric",
+                    "aggregation": "min",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in sql
+
     def test_eval_metric_pass_rate_aggregation(self):
         config = {
             "project_ids": ["proj1"],
@@ -524,8 +562,31 @@ class TestDashboardQueryBuilder:
         builder = DashboardQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
-        assert "trace_annotation" in sql
-        assert "annotation_value_float" in sql
+        assert "model_hub_score" in sql
+        assert "JSONExtractFloat(a.value, 'value')" in sql
+        assert params["annotation_label_id"]
+
+    def test_annotation_star_metric_uses_rating_value(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "30D"},
+            "metrics": [
+                {
+                    "id": "a_star",
+                    "name": "quality_star",
+                    "type": "annotation_metric",
+                    "label_id": str(uuid.uuid4()),
+                    "aggregation": "avg",
+                    "output_type": "star",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "model_hub_score" in sql
+        assert "JSONExtractFloat(a.value, 'rating')" in sql
 
     def test_custom_attribute_query(self):
         config = {
@@ -1405,7 +1466,7 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         assert len(queries) == 1
         sql, params, _ = queries[0]
-        assert "trace_annotation" in sql
+        assert "model_hub_score" in sql
         assert params["annotation_label_id"] == label_uuid
 
     # --- Custom attribute metrics ---

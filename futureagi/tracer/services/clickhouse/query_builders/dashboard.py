@@ -18,6 +18,10 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from tracer.services.clickhouse.query_builders.expressions import (
+    annotation_numeric_value_expr,
+)
+
 logger = logging.getLogger(__name__)
 
 # Allowed characters for ClickHouse map keys: alphanumeric, dots, underscores, hyphens
@@ -180,7 +184,7 @@ def _prefix_spans_columns(clause: str) -> str:
     import re
 
     # Prefix bare column names (not already prefixed and not inside %(...))
-    for col in ("project_id", "_peerdb_is_deleted", "start_time"):
+    for col in ("project_id", "_peerdb_is_deleted", "start_time", "parent_span_id"):
         # Match bare column name not preceded by . or inside %(...)
         clause = re.sub(
             rf"(?<!\.)(?<!%\()(?<!\w){col}(?!\w)(?!s\))",
@@ -315,7 +319,10 @@ class DashboardQueryBuilder:
                 params,
             )
         _, col_expr = SYSTEM_METRICS[metric_name]
-        # Force count-based aggregation for non-numeric / identity metrics
+        # Project count should count distinct projects, not raw span rows.
+        if metric_name == "project" and aggregation == "count":
+            aggregation = "count_distinct"
+        # Force count-based aggregation for non-numeric / identity metrics.
         if metric_name in _COUNT_DISTINCT_METRICS and aggregation not in (
             "count",
             "count_distinct",
@@ -332,6 +339,8 @@ class DashboardQueryBuilder:
         where_clauses, params = self._build_where_clauses(
             "spans", "start_time", per_metric_filters, params
         )
+        if metric_name == "latency":
+            where_clauses.append("(parent_span_id IS NULL OR parent_span_id = '')")
 
         # Subquery filters from global + per-metric for non-system metrics
         subquery_clauses = self._build_subquery_filters(
@@ -780,7 +789,7 @@ class DashboardQueryBuilder:
             agg_expr = "count()"
         else:
             # Numeric/star: average of the float value
-            col_expr = "JSONExtractFloat(a.value, 'value')"
+            col_expr = annotation_numeric_value_expr(alias="a")
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
         select_parts = [f"{bucket_fn}(a.created_at) AS time_bucket"]
@@ -1099,9 +1108,15 @@ class DashboardQueryBuilder:
                 elif output_type == "text":
                     val_expr = f"if({alias}.trace_id IS NULL, '(not set)', JSONExtractString({alias}.value, 'text'))"
                 elif output_type in ("numeric", "star"):
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', toString(round(JSONExtractFloat({alias}.value, 'value'), 1)))"
+                    val_expr = (
+                        f"if({alias}.trace_id IS NULL, '(not set)', "
+                        f"toString(round({annotation_numeric_value_expr(alias=alias)}, 1)))"
+                    )
                 else:
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', toString(JSONExtractFloat({alias}.value, 'value')))"
+                    val_expr = (
+                        f"if({alias}.trace_id IS NULL, '(not set)', "
+                        f"toString({annotation_numeric_value_expr(alias=alias)}))"
+                    )
 
                 join_clause = (
                     f"LEFT JOIN model_hub_score AS {alias} "
@@ -1386,7 +1401,8 @@ class DashboardQueryBuilder:
                     f"SELECT toString(trace_id) FROM model_hub_score FINAL "
                     f"WHERE label_id = toUUID(%({label_id_key})s) "
                     f"AND organization_id = toUUID(%({ann_org_key})s) "
-                    f"AND JSONExtractFloat(value, 'value') {op_symbol} %({val_key})s "
+                    f"AND {annotation_numeric_value_expr(alias='model_hub_score')} "
+                    f"{op_symbol} %({val_key})s "
                     f"AND _peerdb_is_deleted = 0"
                     f")"
                 )
