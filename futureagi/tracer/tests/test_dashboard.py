@@ -1121,6 +1121,43 @@ class TestDashboardQueryExecution:
         _, kwargs = mock_service.execute_ch_query.call_args
         assert kwargs["timeout_ms"] == 30000
 
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_simulation_custom_attribute_routes_to_trace_builder(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"time_bucket": "2025-01-01T00:00:00", "value": 0.01}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "cost_breakdown.stt",
+                        "name": "cost_breakdown.stt",
+                        "type": "custom_attribute",
+                        "attribute_key": "cost_breakdown.stt",
+                        "attribute_type": "number",
+                        "aggregation": "avg",
+                        "source": "simulation",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "span_attr_num" in sql
+        assert "simulate_call_execution" not in sql
+
 
 class TestDashboardTraceTimeoutSelection:
     def test_default_trace_timeout_is_short(self):
@@ -1175,6 +1212,30 @@ class TestDashboardTraceTimeoutSelection:
         assert timeout == 30000
 
 
+class TestDashboardMetricSourceNormalization:
+    def test_simulation_custom_attribute_is_rerouted_to_traces(self):
+        viewset = DashboardViewSet()
+        normalized = viewset._normalize_metric_sources(
+            [
+                {
+                    "id": "cost_breakdown.stt",
+                    "type": "custom_attribute",
+                    "source": "simulation",
+                }
+            ]
+        )
+
+        assert normalized[0]["source"] == "traces"
+
+    def test_non_custom_simulation_metric_keeps_simulation_source(self):
+        viewset = DashboardViewSet()
+        normalized = viewset._normalize_metric_sources(
+            [{"id": "stt_cost", "type": "system_metric", "source": "simulation"}]
+        )
+
+        assert normalized[0]["source"] == "simulation"
+
+
 # ===========================================================================
 # Widget Query Execution (mocked ClickHouse)
 # ===========================================================================
@@ -1222,6 +1283,54 @@ class TestWidgetQueryExecution:
             f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
         )
         assert response.status_code == 400
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_execute_query_simulation_custom_attribute_routes_to_trace_builder(
+        self,
+        mock_get_client,
+        mock_enabled,
+        auth_client,
+        dashboard,
+        dashboard_widget,
+        observe_project,
+    ):
+        dashboard_widget.query_config = {
+            "workflow": "simulation",
+            "project_ids": [str(observe_project.id)],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "cost_breakdown.stt",
+                    "name": "cost_breakdown.stt",
+                    "type": "custom_attribute",
+                    "attribute_key": "cost_breakdown.stt",
+                    "attribute_type": "number",
+                    "aggregation": "avg",
+                    "source": "simulation",
+                }
+            ],
+        }
+        dashboard_widget.save(update_fields=["query_config"])
+
+        mock_client = MagicMock()
+        mock_client.execute_read.return_value = (
+            [(datetime(2025, 1, 1), 0.01)],
+            [("time_bucket", "DateTime"), ("value", "Float64")],
+            5.0,
+        )
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
+        )
+
+        assert response.status_code == 200
+        sql = mock_client.execute_read.call_args.args[0]
+        assert "span_attr_num" in sql
+        assert "simulate_call_execution" not in sql
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
