@@ -22,6 +22,7 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
+import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
@@ -525,7 +526,63 @@ const DatasetTestMode = React.forwardRef(
       const base = columns
         .filter((c) => c.id && c.name && !["id", "orgId"].includes(c.name))
         .map((c) => c.name);
-      if (!extraColumns?.length) return base;
+
+      // Expand JSON columns with nested sub-key paths (e.g. "EXPECTED OUTPUT.where_conditions")
+      // by introspecting the first row's cell values — same recursive walk as TaskLivePreview.
+      const ARRAY_PEEK = 500;
+      const DICT_LIMIT = 5000;
+      const walk = (node, prefix, keys) => {
+        if (Array.isArray(node)) {
+          node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
+            const path = prefix ? `${prefix}.${idx}` : String(idx);
+            keys.push(path);
+            if (item && typeof item === "object") {
+              walk(item, path, keys);
+            }
+          });
+          return;
+        }
+        for (const [k, v] of canonicalEntries(node)) {
+          if (k.startsWith("_")) continue;
+          const path = prefix ? `${prefix}.${k}` : k;
+          keys.push(path);
+          if (v && typeof v === "object") {
+            if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
+              walk(v, path, keys);
+            }
+          }
+        }
+      };
+
+      const expanded = [];
+      base.forEach((colName) => {
+        expanded.push(colName);
+        const cell = rowCells.find((rc) => rc.name === colName);
+        if (!cell) return;
+        let parsed = cell.value;
+        if (typeof parsed === "string") {
+          const trimmed = parsed.trim();
+          if (
+            (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+            (trimmed.startsWith("[") && trimmed.endsWith("]"))
+          ) {
+            try {
+              parsed = JSON.parse(trimmed);
+            } catch {
+              return;
+            }
+          } else {
+            return;
+          }
+        }
+        if (parsed && typeof parsed === "object") {
+          const subKeys = [];
+          walk(parsed, colName, subKeys);
+          expanded.push(...subKeys);
+        }
+      });
+
+      if (!extraColumns?.length) return expanded;
       // Virtual columns ("Output", "Prompt Chain" for experiments) render
       // first so they're prominent in the dropdown AND win auto-mapping
       // ties — auto-map iterates columnNames in order and takes the first
@@ -539,9 +596,9 @@ const DatasetTestMode = React.forwardRef(
         )
         .filter(Boolean);
       const extraSet = new Set(extras);
-      const baseWithoutExtras = base.filter((n) => !extraSet.has(n));
+      const baseWithoutExtras = expanded.filter((n) => !extraSet.has(n));
       return [...extras, ...baseWithoutExtras];
-    }, [columns, sourceColumns, extraColumns, isWorkbenchMode]);
+    }, [columns, sourceColumns, extraColumns, isWorkbenchMode, rowCells]);
 
     // Workbench mode: map display name → field identifier (e.g. "model_output" → "output_prompt")
     const sourceNameToField = useMemo(() => {
