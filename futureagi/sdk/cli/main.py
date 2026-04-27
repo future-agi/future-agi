@@ -30,6 +30,7 @@ from sdk.cli.client import (
     AuthConfig,
     AuthError,
     CLIError,
+    PollTimeoutError,
     SimulateClient,
 )
 from sdk.cli.output import emit, get_formatter
@@ -233,10 +234,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         try:
             final_status = client.wait_for_completion(
                 test_id=args.test_id,
+                execution_id=execution.execution_id,
                 poll_interval=args.poll_interval,
                 timeout=args.timeout,
             )
-        except CLIError:
+        except PollTimeoutError:
+            # Genuine timeout — exit code 2.
             emit(
                 formatter.format_timeout(
                     execution_id=execution.execution_id,
@@ -245,6 +248,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 )
             )
             return EXIT_TIMEOUT_OR_FAILURE
+        except AuthError as exc:
+            # Auth failure during polling — exit code 3.
+            emit(formatter.format_error(str(exc)), file=sys.stderr)
+            return EXIT_USAGE_ERROR
+        except CLIError as exc:
+            # Network/API error during polling — exit code 3.
+            emit(formatter.format_error(str(exc)), file=sys.stderr)
+            return EXIT_USAGE_ERROR
 
         # Handle non-completed terminal states.
         if final_status.status.lower() != "completed":
@@ -309,7 +320,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     client = SimulateClient(base_url=args.base_url, auth=auth)
 
     try:
-        result = client.poll_status(args.test_id)
+        result = client.poll_status(
+            args.test_id, execution_id=args.execution_id
+        )
         emit(formatter.format_polling(result.status, result.progress))
 
         # For JSON output, also emit raw data when polling suppresses output.

@@ -29,6 +29,12 @@ DEFAULT_TIMEOUT_SECONDS = 3600
 DEFAULT_CONNECT_TIMEOUT = 30.0
 DEFAULT_READ_TIMEOUT = 60.0
 MAX_RETRIES = 1
+BACKOFF_MULTIPLIER = 1.5
+MAX_POLL_INTERVAL_SECONDS = 30
+
+# The backend wraps API responses in {"status": 0, "result": <payload>}.
+# This is the key under which the actual data lives.
+API_RESULT_ENVELOPE_KEY = "result"
 
 # Terminal statuses returned by the /status/ endpoint.
 TERMINAL_STATUSES = frozenset(
@@ -46,6 +52,10 @@ class AuthError(CLIError):
 
 class APIError(CLIError):
     """Raised when the API returns an unexpected error."""
+
+
+class PollTimeoutError(CLIError):
+    """Raised when polling times out (distinct from network/auth errors)."""
 
 
 @dataclass(frozen=True)
@@ -148,7 +158,8 @@ class SimulateClient:
         if simulator_id:
             body["simulator_id"] = simulator_id
 
-        data = self._request("POST", url, json_body=body)
+        raw = self._request("POST", url, json_body=body)
+        data = self._unwrap_envelope(raw)
 
         return ExecutionResult(
             execution_id=str(data.get("execution_id", "")),
@@ -158,17 +169,24 @@ class SimulateClient:
             total_calls=int(data.get("total_calls", 0)),
         )
 
-    def poll_status(self, test_id: str) -> StatusResult:
+    def poll_status(
+        self, test_id: str, execution_id: str | None = None
+    ) -> StatusResult:
         """Poll execution status via ``GET /simulate/run-tests/{id}/status/``.
 
         Args:
             test_id: UUID of the RunTest.
+            execution_id: Optional UUID of a specific execution to query.
 
         Returns:
             A ``StatusResult`` with current execution progress.
         """
         url = f"{self._base_url}/simulate/run-tests/{test_id}/status/"
-        data = self._request("GET", url)
+        params: dict[str, str] | None = None
+        if execution_id:
+            params = {"execution_id": execution_id}
+        raw = self._request("GET", url, params=params)
+        data = self._unwrap_envelope(raw)
 
         return StatusResult(
             status=str(data.get("status", "unknown")),
@@ -190,7 +208,8 @@ class SimulateClient:
         """
         url = f"{self._base_url}/simulate/run-tests/{test_id}/eval-summary/"
         params = {"execution_id": execution_id}
-        data = self._request("GET", url, params=params)
+        raw = self._request("GET", url, params=params)
+        data = self._unwrap_envelope(raw)
 
         evals = data.get("evals", data.get("results", []))
         aggregate_pass_rate = self._compute_aggregate_pass_rate(evals)
@@ -205,37 +224,49 @@ class SimulateClient:
     def wait_for_completion(
         self,
         test_id: str,
+        execution_id: str | None = None,
         poll_interval: int = DEFAULT_POLL_INTERVAL_SECONDS,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> StatusResult:
         """Poll until the execution reaches a terminal state or times out.
 
+        Uses exponential backoff: each poll increases the interval by
+        ``BACKOFF_MULTIPLIER`` up to ``MAX_POLL_INTERVAL_SECONDS``.
+
         Args:
             test_id: UUID of the RunTest.
-            poll_interval: Seconds between polls.
+            execution_id: Optional UUID of the specific execution.
+            poll_interval: Initial seconds between polls.
             timeout: Maximum seconds to wait.
 
         Returns:
             The final ``StatusResult``.
 
         Raises:
-            CLIError: If the timeout is exceeded.
+            PollTimeoutError: If the timeout is exceeded.
+            AuthError: If authentication fails during polling.
+            CLIError: On network errors during polling.
         """
         deadline = time.monotonic() + timeout
+        current_interval = float(poll_interval)
 
         while True:
-            result = self.poll_status(test_id)
+            result = self.poll_status(test_id, execution_id=execution_id)
 
             if result.is_terminal:
                 return result
 
             if time.monotonic() >= deadline:
-                raise CLIError(
+                raise PollTimeoutError(
                     f"Timed out after {timeout}s waiting for execution "
                     f"to complete. Last status: {result.status}"
                 )
 
-            time.sleep(poll_interval)
+            time.sleep(current_interval)
+            current_interval = min(
+                current_interval * BACKOFF_MULTIPLIER,
+                MAX_POLL_INTERVAL_SECONDS,
+            )
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -315,6 +346,30 @@ class SimulateClient:
         if last_error is not None:
             raise CLIError(f"Request failed after retries: {last_error}")
         raise CLIError("Request failed unexpectedly")  # pragma: no cover
+
+    @staticmethod
+    def _unwrap_envelope(data: dict[str, Any]) -> dict[str, Any]:
+        """Unwrap the FutureAGI API response envelope.
+
+        The backend wraps all responses as::
+
+            {"status": 0, "result": <actual_payload>}
+
+        This method extracts the inner payload. If the response does
+        not have the envelope structure, it returns the data as-is
+        (graceful fallback for direct responses like execute/).
+
+        Args:
+            data: Raw parsed JSON response.
+
+        Returns:
+            The unwrapped payload dictionary.
+        """
+        if API_RESULT_ENVELOPE_KEY in data and isinstance(
+            data[API_RESULT_ENVELOPE_KEY], dict
+        ):
+            return data[API_RESULT_ENVELOPE_KEY]
+        return data
 
     @staticmethod
     def _compute_aggregate_pass_rate(

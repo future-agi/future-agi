@@ -15,6 +15,7 @@ from sdk.cli.client import (
     AuthConfig,
     AuthError,
     CLIError,
+    PollTimeoutError,
     SimulateClient,
 )
 
@@ -285,8 +286,8 @@ class TestWaitForCompletion:
         assert call_count == 3
         client.close()
 
-    def test_timeout_raises_cli_error(self) -> None:
-        """Verify timeout raises ``CLIError``."""
+    def test_timeout_raises_poll_timeout_error(self) -> None:
+        """Verify timeout raises ``PollTimeoutError`` (not generic CLIError)."""
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
@@ -294,8 +295,97 @@ class TestWaitForCompletion:
             )
 
         client = _make_client(httpx.MockTransport(handler))
-        with pytest.raises(CLIError, match="Timed out"):
+        with pytest.raises(PollTimeoutError, match="Timed out"):
             client.wait_for_completion(
                 "test-456", poll_interval=0, timeout=0
             )
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# _unwrap_envelope
+# ---------------------------------------------------------------------------
+
+
+class TestUnwrapEnvelope:
+    """Tests for ``SimulateClient._unwrap_envelope``."""
+
+    def test_unwraps_result_key(self) -> None:
+        """Verify envelope with 'result' key is unwrapped."""
+        data = {"status": 0, "result": {"evals": [{"name": "A"}]}}
+        unwrapped = SimulateClient._unwrap_envelope(data)
+        assert unwrapped == {"evals": [{"name": "A"}]}
+
+    def test_passthrough_without_envelope(self) -> None:
+        """Verify data without envelope is returned as-is."""
+        data = {"execution_id": "abc", "status": "started"}
+        unwrapped = SimulateClient._unwrap_envelope(data)
+        assert unwrapped == data
+
+    def test_passthrough_when_result_is_not_dict(self) -> None:
+        """Verify non-dict 'result' values are not unwrapped."""
+        data = {"status": 0, "result": "some string"}
+        unwrapped = SimulateClient._unwrap_envelope(data)
+        assert unwrapped == data
+
+    def test_eval_summary_with_envelope(self) -> None:
+        """Verify eval-summary works with the full API envelope."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "status": 0,
+                    "result": {
+                        "evals": [
+                            {"name": "Accuracy", "passed": 8, "total": 10},
+                        ],
+                    },
+                },
+            )
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = client.get_eval_summary("test-456", "exec-1")
+
+        assert len(result.evals) == 1
+        assert result.aggregate_pass_rate == pytest.approx(0.8)
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# poll_status with execution_id
+# ---------------------------------------------------------------------------
+
+
+class TestPollStatusWithExecutionId:
+    """Tests for ``poll_status`` with execution_id parameter."""
+
+    def test_passes_execution_id_as_query_param(self) -> None:
+        """Verify execution_id is sent as a query parameter."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "execution_id=exec-99" in str(request.url)
+            return httpx.Response(
+                200, json={"status": "completed", "progress": 1.0}
+            )
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = client.poll_status("test-456", execution_id="exec-99")
+
+        assert result.status == "completed"
+        client.close()
+
+    def test_omits_execution_id_when_none(self) -> None:
+        """Verify no execution_id query param when not provided."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "execution_id" not in str(request.url)
+            return httpx.Response(
+                200, json={"status": "running", "progress": 0.5}
+            )
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = client.poll_status("test-456")
+
+        assert result.status == "running"
         client.close()
