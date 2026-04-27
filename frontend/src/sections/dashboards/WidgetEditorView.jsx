@@ -75,6 +75,19 @@ const escapeCsvField = (field) => {
   return str;
 };
 
+const getSeriesAverage = (points = []) => {
+  let total = 0;
+  let count = 0;
+  for (const pt of points) {
+    if (pt?.y == null) continue;
+    const y = Number(pt.y);
+    if (!Number.isFinite(y)) continue;
+    total += y;
+    count += 1;
+  }
+  return count > 0 ? total / count : null;
+};
+
 const TIME_PRESETS = [
   { label: "Custom", value: "custom" },
   { label: "30 mins", value: "30m" },
@@ -2387,7 +2400,7 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: 0,
+        size: apexType === "line" || apexType === "area" ? 4 : 0,
         strokeWidth: 2,
         strokeColors: isDark ? theme.palette.background.paper : "#fff",
         hover: { size: 6, sizeOffset: 3 },
@@ -2554,8 +2567,8 @@ export default function WidgetEditorView() {
       return name.length > 25 ? name.slice(0, 22) + "..." : name;
     });
     const values = chartSeries.map((s) => {
-      const total = s.data.reduce((sum, pt) => sum + (pt.y || 0), 0);
-      return s.data.length ? total / s.data.length : 0;
+      const avg = getSeriesAverage(s.data);
+      return avg == null ? 0 : avg;
     });
     return {
       categories,
@@ -2840,13 +2853,10 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = s.data.length
-                  ? s.data.reduce((sum, pt) => sum + (pt.y || 0), 0) /
-                    s.data.length
-                  : 0;
+                const avg = getSeriesAverage(s.data);
                 return [
                   s.name,
-                  avg.toFixed(2),
+                  avg == null ? "—" : avg.toFixed(2),
                   ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
                 ];
               });
@@ -2879,13 +2889,10 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = s.data.length
-                  ? s.data.reduce((sum, pt) => sum + (pt.y || 0), 0) /
-                    s.data.length
-                  : 0;
+                const avg = getSeriesAverage(s.data);
                 return [
                   s.name,
-                  avg.toFixed(2),
+                  avg == null ? "—" : avg.toFixed(2),
                   ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
                 ];
               });
@@ -3521,11 +3528,7 @@ export default function WidgetEditorView() {
                         sx={{ height: "100%" }}
                       >
                         {chartSeries.map((s, i) => {
-                          const total = s.data.reduce(
-                            (sum, pt) => sum + (pt.y || 0),
-                            0,
-                          );
-                          const avg = s.data.length ? total / s.data.length : 0;
+                          const avg = getSeriesAverage(s.data);
                           return (
                             <Box key={i} sx={{ textAlign: "center" }}>
                               <Typography
@@ -3534,9 +3537,11 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg >= 1000
-                                  ? `${(avg / 1000).toFixed(1)}K`
-                                  : avg.toFixed(1)}
+                                {avg == null
+                                  ? "—"
+                                  : avg >= 1000
+                                    ? `${(avg / 1000).toFixed(1)}K`
+                                    : avg.toFixed(1)}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -3960,11 +3965,6 @@ export default function WidgetEditorView() {
                 {chartSeries.map((s, i) => {
                   const origIdx = previewSeries.indexOf(s);
                   const idx = origIdx >= 0 ? origIdx : i;
-                  const total = s.data.reduce(
-                    (sum, pt) => sum + (pt.y || 0),
-                    0,
-                  );
-                  const _avg = s.data.length ? total / s.data.length : 0;
                   return (
                     <Box
                       key={i}
@@ -4048,19 +4048,13 @@ export default function WidgetEditorView() {
                         .includes(tableSearch.toLowerCase()),
                   )
                   .sort((a, b) => {
-                    const avgA = previewSeries[a].data.length
-                      ? previewSeries[a].data.reduce(
-                          (s, p) => s + (p.y || 0),
-                          0,
-                        ) / previewSeries[a].data.length
-                      : 0;
-                    const avgB = previewSeries[b].data.length
-                      ? previewSeries[b].data.reduce(
-                          (s, p) => s + (p.y || 0),
-                          0,
-                        ) / previewSeries[b].data.length
-                      : 0;
-                    return avgB - avgA;
+                    const avgA = getSeriesAverage(previewSeries[a].data);
+                    const avgB = getSeriesAverage(previewSeries[b].data);
+                    const scoreA =
+                      avgA == null ? Number.NEGATIVE_INFINITY : avgA;
+                    const scoreB =
+                      avgB == null ? Number.NEGATIVE_INFINITY : avgB;
+                    return scoreB - scoreA;
                   });
 
                 return (
@@ -4219,12 +4213,7 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = s.data.length
-                              ? s.data.reduce(
-                                  (sum, pt) => sum + (pt.y || 0),
-                                  0,
-                                ) / s.data.length
-                              : 0;
+                            const avg = getSeriesAverage(s.data);
                             const color =
                               SERIES_COLORS[si % SERIES_COLORS.length];
                             return (
@@ -4283,11 +4272,13 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg >= 1000
-                                    ? avg.toLocaleString(undefined, {
-                                        maximumFractionDigits: 1,
-                                      })
-                                    : avg.toFixed(1)}
+                                  {avg == null
+                                    ? "—"
+                                    : avg >= 1000
+                                      ? avg.toLocaleString(undefined, {
+                                          maximumFractionDigits: 1,
+                                        })
+                                      : avg.toFixed(1)}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
