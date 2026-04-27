@@ -7,6 +7,7 @@ import structlog
 from django.conf import settings as django_settings
 
 from agentcc.models import AgentccOrgConfig
+from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
 
 logger = structlog.get_logger(__name__)
@@ -437,7 +438,7 @@ def _build_payload(org_id, config):
         "providers": _assemble_providers(org_id),
         "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
         "routing": config.routing,
-        "cache": config.cache,
+        "cache": normalize_cache_config(config.cache),
         "rate_limiting": config.rate_limiting,
         "budgets": _transform_budgets(config.budgets),
         "cost_tracking": config.cost_tracking,
