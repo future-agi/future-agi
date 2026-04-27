@@ -2989,7 +2989,15 @@ class CallExecutionDetailView(APIView):
             # without an extra ObservationSpan query per instance, so we
             # add it here in the detail view where a one-row lookup is cheap.
             response_data = dict(serializer.data)
-            add_trace_details_to_call_executions([response_data])
+            # temporarily disabled while
+            # tracer_obse_eval_attr_gin is being rebuilt on prod (the index is
+            # currently INVALID, causing this JSONB containment lookup to
+            # seq-scan ~7.6M rows and hit statement_timeout). Re-enable as
+            # soon as the index is valid. Knock-on effect while disabled:
+            # Logs tab is empty for all simulate calls; Attributes tab is
+            # empty for chat/LiveKit (VAPI/Retell still work via the
+            # provider_call_data fallback below).
+            # add_trace_details_to_call_executions([response_data])
 
             # Shape parity with the observe drawer: when a trace is linked,
             # also return the full serialized observation spans array. The
