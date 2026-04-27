@@ -1020,6 +1020,16 @@ export const endpoints = {
         `/model-hub/experiments/v2/${expId}/json-schema/`,
       getExperimentDerivedVariables: (expId) =>
         `/model-hub/experiments/v2/${expId}/derived-variables/`,
+      feedback: {
+        getTemplate: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-template/`,
+        create: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/`,
+        getDetails: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-feedback-details/`,
+        submit: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/submit-feedback/`,
+      },
     },
     apiKey: {
       create: "/model-hub/api-keys/",
