@@ -25,6 +25,8 @@ export const initPostHog = () => {
       api_host: posthogHost,
       // Share cookie across *.futureagi.com so UTM/session survives marketing → app
       cross_subdomain_cookie: true,
+      cookie_domain:'.futureagi.com',
+      
       // Autocapture — clicks, form submissions, pageviews
       autocapture: true,
       // Session replay
