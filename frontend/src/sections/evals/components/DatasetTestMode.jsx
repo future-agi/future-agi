@@ -930,8 +930,21 @@ const DatasetTestMode = React.forwardRef(
         Object.entries(mapping).forEach(([variable, colName]) => {
           // Extras resolve to their own field (e.g. "Output" → "output") and
           // bypass the dataset UUID lookup since they don't exist in columns.
-          m[variable] =
-            extraNameToField[colName] || nameToId[colName] || colName;
+          if (extraNameToField[colName]) {
+            m[variable] = extraNameToField[colName];
+          } else if (nameToId[colName]) {
+            m[variable] = nameToId[colName];
+          } else if (colName.includes(".")) {
+            // Dotted sub-key path (e.g. "EXPECTED OUTPUT.where_conditions"):
+            // convert root column name to UUID, keep the sub-key path.
+            const dotIdx = colName.indexOf(".");
+            const rootName = colName.slice(0, dotIdx);
+            const subPath = colName.slice(dotIdx + 1);
+            const rootId = nameToId[rootName];
+            m[variable] = rootId ? `${rootId}.${subPath}` : colName;
+          } else {
+            m[variable] = colName;
+          }
         });
       }
       return m;

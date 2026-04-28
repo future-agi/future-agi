@@ -9,7 +9,7 @@ from datetime import datetime
 import structlog
 
 # from ee.agenthub.feedback_agent_updated.utils import RAG
-from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import close_old_connections, models, transaction
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -303,7 +303,7 @@ def _resolve_column_reference(column_ref, dataset_id):
     # Try as UUID first
     try:
         return Column.objects.get(id=column_ref)
-    except (Column.DoesNotExist, ValueError):
+    except (Column.DoesNotExist, ValueError, ValidationError):
         pass
 
     # Try as column name within the dataset
