@@ -14787,13 +14787,16 @@ def get_json_column_schemas(dataset):
         metadata = column.metadata or {}
         json_schema = metadata.get("json_schema")
 
-        if json_schema and json_schema.get("keys"):
+        if json_schema and (json_schema.get("keys") or json_schema.get("max_array_count")):
             # Use cached schema
-            result[str(column.id)] = {
+            entry = {
                 "name": column.name,
                 "keys": json_schema.get("keys", []),
                 "sample": json_schema.get("sample"),
             }
+            if json_schema.get("max_array_count"):
+                entry["max_array_count"] = json_schema["max_array_count"]
+            result[str(column.id)] = entry
         else:
             # Extract schema from cells. For text columns, check a small
             # sample first to avoid wasting time on non-JSON content.
@@ -14818,17 +14821,20 @@ def get_json_column_schemas(dataset):
             if sample_cells:
                 schema = extract_json_schema_for_column(list(sample_cells))
 
-                if schema.get("keys"):
+                if schema.get("keys") or schema.get("max_array_count"):
                     # Store schema in column metadata
                     metadata["json_schema"] = schema
                     column.metadata = metadata
                     column.save(update_fields=["metadata"])
 
-                    result[str(column.id)] = {
+                    entry = {
                         "name": column.name,
                         "keys": schema.get("keys", []),
                         "sample": schema.get("sample"),
                     }
+                    if schema.get("max_array_count"):
+                        entry["max_array_count"] = schema["max_array_count"]
+                    result[str(column.id)] = entry
 
     # Get images-type columns and calculate max_images_count
     images_columns = Column.objects.filter(

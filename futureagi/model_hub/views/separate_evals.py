@@ -2718,7 +2718,7 @@ class CompositeEvalCreateView(APIView):
             CompositeCreateRequest,
             CompositeCreateResponse,
         )
-        from model_hub.utils.eval_list import derive_eval_type
+        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
 
         try:
             try:
@@ -2805,6 +2805,9 @@ class CompositeEvalCreateView(APIView):
                 config={},
                 description=req.description or "",
                 template_type="composite",
+                eval_type=infer_composite_eval_type(
+                    derive_eval_type(child) for child in children
+                ),
                 visible_ui=True,
                 aggregation_enabled=req.aggregation_enabled,
                 aggregation_function=req.aggregation_function,
@@ -2962,7 +2965,7 @@ class CompositeEvalDetailView(APIView):
             CompositeDetailResponse,
             CompositeUpdateRequest,
         )
-        from model_hub.utils.eval_list import derive_eval_type
+        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
 
         try:
             try:
@@ -3072,7 +3075,6 @@ class CompositeEvalDetailView(APIView):
                 parent.aggregation_function = req.aggregation_function
             if req.composite_child_axis is not None:
                 parent.composite_child_axis = req.composite_child_axis
-            parent.save()
 
             # Replace child list if provided
             if req.child_template_ids is not None:
@@ -3107,6 +3109,9 @@ class CompositeEvalDetailView(APIView):
                         except ValueError as ve:
                             return self._gm.bad_request(str(ve))
 
+                parent.eval_type = infer_composite_eval_type(
+                    derive_eval_type(child) for child in child_qs
+                )
                 # Soft-delete existing children links, then recreate
                 CompositeEvalChild.objects.filter(parent=parent, deleted=False).update(
                     deleted=True
@@ -3123,7 +3128,6 @@ class CompositeEvalDetailView(APIView):
                         weight=weights.get(child_id, 1.0),
                     )
             elif req.child_weights is not None:
-                # Update weights on existing children only
                 existing_links = CompositeEvalChild.objects.filter(
                     parent=parent, deleted=False
                 )
@@ -3132,6 +3136,8 @@ class CompositeEvalDetailView(APIView):
                     if cid in req.child_weights:
                         link.weight = req.child_weights[cid]
                         link.save(update_fields=["weight"])
+
+            parent.save()
 
             # Re-fetch children and return the updated detail response.
             links = list(

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
-const SAVED_VIEWS_KEY = "saved-views";
+export const SAVED_VIEWS_KEY = "saved-views";
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -40,7 +40,32 @@ export const useCreateWorkspaceSavedView = (tabType) => {
   return useMutation({
     mutationFn: (data) =>
       axios.post(endpoints.savedViews.create, { ...data, tab_type: tabType }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const newView = response?.data?.result;
+      if (newView) {
+        queryClient.setQueryData(
+          [SAVED_VIEWS_KEY, "workspace", tabType],
+          (old) => {
+            if (!old) return old;
+            const currentResult = old.data?.result ?? {};
+            const currentList =
+              currentResult.custom_views ?? currentResult.customViews ?? [];
+            if (currentList.some((v) => v.id === newView.id)) return old;
+            const nextList = [...currentList, newView];
+            return {
+              ...old,
+              data: {
+                ...old.data,
+                result: {
+                  ...currentResult,
+                  custom_views: nextList,
+                  customViews: nextList,
+                },
+              },
+            };
+          },
+        );
+      }
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
       });
@@ -53,7 +78,33 @@ export const useUpdateWorkspaceSavedView = (tabType) => {
   return useMutation({
     mutationFn: ({ id, ...data }) =>
       axios.put(endpoints.savedViews.update(id), data),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const updated = response?.data?.result;
+      if (updated?.id) {
+        queryClient.setQueryData(
+          [SAVED_VIEWS_KEY, "workspace", tabType],
+          (old) => {
+            if (!old) return old;
+            const currentResult = old.data?.result ?? {};
+            const currentList =
+              currentResult.custom_views ?? currentResult.customViews ?? [];
+            const nextList = currentList.map((v) =>
+              v.id === updated.id ? { ...v, ...updated } : v,
+            );
+            return {
+              ...old,
+              data: {
+                ...old.data,
+                result: {
+                  ...currentResult,
+                  custom_views: nextList,
+                  customViews: nextList,
+                },
+              },
+            };
+          },
+        );
+      }
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
       });
@@ -81,7 +132,32 @@ export const useCreateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) => axios.post(endpoints.savedViews.create, data),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const newView = response?.data?.result;
+      if (newView) {
+        queryClient.setQueryData(
+          [SAVED_VIEWS_KEY, projectId],
+          (old) => {
+            if (!old) return old;
+            const currentResult = old.data?.result ?? {};
+            const currentList =
+              currentResult.custom_views ?? currentResult.customViews ?? [];
+            if (currentList.some((v) => v.id === newView.id)) return old;
+            const nextList = [...currentList, newView];
+            return {
+              ...old,
+              data: {
+                ...old.data,
+                result: {
+                  ...currentResult,
+                  custom_views: nextList,
+                  customViews: nextList,
+                },
+              },
+            };
+          },
+        );
+      }
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, projectId],
       });
@@ -93,8 +169,33 @@ export const useUpdateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }) =>
-      axios.put(endpoints.savedViews.update(id), data),
-    onSuccess: () => {
+      axios.put(endpoints.savedViews.update(id), data, {
+        params: { project_id: projectId },
+      }),
+    onSuccess: (response) => {
+      const updated = response?.data?.result;
+      if (updated?.id) {
+        queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) => {
+          if (!old) return old;
+          const currentResult = old.data?.result ?? {};
+          const currentList =
+            currentResult.custom_views ?? currentResult.customViews ?? [];
+          const nextList = currentList.map((v) =>
+            v.id === updated.id ? { ...v, ...updated } : v,
+          );
+          return {
+            ...old,
+            data: {
+              ...old.data,
+              result: {
+                ...currentResult,
+                custom_views: nextList,
+                customViews: nextList,
+              },
+            },
+          };
+        });
+      }
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, projectId],
       });
@@ -121,7 +222,11 @@ export const useDuplicateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) =>
-      axios.post(endpoints.savedViews.duplicate(id), { name }),
+      axios.post(
+        endpoints.savedViews.duplicate(id),
+        { name },
+        { params: { project_id: projectId } },
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: [SAVED_VIEWS_KEY, projectId],

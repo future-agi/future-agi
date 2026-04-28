@@ -175,7 +175,27 @@ def extract_json_keys(
 
     paths = []
 
-    if isinstance(json_data, dict):
+    if isinstance(json_data, list) and json_data and prefix:
+        # Handle arrays with a known prefix (nested arrays inside objects).
+        # Top-level arrays (no prefix) are handled via max_array_count in the
+        # schema response; the frontend generates indexed options from that
+        # count so we don't emit bare "[0]" keys which would produce
+        # malformed "col.[0]" paths in the dot-join expansion loops.
+        count = min(len(json_data), 2)
+        for i in range(count):
+            if max_paths is not None and len(paths) >= max_paths:
+                break
+            array_path = f"{prefix}[{i}]"
+            paths.append(array_path)
+
+            if isinstance(json_data[i], dict):
+                remaining = max_paths - len(paths) if max_paths else None
+                sub_paths = extract_json_keys(
+                    json_data[i], array_path, max_depth - 1, remaining
+                )
+                paths.extend(sub_paths)
+
+    elif isinstance(json_data, dict):
         for key, value in json_data.items():
             # Check if we've reached the limit
             if max_paths is not None and len(paths) >= max_paths:
@@ -305,12 +325,16 @@ def extract_json_schema_for_column(sample_values: List[str]) -> dict:
     """
     all_keys = set()
     first_sample = None
+    max_array_count = 0
 
     for value in sample_values:
         parsed, is_valid = parse_json_safely(value)
         if is_valid:
             if first_sample is None:
                 first_sample = parsed
+            # Track top-level array lengths
+            if isinstance(parsed, list):
+                max_array_count = max(max_array_count, len(parsed))
             keys = extract_json_keys(parsed, max_depth=5)
             all_keys.update(keys)
 
@@ -324,7 +348,13 @@ def extract_json_schema_for_column(sample_values: List[str]) -> dict:
         if len(sample_str) < 1000:
             sample_for_storage = first_sample
 
-    return {
+    result = {
         "keys": sorted_keys,
         "sample": sample_for_storage,
     }
+
+    # Include max_array_count when column contains top-level arrays
+    if max_array_count > 0:
+        result["max_array_count"] = max_array_count
+
+    return result

@@ -3,14 +3,18 @@ import {
   Autocomplete,
   Box,
   Chip,
+  ClickAwayListener,
   CircularProgress,
   IconButton,
   InputAdornment,
+  Paper,
+  Popper,
   Tab,
   Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -247,6 +251,191 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// ColumnTreeSelect — dropdown with tree view for column + nested path selection
+// ---------------------------------------------------------------------------
+function buildTree(columnNames) {
+  const roots = [];
+  const nodeMap = {}; // path → node
+
+  const getOrCreate = (path, label, parentList) => {
+    if (nodeMap[path]) return nodeMap[path];
+    const node = { id: path, label, path, children: [] };
+    nodeMap[path] = node;
+    parentList.push(node);
+    return node;
+  };
+
+  columnNames.forEach((fullPath) => {
+    // Split into segments: "col.a.b" → ["col","a","b"], "col[0].x" → ["col","[0]","x"]
+    const segments = [];
+    let current = "";
+    for (let i = 0; i < fullPath.length; i++) {
+      const ch = fullPath[i];
+      if (ch === ".") {
+        if (current) segments.push(current);
+        current = "";
+      } else if (ch === "[") {
+        if (current) segments.push(current);
+        current = "[";
+      } else if (ch === "]") {
+        current += "]";
+        segments.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    if (current) segments.push(current);
+
+    if (segments.length === 1) {
+      getOrCreate(fullPath, segments[0], roots);
+    } else {
+      // Walk segments, creating intermediate nodes
+      let parentList = roots;
+      let builtPath = "";
+      for (let i = 0; i < segments.length; i++) {
+        const sep = i === 0 ? "" : segments[i].startsWith("[") ? "" : ".";
+        builtPath += sep + segments[i];
+        const node = getOrCreate(builtPath, segments[i], parentList);
+        parentList = node.children;
+      }
+    }
+  });
+  return roots;
+}
+
+function renderTreeNode(node, onSelect) {
+  const hasKids = node.children.length > 0;
+  return (
+    <TreeItem
+      key={node.id}
+      nodeId={node.id}
+      label={
+        <Typography
+          sx={{
+            fontSize: "12px",
+            fontFamily: "monospace",
+            fontWeight: hasKids ? 600 : 400,
+            color: hasKids ? "text.primary" : "text.secondary",
+            py: 0.15,
+          }}
+          onClick={(e) => { e.stopPropagation(); onSelect(node.path); }}
+        >
+          {node.label}
+        </Typography>
+      }
+    >
+      {hasKids && node.children.map((child) => renderTreeNode(child, onSelect))}
+    </TreeItem>
+  );
+}
+
+function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+  const [open, setOpen] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const anchorRef = useRef(null);
+  const tree = useMemo(() => buildTree(columnNames), [columnNames]);
+
+  // Only filter when user is actively typing, not when re-opening with a selected value
+  const filtered = useMemo(() => {
+    if (!typing || !value) return tree;
+    const q = value.toLowerCase();
+    const filterNodes = (nodes) =>
+      nodes.map((node) => {
+        if (node.path.toLowerCase().startsWith(q)) return node;
+        const kids = filterNodes(node.children);
+        if (kids.length) return { ...node, children: kids };
+        return null;
+      }).filter(Boolean);
+    return filterNodes(tree);
+  }, [tree, value, typing]);
+
+  // Collect all node IDs for default expansion
+  const allIds = useMemo(() => {
+    const ids = [];
+    const walk = (nodes) => nodes.forEach((n) => { ids.push(n.id); walk(n.children); });
+    walk(filtered);
+    return ids;
+  }, [filtered]);
+
+  const handleSelect = (path) => {
+    onChange(path);
+    setOpen(false);
+    setTyping(false);
+  };
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      <TextField
+        ref={anchorRef}
+        size="small"
+        fullWidth
+        value={value}
+        placeholder="Select column"
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setTyping(true);
+          onChange(e.target.value);
+          if (!open) setOpen(true);
+        }}
+        InputProps={{
+          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+          endAdornment: (
+            <InputAdornment position="end">
+              <Iconify
+                icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+                width={16}
+                sx={{ color: "text.disabled", cursor: "pointer" }}
+                onClick={() => { setOpen((p) => !p); setTyping(false); }}
+              />
+            </InputAdornment>
+          ),
+        }}
+        sx={{
+          ...(isUnmapped && {
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+          }),
+        }}
+      />
+      {open && filtered.length > 0 && (
+        <Popper
+          open
+          anchorEl={anchorRef.current}
+          placement="bottom-start"
+          style={{ zIndex: 1301, width: anchorRef.current?.offsetWidth || 240 }}
+        >
+          <ClickAwayListener onClickAway={(e) => {
+            // Don't close if clicking the input field itself
+            if (anchorRef.current?.contains(e.target)) return;
+            setOpen(false);
+            setTyping(false);
+          }}>
+            <Paper
+              elevation={8}
+              sx={{ mt: 0.5, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
+            >
+              <Box sx={{ maxHeight: 260, overflow: "auto", py: 0.5 }}>
+                <TreeView
+                  defaultExpanded={allIds}
+                  defaultCollapseIcon={<Iconify icon="mdi:chevron-down" width={14} sx={{ color: "text.disabled" }} />}
+                  defaultExpandIcon={<Iconify icon="mdi:chevron-right" width={14} sx={{ color: "text.disabled" }} />}
+                  sx={{
+                    "& .MuiTreeItem-content": { py: 0.1, borderRadius: "4px" },
+                    "& .MuiTreeItem-content:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  {filtered.map((node) => renderTreeNode(node, handleSelect))}
+                </TreeView>
+              </Box>
+            </Paper>
+          </ClickAwayListener>
+        </Popper>
+      )}
+    </Box>
+  );
+}
+
 // Walk a JSON value and extract dot-notation keys (max 3 levels deep).
 function extractKeysFromValue(raw) {
   let parsed = null;
@@ -259,11 +448,13 @@ function extractKeysFromValue(raw) {
   const walk = (obj, prefix, depth) => {
     if (depth > 3 || !obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) {
-      keys.push(`${prefix}[0]`);
-      // Walk first element to discover object keys inside arrays
-      if (obj.length && obj[0] && typeof obj[0] === "object" && !Array.isArray(obj[0])) {
-        for (const k of Object.keys(obj[0])) {
-          keys.push(`${prefix}[0].${k}`);
+      // Show first 3 indices (or less if array is shorter)
+      const count = Math.min(obj.length, 3);
+      for (let i = 0; i < count; i++) {
+        keys.push(`${prefix}[${i}]`);
+        // Recurse into each element to discover nested object keys
+        if (obj[i] && typeof obj[i] === "object") {
+          walk(obj[i], `${prefix}[${i}]`, depth + 1);
         }
       }
       return;
@@ -1344,85 +1535,16 @@ const DatasetTestMode = React.forwardRef(
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
-                  <Autocomplete
-                    size="small"
-                    freeSolo
-                    options={
-                      mapping[variable] &&
-                      !columnNames.includes(mapping[variable])
-                        ? [mapping[variable], ...columnNames]
-                        : columnNames
-                    }
-                    value={mapping[variable] || null}
-                    onChange={(_, val) =>
+                  <ColumnTreeSelect
+                    columnNames={columnNames}
+                    value={mapping[variable] || ""}
+                    onChange={(val) =>
                       setMapping((prev) => ({
                         ...prev,
                         [variable]: val || "",
                       }))
                     }
-                    onBlur={(e) => {
-                      const val = e.target.value?.trim();
-                      if (val) setMapping((prev) => ({ ...prev, [variable]: val }));
-                    }}
-                    filterOptions={(opts, { inputValue }) => {
-                      const q = inputValue.toLowerCase();
-                      if (!q) return opts.filter((o) => !o.includes(".") && !o.includes("["));
-                      const showNested = q.includes(".") || q.includes("[");
-                      return opts.filter((o) => {
-                        const lower = o.toLowerCase();
-                        if (!showNested && (lower.includes(".") || lower.includes("["))) return false;
-                        return lower.startsWith(q);
-                      });
-                    }}
-                    openOnFocus
-                    autoHighlight
-                    selectOnFocus
-                    handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt === val}
-                    sx={{
-                      flex: 1,
-                      ...(isUnmapped && {
-                        "& .MuiOutlinedInput-notchedOutline": {
-                          borderColor: "warning.main",
-                        },
-                      }),
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        placeholder="Select column (required)"
-                        InputProps={{
-                          ...params.InputProps,
-                          sx: {
-                            ...params.InputProps.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            height: 30,
-                            py: 0,
-                          },
-                        }}
-                      />
-                    )}
-                    renderOption={(props, col) => {
-                      const { key, ...rest } = props;
-                      const isNested = col.includes(".") || col.includes("[");
-                      return (
-                        <Box
-                          component="li"
-                          key={key}
-                          {...rest}
-                          sx={{
-                            ...rest.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            ...(isNested && { pl: 3, color: "text.secondary" }),
-                          }}
-                        >
-                          {col}
-                        </Box>
-                      );
-                    }}
-                    ListboxProps={{ style: { maxHeight: 260 } }}
+                    isUnmapped={isUnmapped}
                   />
                 </Box>
               );

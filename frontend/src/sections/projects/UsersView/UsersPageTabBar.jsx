@@ -203,6 +203,7 @@ const UsersPageTabBar = ({
           type="black"
         >
           <ButtonBase
+            data-create-view-btn
             onClick={(e) => setSaveViewAnchor(e.currentTarget)}
             sx={{
               display: "inline-flex",

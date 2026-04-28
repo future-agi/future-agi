@@ -126,6 +126,8 @@ services:
     image: futureagi/backend:local
     ports:
       - "${BACKEND_PORT:-8000}:80"
+    env_file:
+      - .env
     environment:
       <<: *backend-env
       SERVICE_TYPE: backend
@@ -151,6 +153,8 @@ services:
       context: ./futureagi
       dockerfile: Dockerfile.oss
     image: futureagi/backend:local
+    env_file:
+      - .env
     environment:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
@@ -177,6 +181,8 @@ services:
       context: ./futureagi/agentcc-gateway
     ports:
       - "${GATEWAY_PORT:-8090}:8080"
+    env_file:
+      - .env
     environment:
       AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -200,6 +206,8 @@ services:
       dockerfile: Dockerfile.oss
     ports:
       - "${SERVING_PORT:-8080}:8080"
+    env_file:
+      - .env
     environment:
       <<: *backend-env
     depends_on:

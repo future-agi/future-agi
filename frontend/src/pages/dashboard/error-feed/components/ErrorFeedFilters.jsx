@@ -47,10 +47,10 @@ const TIME_RANGE_OPTIONS = [
 
 const FIX_LAYER_OPTIONS = [
   { value: "", label: "All Fix Layers" },
-  { value: "prompt", label: "Prompt" },
-  { value: "tools", label: "Tools" },
-  { value: "orchestration", label: "Orchestration" },
-  { value: "guardrails", label: "Guardrails" },
+  { value: "Prompt", label: "Prompt" },
+  { value: "Tools", label: "Tools" },
+  { value: "Orchestration", label: "Orchestration" },
+  { value: "Guardrails", label: "Guardrails" },
 ];
 
 // ── compact select ─────────────────────────────────────────────────────────

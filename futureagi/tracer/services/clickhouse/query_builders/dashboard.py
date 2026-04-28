@@ -18,6 +18,10 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from tracer.services.clickhouse.query_builders.expressions import (
+    annotation_numeric_value_expr,
+)
+
 logger = logging.getLogger(__name__)
 
 # Allowed characters for ClickHouse map keys: alphanumeric, dots, underscores, hyphens
@@ -95,6 +99,11 @@ METRIC_UNITS: Dict[str, str] = {
     "tag": "",
 }
 
+# Metrics whose column expression emits a 0/1 indicator per row. The
+# averaging aggregations get rescaled to a percentage at query time via
+# ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
+_RATE_INDICATOR_METRICS = frozenset({"error_rate"})
+
 # Metrics that are non-numeric identifiers — force count_distinct aggregation
 _COUNT_DISTINCT_METRICS = frozenset(
     {
@@ -117,6 +126,32 @@ _COUNT_DISTINCT_METRICS = frozenset(
         "tag",
     }
 )
+
+# Aggregations that produce an "average-like" result (mean, median, any
+# percentile). Rate metrics that store a 0/1 indicator per row need their
+# averaging result multiplied by 100 so the value matches the declared
+# ``%`` unit. sum/count/min/max are intentionally excluded — for a 0/1
+# indicator they keep their natural meaning (count of matching rows for
+# sum/count; bounded 0/1 for min/max).
+AVERAGING_AGGREGATIONS = frozenset(
+    {"avg", "median", "p25", "p50", "p75", "p90", "p95", "p99"}
+)
+
+
+def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
+    """Wrap *agg_expr* in ``(... ) * 100`` for averaging aggregations.
+
+    Used by metrics whose column expression emits a 0/1 indicator per
+    row (``error_rate``, ``cell_error_rate``, ``success_rate``,
+    ``failure_rate``) so widgets that render them with a ``%`` suffix
+    show ``42%`` rather than ``0.42%``. Non-averaging aggregations are
+    returned unchanged so e.g. ``sum(failure_rate)`` still reports a
+    failure count.
+    """
+    if aggregation in AVERAGING_AGGREGATIONS:
+        return f"({agg_expr}) * 100"
+    return agg_expr
+
 
 AGGREGATIONS: Dict[str, str] = {
     "avg": "avg({col})",
@@ -180,7 +215,7 @@ def _prefix_spans_columns(clause: str) -> str:
     import re
 
     # Prefix bare column names (not already prefixed and not inside %(...))
-    for col in ("project_id", "_peerdb_is_deleted", "start_time"):
+    for col in ("project_id", "_peerdb_is_deleted", "start_time", "parent_span_id"):
         # Match bare column name not preceded by . or inside %(...)
         clause = re.sub(
             rf"(?<!\.)(?<!%\()(?<!\w){col}(?!\w)(?!s\))",
@@ -315,13 +350,20 @@ class DashboardQueryBuilder:
                 params,
             )
         _, col_expr = SYSTEM_METRICS[metric_name]
-        # Force count-based aggregation for non-numeric / identity metrics
+        # Project count should count distinct projects, not raw span rows.
+        if metric_name == "project" and aggregation == "count":
+            aggregation = "count_distinct"
+        # Force count-based aggregation for non-numeric / identity metrics.
         if metric_name in _COUNT_DISTINCT_METRICS and aggregation not in (
             "count",
             "count_distinct",
         ):
             aggregation = "count_distinct"
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
+
+        # 0/1 indicator metrics → rescale averaging aggs to percent.
+        if metric_name in _RATE_INDICATOR_METRICS:
+            agg_expr = rescale_rate_to_percent(agg_expr, aggregation)
 
         select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
         group_parts = ["time_bucket"]
@@ -332,6 +374,8 @@ class DashboardQueryBuilder:
         where_clauses, params = self._build_where_clauses(
             "spans", "start_time", per_metric_filters, params
         )
+        if metric_name == "latency":
+            where_clauses.append("(parent_span_id IS NULL OR parent_span_id = '')")
 
         # Subquery filters from global + per-metric for non-system metrics
         subquery_clauses = self._build_subquery_filters(
@@ -768,19 +812,25 @@ class DashboardQueryBuilder:
                 pass
         if output_type in ("categorical", "choice"):
             # Categorical: count rows (each row = one annotation)
-            col_expr = "1"
             agg_expr = "count()"
-        elif output_type in ("thumbs_up_down", "pass_fail"):
-            # Boolean: percentage of "up" / "Passed"
-            col_expr = "JSONExtractString(a.value, 'value')"
-            agg_expr = f"countIf({col_expr} = 'up') * 100.0 / greatest(count(), 1)"
+        elif output_type == "thumbs_up_down":
+            # Stored as {"value": "up"|"down"} — percentage of "up".
+            # countIf already skips NULL/missing rows, but we still want
+            # the denominator to exclude rows where the key is absent.
+            col_expr = (
+                "JSONExtract(a.value, 'value', 'Nullable(String)')"
+            )
+            agg_expr = (
+                f"countIf({col_expr} = 'up') * 100.0 / "
+                f"greatest(countIf({col_expr} IS NOT NULL), 1)"
+            )
         elif output_type == "text":
             # Text: just count annotations
-            col_expr = "1"
             agg_expr = "count()"
         else:
-            # Numeric/star: average of the float value
-            col_expr = "JSONExtractFloat(a.value, 'value')"
+            # Numeric/star: aggregate the float value, skipping NULLs so
+            # missing/non-numeric payloads don't pull averages toward 0.
+            col_expr = annotation_numeric_value_expr(alias="a", nullable=True)
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
         select_parts = [f"{bucket_fn}(a.created_at) AS time_bucket"]
@@ -788,10 +838,28 @@ class DashboardQueryBuilder:
         order_parts = ["time_bucket"]
         select_parts.append(f"{agg_expr} AS value")
 
-        # model_hub_score has no project_id — resolve via trace_dict
+        # model_hub_score has no project_id of its own that maps to
+        # tracer.Project, so resolve via trace_dict for trace-attached
+        # scores and via the spans table for span-attached scores.
+        # Other source types (call_execution, dataset_row, …) are out of
+        # scope for trace dashboards.
         where_parts = [
-            "dictGet('trace_dict', 'project_id', a.trace_id) IN %(project_ids)s",
+            (
+                "("
+                "(a.trace_id IS NOT NULL "
+                "AND dictGet('trace_dict', 'project_id', a.trace_id) "
+                "IN %(project_ids)s)"
+                " OR "
+                "(a.observation_span_id IS NOT NULL "
+                "AND a.observation_span_id != '' "
+                "AND a.observation_span_id IN ("
+                "SELECT id FROM spans "
+                "WHERE project_id IN %(project_ids)s "
+                "AND _peerdb_is_deleted = 0))"
+                ")"
+            ),
             "a._peerdb_is_deleted = 0",
+            "a.deleted = 0",
             "a.created_at >= %(start_date)s",
             "a.created_at < %(end_date)s",
             "a.label_id = toUUID(%(annotation_label_id)s)",
@@ -1091,23 +1159,42 @@ class DashboardQueryBuilder:
                 params[param_key] = label_id
                 ann_idx += 1
 
-                # Value extraction based on type
+                # ``id IS NULL`` distinguishes "no annotation row matched
+                # the LEFT JOIN" from "row exists but value JSON is
+                # missing the key" (which would otherwise extract as 0
+                # / empty and silently bucket alongside real values).
+                missing_check = f"{alias}.id IS NULL"
                 if output_type in ("categorical", "choice"):
-                    val_expr = f"arrayJoin(if({alias}.trace_id IS NULL, ['(not set)'], JSONExtract({alias}.value, 'selected', 'Array(String)')))"
-                elif output_type in ("thumbs_up_down", "pass_fail"):
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', JSONExtractString({alias}.value, 'value'))"
+                    val_expr = (
+                        f"arrayJoin(if({missing_check}, ['(not set)'], "
+                        f"JSONExtract({alias}.value, 'selected', 'Array(String)')))"
+                    )
+                elif output_type == "thumbs_up_down":
+                    val_expr = (
+                        f"if({missing_check}, '(not set)', "
+                        f"JSONExtractString({alias}.value, 'value'))"
+                    )
                 elif output_type == "text":
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', JSONExtractString({alias}.value, 'text'))"
-                elif output_type in ("numeric", "star"):
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', toString(round(JSONExtractFloat({alias}.value, 'value'), 1)))"
+                    val_expr = (
+                        f"if({missing_check}, '(not set)', "
+                        f"JSONExtractString({alias}.value, 'text'))"
+                    )
                 else:
-                    val_expr = f"if({alias}.trace_id IS NULL, '(not set)', toString(JSONExtractFloat({alias}.value, 'value')))"
+                    nullable_num = annotation_numeric_value_expr(
+                        alias=alias, nullable=True
+                    )
+                    rounding = ", 1" if output_type in ("numeric", "star") else ""
+                    val_expr = (
+                        f"if({missing_check} OR {nullable_num} IS NULL, "
+                        f"'(not set)', toString(round({nullable_num}{rounding})))"
+                    )
 
                 join_clause = (
                     f"LEFT JOIN model_hub_score AS {alias} "
                     f"ON toString({alias}.trace_id) = s.trace_id "
                     f"AND {alias}.label_id = toUUID(%({param_key})s) "
-                    f"AND {alias}._peerdb_is_deleted = 0"
+                    f"AND {alias}._peerdb_is_deleted = 0 "
+                    f"AND {alias}.deleted = 0"
                 )
                 result.append(
                     {"type": "annotation", "expr": val_expr, "join": join_clause}
@@ -1381,13 +1468,21 @@ class DashboardQueryBuilder:
                 label_id = f.get("metric_name", "")
                 ann_org_key = f"{prefix}ann_org_id_{idx}"
 
+                # Use the nullable extractor so JSON payloads missing
+                # the numeric key compare as NULL (and are excluded by
+                # the filter) instead of evaluating as 0.
+                num_expr = annotation_numeric_value_expr(
+                    alias="model_hub_score", nullable=True
+                )
                 subquery = (
                     f"trace_id IN ("
                     f"SELECT toString(trace_id) FROM model_hub_score FINAL "
                     f"WHERE label_id = toUUID(%({label_id_key})s) "
                     f"AND organization_id = toUUID(%({ann_org_key})s) "
-                    f"AND JSONExtractFloat(value, 'value') {op_symbol} %({val_key})s "
-                    f"AND _peerdb_is_deleted = 0"
+                    f"AND {num_expr} IS NOT NULL "
+                    f"AND {num_expr} {op_symbol} %({val_key})s "
+                    f"AND _peerdb_is_deleted = 0 "
+                    f"AND deleted = 0"
                     f")"
                 )
                 clauses.append(subquery)
