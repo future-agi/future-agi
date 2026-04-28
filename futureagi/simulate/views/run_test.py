@@ -5582,12 +5582,18 @@ def _create_rerun_call_execution(call_execution):
 
     # phone_number_id is only used by VAPI; LiveKit's prepare_call
     # ignores CreateCallExecution.phone_number_id entirely.
-    from ee.voice.utils.system_provider import resolve_system_voice_provider
+    try:
+        from ee.voice.utils.system_provider import resolve_system_voice_provider
+    except ImportError:
+        resolve_system_voice_provider = None
 
-    agent_version = call_execution.agent_version
-    snapshot = (agent_version.configuration_snapshot or {}) if agent_version else {}
-    client_provider = snapshot.get("provider")
-    system_provider = resolve_system_voice_provider(client_provider)
+    if resolve_system_voice_provider is not None:
+        agent_version = call_execution.agent_version
+        snapshot = (agent_version.configuration_snapshot or {}) if agent_version else {}
+        client_provider = snapshot.get("provider")
+        system_provider = resolve_system_voice_provider(client_provider)
+    else:
+        system_provider = os.getenv("SYSTEM_VOICE_PROVIDER", "livekit")
     if system_provider == "livekit":
         phone_number_id = ""
     elif phone_number and phone_number.startswith("+91"):
