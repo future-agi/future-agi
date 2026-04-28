@@ -331,6 +331,58 @@ class TestMetricsEndpoint:
         assert "call.user_wpm" not in metric_names
         assert "freeform.attr" in metric_names
 
+    def test_clickhouse_custom_attribute_discovery_includes_raw_attribute_sources(self):
+        viewset = DashboardViewSet()
+        mock_ch = MagicMock()
+        mock_ch.execute_read.side_effect = [
+            (
+                [
+                    {"key": "typed.attr", "type": "text"},
+                ],
+                [],
+                1.0,
+            ),
+            (
+                [
+                    {
+                        "attrs": '{"livekit.customer_id": "cust-1", "livekit.score": 0.95}'
+                    },
+                ],
+                [],
+                1.0,
+            ),
+            (
+                [
+                    {
+                        "attrs": '{"livekit.connected": true, "nested": {"ignored": true}}'
+                    },
+                ],
+                [],
+                1.0,
+            ),
+        ]
+
+        attrs = viewset._fetch_clickhouse_custom_attributes(mock_ch, ["project-1"])
+
+        typed_sql = mock_ch.execute_read.call_args_list[0].args[0]
+        spans_raw_sql = mock_ch.execute_read.call_args_list[1].args[0]
+        cdc_raw_sql = mock_ch.execute_read.call_args_list[2].args[0]
+        assert "mapKeys(span_attr_str)" in typed_sql
+        assert "JSONExtractKeys" not in typed_sql
+        assert "span_attributes_raw AS attrs" in spans_raw_sql
+        assert "span_attributes AS attrs" in cdc_raw_sql
+        assert "PREWHERE project_id IN %(project_ids)s" in spans_raw_sql
+        assert "LIMIT 200" in spans_raw_sql
+        assert mock_ch.execute_read.call_args_list[0].args[1]["project_ids"] == [
+            "project-1"
+        ]
+        assert attrs == [
+            {"key": "livekit.connected", "type": "boolean"},
+            {"key": "livekit.customer_id", "type": "text"},
+            {"key": "livekit.score", "type": "number"},
+            {"key": "typed.attr", "type": "text"},
+        ]
+
 
 # ===========================================================================
 # DashboardQueryBuilder
@@ -638,6 +690,38 @@ class TestDashboardQueryBuilder:
         sql, _, _ = queries[0]
         assert "span_attr_num" in sql
         assert "custom.score" in sql
+        assert "tracer_observation_span" in sql
+        assert "span_attributes_raw" in sql
+        assert "JSONExtractFloat" in sql
+        assert "PREWHERE project_id IN %(project_ids)s" in sql
+        assert "JSONHas(span_attributes, 'custom.score')" in sql
+
+    def test_custom_attribute_query_falls_back_to_raw_string_attributes(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "customer_tier",
+                    "name": "customer_tier",
+                    "type": "custom_attribute",
+                    "attribute_key": "customer.tier",
+                    "attribute_type": "string",
+                    "aggregation": "count_distinct",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "span_attr_str" in sql
+        assert "customer.tier" in sql
+        assert "tracer_observation_span" in sql
+        assert "span_attributes_raw" in sql
+        assert "JSONExtractString" in sql
+        assert "PREWHERE project_id IN %(project_ids)s" in sql
+        assert "JSONHas(span_attributes, 'customer.tier')" in sql
 
     def test_multiple_metrics(self, sample_query_config):
         sample_query_config["metrics"].append(

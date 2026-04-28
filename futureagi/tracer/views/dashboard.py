@@ -188,6 +188,91 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             normalized.append(metric_copy)
         return normalized
 
+    def _fetch_clickhouse_custom_attributes(self, ch, project_ids):
+        def _infer_raw_attr_type(value):
+            if isinstance(value, bool):
+                return "boolean"
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return "number"
+            return "text"
+
+        def _add_raw_attrs(raw_rows, attrs_by_key):
+            import json
+
+            for row in raw_rows:
+                raw = row.get("attrs") if isinstance(row, dict) else row[0]
+                try:
+                    attrs = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(attrs, dict):
+                    continue
+                for key, value in attrs.items():
+                    if key not in attrs_by_key and isinstance(
+                        value, (str, int, float, bool)
+                    ):
+                        attrs_by_key[key] = _infer_raw_attr_type(value)
+
+        rows, _cols, _ = ch.execute_read(
+            """
+            SELECT key, argMax(type, cnt) AS type
+            FROM (
+                SELECT key, 'text' AS type, count() AS cnt
+                FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
+                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'number' AS type, count() AS cnt
+                FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
+                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'boolean' AS type, count() AS cnt
+                FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
+                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                GROUP BY key
+            )
+            GROUP BY key ORDER BY key LIMIT 2000
+            """,
+            {"project_ids": project_ids},
+            timeout_ms=15000,
+        )
+        attrs_by_key = {}
+        for row in rows:
+            if isinstance(row, dict):
+                key, attr_type = row.get("key", ""), row.get("type", "string")
+            elif isinstance(row, (list, tuple)) and len(row) >= 2:
+                key, attr_type = row[0], row[1]
+            else:
+                continue
+            if key:
+                attrs_by_key[key] = attr_type
+
+        for table, column in (
+            ("spans", "span_attributes_raw"),
+            ("tracer_observation_span", "span_attributes"),
+        ):
+            raw_rows, _cols, _ = ch.execute_read(
+                f"""
+                SELECT {column} AS attrs
+                FROM {table}
+                PREWHERE project_id IN %(project_ids)s
+                WHERE _peerdb_is_deleted = 0
+                    AND {column} != '{{}}'
+                    AND {column} != ''
+                ORDER BY created_at DESC
+                LIMIT 200
+                """,
+                {"project_ids": project_ids},
+                timeout_ms=5000,
+            )
+            _add_raw_attrs(raw_rows, attrs_by_key)
+
+        return [
+            {"key": key, "type": attr_type}
+            for key, attr_type in sorted(attrs_by_key.items())
+        ][:2000]
+
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
@@ -991,39 +1076,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     from tracer.services.clickhouse.client import get_clickhouse_client
 
                     ch = get_clickhouse_client()
-                    # Single batch query with type inference across all projects
-                    rows, cols, _ = ch.execute_read(
-                        """
-                        SELECT key, argMax(type, cnt) AS type FROM (
-                            SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
-                        )
-                        GROUP BY key ORDER BY key LIMIT 2000
-                        """,
-                        {"project_ids": project_ids},
-                        timeout_ms=15000,
+                    custom_attributes.extend(
+                        self._fetch_clickhouse_custom_attributes(ch, project_ids)
                     )
-                    for r in rows:
-                        if isinstance(r, dict):
-                            k, t = r.get("key", ""), r.get("type", "string")
-                        elif isinstance(r, (list, tuple)) and len(r) >= 2:
-                            k, t = r[0], r[1]
-                        else:
-                            continue
-                        if k:
-                            custom_attributes.append({"key": k, "type": t})
                 elif project_ids:
                     for pid in project_ids:
                         keys = SQL_query_handler.get_span_attributes_for_project(pid)

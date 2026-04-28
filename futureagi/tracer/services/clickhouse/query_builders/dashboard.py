@@ -889,10 +889,22 @@ class DashboardQueryBuilder:
         attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
         attr_type = metric.get("attribute_type", "number")
 
+        raw_attr_expr = (
+            "if(span_attributes_raw != '{}' AND span_attributes_raw != '', "
+            "span_attributes_raw, ifNull(os.span_attributes, '{}'))"
+        )
         if attr_type == "number":
-            col_expr = f"span_attr_num['{attr_key}']"
+            col_expr = (
+                f"if(mapContains(span_attr_num, '{attr_key}'), "
+                f"span_attr_num['{attr_key}'], "
+                f"JSONExtractFloat({raw_attr_expr}, '{attr_key}'))"
+            )
         else:
-            col_expr = f"span_attr_str['{attr_key}']"
+            col_expr = (
+                f"if(mapContains(span_attr_str, '{attr_key}'), "
+                f"span_attr_str['{attr_key}'], "
+                f"JSONExtractString({raw_attr_expr}, '{attr_key}'))"
+            )
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
@@ -924,6 +936,17 @@ class DashboardQueryBuilder:
         query = (
             f"SELECT {', '.join(select_parts)}\n"
             f"FROM spans\n"
+            f"LEFT JOIN (\n"
+            f"    SELECT id, span_attributes\n"
+            f"    FROM tracer_observation_span FINAL\n"
+            f"    PREWHERE project_id IN %(project_ids)s\n"
+            f"    WHERE _peerdb_is_deleted = 0\n"
+            f"      AND start_time >= %(start_date)s\n"
+            f"      AND start_time < %(end_date)s\n"
+            f"      AND span_attributes != '{{}}'\n"
+            f"      AND span_attributes != ''\n"
+            f"      AND JSONHas(span_attributes, '{attr_key}')\n"
+            f") AS os ON os.id = spans.id\n"
             f"WHERE {' AND '.join(all_where)}\n"
             f"GROUP BY {', '.join(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
