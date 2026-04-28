@@ -800,6 +800,29 @@ class TestDashboardQueryBuilder:
         assert "PREWHERE project_id IN %(project_ids)s" in sql
         assert "JSONHas(span_attributes, 'customer.tier')" in sql
 
+    def test_custom_attribute_text_metric_without_type_counts_values(self):
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "month",
+            "time_range": {"preset": "6M"},
+            "metrics": [
+                {
+                    "id": "error.message",
+                    "name": "error.message",
+                    "type": "custom_attribute",
+                    "attribute_key": "error.message",
+                    "aggregation": "sum",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "countIf(" in sql
+        assert "JSONExtractString" in sql
+        assert "JSONExtractFloat" not in sql
+        assert "sum(" not in sql
+
     def test_multiple_metrics(self, sample_query_config):
         sample_query_config["metrics"].append(
             {

@@ -1095,6 +1095,25 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             for attr in custom_attributes:
                 k = attr["key"] if isinstance(attr, dict) else attr
                 t = attr.get("type", "string") if isinstance(attr, dict) else "string"
+                allowed_aggregations = (
+                    [
+                        "avg",
+                        "median",
+                        "max",
+                        "min",
+                        "p25",
+                        "p50",
+                        "p75",
+                        "p90",
+                        "p95",
+                        "p99",
+                        "sum",
+                        "count",
+                        "count_distinct",
+                    ]
+                    if t == "number"
+                    else ["count", "count_distinct"]
+                )
                 metrics.append(
                     {
                         "name": k,
@@ -1102,6 +1121,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "category": "custom_attribute",
                         "source": "traces",
                         "type": t,
+                        "allowed_aggregations": allowed_aggregations,
                     }
                 )
 

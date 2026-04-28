@@ -1570,6 +1570,9 @@ export default function WidgetEditorView() {
     return map[type] || type;
   };
 
+  const toAttributeType = (dataType) =>
+    dataType === "number" ? "number" : "string";
+
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
     const aggregation =
@@ -1595,6 +1598,7 @@ export default function WidgetEditorView() {
       if (m.outputType) base.output_type = m.outputType;
     } else if (backendType === "custom_attribute") {
       base.attribute_key = m.id;
+      base.attribute_type = toAttributeType(m.dataType);
     } else if (backendType === "custom_column") {
       base.column_id = m.id;
       if (m.columnDataType) base.data_type = m.columnDataType;
@@ -1627,7 +1631,7 @@ export default function WidgetEditorView() {
       source: f.source || "traces",
     };
     if (backendType === "custom_attribute") {
-      base.attribute_type = "string";
+      base.attribute_type = toAttributeType(f.dataType);
     }
     if (backendType === "eval_metric" && f.outputType) {
       base.output_type = f.outputType;
@@ -1645,7 +1649,7 @@ export default function WidgetEditorView() {
       source: b.source || "traces",
     };
     if (backendType === "custom_attribute") {
-      base.attribute_type = "string";
+      base.attribute_type = toAttributeType(b.dataType);
     }
     if (backendType === "annotation_metric") {
       base.label_id = b.id;
@@ -1841,6 +1845,7 @@ export default function WidgetEditorView() {
         id: option.id,
         name: option.name,
         type: option.type,
+        dataType: option.dataType || "string",
         source: option.source || "traces",
         outputType: option.outputType,
       };

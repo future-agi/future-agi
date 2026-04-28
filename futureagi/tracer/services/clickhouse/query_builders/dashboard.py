@@ -69,6 +69,15 @@ def _custom_attr_value_expr(
     )
 
 
+def _normalize_attr_type(attr_type: Optional[str]) -> str:
+    normalized = (attr_type or "string").lower()
+    if normalized in ("number", "numeric", "float", "integer", "int"):
+        return "number"
+    if normalized in ("bool", "boolean"):
+        return "boolean"
+    return "string"
+
+
 # ---------------------------------------------------------------------------
 # Metric resolution tables
 # ---------------------------------------------------------------------------
@@ -769,7 +778,7 @@ class DashboardQueryBuilder:
             elif f_type == "custom_attribute":
                 need_spans_join = True
                 attr_key = _sanitize_attr_key(f_name)
-                attr_type = f.get("attribute_type", "string")
+                attr_type = _normalize_attr_type(f.get("attribute_type", "string"))
                 col = _custom_attr_value_expr(attr_key, attr_type, "s")
                 where_parts.append(f"{col} {op_symbol} %({val_key})s")
                 params[val_key] = _coerce_filter_value(val, op)
@@ -922,7 +931,11 @@ class DashboardQueryBuilder:
         params: dict,
     ) -> Tuple[str, dict]:
         attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
-        attr_type = metric.get("attribute_type", "number")
+        attr_type = _normalize_attr_type(
+            metric.get("attribute_type")
+            or metric.get("data_type")
+            or metric.get("dataType")
+        )
 
         raw_attr_expr = (
             "if(span_attributes_raw != '{}' AND span_attributes_raw != '', "
@@ -932,7 +945,12 @@ class DashboardQueryBuilder:
             attr_key, attr_type, raw_attrs_expr=raw_attr_expr
         )
 
-        agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
+        if attr_type == "number":
+            agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
+        elif aggregation == "count_distinct":
+            agg_expr = f"uniqIf({col_expr}, {col_expr} != '')"
+        else:
+            agg_expr = f"countIf({col_expr} != '')"
 
         select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
         group_parts = ["time_bucket"]
@@ -1174,7 +1192,7 @@ class DashboardQueryBuilder:
 
             elif bd_type == "custom_attribute":
                 safe_name = _sanitize_attr_key(bd_name)
-                attr_type = bd.get("attribute_type", "string")
+                attr_type = _normalize_attr_type(bd.get("attribute_type", "string"))
                 expr = _custom_attr_value_expr(safe_name, attr_type)
                 result.append({"type": "column", "expr": expr, "join": None})
 
@@ -1407,7 +1425,7 @@ class DashboardQueryBuilder:
                 f_name = _sanitize_attr_key(f.get("metric_name", ""))
                 op = f.get("operator", "")
                 val = f.get("value")
-                attr_type = f.get("attribute_type", "string")
+                attr_type = _normalize_attr_type(f.get("attribute_type", "string"))
                 col = _custom_attr_value_expr(f_name, attr_type)
 
                 if op in ("is_set", "is_not_set", "is_numeric", "is_not_numeric"):
