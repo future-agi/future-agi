@@ -199,18 +199,18 @@ def _parse_persona(persona_value: Any) -> dict[str, Any]:
 def _build_voice_settings(
     persona_data: dict[str, Any],
     simulator_agent,
+    client_provider: str | None = None,
 ) -> dict[str, Any]:
     """Build voice settings from persona data and simulator agent defaults."""
-    import os
-
     from ee.voice.constants.voice_catalog import resolve_voice_id
     from ee.voice.constants.voice_mapper import select_voice_id
+    from simulate.utils.voice_provider import resolve_system_voice_provider
     from tracer.models.observability_provider import ProviderChoices
 
     # Voice_id format is determined by the system voice provider (the
     # infrastructure hosting the simulator assistant), not by the user's
     # agent provider.
-    system_provider = os.getenv("SYSTEM_VOICE_PROVIDER", ProviderChoices.LIVEKIT)
+    system_provider = resolve_system_voice_provider(client_provider)
 
     # Select voice name based on persona attributes (rule-based scoring)
     selected_voice_name = select_voice_id(persona_data, provider=system_provider)
@@ -399,7 +399,11 @@ async def create_call_execution_records(
 
                         # Build voice settings
                         voice_settings = (
-                            _build_voice_settings(persona_data, simulator_agent)
+                            _build_voice_settings(
+                                persona_data,
+                                simulator_agent,
+                                snapshot.get("provider"),
+                            )
                             if simulator_agent
                             else {}
                         )
