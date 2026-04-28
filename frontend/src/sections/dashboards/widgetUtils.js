@@ -46,6 +46,24 @@ const UNIT_LESS_AGGREGATIONS = new Set([
   "fail_count",
 ]);
 
+// Units the backend may return on a metric. Anything listed as "suffix"
+// is rendered after the value (e.g. "120 ms", "5 /min"); "prefix" is for
+// currency-like indicators rendered before the value (e.g. "$3").
+// Without this mapping, non-percent units (ms, s, cents, /min, …) were
+// silently dropped, which is why latency metrics rendered with no unit
+// while percentage metrics misleadingly looked the same as latencies.
+const UNIT_RENDERING = {
+  $: { prefixSuffix: "prefix" },
+  "%": { prefixSuffix: "suffix" },
+  "#": { prefixSuffix: "prefix" },
+  ms: { prefixSuffix: "suffix", separator: " " },
+  s: { prefixSuffix: "suffix", separator: " " },
+  cents: { prefixSuffix: "suffix", separator: " " },
+  tokens: { prefixSuffix: "suffix", separator: " " },
+  wpm: { prefixSuffix: "suffix", separator: " " },
+  "/min": { prefixSuffix: "suffix" },
+};
+
 export const getSuggestedUnitConfig = (metricConfigs = []) => {
   if (
     metricConfigs.some((metric) =>
@@ -54,15 +72,19 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
   ) {
     return { unit: "", prefixSuffix: "prefix" };
   }
-  const uniqueUnits = [
-    ...new Set(metricConfigs.map((metric) => metric?.unit).filter(Boolean)),
-  ];
-  if (uniqueUnits.length !== 1) {
+  // Don't filter empty strings here — a chart that mixes a unit-less
+  // metric (e.g. ``call_count`` with unit "") and a metric with a unit
+  // (e.g. ``duration`` with unit "s") should fall back to no suggested
+  // unit instead of inheriting the non-empty one. Otherwise call_count
+  // ends up rendered as ``35 s`` because it shares the axis suggestion.
+  const allUnits = metricConfigs.map((metric) => metric?.unit ?? "");
+  const uniqueUnits = [...new Set(allUnits)];
+  if (uniqueUnits.length !== 1 || !uniqueUnits[0]) {
     return { unit: "", prefixSuffix: "prefix" };
   }
   const [unit] = uniqueUnits;
-  if (unit === "$") return { unit, prefixSuffix: "prefix" };
-  if (unit === "%") return { unit, prefixSuffix: "suffix" };
+  const rendering = UNIT_RENDERING[unit];
+  if (rendering) return { unit, ...rendering };
   return { unit: "", prefixSuffix: "prefix" };
 };
 
@@ -85,5 +107,10 @@ export const formatValueWithConfig = (
   } else {
     str = num.toFixed(dec);
   }
-  return prefixSuffix === "suffix" ? `${str}${unit}` : `${unit}${str}`;
+  if (!unit) return str;
+  const rendering = UNIT_RENDERING[unit] || {};
+  const separator = rendering.separator ?? "";
+  return prefixSuffix === "suffix"
+    ? `${str}${separator}${unit}`
+    : `${unit}${separator}${str}`;
 };

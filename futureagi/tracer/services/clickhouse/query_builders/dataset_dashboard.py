@@ -27,6 +27,7 @@ from tracer.services.clickhouse.query_builders.dashboard_base import (
     _coerce_filter_value,
     _generate_time_buckets,
     _parse_dt,
+    rescale_rate_to_percent,
 )
 
 # Allowed characters for safe string interpolation
@@ -58,6 +59,9 @@ DATASET_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     ),
 }
 
+# Metrics whose column expression emits a 0/1 indicator per row.
+_RATE_INDICATOR_METRICS = frozenset({"cell_error_rate"})
+
 DATASET_METRIC_UNITS: Dict[str, str] = {
     "row_count": "",
     "prompt_tokens": "tokens",
@@ -82,18 +86,22 @@ DATASET_AGGREGATIONS: Dict[str, str] = {
     "count": "count()",
     "count_distinct": "uniq({col})",
     "sum": "sum({col})",
-    # Dataset-specific aggregations for pass/fail and boolean
+    # Dataset-specific aggregations for pass/fail and boolean.
+    # Rate aggregations return 0–100 (percentage) so widgets that display
+    # them with a ``%`` suffix don't show 0.42% for a 42% pass rate.
     "pass_rate": (
-        "countIf(lower({col}) IN ('true', 'pass', 'passed', '1')) "
+        "countIf(lower({col}) IN ('true', 'pass', 'passed', '1')) * 100.0 "
         "/ nullIf(count(), 0)"
     ),
     "fail_rate": (
-        "countIf(lower({col}) IN ('false', 'fail', 'failed', '0')) "
+        "countIf(lower({col}) IN ('false', 'fail', 'failed', '0')) * 100.0 "
         "/ nullIf(count(), 0)"
     ),
     "pass_count": "countIf(lower({col}) IN ('true', 'pass', 'passed', '1'))",
     "fail_count": "countIf(lower({col}) IN ('false', 'fail', 'failed', '0'))",
-    "true_rate": ("countIf(lower({col}) IN ('true', '1')) / nullIf(count(), 0)"),
+    "true_rate": (
+        "countIf(lower({col}) IN ('true', '1')) * 100.0 / nullIf(count(), 0)"
+    ),
 }
 
 # Breakdown dimensions for dataset workflow
@@ -218,6 +226,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         agg_expr = DATASET_AGGREGATIONS.get(aggregation, "avg({col})").format(
             col=col_expr
         )
+
+        if metric_name in _RATE_INDICATOR_METRICS:
+            agg_expr = rescale_rate_to_percent(agg_expr, aggregation)
 
         select_parts = [f"{bucket_fn}(c.created_at) AS time_bucket"]
         group_parts = ["time_bucket"]
