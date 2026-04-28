@@ -15,7 +15,7 @@ from simulate.models.test_execution import CallExecution
 from simulate.serializers.response.agent_definition import (
     AgentDefinitionResponseSerializer,
 )
-from simulate.serializers.scenarios import ScenariosSerializer
+from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
 
 
@@ -61,7 +61,7 @@ class RunTestSerializer(serializers.ModelSerializer):
         source="agent_definition", read_only=True
     )
 
-    scenarios_detail = ScenariosSerializer(
+    scenarios_detail = ScenarioResponseSerializer(
         source="scenarios", many=True, read_only=True
     )
 

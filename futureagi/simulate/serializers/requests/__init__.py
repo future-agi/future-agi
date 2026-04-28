@@ -8,6 +8,24 @@ from .agent_definition import (
 from .agent_version import (
     AgentVersionCreateRequestSerializer,
 )
+from .run_test_evals import (
+    AddEvalConfigsRequestSerializer,
+    EvalConfigDefinitionSerializer,
+    EvalConfigUpdateRequestSerializer,
+    EvalSummaryComparisonFilterSerializer,
+    EvalSummaryFilterSerializer,
+    RunNewEvalsOnTestExecutionSerializer,
+)
+from .scenarios import (
+    ColumnDefinitionSerializer,
+    ScenarioAddColumnsRequestSerializer,
+    ScenarioAddRowsRequestSerializer,
+    ScenarioCreateRequestSerializer,
+    ScenarioEditPromptsRequestSerializer,
+    ScenarioEditRequestSerializer,
+    ScenarioFilterSerializer,
+    ScenarioMultiDatasetFilterSerializer,
+)
 
 # from .persona import (
 #     PersonaCreateRequestSerializer,
@@ -17,12 +35,26 @@ from .agent_version import (
 # )
 
 __all__ = [
+    "EvalConfigDefinitionSerializer",
+    "AddEvalConfigsRequestSerializer",
+    "EvalConfigUpdateRequestSerializer",
+    "EvalSummaryFilterSerializer",
+    "EvalSummaryComparisonFilterSerializer",
+    "RunNewEvalsOnTestExecutionSerializer",
     "AgentDefinitionCreateRequestSerializer",
     "AgentDefinitionEditRequestSerializer",
     "AgentDefinitionBulkDeleteRequestSerializer",
     "AgentDefinitionFilterSerializer",
     "FetchAssistantRequestSerializer",
     "AgentVersionCreateRequestSerializer",
+    "ColumnDefinitionSerializer",
+    "ScenarioFilterSerializer",
+    "ScenarioMultiDatasetFilterSerializer",
+    "ScenarioCreateRequestSerializer",
+    "ScenarioEditRequestSerializer",
+    "ScenarioEditPromptsRequestSerializer",
+    "ScenarioAddRowsRequestSerializer",
+    "ScenarioAddColumnsRequestSerializer",
     # "PersonaCreateRequestSerializer",
     # "PersonaUpdateRequestSerializer",
     # "PersonaDuplicateRequestSerializer",

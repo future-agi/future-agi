@@ -16,6 +16,30 @@ from .agent_version import (
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
 )
+from .run_test_evals import (
+    AddEvalConfigsResponseSerializer,
+    DeleteEvalConfigResponseSerializer,
+    EvalConfigResponseSerializer,
+    EvalConfigUpdateResponseSerializer,
+    EvalErrorResponseSerializer,
+    EvalSummaryComparisonResponseSerializer,
+    EvalSummaryResponseSerializer,
+    EvalTemplateSummarySerializer,
+    RunNewEvalsResponseSerializer,
+)
+from .scenarios import (
+    ScenarioAddColumnsResponseSerializer,
+    ScenarioAddRowsResponseSerializer,
+    ScenarioCreateResponseSerializer,
+    ScenarioDeleteResponseSerializer,
+    ScenarioDetailResponseSerializer,
+    ScenarioEditResponseSerializer,
+    ScenarioErrorResponseSerializer,
+    ScenarioListResponseSerializer,
+    ScenarioMultiDatasetResponseSerializer,
+    ScenarioPromptsUpdateResponseSerializer,
+    ScenarioResponseSerializer,
+)
 
 # from .persona import (
 #     PersonaDeleteResponseSerializer,
@@ -25,6 +49,15 @@ from .agent_version import (
 # )
 
 __all__ = [
+    "EvalConfigResponseSerializer",
+    "AddEvalConfigsResponseSerializer",
+    "EvalConfigUpdateResponseSerializer",
+    "DeleteEvalConfigResponseSerializer",
+    "EvalTemplateSummarySerializer",
+    "EvalSummaryResponseSerializer",
+    "EvalSummaryComparisonResponseSerializer",
+    "RunNewEvalsResponseSerializer",
+    "EvalErrorResponseSerializer",
     "AgentDefinitionResponseSerializer",
     "AgentDefinitionCreateResponseSerializer",
     "AgentDefinitionEditResponseSerializer",
@@ -39,6 +72,17 @@ __all__ = [
     "AgentVersionActivateResponseSerializer",
     "AgentVersionDeleteResponseSerializer",
     "AgentVersionRestoreResponseSerializer",
+    "ScenarioResponseSerializer",
+    "ScenarioListResponseSerializer",
+    "ScenarioDetailResponseSerializer",
+    "ScenarioCreateResponseSerializer",
+    "ScenarioEditResponseSerializer",
+    "ScenarioDeleteResponseSerializer",
+    "ScenarioAddRowsResponseSerializer",
+    "ScenarioAddColumnsResponseSerializer",
+    "ScenarioMultiDatasetResponseSerializer",
+    "ScenarioPromptsUpdateResponseSerializer",
+    "ScenarioErrorResponseSerializer",
     # "PersonaResponseSerializer",
     # "PersonaListSerializer",
     # "PersonaDeleteResponseSerializer",
