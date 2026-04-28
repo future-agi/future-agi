@@ -16,6 +16,7 @@ class SavedView(BaseModel):
         ("imagine", "Imagine"),
         ("users", "Users"),
         ("user_detail", "User Detail"),
+        ("sessions", "Sessions"),
     )
 
     VISIBILITY_CHOICES = (

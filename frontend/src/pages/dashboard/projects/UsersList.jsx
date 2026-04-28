@@ -1,9 +1,13 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
 import { Helmet } from "react-helmet-async";
 import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
 import Iconify from "src/components/iconify";
 import UsersView from "src/sections/projects/UsersView/UsersView";
 import UsersPageTabBar from "src/sections/projects/UsersView/UsersPageTabBar";
+import { useUrlState } from "src/routes/hooks/use-url-state";
+import { useGetWorkspaceSavedViews } from "src/api/project/saved-views";
+
+const USERS_TAB_TYPE = "users";
 
 // Top-level "Users" page at /dashboard/users.
 //
@@ -17,7 +21,23 @@ const UserList = () => {
 
   // Saved-view api ref populated by UsersView on mount. Drives the tab bar.
   const savedViewApiRef = useRef(null);
-  const [activeTab, setActiveTab] = useState("all");
+  // URL-synced so a refresh on `?usersTab=view-<id>` restores the saved view
+  // instead of resetting to the All Users default (which would clobber
+  // useUrlState-restored display state via UsersPageTabBar's applyConfig(null)
+  // path).
+  const [activeTab, setActiveTab] = useUrlState("usersTab", "all");
+
+  // Derive the active saved view's config so UsersView can compute
+  // canSaveView (Save view button visibility) against the right baseline.
+  // Same react-query subscription UsersPageTabBar uses — gets deduped.
+  const { data: savedViewsData } = useGetWorkspaceSavedViews(USERS_TAB_TYPE);
+  const activeViewConfig = useMemo(() => {
+    if (!activeTab?.startsWith?.("view-")) return null;
+    const id = activeTab.slice(5);
+    const list =
+      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    return list.find((v) => v.id === id)?.config ?? null;
+  }, [activeTab, savedViewsData]);
 
   // Stable handles — the ref indirection makes empty-deps safe.
   const getSavedViewConfig = useCallback(
@@ -162,7 +182,10 @@ const UserList = () => {
 
         {/* Content */}
         <Box sx={contentStyles}>
-          <UsersView savedViewApiRef={savedViewApiRef} />
+          <UsersView
+            savedViewApiRef={savedViewApiRef}
+            activeViewConfig={activeViewConfig}
+          />
         </Box>
       </Box>
     </>
