@@ -140,12 +140,17 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
     def _build_float_query(self) -> Tuple[str, Dict[str, Any]]:
         """Average numeric/star annotation value per time bucket."""
         bucket_fn = self.time_bucket_expr(self.interval)
+        # Use the nullable extractor so rows whose JSON payload is missing
+        # the ``rating`` / ``value`` key return NULL and are skipped by
+        # ``avg()`` instead of silently contributing 0.0.
+        nullable_expr = annotation_numeric_value_expr(nullable=True)
         query = f"""
         SELECT
             {bucket_fn}(created_at) AS time_bucket,
-            avg({annotation_numeric_value_expr()}) AS value
+            avg({nullable_expr}) AS value
         FROM {self.TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -176,6 +181,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             avg(CASE WHEN JSONExtractString(value, 'value') = %(bool_match)s THEN 100.0 ELSE 0.0 END) AS value
         FROM {self.TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -208,6 +214,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             ) AS value
         FROM {self.TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -225,6 +232,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             count() AS value
         FROM {self.TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s

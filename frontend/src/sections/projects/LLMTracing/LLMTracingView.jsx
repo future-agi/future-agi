@@ -17,6 +17,7 @@ import React, {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -186,12 +187,16 @@ import {
 } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
+import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
 import {
   useUpdateSavedView,
   useCreateSavedView,
+  useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
+
+const USER_DETAIL_TAB_TYPE = "user_detail";
 
 // Eagerly load the trace grid (always visible)
 import TraceGrid from "./TraceGrid";
@@ -672,19 +677,68 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // User mode: sessions routes back out to /dashboard/users/:id — users
   // self-nav is suppressed (we're already on the user). Project mode:
-  // cross-nav into observe routes.
+  // cross-nav into observe routes; group-by changes off a saved view
+  // also clear the saved-view context so the new destination doesn't
+  // inherit its filters.
+
+  // Pulled up out of the larger useObserveHeader() destructure below so
+  // handleGroupByChange (which clears activeViewConfig when navigating off
+  // a saved view) can reference it without a TDZ. Same context call ID,
+  // shape-stable from React.
+  const { setActiveViewConfig: setActiveViewConfigFromCtx } =
+    useObserveHeader();
+
   const handleGroupByChange = useCallback(
     (groupKey) => {
+      // Group-by changes off a saved view land on the corresponding default
+      // tab — the saved view's filters/columns aren't meaningful for a
+      // different group key, so we drop activeViewConfig and rewrite the
+      // tab URL key. Detect saved view via the URL `tab` (`userTab` in
+      // user mode) — `view-<id>` means we're on a custom saved view.
+      const params = new URLSearchParams(window.location.search);
+      const tabKey = isUserMode ? "userTab" : "tab";
+      const onSavedView = params.get(tabKey)?.startsWith("view-");
+
       switch (groupKey) {
         case "none":
         case "trace":
-          setSelectedTab("trace");
+          if (onSavedView) {
+            setActiveViewConfigFromCtx(null);
+            if (isUserMode) {
+              navigate("?userTab=traces&selectedTab=trace", { replace: true });
+            } else {
+              navigate(
+                `/dashboard/observe/${observeId}/llm-tracing?tab=traces&selectedTab=trace`,
+                { replace: true },
+              );
+            }
+          } else {
+            setSelectedTab("trace");
+          }
           break;
         case "span":
-          setSelectedTab("spans");
+          if (onSavedView) {
+            setActiveViewConfigFromCtx(null);
+            if (isUserMode) {
+              // User Detail has a single "Trace" fixed tab that hosts the
+              // selectedTab toggle, so we land on userTab=traces with
+              // selectedTab=spans.
+              navigate("?userTab=traces&selectedTab=spans", { replace: true });
+            } else {
+              navigate(
+                `/dashboard/observe/${observeId}/llm-tracing?tab=spans&selectedTab=spans`,
+                { replace: true },
+              );
+            }
+          } else {
+            setSelectedTab("spans");
+          }
           break;
         case "users":
-          if (!isUserMode) navigate(`/dashboard/observe/${observeId}/users`);
+          if (!isUserMode) {
+            setActiveViewConfigFromCtx(null);
+            navigate(`/dashboard/observe/${observeId}/users`);
+          }
           break;
         case "sessions":
           if (isUserMode) {
@@ -695,6 +749,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               search: `?${new URLSearchParams({ userTab: "sessions" })}`,
             });
           } else {
+            setActiveViewConfigFromCtx(null);
             navigate(`/dashboard/observe/${observeId}/sessions`);
           }
           break;
@@ -702,7 +757,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           break;
       }
     },
-    [observeId, navigate, setSelectedTab, isUserMode, userIdForUserMode],
+    [
+      observeId,
+      navigate,
+      setSelectedTab,
+      setActiveViewConfigFromCtx,
+      isUserMode,
+      userIdForUserMode,
+    ],
   );
 
   const hiddenGroupByOptions = useMemo(
@@ -858,8 +920,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const primaryCallLogsGridRef = useRef(null);
   const compareCallLogsGridRef = useRef(null);
   const columnConfigureRef = useRef();
+  // Saved-view columnState queued before the active sub-tab's primary grid
+  // mounted. Drained by onGridReady on the primary grid.
+  const pendingColumnStateRef = useRef(null);
 
-  const { setHeaderConfig, activeViewConfig } = useObserveHeader();
+  const {
+    setHeaderConfig,
+    activeViewConfig,
+    setActiveViewConfig,
+    registerGetViewConfig,
+    registerGetTabType,
+  } = useObserveHeader();
 
   const { data: projectDetail } = useGetProjectDetails(observeId, !isUserMode);
   // In user mode the grid should behave like an OBSERVE project (no project
@@ -1602,8 +1673,38 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   }, [selectedTab, primaryTraceDateFilter, primarySpanDateFilter]);
 
   // Load filters + display settings from saved view config when a custom view tab is selected
+  // Tracked separately so the null-branch reset only fires on a genuine
+  // saved-view → default transition, not on initial mount where
+  // activeViewConfig is null only because hydration hasn't landed yet.
+  // Without this guard, the destructive resets below clobber state that
+  // the localStorage rehydrate (line 1816) and the apply branch are
+  // about to set from the saved view itself.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
-    if (!activeViewConfig) return;
+    if (!activeViewConfig) {
+      const wasOnSavedView = wasOnSavedViewRef.current;
+      wasOnSavedViewRef.current = false;
+      if (!wasOnSavedView) return; // initial mount / already on default — nothing to clean up
+      // Back to a default tab — clear local extraFilters so chips from a
+      // prior custom view don't linger. URL-synced display state
+      // (cellHeight / showErrors / showNonAnnotated / hasEvalFilter /
+      // showCompare) is wiped via the parent's URL navigation; viewMode
+      // lives in the Zustand store (no URL key) so we reset it explicitly,
+      // and the active grid's columnState (widths/order/sort) is internal
+      // to AG Grid and likewise needs an imperative reset.
+      setExtraFilters((prev) => (prev.length === 0 ? prev : []));
+      setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
+      pendingColumnStateRef.current = null;
+      pendingCustomColumnsRef.current = [];
+      const activeApi =
+        selectedTab === "trace"
+          ? primaryTraceGridRef.current?.api
+          : primarySpanGridRef.current?.api;
+      if (activeApi?.resetColumnState) activeApi.resetColumnState();
+      return;
+    }
+    wasOnSavedViewRef.current = true;
 
     // Apply display settings
     const display = activeViewConfig.display || {};
@@ -1621,50 +1722,102 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       pendingCustomColumnsRef.current = display.customColumns;
     }
 
-    // Apply filters
-    if (activeViewConfig.filters?.length > 0) {
-      const filtersWithIds = activeViewConfig.filters.map((f) => ({
-        ...f,
-        id: f.id || getRandomId(),
-      }));
-      if (selectedTab === "trace") {
-        setPrimaryTraceFilters(filtersWithIds);
+    // Apply column state (widths/order/sort) to the active sub-tab's primary
+    // grid. If the grid isn't mounted yet, queue for the onGridReady callback.
+    if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      const activeApi =
+        selectedTab === "trace"
+          ? primaryTraceGridRef.current?.api
+          : primarySpanGridRef.current?.api;
+      if (activeApi?.applyColumnState) {
+        activeApi.applyColumnState({
+          state: display.columnState,
+          applyOrder: true,
+        });
       } else {
-        setPrimarySpanFilters(filtersWithIds);
+        pendingColumnStateRef.current = display.columnState;
       }
     }
 
-    // Restore compare state
-    if (display.showCompare) {
-      if (activeViewConfig.compareFilters?.length > 0) {
-        const compareFiltersWithIds = activeViewConfig.compareFilters.map(
-          (f) => ({
-            ...f,
-            id: f.id || getRandomId(),
-          }),
-        );
-        if (selectedTab === "trace") {
-          setCompareTraceFilters(compareFiltersWithIds);
-        } else {
-          setCompareSpansFilters(compareFiltersWithIds);
-        }
-      }
-      if (activeViewConfig.compareDateFilter) {
-        if (selectedTab === "trace") {
-          setCompareTraceDateFilter(activeViewConfig.compareDateFilter);
-        } else {
-          setCompareSpansDateFilter(activeViewConfig.compareDateFilter);
-        }
-      }
-      if (activeViewConfig.extraFilters?.length > 0) {
-        setExtraFilters(activeViewConfig.extraFilters);
-      }
-      if (activeViewConfig.compareExtraFilters?.length > 0) {
-        setCompareExtraFilters(activeViewConfig.compareExtraFilters);
+    // Primary date filter — stored inside display for backend-whitelist compatibility.
+    // Only apply if the saved view has one; old views without it keep the current date.
+    if (display.dateFilter) {
+      if (selectedTab === "trace") {
+        setPrimaryTraceDateFilter(display.dateFilter);
+      } else {
+        setPrimarySpanDateFilter(display.dateFilter);
       }
     }
+
+    // Apply filters — replace unconditionally so switching views clears stale filters.
+    const nextFilters = (activeViewConfig.filters || []).map((f) => ({
+      ...f,
+      id: f.id || getRandomId(),
+    }));
+    if (selectedTab === "trace") {
+      setPrimaryTraceFilters(nextFilters);
+    } else {
+      setPrimarySpanFilters(nextFilters);
+    }
+
+    // Apply extraFilters unconditionally (independent of compare mode).
+    setExtraFilters(activeViewConfig.extraFilters || []);
+
+    // Compare state — always replace, regardless of current showCompare state.
+    const nextCompareFilters = (activeViewConfig.compareFilters || []).map(
+      (f) => ({
+        ...f,
+        id: f.id || getRandomId(),
+      }),
+    );
+    if (selectedTab === "trace") {
+      setCompareTraceFilters(nextCompareFilters);
+      if (activeViewConfig.compareDateFilter !== undefined) {
+        setCompareTraceDateFilter(activeViewConfig.compareDateFilter);
+      }
+    } else {
+      setCompareSpansFilters(nextCompareFilters);
+      if (activeViewConfig.compareDateFilter !== undefined) {
+        setCompareSpansDateFilter(activeViewConfig.compareDateFilter);
+      }
+    }
+    setCompareExtraFilters(activeViewConfig.compareExtraFilters || []);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
+
+  // Drain the queued saved-view columnState once the active sub-tab's primary
+  // grid mounts. TraceGrid is lazy-loaded so the AG Grid api may not exist
+  // when applyConfig runs — retry a handful of times to catch it.
+  useEffect(() => {
+    if (!pendingColumnStateRef.current) return;
+    let attempts = 0;
+    let timer = null;
+    const tryApply = () => {
+      const api =
+        selectedTab === "trace"
+          ? primaryTraceGridRef.current?.api
+          : primarySpanGridRef.current?.api;
+      if (
+        api?.applyColumnState &&
+        Array.isArray(pendingColumnStateRef.current)
+      ) {
+        api.applyColumnState({
+          state: pendingColumnStateRef.current,
+          applyOrder: true,
+        });
+        pendingColumnStateRef.current = null;
+        return;
+      }
+      if (attempts++ < 20) {
+        timer = setTimeout(tryApply, 100);
+      }
+    };
+    tryApply();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeViewConfig, selectedTab]);
 
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
@@ -1762,16 +1915,30 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
+  // Workspace-scoped update for user_detail mode (CrossProjectUserDetailPage).
+  // Always declared (hooks can't be conditional); only invoked when isUserMode.
+  const { mutate: updateWorkspaceSavedView } =
+    useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
-  // Get active view tab ID from URL
+  // Get active view tab ID from URL. The tab-key URL param differs per
+  // surface: "tab" on ObservePage, "userTab" on CrossProjectUserDetailPage.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
+    const tab = isUserMode ? params.get("userTab") : params.get("tab");
     return tab?.startsWith("view-") ? tab.replace("view-", "") : null;
-  }, [activeViewConfig]); // re-derive when view config changes
+  }, [activeViewConfig, isUserMode]); // re-derive when view config changes
 
   // Build the full saved view config payload
   const buildViewConfig = useCallback(() => {
+    // Capture current grid column state (widths/order/sort/visibility) of the
+    // active sub-tab's primary grid, so saved views restore the user's exact
+    // column layout. Stashed inside `display` because the backend serializer
+    // whitelists `display` for arbitrary subkeys.
+    const activeGridApi =
+      selectedTab === "trace"
+        ? primaryTraceGridRef.current?.api
+        : primarySpanGridRef.current?.api;
+    const columnState = activeGridApi?.getColumnState?.() ?? undefined;
     const currentDisplay = {
       viewMode,
       cellHeight,
@@ -1780,6 +1947,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showCompare,
       hasEvalFilter,
       customColumns: getCustomColumns(),
+      // Stash primary date filter inside display for backend-whitelist compatibility
+      dateFilter:
+        selectedTab === "trace"
+          ? primaryTraceDateFilter
+          : primarySpanDateFilter,
+      ...(columnState ? { columnState } : {}),
     };
     const mapFilters = (filters) =>
       (filters || []).map((f) => ({
@@ -1791,6 +1964,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       filters: mapFilters(
         selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters,
       ),
+      // extraFilters is independent of compare mode — always persist
+      extraFilters: extraFilters || [],
     };
     // Include compare state when compare mode is on
     if (showCompare) {
@@ -1801,7 +1976,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         selectedTab === "trace"
           ? compareTraceDateFilter
           : compareSpansDateFilter;
-      config.extraFilters = extraFilters || [];
       config.compareExtraFilters = compareExtraFilters || [];
     }
     return config;
@@ -1816,6 +1990,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     selectedTab,
     primaryTraceFilters,
     primarySpanFilters,
+    primaryTraceDateFilter,
+    primarySpanDateFilter,
     compareTraceFilters,
     compareSpansFilters,
     compareTraceDateFilter,
@@ -1824,9 +2000,55 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     compareExtraFilters,
   ]);
 
-  // Auto-save display settings when they change
-  const autoSaveTimerRef = useRef(null);
   useEffect(() => {
+    registerGetViewConfig(buildViewConfig);
+    return () => registerGetViewConfig(null);
+  }, [registerGetViewConfig, buildViewConfig]);
+
+  useEffect(() => {
+    const getTabType = () => (selectedTab === "spans" ? "spans" : "traces");
+    registerGetTabType(getTabType);
+    return () => registerGetTabType(null);
+  }, [registerGetTabType, selectedTab]);
+
+  // Explicit "Save view" — overwrite the active saved view's config with the
+  // current live state. Bound to ObserveToolbar's Save view button.
+  const handleSaveView = useCallback(() => {
+    if (!activeViewTabId) return;
+    const config = buildViewConfig();
+    const mutate = isUserMode ? updateWorkspaceSavedView : updateSavedView;
+    mutate(
+      { id: activeViewTabId, config },
+      {
+        onSuccess: (response) => {
+          // Refresh the baseline so canSaveView's diff resets to false.
+          setActiveViewConfig(response?.data?.result?.config ?? config);
+          enqueueSnackbar("View updated", { variant: "success" });
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to update view", { variant: "error" }),
+      },
+    );
+  }, [
+    activeViewTabId,
+    buildViewConfig,
+    isUserMode,
+    updateSavedView,
+    updateWorkspaceSavedView,
+    setActiveViewConfig,
+  ]);
+
+  // Persist display settings to localStorage on the default tab so personal
+  // preferences (cellHeight, viewMode, …) survive across navigation. The
+  // backend-update branch that used to live here was removed: filter/date
+  // state was never in the dep array, so it silently missed those changes.
+  // Updates to a saved view are now triggered explicitly by handleSaveView
+  // (the Save view button in the toolbar).
+  useEffect(() => {
+    // Default tab only — persist personal display preferences to localStorage
+    // so cellHeight / viewMode / etc. survive across navigation. Saved-view
+    // tabs go through the explicit Save view button (handleSaveView) instead.
+    if (activeViewTabId) return;
     const currentDisplay = {
       viewMode,
       cellHeight,
@@ -1836,25 +2058,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       hasEvalFilter,
       customColumns: getCustomColumns(),
     };
-
-    // For default tab (no custom view), persist to localStorage
-    if (!activeViewTabId) {
-      try {
-        localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
-      } catch {
-        /* quota exceeded */
-      }
-      return;
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
+    } catch {
+      /* quota exceeded */
     }
-
-    // For custom view tabs, debounced auto-save to backend
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      updateSavedView({ id: activeViewTabId, config: buildViewConfig() });
-    }, 1500);
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     viewMode,
@@ -1958,10 +2166,107 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     createSavedView,
   ]);
 
+  // Eval filter chips — drives the Filter button's red "active" dot.
+  // Keep this scoped to extraFilters only; date/column changes should NOT
+  // light up the Filter button (those have their own affordances).
   const hasActiveFilter = useMemo(
     () => extraFilters?.length > 0,
     [extraFilters],
   );
+
+  // "Save view" button is a convenience affordance for a custom saved view
+  // that has been modified. On a default tab, the "+" button alone handles
+  // save-as-new — we don't want Save view cluttering the toolbar there.
+  const canSaveView = useMemo(() => {
+    if (!activeViewConfig) return false;
+
+    const baselineDisplay = activeViewConfig.display || {};
+    const baselineExtraFilters = activeViewConfig.extraFilters || [];
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineColumnFilters = activeViewConfig.filters || [];
+
+    if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
+
+    const currentDate =
+      selectedTab === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
+    if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
+
+    const columnFilters =
+      selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters;
+    if (!filtersContentEqual(columnFilters, baselineColumnFilters)) return true;
+
+    if (
+      baselineDisplay.viewMode !== undefined &&
+      baselineDisplay.viewMode !== viewMode
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.cellHeight !== undefined &&
+      baselineDisplay.cellHeight !== cellHeight
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showErrors !== undefined &&
+      baselineDisplay.showErrors !== showErrors
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showNonAnnotated !== undefined &&
+      baselineDisplay.showNonAnnotated !== showNonAnnotated
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showCompare !== undefined &&
+      baselineDisplay.showCompare !== showCompare
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.hasEvalFilter !== undefined &&
+      baselineDisplay.hasEvalFilter !== hasEvalFilter
+    ) {
+      return true;
+    }
+    // Custom columns: did the user add/remove a custom column since the
+    // saved view? Compare by id, not deep shape.
+    const baselineCustom = Array.isArray(baselineDisplay.customColumns)
+      ? baselineDisplay.customColumns
+      : [];
+    const currentCustom = getCustomColumns() || [];
+    if (currentCustom.length !== baselineCustom.length) return true;
+    if (currentCustom.length > 0) {
+      const baselineIds = new Set(baselineCustom.map((c) => c?.id));
+      for (const col of currentCustom) {
+        if (!baselineIds.has(col?.id)) return true;
+      }
+    }
+    return false;
+  }, [
+    activeViewConfig,
+    extraFilters,
+    selectedTab,
+    primaryTraceDateFilter,
+    primarySpanDateFilter,
+    primaryTraceFilters,
+    primarySpanFilters,
+    viewMode,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    showCompare,
+    hasEvalFilter,
+    getCustomColumns,
+  ]);
+
+  // Defer the visibility signal so it catches up with activeViewConfig
+  // (which updates inside startTransition). Without this, canSaveView briefly
+  // returns true on view-switch because filter state updates urgently while
+  // the baseline update trails by a render, which makes the button flicker.
+  const canSaveViewDeferred = useDeferredValue(canSaveView);
 
   const currentGridRef = useMemo(() => {
     if (selectedGraph === "primary" && selectedTab === "trace") {
@@ -2827,6 +3132,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   : setPrimarySpanDateFilter
               }
               hasActiveFilter={hasActiveFilter}
+              canSaveView={canSaveViewDeferred}
+              onSaveView={handleSaveView}
               onFilterToggle={() => {
                 // Clear any chip/+ anchor so the popover re-anchors to the
                 // toolbar Filter button (avoids opening on a stale anchor).

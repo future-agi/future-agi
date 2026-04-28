@@ -189,6 +189,22 @@ const PERCENTILE_OPTIONS = [
 
 const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
 
+// Curated list of unit presets shown in the widget editor's Unit
+// dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
+// (the formatter that places these as a prefix or suffix). "Custom" is
+// rendered separately by the editor and maps to an empty unit value.
+const UNIT_PRESETS = [
+  { label: "$", value: "$" },
+  { label: "%", value: "%" },
+  { label: "#", value: "#" },
+  { label: "ms", value: "ms" },
+  { label: "s", value: "s" },
+  { label: "tokens", value: "tokens" },
+  { label: "cents", value: "cents" },
+  { label: "wpm", value: "wpm" },
+  { label: "/min", value: "/min" },
+];
+
 const METRIC_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
   {
@@ -447,17 +463,24 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         <Typography variant="body2" color="text.secondary">
           Unit
         </Typography>
-        <ToggleButtons
-          options={[
-            { label: "$", value: "$" },
-            { label: "%", value: "%" },
-            { label: "#", value: "#" },
-            { label: "Custom", value: "custom" },
-          ]}
-          value={config.unit || "custom"}
-          onChange={(v) => onChange("unit", v === "custom" ? "" : v)}
-          theme={theme}
-        />
+        <TextField
+          select
+          size="small"
+          value={UNIT_PRESETS.some((u) => u.value === config.unit) ? config.unit : "custom"}
+          onChange={(e) =>
+            onChange("unit", e.target.value === "custom" ? "" : e.target.value)
+          }
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+        >
+          {UNIT_PRESETS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px" }}>
+              {opt.label}
+            </MenuItem>
+          ))}
+          <MenuItem value="custom" sx={{ fontSize: "13px" }}>
+            Custom
+          </MenuItem>
+        </TextField>
       </Stack>
 
       {/* Prefix / Suffix */}
@@ -617,7 +640,13 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   );
 }
 
-function AggregationPicker({ value, onChange, theme, extraOptions }) {
+function AggregationPicker({
+  value,
+  onChange,
+  theme,
+  extraOptions,
+  allowedAggregations,
+}) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [showPercentiles, setShowPercentiles] = useState(false);
 
@@ -639,7 +668,22 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
   const allAggs = extraOptions
     ? [...ALL_AGGREGATIONS, ...extraOptions]
     : ALL_AGGREGATIONS;
-  const current = allAggs.find((a) => a.value === value);
+  const allowedSet = allowedAggregations?.length
+    ? new Set(allowedAggregations)
+    : null;
+  const primaryAggs = allowedSet
+    ? AGGREGATION_OPTIONS.filter((opt) => allowedSet.has(opt.value))
+    : AGGREGATION_OPTIONS;
+  const allowedExtraOptions = allowedSet
+    ? (extraOptions || []).filter((opt) => allowedSet.has(opt.value))
+    : extraOptions;
+  const percentileAggs = allowedSet
+    ? PERCENTILE_OPTIONS.filter((opt) => allowedSet.has(opt.value))
+    : PERCENTILE_OPTIONS;
+  const visibleAggs = allowedSet
+    ? [...primaryAggs, ...(allowedExtraOptions || []), ...percentileAggs]
+    : allAggs;
+  const current = visibleAggs.find((a) => a.value === value);
   const open = Boolean(anchorEl);
 
   return (
@@ -671,7 +715,7 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
           >
             {!showPercentiles ? (
               <List dense disablePadding>
-                {AGGREGATION_OPTIONS.map((opt) => (
+                {primaryAggs.map((opt) => (
                   <ListItemButton
                     key={opt.value}
                     selected={value === opt.value}
@@ -687,10 +731,10 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                     />
                   </ListItemButton>
                 ))}
-                {extraOptions && extraOptions.length > 0 && (
+                {allowedExtraOptions && allowedExtraOptions.length > 0 && (
                   <>
                     <Divider />
-                    {extraOptions.map((opt) => (
+                    {allowedExtraOptions.map((opt) => (
                       <ListItemButton
                         key={opt.value}
                         selected={value === opt.value}
@@ -708,29 +752,33 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                     ))}
                   </>
                 )}
-                <Divider />
-                <ListItemButton
-                  onClick={() => setShowPercentiles(true)}
-                  sx={{ py: 0.75 }}
-                >
-                  <ListItemText
-                    primary="Percentile"
-                    primaryTypographyProps={{
-                      variant: "body2",
-                      fontSize: "13px",
-                      fontWeight: PERCENTILE_OPTIONS.some(
-                        (p) => p.value === value,
-                      )
-                        ? 600
-                        : 400,
-                    }}
-                  />
-                  <Iconify
-                    icon="mdi:chevron-right"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                </ListItemButton>
+                {percentileAggs.length > 0 && (
+                  <>
+                    <Divider />
+                    <ListItemButton
+                      onClick={() => setShowPercentiles(true)}
+                      sx={{ py: 0.75 }}
+                    >
+                      <ListItemText
+                        primary="Percentile"
+                        primaryTypographyProps={{
+                          variant: "body2",
+                          fontSize: "13px",
+                          fontWeight: percentileAggs.some(
+                            (p) => p.value === value,
+                          )
+                            ? 600
+                            : 400,
+                        }}
+                      />
+                      <Iconify
+                        icon="mdi:chevron-right"
+                        width={16}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </ListItemButton>
+                  </>
+                )}
               </List>
             ) : (
               <List dense disablePadding>
@@ -753,7 +801,7 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                   />
                 </ListItemButton>
                 <Divider />
-                {PERCENTILE_OPTIONS.map((opt) => (
+                {percentileAggs.map((opt) => (
                   <ListItemButton
                     key={opt.value}
                     selected={value === opt.value}
@@ -1236,8 +1284,14 @@ export default function WidgetEditorView() {
     xAxis: { visible: true, label: "" },
     seriesAxis: {}, // { [seriesIndex]: "left" | "right" }
   });
-  const [hasAutoAppliedLeftAxisUnit, setHasAutoAppliedLeftAxisUnit] =
-    useState(false);
+  // Tracks the unit value we last auto-applied to ``axisConfig.leftY``.
+  // Stored (rather than a single boolean) so we can tell the difference
+  // between "user picked this manually" and "we set it on their behalf
+  // when the metric set last changed". When the suggested unit changes
+  // — e.g. swapping a ``duration`` (s) metric for an annotation (no
+  // unit) — we reconcile the axis only if the current axis unit is the
+  // one we last auto-applied; user-chosen units are never overwritten.
+  const [autoAppliedLeftAxisUnit, setAutoAppliedLeftAxisUnit] = useState(null);
   const updateAxis = (axis, key, val) =>
     setAxisConfig((prev) => ({
       ...prev,
@@ -1409,6 +1463,7 @@ export default function WidgetEditorView() {
           columnDataType: m.dataType || m.data_type,
           configIds: m.configIds || m.config_ids,
           evalKey: m.evalKey || m.eval_key,
+          allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
           unit: m.unit,
         };
       });
@@ -1426,6 +1481,7 @@ export default function WidgetEditorView() {
         type: "system",
         source: "traces",
         dataType: m.type || "string",
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1440,6 +1496,7 @@ export default function WidgetEditorView() {
         source: "datasets",
         dataType: "number",
         outputType: m.outputType || m.output_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1454,6 +1511,7 @@ export default function WidgetEditorView() {
         source: "traces",
         dataType: "number",
         outputType: m.outputType || m.output_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1467,6 +1525,7 @@ export default function WidgetEditorView() {
         type: "custom_attribute",
         source: "traces",
         dataType: m.type || "string",
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1481,6 +1540,7 @@ export default function WidgetEditorView() {
         source: "datasets",
         dataType: m.type || "number",
         columnDataType: m.dataType || m.data_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     return opts;
@@ -1512,13 +1572,18 @@ export default function WidgetEditorView() {
 
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
+    const aggregation =
+      m.allowedAggregations?.length &&
+      !m.allowedAggregations.includes(m.aggregation)
+        ? m.allowedAggregations[0]
+        : m.aggregation || "avg";
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
       displayName: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
-      aggregation: m.aggregation || "avg",
+      aggregation,
     };
     if (backendType === "eval_metric") {
       // m.id is eval_template_id from the metrics endpoint
@@ -1684,6 +1749,12 @@ export default function WidgetEditorView() {
         defaultAgg = "count";
       } else if (option.source === "simulation" && option.id === "call_count") {
         defaultAgg = "count";
+      }
+      if (
+        option.allowedAggregations?.length &&
+        !option.allowedAggregations.includes(defaultAgg)
+      ) {
+        [defaultAgg] = option.allowedAggregations;
       }
       const newMetric = {
         ...option,
@@ -2002,25 +2073,28 @@ export default function WidgetEditorView() {
   }, [axisConfig.leftY, suggestedLeftAxisUnit]);
 
   useEffect(() => {
-    if (
-      hasAutoAppliedLeftAxisUnit ||
-      axisConfig.leftY.unit ||
-      !suggestedLeftAxisUnit.unit
-    ) {
+    const currentUnit = axisConfig.leftY.unit;
+    const suggested = suggestedLeftAxisUnit.unit;
+    // Skip if the user picked something different from what we
+    // auto-applied — that's their choice and we leave it alone.
+    if (currentUnit && currentUnit !== autoAppliedLeftAxisUnit) {
       return;
     }
+    if (suggested === currentUnit) return;
     setAxisConfig((prev) => ({
       ...prev,
       leftY: {
         ...prev.leftY,
-        unit: suggestedLeftAxisUnit.unit,
-        prefixSuffix: suggestedLeftAxisUnit.prefixSuffix,
+        unit: suggested,
+        prefixSuffix: suggested
+          ? suggestedLeftAxisUnit.prefixSuffix
+          : prev.leftY.prefixSuffix || "prefix",
       },
     }));
-    setHasAutoAppliedLeftAxisUnit(true);
+    setAutoAppliedLeftAxisUnit(suggested || null);
   }, [
     axisConfig.leftY.unit,
-    hasAutoAppliedLeftAxisUnit,
+    autoAppliedLeftAxisUnit,
     suggestedLeftAxisUnit,
   ]);
 
@@ -4678,9 +4752,15 @@ export default function WidgetEditorView() {
                       </IconButton>
                     </Stack>
                     <AggregationPicker
-                      value={m.aggregation}
+                      value={
+                        m.allowedAggregations?.length &&
+                        !m.allowedAggregations.includes(m.aggregation)
+                          ? m.allowedAggregations[0]
+                          : m.aggregation
+                      }
                       onChange={(val) => handleUpdateMetricAggregation(i, val)}
                       theme={theme}
+                      allowedAggregations={m.allowedAggregations}
                       extraOptions={
                         m.source === "datasets" ||
                         m.source === "simulation" ||

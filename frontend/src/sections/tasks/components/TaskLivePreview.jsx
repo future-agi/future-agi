@@ -21,7 +21,9 @@ import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { canonicalEntries } from "src/utils/utils";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import EvalResultDisplay from "src/sections/evals/components/EvalResultDisplay";
@@ -349,14 +351,11 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const fieldNames = useMemo(() => {
     if (!spanDetail) return [];
     const keys = [];
-    // Walks both dicts and arrays, emitting numeric indices for array
-    // elements so users can map eval variables to paths like
-    // `messages.0.content` (the standard JS/JSON path notation that
-    // `walkPath` resolves via `obj[k]` — works for both string keys
-    // and numeric indices). Limits prevent runaway recursion on huge
-    // payloads: 50 keys per dict, 10 elements per array.
-    const ARRAY_PEEK = 10;
-    const DICT_LIMIT = 50;
+    // Limits match the resolver walker below so every path this component
+    // claims is in the row is actually resolvable at test time — otherwise
+    // the "(not in row)" chip lies for deep paths that do resolve.
+    const ARRAY_PEEK = 500;
+    const DICT_LIMIT = 5000;
     const walk = (node, prefix) => {
       if (Array.isArray(node)) {
         node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
@@ -368,7 +367,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         });
         return;
       }
-      for (const [k, v] of Object.entries(node)) {
+      for (const [k, v] of canonicalEntries(node)) {
         if (k.startsWith("_")) continue;
         const path = prefix ? `${prefix}.${k}` : k;
         keys.push(path);
@@ -419,8 +418,10 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     // fieldNames dropdown in TracingTestMode). This ensures mapped
     // fields like "input.value" (stripped from "span_attributes.input.value")
     // resolve correctly even when a top-level "input" shadows the path.
-    const ARRAY_PEEK = 10;
-    const DICT_LIMIT = 50;
+    // Limits match the dropdown walker in TracingTestMode so every path
+    // offered to the user during mapping also resolves at test time.
+    const ARRAY_PEEK = 500;
+    const DICT_LIMIT = 5000;
     const valueMap = {};
     const walkValues = (node, prefix) => {
       if (Array.isArray(node)) {
@@ -433,7 +434,10 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         });
         return;
       }
-      for (const [k, v] of Object.entries(node)) {
+      // canonicalEntries drops the camelCase aliases the axios interceptor
+      // layers on — otherwise `span_attributes.*` and `spanAttributes.*`
+      // both end up in valueMap and only the snake side gets stripped.
+      for (const [k, v] of canonicalEntries(node)) {
         if (k.startsWith("_")) continue;
         const path = prefix ? `${prefix}.${k}` : k;
         valueMap[path] = v;
@@ -1127,16 +1131,28 @@ const VariableMappingView = ({
                           width={11}
                           sx={{ color: "text.disabled" }}
                         />
-                        <Typography
-                          variant="caption"
-                          sx={{
-                            fontSize: "11px",
-                            fontFamily: "monospace",
-                            color: resolved ? "primary.main" : "warning.main",
-                          }}
+                        <CustomTooltip
+                          title={field || ""}
+                          show={!!field}
+                          type="default"
+                          placement="top"
+                          arrow
+                          size="small"
                         >
-                          {field || "—"}
-                        </Typography>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              fontSize: "11px",
+                              fontFamily: "monospace",
+                              color: resolved ? "primary.main" : "warning.main",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {field || "—"}
+                          </Typography>
+                        </CustomTooltip>
                         {!resolved && field && (
                           <Typography
                             variant="caption"

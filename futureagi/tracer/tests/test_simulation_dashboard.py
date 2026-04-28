@@ -140,6 +140,36 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
         sql, _, _ = queries[0]
         self.assertIn("count()", sql)
 
+    def test_base_query_excludes_soft_deleted_calls(self):
+        builder = SimulationQueryBuilder(self._make_config("ended_reason", "count"))
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("c._peerdb_is_deleted = 0", sql)
+        self.assertIn("c.deleted = 0", sql)
+
+    def test_ended_reason_unsupported_aggregation_uses_distinct_non_empty_reasons(self):
+        builder = SimulationQueryBuilder(self._make_config("ended_reason", "avg"))
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("uniqIf(c.ended_reason", sql)
+        self.assertIn("c.ended_reason IS NOT NULL AND c.ended_reason != ''", sql)
+        self.assertNotIn("uniq(c.ended_reason)", sql)
+
+    def test_ended_reason_count_counts_non_empty_reasons(self):
+        builder = SimulationQueryBuilder(self._make_config("ended_reason", "count"))
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("countIf(c.ended_reason IS NOT NULL AND c.ended_reason != '')", sql)
+
+    def test_ended_reason_count_distinct_ignores_empty_reasons(self):
+        builder = SimulationQueryBuilder(
+            self._make_config("ended_reason", "count_distinct")
+        )
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("uniqIf(c.ended_reason", sql)
+        self.assertIn("c.ended_reason IS NOT NULL AND c.ended_reason != ''", sql)
+
     def test_success_rate_metric(self):
         builder = SimulationQueryBuilder(self._make_config("success_rate", "avg"))
         queries = builder.build_all_queries()
@@ -159,6 +189,52 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
             sql, _, _ = queries[0]
             self.assertIn("avg(", sql)
             self.assertIn("simulate_call_execution", sql)
+
+    def test_component_latency_metrics_use_customer_latency_json(self):
+        expected_paths = {
+            "stt_latency": "transcriber",
+            "tts_latency": "voice",
+            "llm_latency": "model",
+        }
+        for metric, customer_key in expected_paths.items():
+            builder = SimulationQueryBuilder(self._make_config(metric, "avg"))
+            queries = builder.build_all_queries()
+            sql, _, _ = queries[0]
+            self.assertIn("customer_latency_metrics", sql)
+            self.assertIn(
+                f"JSONExtractFloat(c.customer_latency_metrics, 'systemMetrics', '{customer_key}')",
+                sql,
+            )
+
+    def test_run_test_and_test_execution_string_metrics_are_queryable(self):
+        expected_sql = {
+            "run_test": "simulate_run_test_dict",
+            "test_execution": "toString(c.test_execution_id)",
+        }
+        for metric, sql_snippet in expected_sql.items():
+            builder = SimulationQueryBuilder(self._make_config(metric, "avg"))
+            queries = builder.build_all_queries()
+            sql, _, _ = queries[0]
+            self.assertIn("uniqIf(", sql)
+            self.assertIn(sql_snippet, sql)
+
+    def test_persona_string_metrics_are_queryable(self):
+        expected_sql = {
+            "persona_gender": "gender",
+            "persona_language": "language",
+        }
+        for metric, field_snippet in expected_sql.items():
+            builder = SimulationQueryBuilder(self._make_config(metric, "avg"))
+            queries = builder.build_all_queries()
+            sql, _, _ = queries[0]
+            self.assertIn("uniqIf(", sql)
+            self.assertIn(field_snippet, sql)
+
+    def test_string_metric_reports_actual_aggregation(self):
+        builder = SimulationQueryBuilder(self._make_config("ended_reason", "avg"))
+        queries = builder.build_all_queries()
+        _, _, info = queries[0]
+        self.assertEqual(info["aggregation"], "count_distinct")
 
     def test_granularity_hour(self):
         config = self._make_config()
@@ -231,6 +307,13 @@ class TestSimulationQueryBuilderBreakdowns(unittest.TestCase):
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         self.assertIn("c.status", sql)
+
+    def test_scenario_type_breakdown(self):
+        builder = SimulationQueryBuilder(self._make_config("scenario_type"))
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("breakdown_value", sql)
+        self.assertIn("scenario_type", sql)
 
 
 class TestSimulationQueryBuilderFilters(unittest.TestCase):
@@ -356,7 +439,8 @@ class TestSimulationQueryBuilderEvalMetric(unittest.TestCase):
         builder = SimulationQueryBuilder(self._make_config())
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
-        self.assertIn("JSONExtractFloat", sql)
+        self.assertIn("Nullable(Float64)", sql)
+        self.assertNotIn("JSONExtractFloat(c.eval_outputs", sql)
         self.assertIn("eval-123", sql)
         self.assertIn("JSONHas", sql)
 

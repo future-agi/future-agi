@@ -975,8 +975,10 @@ class AddApiColumnView(APIView):
                     else:
                         body[key] = self._replace_variables(values, cell.row)
 
-            # Process URL
+            # Process URL — apply variable substitution if a cell/row is available
             url = config["url"]
+            if cell and cell.row:
+                url = self._replace_variables(url, cell.row)
 
             # Make the API call
             response = requests.request(
@@ -2833,7 +2835,14 @@ def add_api_column_async(
             # Submit API calls for each row with rate limiting
             future_to_row = {}
             for row in rows:
-                future_to_row[executor.submit(wrapped_make_api_call, None, config)] = (
+                existing_cell = existing_cells_map.get(str(row.id))
+                cell = existing_cell if existing_cell else Cell(
+                    dataset_id=dataset_id,
+                    column_id=new_column_id,
+                    row=row,
+                    value=None,
+                )
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
                     row
                 )
 
@@ -3041,13 +3050,17 @@ class PreviewDatasetOperationView(APIView):
         api_caller = AddApiColumnView()
         results = []
 
+        api_config = config.get("config", config)
+
         for row in sample_rows:
             if "column_id" not in config:
-                value = api_caller._make_api_call(cell=None, config=config["config"])
+                # Create a temporary cell with the row so variable substitution works
+                cell = Cell(row=row, value=None)
+                value = api_caller._make_api_call(cell=cell, config=api_config)
                 results.append({"row_id": str(row.id), "output": json.dumps(value)})
             else:
                 cell = Cell.objects.get(row=row, column_id=config["column_id"])
-                value = api_caller._make_api_call(cell, config)
+                value = api_caller._make_api_call(cell, api_config)
                 results.append(
                     {
                         "row_id": str(row.id),

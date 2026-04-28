@@ -302,6 +302,35 @@ class TestMetricsEndpoint:
         assert "latency" in metric_names
         assert "cost" in metric_names
 
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_suppresses_customer_attribute_aliases_when_canonical_metric_exists(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        observe_project,
+    ):
+        mock_get_span_attrs.return_value = [
+            "call.bot_wpm",
+            "call.user_wpm",
+            "freeform.attr",
+        ]
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        metric_names = [m["name"] for m in metrics]
+        assert "bot_wpm" in metric_names
+        assert "user_wpm" in metric_names
+        assert "call.bot_wpm" not in metric_names
+        assert "call.user_wpm" not in metric_names
+        assert "freeform.attr" in metric_names
+
 
 # ===========================================================================
 # DashboardQueryBuilder
@@ -1121,6 +1150,148 @@ class TestDashboardQueryExecution:
         _, kwargs = mock_service.execute_ch_query.call_args
         assert kwargs["timeout_ms"] == 30000
 
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_simulation_custom_attribute_routes_to_trace_builder(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"time_bucket": "2025-01-01T00:00:00", "value": 0.01}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "cost_breakdown.stt",
+                        "name": "cost_breakdown.stt",
+                        "type": "custom_attribute",
+                        "attribute_key": "cost_breakdown.stt",
+                        "attribute_type": "number",
+                        "aggregation": "avg",
+                        "source": "simulation",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "span_attr_num" in sql
+        assert "simulate_call_execution" not in sql
+
+    def test_query_action_simulation_metric_failure_does_not_blank_other_metrics(
+        self,
+    ):
+        viewset = DashboardViewSet()
+        mock_service = MagicMock()
+        success_result = MagicMock()
+        success_result.data = [
+            {"time_bucket": "2025-01-01T00:00:00", "value": 1.0},
+        ]
+        mock_service.execute_ch_query.side_effect = [
+            Exception("Code: 47 unknown column"),
+            success_result,
+        ]
+
+        sim_config = {
+            "workflow": "simulation",
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "duration",
+                    "name": "duration",
+                    "type": "system_metric",
+                    "aggregation": "avg",
+                    "source": "simulation",
+                },
+                {
+                    "id": "success_rate",
+                    "name": "success_rate",
+                    "type": "system_metric",
+                    "aggregation": "avg",
+                    "source": "simulation",
+                },
+            ],
+        }
+
+        results = viewset._run_simulation_analytics_queries(
+            mock_service,
+            sim_config,
+        )
+
+        assert mock_service.execute_ch_query.call_count == 2
+        assert results[0][0]["name"] == "duration"
+        assert results[0][1] == []
+        assert results[1][0]["name"] == "success_rate"
+        assert results[1][1] == success_result.data
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_simulation_metric_preserves_simulation_units(
+        self, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"time_bucket": "2025-01-01T00:00:00", "value": 12.5}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "workflow": "simulation",
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "duration",
+                        "name": "duration",
+                        "displayName": "Duration",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                        "source": "simulation",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        metric = response.json()["result"]["metrics"][0]
+        assert metric["unit"] == "s"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_simulation_excludes_deleted_rows_and_handles_numeric_columns(
+        self, _mock_enabled, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/?source=simulation&metric_name=duration&metric_type=system_metric"
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "c.deleted = 0" in sql
+        assert "c.duration_seconds IS NOT NULL" in sql
+        assert "c.duration_seconds != ''" not in sql
+
 
 class TestDashboardTraceTimeoutSelection:
     def test_default_trace_timeout_is_short(self):
@@ -1175,6 +1346,30 @@ class TestDashboardTraceTimeoutSelection:
         assert timeout == 30000
 
 
+class TestDashboardMetricSourceNormalization:
+    def test_simulation_custom_attribute_is_rerouted_to_traces(self):
+        viewset = DashboardViewSet()
+        normalized = viewset._normalize_metric_sources(
+            [
+                {
+                    "id": "cost_breakdown.stt",
+                    "type": "custom_attribute",
+                    "source": "simulation",
+                }
+            ]
+        )
+
+        assert normalized[0]["source"] == "traces"
+
+    def test_non_custom_simulation_metric_keeps_simulation_source(self):
+        viewset = DashboardViewSet()
+        normalized = viewset._normalize_metric_sources(
+            [{"id": "stt_cost", "type": "system_metric", "source": "simulation"}]
+        )
+
+        assert normalized[0]["source"] == "simulation"
+
+
 # ===========================================================================
 # Widget Query Execution (mocked ClickHouse)
 # ===========================================================================
@@ -1222,6 +1417,54 @@ class TestWidgetQueryExecution:
             f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
         )
         assert response.status_code == 400
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_execute_query_simulation_custom_attribute_routes_to_trace_builder(
+        self,
+        mock_get_client,
+        mock_enabled,
+        auth_client,
+        dashboard,
+        dashboard_widget,
+        observe_project,
+    ):
+        dashboard_widget.query_config = {
+            "workflow": "simulation",
+            "project_ids": [str(observe_project.id)],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "cost_breakdown.stt",
+                    "name": "cost_breakdown.stt",
+                    "type": "custom_attribute",
+                    "attribute_key": "cost_breakdown.stt",
+                    "attribute_type": "number",
+                    "aggregation": "avg",
+                    "source": "simulation",
+                }
+            ],
+        }
+        dashboard_widget.save(update_fields=["query_config"])
+
+        mock_client = MagicMock()
+        mock_client.execute_read.return_value = (
+            [(datetime(2025, 1, 1), 0.01)],
+            [("time_bucket", "DateTime"), ("value", "Float64")],
+            5.0,
+        )
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
+        )
+
+        assert response.status_code == 200
+        sql = mock_client.execute_read.call_args.args[0]
+        assert "span_attr_num" in sql
+        assert "simulate_call_execution" not in sql
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -2268,3 +2511,17 @@ class TestDashboardQueryBuilderBase:
         )
         series_names = [s["name"] for s in result["series"]]
         assert "My Project" in series_names
+
+    def test_format_metric_result_uses_metric_id_for_unit_lookup(self):
+        config = {
+            "granularity": "day",
+            "metrics": [],
+            "breakdowns": [],
+        }
+        base = DashboardQueryBuilderBase(config)
+        all_buckets = [datetime(2025, 1, 1).isoformat()]
+        metric_info = {"id": "duration", "name": "Duration", "aggregation": "avg"}
+        rows = [{"time_bucket": datetime(2025, 1, 1), "value": 42.5}]
+        result = base._format_metric_result(metric_info, rows, all_buckets, {"duration": "s"})
+        assert result["name"] == "Duration"
+        assert result["unit"] == "s"

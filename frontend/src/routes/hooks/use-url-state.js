@@ -29,18 +29,23 @@ export function useUrlState(key, defaultValue) {
   // Flag to track if the URL change was triggered internally
   const isInternalUpdate = useRef(false);
 
-  // Update both state and URL
+  // Update both state and URL.
+  // Reads from `window.location.search` rather than the functional
+  // setSearchParams form because react-router's prev arg in the functional
+  // form doesn't reflect intermediate navigate() calls within the same
+  // synchronous tick — when multiple useUrlState setters fire back-to-back
+  // (e.g. setActiveTab → applyConfig → setCellHeight/etc), the later writes
+  // clobber the earlier ones. window.location.search IS updated
+  // synchronously by react-router's underlying history.replaceState, so
+  // each setter merges with the latest URL state correctly.
   const setValue = useCallback(
     (newValue, options = { replace: true }) => {
-      // Update state using functional update to ensure latest value
       setStateValue((currentValue) => {
         const nextValue =
           typeof newValue === "function" ? newValue(currentValue) : newValue;
 
-        // Mark this as an internal update
         isInternalUpdate.current = true;
 
-        // Update URL
         const newSearchParams = new URLSearchParams(window.location.search);
         newSearchParams.set(key, stringifyUrlValue(nextValue));
         setSearchParams(newSearchParams, { replace: options.replace });
@@ -48,8 +53,9 @@ export function useUrlState(key, defaultValue) {
         return nextValue;
       });
     },
-    [key, setSearchParams], // Removed value from dependencies since we use functional updates
+    [key, setSearchParams],
   );
+
   const removeValue = useCallback(
     (options = { replace: true }) => {
       isInternalUpdate.current = true;
@@ -58,15 +64,14 @@ export function useUrlState(key, defaultValue) {
       newSearchParams.delete(key);
       setSearchParams(newSearchParams, { replace: options.replace });
 
-      // Reset state (or set to undefined if you prefer).
       setStateValue(defaultValue);
     },
     [key, setSearchParams, defaultValue],
   );
+
   // Handle external URL changes (like browser back/forward)
   useEffect(() => {
     if (isInternalUpdate.current) {
-      // Reset the flag and skip the updateuseUrlState
       isInternalUpdate.current = false;
       return;
     }
@@ -78,7 +83,6 @@ export function useUrlState(key, defaultValue) {
       return;
     }
 
-    // Update state only if the change came from external source
     const newValue = parseUrlValue(searchParams.get(key), defaultValue);
     setStateValue(newValue);
   }, [searchParams, key, defaultValue, value]);

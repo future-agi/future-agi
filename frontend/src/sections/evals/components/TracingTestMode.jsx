@@ -679,7 +679,7 @@ const TracingTestMode = React.forwardRef(
     }, [spanDetail]);
 
     const fieldNames = useMemo(
-      () => walkedFromDetail || rowFields.map((f) => f.key),
+      () => walkedFromDetail || rowFields.map((f) => f?.colId || f?.key),
       [walkedFromDetail, rowFields],
     );
 
@@ -783,8 +783,11 @@ const TracingTestMode = React.forwardRef(
         // "input.value" — which may have been soft-flattened from
         // "span_attributes.input.value") always resolves to the correct
         // value, even when the top-level key shadows a deeper path.
-        const ARRAY_PEEK = 10;
-        const DICT_LIMIT = 50;
+        // Limits match the dropdown walker so every path offered in the UI
+        // also resolves — otherwise deep paths (e.g. gen_ai.* under a big
+        // span_attributes dict) would be selectable but unresolvable.
+        const ARRAY_PEEK = 500;
+        const DICT_LIMIT = 5000;
         const valueMap = {};
         const walkValues = (node, prefix) => {
           if (Array.isArray(node)) {
@@ -797,7 +800,12 @@ const TracingTestMode = React.forwardRef(
             });
             return;
           }
-          for (const [k, v] of Object.entries(node)) {
+          // canonicalEntries drops the camelCase aliases the axios
+          // interceptor layers on — otherwise valueMap gets both
+          // `span_attributes.*` and `spanAttributes.*` branches of the
+          // same data, and only the snake side is stripped by the
+          // soft-flatten below.
+          for (const [k, v] of canonicalEntries(node)) {
             if (k.startsWith("_")) continue;
             const path = prefix ? `${prefix}.${k}` : k;
             valueMap[path] = v;

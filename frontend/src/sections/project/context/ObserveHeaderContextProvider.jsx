@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import React from "react";
 
@@ -16,8 +16,26 @@ const ObserveHeaderProvider = ({ children }) => {
     gridApi: null,
   });
 
-  // Config from the active saved-view tab (null for fixed default tabs)
   const [activeViewConfig, setActiveViewConfig] = useState(null);
+
+  // Ref (not state) so re-registering the callback doesn't re-render sibling consumers.
+  const getViewConfigRef = useRef(null);
+  const registerGetViewConfig = useCallback((fn) => {
+    getViewConfigRef.current = typeof fn === "function" ? fn : null;
+  }, []);
+  const getViewConfig = useCallback(() => {
+    const fn = getViewConfigRef.current;
+    return typeof fn === "function" ? fn() : null;
+  }, []);
+
+  const getTabTypeRef = useRef(null);
+  const registerGetTabType = useCallback((fn) => {
+    getTabTypeRef.current = typeof fn === "function" ? fn : null;
+  }, []);
+  const getTabType = useCallback(() => {
+    const fn = getTabTypeRef.current;
+    return typeof fn === "function" ? fn() : "traces";
+  }, []);
 
   return (
     <ObserveHeaderContext.Provider
@@ -26,6 +44,10 @@ const ObserveHeaderProvider = ({ children }) => {
         setHeaderConfig,
         activeViewConfig,
         setActiveViewConfig,
+        registerGetViewConfig,
+        getViewConfig,
+        registerGetTabType,
+        getTabType,
       }}
     >
       {children}

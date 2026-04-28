@@ -163,6 +163,7 @@ export const transformDynamicColumnConfig = (type, config, allColumns) => {
       return {
         config: {
           ...config,
+          url: replaceColumnIdWithName(config?.url || "", allColumns),
           body: replaceColumnIdWithName(
             JSON.stringify(config?.body) || "",
             allColumns,

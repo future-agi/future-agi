@@ -2,6 +2,7 @@ import React, {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -17,6 +18,13 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import {
+  useUpdateSavedView,
+  useUpdateWorkspaceSavedView,
+} from "src/api/project/saved-views";
+import { enqueueSnackbar } from "notistack";
+
+const USERS_TAB_TYPE = "users";
 
 // Shared observe components
 import ObserveToolbar from "../LLMTracing/ObserveToolbar";
@@ -32,9 +40,11 @@ const PrimaryGraph = lazy(
 
 // User-specific
 import useUsersStore from "./Store/usersStore";
+import { getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
+import { filtersContentEqual } from "../saved-view-utils";
 
 // ---------------------------------------------------------------------------
 // User filter fields for TraceFilterPanel
@@ -110,7 +120,13 @@ const getDateLabel = (dateFilter) => {
 
 const noopExtraProperties = () => ({});
 
-const UsersView = ({ savedViewApiRef = null }) => {
+const UsersView = ({
+  savedViewApiRef = null,
+  // Optional override for activeViewConfig — used by callers (e.g. UserList)
+  // that don't wrap UsersView in ObserveHeaderProvider but still want
+  // canSaveView to reflect divergence from a saved view's baseline.
+  activeViewConfig: activeViewConfigProp,
+}) => {
   const { observeId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -181,7 +197,16 @@ const UsersView = ({ savedViewApiRef = null }) => {
   // Expose a refresh callback to the shared ObserveHeader so the refresh
   // button in the header triggers an ag-grid serverSide refresh on this
   // Users tab.
-  const { setHeaderConfig } = useObserveHeader();
+  const {
+    setHeaderConfig,
+    activeViewConfig: activeViewConfigCtx,
+    setActiveViewConfig,
+    registerGetViewConfig,
+    registerGetTabType,
+  } = useObserveHeader();
+  // Prefer prop (set by UserList for /dashboard/users) over context
+  // (set by ObservePage for the Users fixed tab).
+  const activeViewConfig = activeViewConfigProp ?? activeViewConfigCtx;
 
   const refreshUsers = useCallback(() => {
     if (gridApi) {
@@ -294,6 +319,11 @@ const UsersView = ({ savedViewApiRef = null }) => {
       acc[col.id] = col.isVisible !== false;
       return acc;
     }, {});
+    // Capture full grid column state (widths, order, sort) so saved views
+    // restore the user's exact column layout. Stash inside `display` since
+    // the backend serializer's allowed_keys whitelists `display` for
+    // arbitrary subkeys but does not whitelist a separate `columnState`.
+    const columnState = gridApi?.getColumnState?.() ?? undefined;
     return {
       display: {
         cellHeight,
@@ -301,6 +331,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
         showNonAnnotated,
         hasEvalFilter,
         visibleColumns,
+        ...(columnState ? { columnState } : {}),
       },
       filters: {
         extraFilters,
@@ -315,7 +346,12 @@ const UsersView = ({ savedViewApiRef = null }) => {
     hasEvalFilter,
     extraFilters,
     dateFilter,
+    gridApi,
   ]);
+
+  // Pending column state from a saved view that arrived before the grid was
+  // ready. Drained by the effect below when gridApi becomes available.
+  const pendingColumnStateRef = useRef(null);
 
   const applyConfig = useCallback(
     (config) => {
@@ -327,6 +363,22 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setShowNonAnnotated(false);
         setHasEvalFilter(false);
         setDateFilter(getDefaultDateRange());
+        pendingColumnStateRef.current = null;
+        // Reset column visibility to the column-config defaults so going back
+        // to All Users from a saved view with limited columns shows everything
+        // again.
+        const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
+          (acc, col) => {
+            acc[col.field] = col.hide === undefined ? true : !col.hide;
+            return acc;
+          },
+          {},
+        );
+        if (Object.keys(defaultsVisibility).length > 0) {
+          updateColumnVisibility(defaultsVisibility);
+        }
+        // Reset AG Grid column state (widths/order/sort) to coldef defaults.
+        if (gridApi?.resetColumnState) gridApi.resetColumnState();
         return;
       }
       const display = config.display || {};
@@ -340,6 +392,16 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setHasEvalFilter(display.hasEvalFilter);
       if (display.visibleColumns && columns?.length) {
         updateColumnVisibility(display.visibleColumns);
+      }
+      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+        if (gridApi?.applyColumnState) {
+          gridApi.applyColumnState({
+            state: display.columnState,
+            applyOrder: true,
+          });
+        } else {
+          pendingColumnStateRef.current = display.columnState;
+        }
       }
       if (Array.isArray(filtersCfg.extraFilters)) {
         setExtraFilters(filtersCfg.extraFilters);
@@ -357,8 +419,20 @@ const UsersView = ({ savedViewApiRef = null }) => {
       setExtraFilters,
       updateColumnVisibility,
       columns,
+      gridApi,
     ],
   );
+
+  // Drain any column state queued before the grid was ready.
+  useEffect(() => {
+    if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
+      gridApi.applyColumnState({
+        state: pendingColumnStateRef.current,
+        applyOrder: true,
+      });
+      pendingColumnStateRef.current = null;
+    }
+  }, [gridApi]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -366,6 +440,150 @@ const UsersView = ({ savedViewApiRef = null }) => {
       savedViewApiRef.current = { getConfig, applyConfig };
     }
   }, [savedViewApiRef, getConfig, applyConfig]);
+
+  // "Save view" surfaces only on a custom saved-view tab when the live state
+  // diverges from its saved baseline. UsersView's config nests dateFilter
+  // inside `filters` (not `display` like LLMTracingView/SessionsView).
+  const canSaveView = useMemo(() => {
+    if (!activeViewConfig) return false;
+
+    const baselineFilters = activeViewConfig.filters || {};
+    const baselineDisplay = activeViewConfig.display || {};
+    const baselineExtraFilters = baselineFilters.extraFilters || [];
+    const baselineDateOption =
+      baselineFilters.dateFilter?.dateOption ?? null;
+
+    if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
+    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (
+      baselineDisplay.cellHeight !== undefined &&
+      baselineDisplay.cellHeight !== cellHeight
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showErrors !== undefined &&
+      baselineDisplay.showErrors !== showErrors
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.showNonAnnotated !== undefined &&
+      baselineDisplay.showNonAnnotated !== showNonAnnotated
+    ) {
+      return true;
+    }
+    if (
+      baselineDisplay.hasEvalFilter !== undefined &&
+      baselineDisplay.hasEvalFilter !== hasEvalFilter
+    ) {
+      return true;
+    }
+    // Column visibility: compare baseline visibleColumns dict against current
+    // columns Zustand state. Only check columns the baseline knows about —
+    // newly-added columns from a backend schema bump shouldn't mark dirty.
+    if (
+      baselineDisplay.visibleColumns &&
+      typeof baselineDisplay.visibleColumns === "object"
+    ) {
+      const currentVisibility = (columns || []).reduce((acc, col) => {
+        acc[col.id] = col.isVisible !== false;
+        return acc;
+      }, {});
+      for (const colId of Object.keys(baselineDisplay.visibleColumns)) {
+        const baselineVisible = baselineDisplay.visibleColumns[colId];
+        const currentVisible = currentVisibility[colId];
+        if (
+          currentVisible !== undefined &&
+          currentVisible !== baselineVisible
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, [
+    activeViewConfig,
+    extraFilters,
+    dateFilter,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    hasEvalFilter,
+    columns,
+  ]);
+
+  const canSaveViewDeferred = useDeferredValue(canSaveView);
+
+  // Update mutations for the explicit Save view button. Project-scoped on
+  // ObservePage's Users fixed tab; workspace-scoped (USERS_TAB_TYPE) on the
+  // top-level /dashboard/users page rendered by UserList.
+  const { mutate: updateSavedView } = useUpdateSavedView(observeId);
+  const { mutate: updateWorkspaceSavedView } =
+    useUpdateWorkspaceSavedView(USERS_TAB_TYPE);
+
+  // Active saved-view id from URL — "tab" key on ObservePage, "usersTab" on
+  // UserList. Re-derived when the active config flips.
+  const activeViewTabId = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const key = isObservePath
+      ? params.get("tab")
+      : params.get("usersTab");
+    return key?.startsWith("view-") ? key.slice(5) : null;
+  }, [activeViewConfig, isObservePath]);
+
+  const handleSaveView = useCallback(() => {
+    if (!activeViewTabId) return;
+    const config = getConfig();
+    const mutate = isObservePath ? updateSavedView : updateWorkspaceSavedView;
+    mutate(
+      { id: activeViewTabId, config },
+      {
+        onSuccess: (response) => {
+          // Refresh context baseline (Observe path) — UserList path's
+          // activeViewConfig prop refreshes via the mutation's optimistic
+          // setQueryData on the workspace cache.
+          setActiveViewConfig(response?.data?.result?.config ?? config);
+          enqueueSnackbar("View updated", { variant: "success" });
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to update view", { variant: "error" }),
+      },
+    );
+  }, [
+    activeViewTabId,
+    getConfig,
+    isObservePath,
+    updateSavedView,
+    updateWorkspaceSavedView,
+    setActiveViewConfig,
+  ]);
+
+  // Register with ObserveHeaderContext so ObserveTabBar's "+" save flow can
+  // snapshot the current Users config when the user is on this fixed tab —
+  // without this, the save POSTs `config: {}` (TH-4578).
+  useEffect(() => {
+    registerGetViewConfig(getConfig);
+    return () => registerGetViewConfig(null);
+  }, [registerGetViewConfig, getConfig]);
+
+  useEffect(() => {
+    registerGetTabType(() => "users");
+    return () => registerGetTabType(null);
+  }, [registerGetTabType]);
+
+  // Apply a saved view's config when activeViewConfig changes. Reuses the
+  // existing applyConfig — handles extraFilters, dateFilter, display state,
+  // column visibility.
+  // Dep array intentionally only watches `activeViewConfig`. `applyConfig`'s
+  // identity changes whenever `columns` does, and `applyConfig` itself
+  // mutates `columns` via `updateColumnVisibility` — keeping it in deps
+  // creates an infinite re-apply loop.
+  useEffect(() => {
+    if (!activeViewConfig) return;
+    applyConfig(activeViewConfig);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewConfig]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -406,6 +624,9 @@ const UsersView = ({ savedViewApiRef = null }) => {
         setDateFilter={setDateFilter}
         // Filter
         hasActiveFilter={hasActiveFilter}
+        canSaveView={canSaveViewDeferred}
+        onSaveView={handleSaveView}
+        graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
         onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
         filterFields={USER_FILTER_FIELDS}
@@ -574,6 +795,7 @@ const UsersView = ({ savedViewApiRef = null }) => {
 
 UsersView.propTypes = {
   savedViewApiRef: PropTypes.shape({ current: PropTypes.any }),
+  activeViewConfig: PropTypes.object,
 };
 
 export default UsersView;

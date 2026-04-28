@@ -2043,7 +2043,14 @@ class GetDatasetTableView(APIView):
             # the dataset; use column_order only for sorting.
             column_order = dataset.column_order or []
             column_order_set = set(column_order)
-            all_columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+            qs = Column.objects.filter(dataset=dataset, deleted=False)
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                qs = qs.exclude(source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ])
+            all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
             # Names of EVALUATION_REASON columns in this dataset. Reason columns
@@ -2683,7 +2690,14 @@ class GetRowDataView(APIView):
             error_messages = []
             cells = Cell.objects.filter(row__in=rows, deleted=False)
             column_order = dataset.column_order or []
-            all_columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+            qs = Column.objects.filter(dataset=dataset, deleted=False)
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                qs = qs.exclude(source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ])
+            all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
             # Apply filters if any
@@ -6065,6 +6079,11 @@ class DownloadDatasetView(APIView):
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
             # Get all columns in the correct order
+            _exp_sources = [
+                SourceChoices.EXPERIMENT.value,
+                SourceChoices.EXPERIMENT_EVALUATION.value,
+                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+            ]
             column_order = dataset.column_order or []
             if column_order:
                 from django.db.models import Case, IntegerField, Value, When
@@ -6088,6 +6107,8 @@ class DownloadDatasetView(APIView):
                 columns = Column.objects.filter(
                     dataset_id=dataset_id, deleted=False
                 ).order_by("id")
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                columns = columns.exclude(source__in=_exp_sources)
 
             # Create DataFrame
             rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
@@ -11447,6 +11468,7 @@ class GetBaseColumnsView(APIView):
 
             # Get all columns per dataset in a single query
             excluded_sources = [
+                SourceChoices.EXPERIMENT.value,
                 SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
                 SourceChoices.EVALUATION_TAGS.value,
                 SourceChoices.OPTIMISATION_EVALUATION_TAGS.value,
@@ -14748,12 +14770,13 @@ def get_json_column_schemas(dataset):
     """
     from model_hub.utils.json_path_resolver import (
         extract_json_schema_for_column,
+        parse_json_safely,
     )
 
-    # Get JSON-type columns
+    # Get JSON-type columns + text columns that may contain JSON values
     json_columns = Column.objects.filter(
         dataset=dataset,
-        data_type="json",
+        data_type__in=["json", "text"],
         deleted=False,
     )
 
@@ -14764,39 +14787,54 @@ def get_json_column_schemas(dataset):
         metadata = column.metadata or {}
         json_schema = metadata.get("json_schema")
 
-        if json_schema and json_schema.get("keys"):
+        if json_schema and (json_schema.get("keys") or json_schema.get("max_array_count")):
             # Use cached schema
-            result[str(column.id)] = {
+            entry = {
                 "name": column.name,
                 "keys": json_schema.get("keys", []),
                 "sample": json_schema.get("sample"),
             }
+            if json_schema.get("max_array_count"):
+                entry["max_array_count"] = json_schema["max_array_count"]
+            result[str(column.id)] = entry
         else:
-            # Extract schema from all cells (up to 500 for performance)
-            sample_cells = (
-                Cell.objects.filter(
-                    column=column,
-                    deleted=False,
-                )
+            # Extract schema from cells. For text columns, check a small
+            # sample first to avoid wasting time on non-JSON content.
+            base_qs = (
+                Cell.objects.filter(column=column, deleted=False)
                 .exclude(value__isnull=True)
                 .exclude(value="")
-                .values_list("value", flat=True)[:500]
             )
+
+            if column.data_type == "text":
+                # Quick check: peek at first 3 non-empty cells
+                peek = list(base_qs.values_list("value", flat=True)[:3])
+                has_json = any(
+                    parse_json_safely(v)[1] for v in peek
+                )
+                if not has_json:
+                    continue
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
+            else:
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
 
             if sample_cells:
                 schema = extract_json_schema_for_column(list(sample_cells))
 
-                if schema.get("keys"):
+                if schema.get("keys") or schema.get("max_array_count"):
                     # Store schema in column metadata
                     metadata["json_schema"] = schema
                     column.metadata = metadata
                     column.save(update_fields=["metadata"])
 
-                    result[str(column.id)] = {
+                    entry = {
                         "name": column.name,
                         "keys": schema.get("keys", []),
                         "sample": schema.get("sample"),
                     }
+                    if schema.get("max_array_count"):
+                        entry["max_array_count"] = schema["max_array_count"]
+                    result[str(column.id)] = entry
 
     # Get images-type columns and calculate max_images_count
     images_columns = Column.objects.filter(

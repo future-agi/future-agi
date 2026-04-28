@@ -2989,7 +2989,7 @@ class CallExecutionDetailView(APIView):
             # without an extra ObservationSpan query per instance, so we
             # add it here in the detail view where a one-row lookup is cheap.
             response_data = dict(serializer.data)
-            add_trace_details_to_call_executions([response_data])
+            # add_trace_details_to_call_executions([response_data])
 
             # Shape parity with the observe drawer: when a trace is linked,
             # also return the full serialized observation spans array. The

@@ -2965,7 +2965,7 @@ class CompositeEvalDetailView(APIView):
             CompositeDetailResponse,
             CompositeUpdateRequest,
         )
-        from model_hub.utils.eval_list import derive_eval_type
+        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
 
         try:
             try:
