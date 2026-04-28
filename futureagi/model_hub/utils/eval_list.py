@@ -451,6 +451,25 @@ def build_eval_list_queryset(
                     | Q(id__in=version_template_ids_email)
                 )
 
+        # Created by exclusion filter
+        if _f("created_by_not"):
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            excluded_by_list = _f("created_by_not")
+            exc_ids_name = EvalTemplateVersion.all_objects.filter(
+                is_default=True,
+                deleted=False,
+                created_by__name__in=excluded_by_list,
+            ).values_list("eval_template_id", flat=True)
+            exc_ids_email = EvalTemplateVersion.all_objects.filter(
+                is_default=True,
+                deleted=False,
+                created_by__email__in=excluded_by_list,
+            ).values_list("eval_template_id", flat=True)
+            qs = qs.exclude(
+                Q(id__in=exc_ids_name) | Q(id__in=exc_ids_email)
+            )
+
         # Note: eval_type filter is applied in-memory after fetching because
         # eval_type is derived from multiple fields (config + tags), not a single
         # DB column. For better performance with large datasets, consider adding

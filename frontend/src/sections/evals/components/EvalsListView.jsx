@@ -293,7 +293,7 @@ const EvalsListView = () => {
 
   // Derive API params
   const ownerFilter = filters?.owner_not
-    ? (filters.owner_not === "system" ? "user" : "system")
+    ? (filters.owner_not === "system" ? "user" : "all")
     : (filters?.owner || "all");
   // `filters.name` from the dropdown is an exact-match list; a single typed
   // value falls back to `search` (fuzzy name__icontains). Multi-select is
@@ -314,6 +314,7 @@ const EvalsListView = () => {
     if (filters.template_type) f.template_type = filters.template_type;
     if (filters.tags) f.tags = filters.tags;
     if (filters.created_by) f.created_by = filters.created_by;
+    if (filters.created_by_not) f.created_by_not = filters.created_by_not;
     if (Array.isArray(filters.name) && filters.name.length > 0) {
       f.names = filters.name;
     } else if (Array.isArray(filters.names) && filters.names.length > 0) {
@@ -328,6 +329,15 @@ const EvalsListView = () => {
     if (!filters) return null;
     const f = { ...filters };
 
+    // Reconstruct negated owner display from created_by_not + owner_not
+    if (Array.isArray(filters.created_by_not) && filters.created_by_not.length > 0) {
+      const negated = [...filters.created_by_not];
+      if (filters.owner_not === "system") negated.push("System");
+      f.owner_not = negated;
+    } else if (filters.owner_not === "system") {
+      f.owner_not = ["System"];
+    }
+
     if (Array.isArray(filters.created_by) && filters.created_by.length > 0) {
       f.owner = [...filters.created_by];
     } else if (filters.owner === "system") {
@@ -337,6 +347,7 @@ const EvalsListView = () => {
     }
 
     delete f.created_by;
+    delete f.created_by_not;
     return f;
   }, [filters]);
 
@@ -924,14 +935,18 @@ const EvalsListView = () => {
               if (!val.length) continue;
               if (t.field === "owner") {
                 const isNeg = t.operator === "is_not" || t.operator === "not_equals";
-                const oKey = isNeg ? "owner_not" : "owner";
                 const hasSystem = val.some((v) => v.toLowerCase() === "system");
                 const userNames = val.filter(
                   (v) => v.toLowerCase() !== "system",
                 );
-                if (hasSystem && !userNames.length) flat[oKey] = "system";
-                else if (!hasSystem && userNames.length) flat[oKey] = "user";
-                if (userNames.length) flat.created_by = userNames;
+                if (isNeg) {
+                  if (hasSystem) flat.owner_not = "system";
+                  if (userNames.length) flat.created_by_not = userNames;
+                } else {
+                  if (hasSystem && !userNames.length) flat.owner = "system";
+                  else if (!hasSystem && userNames.length) flat.owner = "user";
+                  if (userNames.length) flat.created_by = userNames;
+                }
               } else if (t.field === "name") {
                 // Single free-text entry → fuzzy `search`; everything else
                 // (including single dropdown pick) → exact match via `name`.
@@ -954,21 +969,22 @@ const EvalsListView = () => {
             // Leave `flat.name` alone (may be string or array) — `apiFilters`
             // decides between `names` (exact multi) and `search` (fuzzy one).
             const flat = { ...result };
-            const oKey = flat.owner_not ? "owner_not" : "owner";
-            if (flat[oKey]) {
-              const vals = Array.isArray(flat[oKey]) ? flat[oKey] : [flat[oKey]];
+            const isNegOwner = Boolean(flat.owner_not);
+            const rawOwner = flat.owner_not || flat.owner;
+            if (rawOwner) {
+              const vals = Array.isArray(rawOwner) ? rawOwner : [rawOwner];
               const hasSystem = vals.some((v) => v.toLowerCase() === "system");
               const userNames = vals.filter((v) => v.toLowerCase() !== "system");
               delete flat.owner;
               delete flat.owner_not;
-              if (oKey === "owner_not") {
-                if (hasSystem && !userNames.length) flat.owner_not = "system";
-                else if (!hasSystem && userNames.length) flat.owner_not = "user";
+              if (isNegOwner) {
+                if (hasSystem) flat.owner_not = "system";
+                if (userNames.length) flat.created_by_not = userNames;
               } else {
                 if (hasSystem && !userNames.length) flat.owner = "system";
                 else if (!hasSystem && userNames.length) flat.owner = "user";
+                if (userNames.length) flat.created_by = userNames;
               }
-              if (userNames.length) flat.created_by = userNames;
             }
             setFilters(Object.keys(flat).length > 0 ? flat : null);
           }

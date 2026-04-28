@@ -775,7 +775,6 @@ class ClickHouseFilterBuilder:
             _fv = _fv[0] if _fv and _fv[0] not in (None, "") else _fv
 
         negate = filter_op in ("not_equals", "not_in", "!=", "is_not", "ne")
-        membership = "NOT IN" if negate else "IN"
 
         error_clause = "AND error = 0"
 
@@ -786,11 +785,16 @@ class ClickHouseFilterBuilder:
             outer_col = "trace_id"
             inner_col = "trace_id"
 
+        # Always use IN (not NOT IN) so traces with no eval records are
+        # excluded.  For negation, flip the comparison inside the subquery.
         if output_type == "PASS_FAIL":
             bool_val = str(_fv).strip().lower() in ("passed", "pass", "true", "1")
-            cmp = f"output_bool = {1 if bool_val else 0}"
+            if negate:
+                cmp = f"output_bool = {0 if bool_val else 1}"
+            else:
+                cmp = f"output_bool = {1 if bool_val else 0}"
             return (
-                f"{outer_col} {membership} ("
+                f"{outer_col} IN ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND _peerdb_is_deleted = 0 "
@@ -804,13 +808,16 @@ class ClickHouseFilterBuilder:
             param_eq = self._next_param("eval_eq")
             self._params[param_like] = f"%{_fv}%"
             self._params[param_eq] = str(_fv)
+            match_cond = f"(output_str_list LIKE %({param_like})s OR output_str = %({param_eq})s)"
+            if negate:
+                match_cond = f"NOT {match_cond}"
             return (
-                f"{outer_col} {membership} ("
+                f"{outer_col} IN ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND _peerdb_is_deleted = 0 "
                 f"{error_clause} "
-                f"AND (output_str_list LIKE %({param_like})s OR output_str = %({param_eq})s)"
+                f"AND {match_cond}"
                 f")"
             )
 
@@ -821,17 +828,7 @@ class ClickHouseFilterBuilder:
             self._params[param] = raw_val / 100.0
         except (ValueError, TypeError):
             self._params[param] = filter_value
-        if negate:
-            return (
-                f"{outer_col} NOT IN ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
-                f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"{error_clause} "
-                f"AND output_float = %({param})s"
-                f")"
-            )
-        op = self.OP_MAP.get(filter_op, "=")
+        op = "!=" if negate else self.OP_MAP.get(filter_op, "=")
         return (
             f"{outer_col} IN ("
             f"SELECT {inner_col} FROM tracer_eval_logger FINAL "

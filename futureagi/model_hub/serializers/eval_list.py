@@ -49,6 +49,11 @@ class EvalListFiltersSerializer(serializers.Serializer):
         required=False,
         allow_empty=True,
     )
+    created_by_not = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True,
+    )
     names = serializers.ListField(
         child=serializers.CharField(),
         required=False,
