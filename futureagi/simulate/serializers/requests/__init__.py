@@ -9,7 +9,6 @@ from .agent_version import (
     AgentVersionCreateRequestSerializer,
 )
 from .run_test import (
-    AddEvalConfigRequestSerializer,
     CreatePromptSimulationSerializer,
     CreateRunTestSerializer,
     RunTestFilterSerializer,
@@ -63,7 +62,6 @@ __all__ = [
     "ScenarioAddRowsRequestSerializer",
     "ScenarioAddColumnsRequestSerializer",
     "RunTestFilterSerializer",
-    "AddEvalConfigRequestSerializer",
     "CreateRunTestSerializer",
     "UpdateRunTestSerializer",
     "CreatePromptSimulationSerializer",

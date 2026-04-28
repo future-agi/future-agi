@@ -62,7 +62,6 @@ from simulate.models.test_execution import (
     EvalExplanationSummaryStatus,
 )
 from simulate.serializers.requests.run_test import (
-    AddEvalConfigRequestSerializer,
     CreateRunTestSerializer,
     RunTestFilterSerializer,
     UpdateRunTestSerializer,

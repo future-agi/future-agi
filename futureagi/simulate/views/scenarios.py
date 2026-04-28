@@ -14,7 +14,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models.user import User
-
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -40,14 +39,17 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.develop_dataset import ColumnSerializer
+
 try:
     from ee.voice.constants.voice_mapper import get_personas_by_language
 except ImportError:
     get_personas_by_language = None
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
-from drf_yasg.utils import swagger_auto_schema
 from simulate.serializers.requests.scenarios import (
     ScenarioAddColumnsRequestSerializer,
     ScenarioAddRowsRequestSerializer,
@@ -321,7 +323,9 @@ class ScenariosListView(APIView):
             scenarios = Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
 
             return Response(
-                ScenarioMultiDatasetResponseSerializer({"column_configs": scenarios}).data,
+                ScenarioMultiDatasetResponseSerializer(
+                    {"column_configs": scenarios}
+                ).data,
                 status=status.HTTP_200_OK,
             )
         except Exception as e:
@@ -403,11 +407,13 @@ class CreateScenarioView(APIView):
 
             # Return immediate response with processing status
             return Response(
-                ScenarioCreateResponseSerializer({
-                    "message": f"{scenario_kind.title()} scenario creation started",
-                    "scenario": temp_scenario,
-                    "status": "processing",
-                }).data,
+                ScenarioCreateResponseSerializer(
+                    {
+                        "message": f"{scenario_kind.title()} scenario creation started",
+                        "scenario": temp_scenario,
+                        "status": "processing",
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -738,7 +744,9 @@ class DeleteScenarioView(APIView):
             scenario.save()
 
             return Response(
-                ScenarioDeleteResponseSerializer({"message": "Scenario deleted successfully"}).data,
+                ScenarioDeleteResponseSerializer(
+                    {"message": "Scenario deleted successfully"}
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -837,10 +845,12 @@ class EditScenarioView(APIView):
             scenario.save()
 
             return Response(
-                ScenarioEditResponseSerializer({
-                    "message": "Scenario updated successfully",
-                    "scenario": scenario,
-                }).data,
+                ScenarioEditResponseSerializer(
+                    {
+                        "message": "Scenario updated successfully",
+                        "scenario": scenario,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -915,10 +925,12 @@ class EditScenarioPromptsView(APIView):
             scenario.simulator_agent.save()
 
             return Response(
-                ScenarioPromptsUpdateResponseSerializer({
-                    "message": "Scenario prompts updated successfully",
-                    "prompts": prompts,
-                }).data,
+                ScenarioPromptsUpdateResponseSerializer(
+                    {
+                        "message": "Scenario prompts updated successfully",
+                        "prompts": prompts,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -1062,12 +1074,14 @@ class AddScenarioRowsView(APIView):
             )
 
             return Response(
-                ScenarioAddRowsResponseSerializer({
-                    "message": f"Started generating {num_rows} new rows for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "num_rows": num_rows,
-                }).data,
+                ScenarioAddRowsResponseSerializer(
+                    {
+                        "message": f"Started generating {num_rows} new rows for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "num_rows": num_rows,
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -1244,12 +1258,14 @@ class AddScenarioColumnsView(APIView):
             )
 
             return Response(
-                ScenarioAddColumnsResponseSerializer({
-                    "message": f"Started generating {len(columns_info)} new column(s) for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "columns": [col["name"] for col in columns_info],
-                }).data,
+                ScenarioAddColumnsResponseSerializer(
+                    {
+                        "message": f"Started generating {len(columns_info)} new column(s) for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "columns": [col["name"] for col in columns_info],
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 

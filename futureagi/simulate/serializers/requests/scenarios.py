@@ -237,11 +237,15 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         if source_type == Scenarios.SourceTypes.PROMPT:
             if not data.get("prompt_template_id"):
                 raise serializers.ValidationError(
-                    {"prompt_template_id": "prompt_template_id is required for prompt source type."}
+                    {
+                        "prompt_template_id": "prompt_template_id is required for prompt source type."
+                    }
                 )
             if not data.get("prompt_version_id"):
                 raise serializers.ValidationError(
-                    {"prompt_version_id": "prompt_version_id is required for prompt source type."}
+                    {
+                        "prompt_version_id": "prompt_version_id is required for prompt source type."
+                    }
                 )
             from model_hub.models.run_prompt import PromptVersion
 
@@ -366,12 +370,19 @@ class ScenarioAddColumnsRequestSerializer(serializers.Serializer):
     Incorporates Phase 0 validations (0.2.1 – 0.2.2) that previously lived in the view.
     """
 
-    columns = serializers.ListField(
-        child=ColumnDefinitionSerializer(),
-        required=True,
-        allow_empty=False,
-        max_length=10,
-    )
+    # Use many=True so drf-yasg renders this as a proper array-of-objects schema.
+    # ListField(child=Serializer()) causes drf-yasg to hoist child fields to the top level.
+    columns = ColumnDefinitionSerializer(many=True, required=True)
+
+    def validate_columns(self, value):
+        """min_length=1, max_length=10 (replaces allow_empty=False / max_length on ListField)."""
+        if not value:
+            raise serializers.ValidationError("At least one column is required.")
+        if len(value) > 10:
+            raise serializers.ValidationError(
+                "Cannot add more than 10 columns at once."
+            )
+        return value
 
     def validate(self, data):
         """Phase 0.2.1 — duplicate names in request; Phase 0.2.2 — already exists in DB."""
@@ -391,8 +402,9 @@ class ScenarioAddColumnsRequestSerializer(serializers.Serializer):
             from model_hub.models.develop_dataset import Column
 
             existing = set(
-                Column.objects.filter(dataset=scenario.dataset, deleted=False)
-                .values_list("name", flat=True)
+                Column.objects.filter(
+                    dataset=scenario.dataset, deleted=False
+                ).values_list("name", flat=True)
             )
             for col in columns:
                 if col["name"] in existing:
