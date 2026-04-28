@@ -26,9 +26,36 @@ from tracer.services.clickhouse.query_builders.dashboard_base import (
     _coerce_filter_value,
     _generate_time_buckets,
     _parse_dt,
+    rescale_rate_to_percent,
 )
 
 _SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
+
+# Metrics whose column expression emits a 0/1 indicator per row.
+_RATE_INDICATOR_METRICS = frozenset({"success_rate", "failure_rate"})
+_STRING_DIMENSION_METRICS = frozenset(
+    {
+        "scenario",
+        "agent_definition",
+        "agent_version",
+        "persona",
+        "call_type",
+        "status",
+        "ended_reason",
+        "scenario_type",
+        "run_test",
+        "test_execution",
+        "persona_gender",
+        "persona_age_group",
+        "persona_location",
+        "persona_profession",
+        "persona_personality",
+        "persona_communication_style",
+        "persona_accent",
+        "persona_language",
+        "persona_conversation_speed",
+    }
+)
 
 
 def _sanitize_key(key: str) -> str:
@@ -56,10 +83,24 @@ _PERSONA_NAME_EXPR = (
 )
 
 _PERSONA_FIELD = lambda field: (f"JSONExtractString({_PERSONA_JSON_EXPR}, '{field}')")
+_CUSTOMER_LATENCY_FIELD = lambda field: (
+    f"JSONExtractFloat(c.customer_latency_metrics, 'systemMetrics', '{field}')"
+)
+# Nullable variant — returns NULL when the JSON key is absent so avg()
+# skips the row instead of folding a 0 into the average.
+_CUSTOMER_LATENCY_FIELD_NULLABLE = lambda field: (
+    "if(JSONHas(c.customer_latency_metrics, 'systemMetrics', "
+    f"'{field}'), JSONExtractFloat(c.customer_latency_metrics, "
+    f"'systemMetrics', '{field}'), CAST(NULL, 'Nullable(Float64)'))"
+)
 
 SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     # Call counts & entity counts
     "call_count": ("simulate_call_execution", "1"),
+    # Rate metrics emit a 0/1 indicator per row. ``avg`` is rescaled to a
+    # percentage in ``_build_system_metric_query`` so users see 42% rather
+    # than 0.42; ``sum`` / ``count`` keep their natural meaning (count of
+    # successful or failed calls).
     "success_rate": (
         "simulate_call_execution",
         "CASE WHEN status = 'completed' THEN 1.0 ELSE 0.0 END",
@@ -72,10 +113,22 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     "duration": ("simulate_call_execution", "duration_seconds"),
     "response_time": ("simulate_call_execution", "response_time_ms"),
     "agent_latency": ("simulate_call_execution", "avg_agent_latency_ms"),
-    # Component latencies (STT/TTS/LLM)
-    "stt_latency": ("simulate_call_execution", "stt_latency_ms"),
-    "tts_latency": ("simulate_call_execution", "tts_latency_ms"),
-    "llm_latency": ("simulate_call_execution", "llm_latency_ms"),
+    # Component latencies (STT/TTS/LLM). Use Nullable(Float64) so calls
+    # whose customer_latency_metrics JSON is empty / missing the key are
+    # skipped by avg() instead of being counted as 0 ms (which silently
+    # collapses real values toward zero and looks like "no data").
+    "stt_latency": (
+        "simulate_call_execution",
+        _CUSTOMER_LATENCY_FIELD_NULLABLE("transcriber"),
+    ),
+    "tts_latency": (
+        "simulate_call_execution",
+        _CUSTOMER_LATENCY_FIELD_NULLABLE("voice"),
+    ),
+    "llm_latency": (
+        "simulate_call_execution",
+        _CUSTOMER_LATENCY_FIELD_NULLABLE("model"),
+    ),
     # Cost breakdown
     "total_cost": ("simulate_call_execution", "cost_cents"),
     "stt_cost": ("simulate_call_execution", "stt_cost_cents"),
@@ -92,7 +145,17 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     "ai_interruption_rate": ("simulate_call_execution", "ai_interruption_rate"),
     "user_wpm": ("simulate_call_execution", "user_wpm"),
     "bot_wpm": ("simulate_call_execution", "bot_wpm"),
-    "talk_ratio": ("simulate_call_execution", "talk_ratio"),
+    # ``talk_ratio`` is stored as ``agent_talk_time / customer_talk_time``
+    # — an unbounded ratio that can exceed 1.0 (and therefore exceeded
+    # 100% when the frontend rendered it as a percentage). Convert it to
+    # the agent's share of total speaking time so the value is always
+    # within [0, 100]. Mirrors test_execution.agent_talk_percentage.
+    "talk_ratio": (
+        "simulate_call_execution",
+        "if(talk_ratio IS NULL OR talk_ratio <= 0, "
+        "CAST(NULL, 'Nullable(Float64)'), "
+        "(talk_ratio / (talk_ratio + 1)) * 100)",
+    ),
     "stop_time_after_interruption": (
         "simulate_call_execution",
         "avg_stop_time_after_interruption_ms",
@@ -125,6 +188,13 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'scenario_type', c.scenario_id, '')",
     ),
+    "run_test": (
+        "simulate_call_execution",
+        "dictGetOrDefault('simulate_run_test_dict', 'name', "
+        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
+    ),
+    "test_execution": ("simulate_call_execution", "toString(c.test_execution_id)"),
     # Persona attributes
     "persona_gender": ("simulate_call_execution", _PERSONA_FIELD("gender")),
     "persona_age_group": ("simulate_call_execution", _PERSONA_FIELD("age_group")),
@@ -161,12 +231,12 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "overall_score": "",
     "message_count": "",
     "user_interruptions": "",
-    "user_interruption_rate": "%",
+    "user_interruption_rate": "/min",
     "ai_interruptions": "",
-    "ai_interruption_rate": "%",
+    "ai_interruption_rate": "/min",
     "user_wpm": "wpm",
     "bot_wpm": "wpm",
-    "talk_ratio": "",
+    "talk_ratio": "%",
     "stop_time_after_interruption": "ms",
     # String dimension metrics (used with count/count_distinct)
     "scenario": "",
@@ -177,6 +247,8 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "status": "",
     "ended_reason": "",
     "scenario_type": "",
+    "run_test": "",
+    "test_execution": "",
     "persona_gender": "",
     "persona_age_group": "",
     "persona_location": "",
@@ -224,6 +296,7 @@ SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
     "call_type": "c.simulation_call_type",
     "status": "c.status",
     "ended_reason": "c.ended_reason",
+    "scenario_type": "dictGetOrDefault('simulate_scenario_dict', 'scenario_type', c.scenario_id, '')",
     "persona_gender": _PERSONA_FIELD("gender"),
     "persona_age_group": _PERSONA_FIELD("age_group"),
     "persona_location": _PERSONA_FIELD("location"),
@@ -279,6 +352,33 @@ SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
         "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
     ),
     "test_execution": "toString(c.test_execution_id)",
+    # Numeric columns — needed so range operators (>, <, between, …) on
+    # call.duration / latencies / costs actually filter instead of being
+    # silently dropped. JSON-derived latencies use the nullable extractor
+    # so missing keys don't compare against 0.
+    "duration": "c.duration_seconds",
+    "response_time": "c.response_time_ms",
+    "agent_latency": "c.avg_agent_latency_ms",
+    "stt_latency": _CUSTOMER_LATENCY_FIELD_NULLABLE("transcriber"),
+    "tts_latency": _CUSTOMER_LATENCY_FIELD_NULLABLE("voice"),
+    "llm_latency": _CUSTOMER_LATENCY_FIELD_NULLABLE("model"),
+    "total_cost": "c.cost_cents",
+    "stt_cost": "c.stt_cost_cents",
+    "llm_cost": "c.llm_cost_cents",
+    "tts_cost": "c.tts_cost_cents",
+    "customer_cost": "c.customer_cost_cents",
+    "overall_score": "c.overall_score",
+    "message_count": "c.message_count",
+    "user_interruptions": "c.user_interruption_count",
+    "user_interruption_rate": "c.user_interruption_rate",
+    "ai_interruptions": "c.ai_interruption_count",
+    "ai_interruption_rate": "c.ai_interruption_rate",
+    "user_wpm": "c.user_wpm",
+    "bot_wpm": "c.bot_wpm",
+    # Filter on the raw stored ratio (unbounded) — the SYSTEM_METRICS
+    # entry only converts to a percentage for display/aggregation.
+    "talk_ratio": "c.talk_ratio",
+    "stop_time_after_interruption": "c.avg_stop_time_after_interruption_ms",
 }
 
 
@@ -329,7 +429,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
     def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
         metric_type = metric.get("type", "system_metric")
         metric_name = metric.get("id") or metric.get("name", "")
-        aggregation = metric.get("aggregation", "avg")
+        aggregation = self._effective_aggregation(metric)
         per_metric_filters = metric.get("filters", [])
 
         start_date, end_date = self.parse_time_range()
@@ -356,6 +456,21 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         else:
             raise ValueError(f"Unknown simulation metric type: {metric_type}")
 
+    def build_all_queries(self) -> List[Tuple[str, dict, dict]]:
+        results = []
+        for metric in self.metrics:
+            sql, params = self.build_metric_query(metric)
+            metric_info = {
+                "id": metric.get("id", ""),
+                "name": metric.get("displayName")
+                or metric.get("display_name")
+                or metric.get("name", ""),
+                "type": metric.get("type", "system_metric"),
+                "aggregation": self._effective_aggregation(metric),
+            }
+            results.append((sql, params, metric_info))
+        return results
+
     # ------------------------------------------------------------------
     # System metric
     # ------------------------------------------------------------------
@@ -372,30 +487,19 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
             raise ValueError(f"Unknown simulation system metric: {metric_name}")
         _, col_expr = SIMULATION_SYSTEM_METRICS[metric_name]
 
-        # call_count should default to count
-        if metric_name == "call_count" and aggregation not in ("count", "sum"):
-            aggregation = "count"
+        if metric_name in _STRING_DIMENSION_METRICS:
+            is_present = f"{col_expr} IS NOT NULL AND {col_expr} != ''"
+            if aggregation != "count":
+                agg_expr = f"uniqIf({col_expr}, {is_present})"
+            else:
+                agg_expr = f"countIf({is_present})"
+        else:
+            agg_expr = SIMULATION_AGGREGATIONS.get(aggregation, "avg({col})").format(
+                col=col_expr
+            )
 
-        # String dimension metrics — force count_distinct (can't avg/sum a string)
-        _STRING_DIMENSION_METRICS = {
-            "scenario",
-            "agent_definition",
-            "agent_version",
-            "persona",
-            "call_type",
-            "status",
-            "ended_reason",
-            "scenario_type",
-        }
-        if metric_name in _STRING_DIMENSION_METRICS and aggregation not in (
-            "count",
-            "count_distinct",
-        ):
-            aggregation = "count_distinct"
-
-        agg_expr = SIMULATION_AGGREGATIONS.get(aggregation, "avg({col})").format(
-            col=col_expr
-        )
+        if metric_name in _RATE_INDICATOR_METRICS:
+            agg_expr = rescale_rate_to_percent(agg_expr, aggregation)
 
         select_parts = [f"{bucket_fn}(c.created_at) AS time_bucket"]
         group_parts = ["time_bucket"]
@@ -490,17 +594,21 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
                 aggregation = "count"
         else:
             # SCORE — numeric
-            col_expr = f"JSONExtractFloat(c.eval_outputs, '{eval_key}', 'score')"
+            col_expr = (
+                f"JSONExtract(c.eval_outputs, '{eval_key}', 'score', 'Nullable(Float64)')"
+            )
 
-        # Build aggregation with pass/fail support
+        # Build aggregation with pass/fail support. Rate aggregations
+        # are scaled to 0–100 so widgets that render them with a ``%``
+        # suffix don't show 0.42% for a 42% pass rate.
         EVAL_AGGREGATIONS = {
             **SIMULATION_AGGREGATIONS,
             "pass_rate": (
-                "countIf(lower({col}) IN ('true', 'pass', 'passed', '1')) "
+                "countIf(lower({col}) IN ('true', 'pass', 'passed', '1')) * 100.0 "
                 "/ nullIf(count(), 0)"
             ),
             "fail_rate": (
-                "countIf(lower({col}) IN ('false', 'fail', 'failed', '0')) "
+                "countIf(lower({col}) IN ('false', 'fail', 'failed', '0')) * 100.0 "
                 "/ nullIf(count(), 0)"
             ),
             "pass_count": "countIf(lower({col}) IN ('true', 'pass', 'passed', '1'))",
@@ -579,9 +687,32 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
             return col
         return None
 
+    def _effective_aggregation(self, metric: dict) -> str:
+        metric_type = metric.get("type", "system_metric")
+        metric_name = metric.get("id") or metric.get("name", "")
+        aggregation = metric.get("aggregation", "avg")
+
+        if metric_type == "system_metric":
+            if metric_name == "call_count" and aggregation not in ("count", "sum"):
+                return "count"
+            if metric_name in _STRING_DIMENSION_METRICS:
+                return "count" if aggregation == "count" else "count_distinct"
+            return aggregation
+
+        if metric_type == "eval_metric":
+            output_type = metric.get("output_type", "SCORE")
+            if output_type == "PASS_FAIL":
+                pass_fail_aggs = {"pass_rate", "fail_rate", "pass_count", "fail_count"}
+                return aggregation if aggregation in (*pass_fail_aggs, "count") else "pass_rate"
+            if output_type == "CHOICE":
+                return aggregation if aggregation in ("count", "count_distinct") else "count"
+
+        return aggregation
+
     def _build_base_where(self, params: dict) -> List[str]:
         clauses = [
             "c._peerdb_is_deleted = 0",
+            "c.deleted = 0",
             "c.created_at >= %(start_date)s",
             "c.created_at < %(end_date)s",
         ]
@@ -607,6 +738,16 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
     ) -> List[str]:
         idx = 0
         for f in filters:
+            # Skip filters scoped to other sources (trace / dataset). The
+            # frontend can mix filters from multiple sources on a single
+            # widget config; without this guard, a trace-scoped filter
+            # like ``model = 'gpt-4o'`` would be silently dropped here
+            # (no matching column) — but more importantly, simulation
+            # filters with an explicit ``source`` are picked up cleanly.
+            f_source = f.get("source")
+            if f_source and f_source != "simulation":
+                continue
+
             f_type = f.get("metric_type", "")
             f_name = f.get("metric_name", "")
             op = f.get("operator", "")

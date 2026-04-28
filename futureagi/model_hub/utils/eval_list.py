@@ -77,9 +77,10 @@ def derive_eval_type(template: "EvalTemplate") -> str:
 
     Uses the dedicated eval_type field if set.
     Falls back to tag/config-based detection for backward compatibility.
-    For composites, returns the union of child eval types (e.g. "code, llm").
+    For composites, returns a single normalized type so response schemas and
+    filters stay compatible with the 3-type contract.
     """
-    # Composite: return union of child eval types
+    # Composite: return a single canonical type
     if getattr(template, "template_type", "single") == "composite":
         return _derive_composite_eval_type(template)
 
@@ -108,7 +109,7 @@ def derive_eval_type(template: "EvalTemplate") -> str:
 
 
 def _derive_composite_eval_type(template: "EvalTemplate") -> str:
-    """Return comma-separated union of child eval types for a composite."""
+    """Return a single canonical eval type for a composite."""
     from model_hub.models.evals_metric import CompositeEvalChild
 
     child_types = list(
@@ -116,8 +117,23 @@ def _derive_composite_eval_type(template: "EvalTemplate") -> str:
         .select_related("child")
         .values_list("child__eval_type", flat=True)
     )
-    unique = sorted(set(t or "llm" for t in child_types))
-    return ", ".join(unique) if unique else "composite"
+    return infer_composite_eval_type(child_types)
+
+
+def infer_composite_eval_type(child_types: Iterable[str | None]) -> str:
+    """Collapse composite child types into one API-safe eval type.
+
+    Mixed composites still need a single `eval_type` because the API and DB
+    field only support `llm`, `code`, or `agent`. We use the strongest child
+    type present so agent-containing composites remain discoverable as agent
+    evals, code-only mixes remain code, and llm is the fallback.
+    """
+    normalized = {t if t in {"llm", "code", "agent"} else "llm" for t in child_types}
+    if "agent" in normalized:
+        return "agent"
+    if "code" in normalized:
+        return "code"
+    return "llm"
 
 
 def derive_output_type(template: "EvalTemplate") -> str:

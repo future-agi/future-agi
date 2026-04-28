@@ -57,15 +57,14 @@ import { useSnackbar } from "src/components/snackbar";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 
-const escapeHtml = (str) => {
-  if (typeof str !== "string") return str;
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-};
+import {
+  DEFAULT_DECIMALS,
+  escapeHtml,
+  formatValueWithConfig,
+  getAutoDecimals,
+  getSeriesAverage,
+  getSuggestedUnitConfig,
+} from "./widgetUtils";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -73,19 +72,6 @@ const escapeCsvField = (field) => {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
-};
-
-const getSeriesAverage = (points = []) => {
-  let total = 0;
-  let count = 0;
-  for (const pt of points) {
-    if (pt?.y == null) continue;
-    const y = Number(pt.y);
-    if (!Number.isFinite(y)) continue;
-    total += y;
-    count += 1;
-  }
-  return count > 0 ? total / count : null;
 };
 
 const TIME_PRESETS = [
@@ -202,6 +188,22 @@ const PERCENTILE_OPTIONS = [
 ];
 
 const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
+
+// Curated list of unit presets shown in the widget editor's Unit
+// dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
+// (the formatter that places these as a prefix or suffix). "Custom" is
+// rendered separately by the editor and maps to an empty unit value.
+const UNIT_PRESETS = [
+  { label: "$", value: "$" },
+  { label: "%", value: "%" },
+  { label: "#", value: "#" },
+  { label: "ms", value: "ms" },
+  { label: "s", value: "s" },
+  { label: "tokens", value: "tokens" },
+  { label: "cents", value: "cents" },
+  { label: "wpm", value: "wpm" },
+  { label: "/min", value: "/min" },
+];
 
 const METRIC_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
@@ -461,17 +463,24 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         <Typography variant="body2" color="text.secondary">
           Unit
         </Typography>
-        <ToggleButtons
-          options={[
-            { label: "$", value: "$" },
-            { label: "%", value: "%" },
-            { label: "#", value: "#" },
-            { label: "Custom", value: "custom" },
-          ]}
-          value={config.unit || "custom"}
-          onChange={(v) => onChange("unit", v === "custom" ? "" : v)}
-          theme={theme}
-        />
+        <TextField
+          select
+          size="small"
+          value={UNIT_PRESETS.some((u) => u.value === config.unit) ? config.unit : "custom"}
+          onChange={(e) =>
+            onChange("unit", e.target.value === "custom" ? "" : e.target.value)
+          }
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+        >
+          {UNIT_PRESETS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px" }}>
+              {opt.label}
+            </MenuItem>
+          ))}
+          <MenuItem value="custom" sx={{ fontSize: "13px" }}>
+            Custom
+          </MenuItem>
+        </TextField>
       </Stack>
 
       {/* Prefix / Suffix */}
@@ -530,9 +539,12 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           options={[
             {
               label: "\u2190 .0",
-              value: Math.max(0, (config.decimals || 1) - 1),
+              value: Math.max(0, (config.decimals ?? DEFAULT_DECIMALS) - 1),
             },
-            { label: ".00 \u2192", value: (config.decimals || 1) + 1 },
+            {
+              label: ".00 \u2192",
+              value: (config.decimals ?? DEFAULT_DECIMALS) + 1,
+            },
           ]}
           value={null}
           onChange={(v) => onChange("decimals", Math.max(0, Math.min(6, v)))}
@@ -553,18 +565,9 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         <Typography variant="body2" fontWeight={500}>
           {(() => {
             const sample = 1250000;
-            const abbr = config.abbreviation;
-            const dec = config.decimals ?? 1;
-            const val =
-              abbr && sample >= 1000000
-                ? `${(sample / 1000000).toFixed(dec)}M`
-                : abbr && sample >= 1000
-                  ? `${(sample / 1000).toFixed(dec)}K`
-                  : sample.toFixed(dec);
-            const unit = config.unit || "";
-            return config.prefixSuffix === "suffix"
-              ? `${val}${unit}`
-              : `${unit}${val}`;
+            return formatValueWithConfig(sample, config, {
+              fallbackDecimals: DEFAULT_DECIMALS,
+            });
           })()}
         </Typography>
       </Stack>
@@ -637,7 +640,13 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   );
 }
 
-function AggregationPicker({ value, onChange, theme, extraOptions }) {
+function AggregationPicker({
+  value,
+  onChange,
+  theme,
+  extraOptions,
+  allowedAggregations,
+}) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [showPercentiles, setShowPercentiles] = useState(false);
 
@@ -659,7 +668,22 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
   const allAggs = extraOptions
     ? [...ALL_AGGREGATIONS, ...extraOptions]
     : ALL_AGGREGATIONS;
-  const current = allAggs.find((a) => a.value === value);
+  const allowedSet = allowedAggregations?.length
+    ? new Set(allowedAggregations)
+    : null;
+  const primaryAggs = allowedSet
+    ? AGGREGATION_OPTIONS.filter((opt) => allowedSet.has(opt.value))
+    : AGGREGATION_OPTIONS;
+  const allowedExtraOptions = allowedSet
+    ? (extraOptions || []).filter((opt) => allowedSet.has(opt.value))
+    : extraOptions;
+  const percentileAggs = allowedSet
+    ? PERCENTILE_OPTIONS.filter((opt) => allowedSet.has(opt.value))
+    : PERCENTILE_OPTIONS;
+  const visibleAggs = allowedSet
+    ? [...primaryAggs, ...(allowedExtraOptions || []), ...percentileAggs]
+    : allAggs;
+  const current = visibleAggs.find((a) => a.value === value);
   const open = Boolean(anchorEl);
 
   return (
@@ -691,7 +715,7 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
           >
             {!showPercentiles ? (
               <List dense disablePadding>
-                {AGGREGATION_OPTIONS.map((opt) => (
+                {primaryAggs.map((opt) => (
                   <ListItemButton
                     key={opt.value}
                     selected={value === opt.value}
@@ -707,10 +731,10 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                     />
                   </ListItemButton>
                 ))}
-                {extraOptions && extraOptions.length > 0 && (
+                {allowedExtraOptions && allowedExtraOptions.length > 0 && (
                   <>
                     <Divider />
-                    {extraOptions.map((opt) => (
+                    {allowedExtraOptions.map((opt) => (
                       <ListItemButton
                         key={opt.value}
                         selected={value === opt.value}
@@ -728,29 +752,33 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                     ))}
                   </>
                 )}
-                <Divider />
-                <ListItemButton
-                  onClick={() => setShowPercentiles(true)}
-                  sx={{ py: 0.75 }}
-                >
-                  <ListItemText
-                    primary="Percentile"
-                    primaryTypographyProps={{
-                      variant: "body2",
-                      fontSize: "13px",
-                      fontWeight: PERCENTILE_OPTIONS.some(
-                        (p) => p.value === value,
-                      )
-                        ? 600
-                        : 400,
-                    }}
-                  />
-                  <Iconify
-                    icon="mdi:chevron-right"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                </ListItemButton>
+                {percentileAggs.length > 0 && (
+                  <>
+                    <Divider />
+                    <ListItemButton
+                      onClick={() => setShowPercentiles(true)}
+                      sx={{ py: 0.75 }}
+                    >
+                      <ListItemText
+                        primary="Percentile"
+                        primaryTypographyProps={{
+                          variant: "body2",
+                          fontSize: "13px",
+                          fontWeight: percentileAggs.some(
+                            (p) => p.value === value,
+                          )
+                            ? 600
+                            : 400,
+                        }}
+                      />
+                      <Iconify
+                        icon="mdi:chevron-right"
+                        width={16}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </ListItemButton>
+                  </>
+                )}
               </List>
             ) : (
               <List dense disablePadding>
@@ -773,7 +801,7 @@ function AggregationPicker({ value, onChange, theme, extraOptions }) {
                   />
                 </ListItemButton>
                 <Divider />
-                {PERCENTILE_OPTIONS.map((opt) => (
+                {percentileAggs.map((opt) => (
                   <ListItemButton
                     key={opt.value}
                     selected={value === opt.value}
@@ -1235,7 +1263,7 @@ export default function WidgetEditorView() {
       unit: "",
       prefixSuffix: "prefix",
       abbreviation: true,
-      decimals: 1,
+      decimals: DEFAULT_DECIMALS,
       min: "",
       max: "",
       outOfBounds: "visible",
@@ -1247,7 +1275,7 @@ export default function WidgetEditorView() {
       unit: "",
       prefixSuffix: "prefix",
       abbreviation: true,
-      decimals: 1,
+      decimals: DEFAULT_DECIMALS,
       min: "",
       max: "",
       outOfBounds: "hidden",
@@ -1256,6 +1284,14 @@ export default function WidgetEditorView() {
     xAxis: { visible: true, label: "" },
     seriesAxis: {}, // { [seriesIndex]: "left" | "right" }
   });
+  // Tracks the unit value we last auto-applied to ``axisConfig.leftY``.
+  // Stored (rather than a single boolean) so we can tell the difference
+  // between "user picked this manually" and "we set it on their behalf
+  // when the metric set last changed". When the suggested unit changes
+  // — e.g. swapping a ``duration`` (s) metric for an annotation (no
+  // unit) — we reconcile the axis only if the current axis unit is the
+  // one we last auto-applied; user-chosen units are never overwritten.
+  const [autoAppliedLeftAxisUnit, setAutoAppliedLeftAxisUnit] = useState(null);
   const updateAxis = (axis, key, val) =>
     setAxisConfig((prev) => ({
       ...prev,
@@ -1427,6 +1463,7 @@ export default function WidgetEditorView() {
           columnDataType: m.dataType || m.data_type,
           configIds: m.configIds || m.config_ids,
           evalKey: m.evalKey || m.eval_key,
+          allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
           unit: m.unit,
         };
       });
@@ -1444,6 +1481,7 @@ export default function WidgetEditorView() {
         type: "system",
         source: "traces",
         dataType: m.type || "string",
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1458,6 +1496,7 @@ export default function WidgetEditorView() {
         source: "datasets",
         dataType: "number",
         outputType: m.outputType || m.output_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1472,6 +1511,7 @@ export default function WidgetEditorView() {
         source: "traces",
         dataType: "number",
         outputType: m.outputType || m.output_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1485,6 +1525,7 @@ export default function WidgetEditorView() {
         type: "custom_attribute",
         source: "traces",
         dataType: m.type || "string",
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     (
@@ -1499,6 +1540,7 @@ export default function WidgetEditorView() {
         source: "datasets",
         dataType: m.type || "number",
         columnDataType: m.dataType || m.data_type,
+        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
       });
     });
     return opts;
@@ -1530,13 +1572,18 @@ export default function WidgetEditorView() {
 
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
+    const aggregation =
+      m.allowedAggregations?.length &&
+      !m.allowedAggregations.includes(m.aggregation)
+        ? m.allowedAggregations[0]
+        : m.aggregation || "avg";
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
       displayName: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
-      aggregation: m.aggregation || "avg",
+      aggregation,
     };
     if (backendType === "eval_metric") {
       // m.id is eval_template_id from the metrics endpoint
@@ -1702,6 +1749,12 @@ export default function WidgetEditorView() {
         defaultAgg = "count";
       } else if (option.source === "simulation" && option.id === "call_count") {
         defaultAgg = "count";
+      }
+      if (
+        option.allowedAggregations?.length &&
+        !option.allowedAggregations.includes(defaultAgg)
+      ) {
+        [defaultAgg] = option.allowedAggregations;
       }
       const newMetric = {
         ...option,
@@ -2002,6 +2055,49 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
+  const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
+  const suggestedLeftAxisUnit = useMemo(
+    () => getSuggestedUnitConfig(metrics),
+    [metrics],
+  );
+  const leftAxisFormatConfig = useMemo(() => {
+    const leftAxis = axisConfig.leftY || {};
+    return {
+      ...leftAxis,
+      unit: leftAxis.unit || suggestedLeftAxisUnit.unit,
+      prefixSuffix:
+        leftAxis.unit || !suggestedLeftAxisUnit.unit
+          ? leftAxis.prefixSuffix || "prefix"
+          : suggestedLeftAxisUnit.prefixSuffix,
+    };
+  }, [axisConfig.leftY, suggestedLeftAxisUnit]);
+
+  useEffect(() => {
+    const currentUnit = axisConfig.leftY.unit;
+    const suggested = suggestedLeftAxisUnit.unit;
+    // Skip if the user picked something different from what we
+    // auto-applied — that's their choice and we leave it alone.
+    if (currentUnit && currentUnit !== autoAppliedLeftAxisUnit) {
+      return;
+    }
+    if (suggested === currentUnit) return;
+    setAxisConfig((prev) => ({
+      ...prev,
+      leftY: {
+        ...prev.leftY,
+        unit: suggested,
+        prefixSuffix: suggested
+          ? suggestedLeftAxisUnit.prefixSuffix
+          : prev.leftY.prefixSuffix || "prefix",
+      },
+    }));
+    setAutoAppliedLeftAxisUnit(suggested || null);
+  }, [
+    axisConfig.leftY.unit,
+    autoAppliedLeftAxisUnit,
+    suggestedLeftAxisUnit,
+  ]);
+
   // Colors that match chartSeries — preserves original color assignment even when series are filtered out
   const chartColors = useMemo(() => {
     if (visibleSeries === null) return SERIES_COLORS;
@@ -2035,20 +2131,11 @@ export default function WidgetEditorView() {
 
   const isDark = theme.palette.mode === "dark";
   const formatValFn = useCallback(
-    (val) => {
-      if (val == null) return "-";
-      const cfg = axisConfig.leftY;
-      const dec = cfg.decimals ?? 1;
-      const unit = cfg.unit || "";
-      let str;
-      if (cfg.abbreviation && Math.abs(val) >= 1000000)
-        str = `${(val / 1000000).toFixed(dec)}M`;
-      else if (cfg.abbreviation && Math.abs(val) >= 1000)
-        str = `${(val / 1000).toFixed(dec)}K`;
-      else str = val.toFixed(dec);
-      return cfg.prefixSuffix === "suffix" ? `${str}${unit}` : `${unit}${str}`;
-    },
-    [axisConfig.leftY],
+    (val) =>
+      formatValueWithConfig(val, leftAxisFormatConfig, {
+        fallbackDecimals: autoDecimals,
+      }),
+    [autoDecimals, leftAxisFormatConfig],
   );
 
   const chartOptions = useMemo(() => {
@@ -2120,19 +2207,11 @@ export default function WidgetEditorView() {
         },
       };
     }
-    const makeFormatter = (cfg) => (val) => {
-      if (val == null) return "-";
-      const dec = cfg.decimals ?? 1;
-      const unit = cfg.unit || "";
-      let str;
-      if (cfg.abbreviation && Math.abs(val) >= 1000000)
-        str = `${(val / 1000000).toFixed(dec)}M`;
-      else if (cfg.abbreviation && Math.abs(val) >= 1000)
-        str = `${(val / 1000).toFixed(dec)}K`;
-      else str = val.toFixed(dec);
-      return cfg.prefixSuffix === "suffix" ? `${str}${unit}` : `${unit}${str}`;
-    };
-    const formatVal = makeFormatter(axisConfig.leftY);
+    const makeFormatter =
+      (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
+      (val) =>
+        formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
+    const formatVal = makeFormatter(leftAxisFormatConfig);
     return {
       chart: {
         type: apexType,
@@ -2481,7 +2560,6 @@ export default function WidgetEditorView() {
           },
     };
   }, [
-    chartType,
     apexType,
     isStacked,
     isHorizontal,
@@ -2490,6 +2568,9 @@ export default function WidgetEditorView() {
     chartColors,
     theme,
     axisConfig,
+    autoDecimals,
+    isDark,
+    leftAxisFormatConfig,
     visibleSeries,
   ]);
 
@@ -2568,11 +2649,15 @@ export default function WidgetEditorView() {
     });
     const values = chartSeries.map((s) => {
       const avg = getSeriesAverage(s.data);
-      return avg == null ? 0 : avg;
+      return {
+        value: avg,
+        numericValue: avg == null ? 0 : avg,
+      };
     });
     return {
       categories,
-      series: [{ name: "Value", data: values }],
+      series: [{ name: "Value", data: values.map((item) => item.numericValue) }],
+      rows: values,
     };
   }, [isHorizontal, chartSeries]);
 
@@ -3265,7 +3350,8 @@ export default function WidgetEditorView() {
                           </Box>
                           {/* Bar rows */}
                           <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
-                            {barData.series[0].data.map((val, i) => {
+                            {barData.rows.map((row, i) => {
+                              const val = row.numericValue;
                               const origIdx =
                                 visibleSeries === null
                                   ? i
@@ -3279,7 +3365,8 @@ export default function WidgetEditorView() {
                                 ];
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
-                              const fmtVal = formatValFn(val);
+                              const fmtVal =
+                                row.value == null ? "—" : formatValFn(row.value);
                               return (
                                 <Box
                                   key={i}
@@ -3539,9 +3626,7 @@ export default function WidgetEditorView() {
                               >
                                 {avg == null
                                   ? "—"
-                                  : avg >= 1000
-                                    ? `${(avg / 1000).toFixed(1)}K`
-                                    : avg.toFixed(1)}
+                                  : formatValFn(avg)}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -4274,11 +4359,7 @@ export default function WidgetEditorView() {
                                 >
                                   {avg == null
                                     ? "—"
-                                    : avg >= 1000
-                                      ? avg.toLocaleString(undefined, {
-                                          maximumFractionDigits: 1,
-                                        })
-                                      : avg.toFixed(1)}
+                                    : formatValFn(avg)}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
@@ -4671,9 +4752,15 @@ export default function WidgetEditorView() {
                       </IconButton>
                     </Stack>
                     <AggregationPicker
-                      value={m.aggregation}
+                      value={
+                        m.allowedAggregations?.length &&
+                        !m.allowedAggregations.includes(m.aggregation)
+                          ? m.allowedAggregations[0]
+                          : m.aggregation
+                      }
                       onChange={(val) => handleUpdateMetricAggregation(i, val)}
                       theme={theme}
+                      allowedAggregations={m.allowedAggregations}
                       extraOptions={
                         m.source === "datasets" ||
                         m.source === "simulation" ||
@@ -5722,7 +5809,7 @@ export default function WidgetEditorView() {
                           unit: "",
                           prefixSuffix: "prefix",
                           abbreviation: true,
-                          decimals: 1,
+                          decimals: DEFAULT_DECIMALS,
                           min: "",
                           max: "",
                           outOfBounds: "visible",
@@ -5750,7 +5837,7 @@ export default function WidgetEditorView() {
                           unit: "",
                           prefixSuffix: "prefix",
                           abbreviation: true,
-                          decimals: 1,
+                          decimals: DEFAULT_DECIMALS,
                           min: "",
                           max: "",
                           outOfBounds: "hidden",

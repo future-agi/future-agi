@@ -61,6 +61,7 @@ const SessionGrid = React.forwardRef(
       className,
       onGridReady,
       pendingCustomColumnsRef,
+      isOnSavedView = false,
     },
     gridApiRef,
   ) => {
@@ -83,6 +84,33 @@ const SessionGrid = React.forwardRef(
     useEffect(() => {
       columnsRef.current = columns;
     }, [columns]);
+
+    // Same trick for updateObj + isOnSavedView — dataSource closes over them
+    // once when memoized, but getRows fires on every scroll/refetch and needs
+    // the latest values. On a saved view we filter columns by `updateObj`
+    // (the view's visibleColumns); on a default tab we fall through to
+    // `res.config.isVisible` (the backend's per-project saved visibility).
+    // Without this gate the data-fetch overwrites the saved view's columns
+    // with the project default on every page load.
+    const updateObjRef = useRef(updateObj);
+    useEffect(() => {
+      updateObjRef.current = updateObj;
+    }, [updateObj]);
+
+    const isOnSavedViewRef = useRef(isOnSavedView);
+    useEffect(() => {
+      isOnSavedViewRef.current = isOnSavedView;
+    }, [isOnSavedView]);
+
+    // Mirror columnDefs into a ref so the dataSource's getRows always reads
+    // the latest. Without this, the dataSource memo (deps =
+    // [filters, projectId, dateInterval]) captures columnDefs ONCE — when
+    // columns is still []. That initial columnDefs uses the LoadingHeader
+    // skeleton branch (line 107-117), and every subsequent getRows call
+    // (page scroll, sort, etc.) writes those skeletons into filteredColumnDefs,
+    // causing the header skeletons to flash back in randomly even after
+    // proper headers had loaded.
+    const columnDefsRef = useRef([]);
 
     const [dateInterval] = useUrlState("dateInterval", "day");
 
@@ -157,6 +185,10 @@ const SessionGrid = React.forwardRef(
       };
     }, [columns, updateObj]);
 
+    useEffect(() => {
+      columnDefsRef.current = columnDefs;
+    }, [columnDefs]);
+
     const [filteredColumnDefs, setFilteredColumnDefs] = useState([]);
 
     // Prefetch cache: stores next page data so scroll feels instant
@@ -226,10 +258,24 @@ const SessionGrid = React.forwardRef(
                 }
               }
 
-              const filteredColumns = columnDefs.filter((column) => {
+              // Read columnDefs from the ref so this filter always sees the
+              // post-setColumns value, not the skeleton-headed default
+              // captured when dataSource was first memoized. Without the ref,
+              // every page-2+ scroll fetch wrote stale skeleton headers back
+              // into filteredColumnDefs.
+              const currentColumnDefs = columnDefsRef.current ?? columnDefs;
+              const filteredColumns = currentColumnDefs.filter((column) => {
                 // Grouped columns (e.g. Annotation Metrics) always visible
                 if (column.children) return true;
                 if (!column.field) return true;
+
+                // On a saved view, the view's visibleColumns (carried in
+                // updateObj) is the source of truth — ignore the backend's
+                // per-project default so view-specific hides don't get
+                // overwritten by the data-fetch response.
+                if (isOnSavedViewRef.current) {
+                  return updateObjRef.current?.[column.field] ?? true;
+                }
 
                 const columnConfig = (res?.config || []).find(
                   (config) => config.id === column.field,
@@ -438,6 +484,7 @@ SessionGrid.propTypes = {
   onSelectionChanged: PropTypes.func,
   className: PropTypes.string,
   pendingCustomColumnsRef: PropTypes.object,
+  isOnSavedView: PropTypes.bool,
 };
 
 export default SessionGrid;

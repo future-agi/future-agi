@@ -887,7 +887,9 @@ class ClickHouseFilterBuilder:
                 self._params[p_hi] = filter_value[1]
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND JSONExtractFloat(value, 'value') BETWEEN %({p_lo})s AND %({p_hi})s)"
+                    f"AND if(JSONHas(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             elif (
                 filter_op == "not_in_between"
@@ -900,13 +902,17 @@ class ClickHouseFilterBuilder:
                 self._params[p_hi] = filter_value[1]
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND JSONExtractFloat(value, 'value') NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
+                    f"AND if(JSONHas(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'value')) NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             else:
                 self._params[param] = filter_value
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND JSONExtractFloat(value, 'value') {op} %({param})s)"
+                    f"AND if(JSONHas(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'rating'), "
+                    f"JSONExtractFloat(value, 'value')) {op} %({param})s)"
                 )
 
         elif filter_type == "boolean":

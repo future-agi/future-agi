@@ -237,32 +237,32 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       getEvalRequiredKeys(normalizedEvalData) ||
       [];
 
-    // When required_keys exist, use them as the authoritative variable list.
-    // This is critical for Jinja2 evals where extractJinjaVariables() only
-    // returns root names (e.g. "file") instead of the full expressions the
-    // backend expects (e.g. "file.code", "language | lower").
-    if (requiredKeys.length > 0) {
-      return [...new Set(requiredKeys)];
-    }
-
     if (evalType === "code") {
       return [];
     }
-    let templateVars;
-    if (templateFormat === "jinja") {
-      templateVars = extractJinjaVariables(instructions || "");
-    } else {
-      const matches =
-        (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-      templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+
+    // System evals + Jinja mode: use static required_keys.
+    // Jinja's extractJinjaVariables() only returns root names (e.g. "file")
+    // not full paths (e.g. "file.code"), so requiredKeys is authoritative.
+    if ((isSystemEval || templateFormat === "jinja") && requiredKeys.length > 0) {
+      return [...new Set(requiredKeys)];
     }
-    return [...new Set(templateVars)];
+
+    // User evals (mustache): prefer live extraction so mapping updates as user types.
+    const matches =
+      (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
+    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    if (templateVars.length > 0) return [...new Set(templateVars)];
+    // Fallback: stored required_keys (before instructions hydrate)
+    if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
+    return [];
   }, [
     instructions,
     normalizedFullEval,
     normalizedEvalData,
     evalType,
     isComposite,
+    isSystemEval,
     compositeDetail,
     templateFormat,
   ]);
@@ -1202,6 +1202,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   onTemplateFormatChange={setTemplateFormat}
                   datasetColumns={datasetColumns}
                   datasetJsonSchemas={datasetJsonSchemas}
+                  mappedVariables={sourceMapping}
                   disabled={isInstructionsReadOnly}
                   modelSelectorDisabled={false}
                   mode={agentMode}

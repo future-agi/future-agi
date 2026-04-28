@@ -12,7 +12,17 @@ export const getAddColumnApiCallValidation = (
         ? z.string().optional()
         : z.string().min(1, "Name is required"),
     config: z.object({
-      url: z.string().url("Invalid URL").min(1, "URL is required"),
+      url: z
+        .string()
+        .min(1, "URL is required")
+        .transform((v) => {
+          let content = v;
+          allColumns.forEach(({ headerName, field }) => {
+            const pattern = new RegExp(`{{\\s*${headerName}\\s*}}`, "g");
+            content = content.replace(pattern, `{{${field}}}`);
+          });
+          return content;
+        }),
       method: z.string().min(1, "Method is required"),
       params: z
         .array(

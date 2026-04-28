@@ -56,10 +56,10 @@ function buildDropdownOptions(datasetColumns, jsonSchemas = {}) {
       isJsonPath: false,
     });
 
-    // Expand JSON columns with nested paths from schema
-    if (col.data_type === "json" && jsonSchemas?.[colId]) {
+    // Expand columns with nested paths from schema (json + text with JSON values)
+    if (jsonSchemas?.[colId]?.keys?.length) {
       const schema = jsonSchemas[colId];
-      schema?.keys?.forEach((path) => {
+      schema.keys.forEach((path) => {
         options.push({
           id: `${colId}.${path}`,
           value: `${col.name}.${path}`,
@@ -83,6 +83,21 @@ function buildDropdownOptions(datasetColumns, jsonSchemas = {}) {
         });
       }
     }
+
+    // Expand json/text columns with top-level array data
+    const colSchema = jsonSchemas?.[colId];
+    if (col.data_type !== "images" && colSchema?.max_array_count) {
+      const count = Math.min(colSchema.max_array_count, 2);
+      for (let idx = 0; idx < count; idx++) {
+        options.push({
+          id: `${colId}[${idx}]`,
+          value: `${col.name}[${idx}]`,
+          dataType: "array_index",
+          isJsonPath: true,
+          parentColumn: col.name,
+        });
+      }
+    }
   });
 
   return options;
@@ -101,9 +116,9 @@ function buildValidVariableSet(datasetColumns, jsonSchemas = {}) {
     const colId = col.id || col.name;
     validSet.add(col.name.toLowerCase());
 
-    // Add JSON paths
-    if (col.data_type === "json" && jsonSchemas?.[colId]) {
-      jsonSchemas[colId]?.keys?.forEach((path) => {
+    // Add nested paths from schema (json + text with JSON values)
+    if (jsonSchemas?.[colId]?.keys?.length) {
+      jsonSchemas[colId].keys.forEach((path) => {
         validSet.add(`${col.name}.${path}`.toLowerCase());
       });
     }
@@ -112,6 +127,15 @@ function buildValidVariableSet(datasetColumns, jsonSchemas = {}) {
     const imagesSchema = jsonSchemas?.[colId];
     if (col.data_type === "images" && imagesSchema?.max_images_count) {
       for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
+        validSet.add(`${col.name}[${idx}]`.toLowerCase());
+      }
+    }
+
+    // Add array indexed access for json/text columns with top-level arrays
+    const colSchema = jsonSchemas?.[colId];
+    if (col.data_type !== "images" && colSchema?.max_array_count) {
+      const count = Math.min(colSchema.max_array_count, 2);
+      for (let idx = 0; idx < count; idx++) {
         validSet.add(`${col.name}[${idx}]`.toLowerCase());
       }
     }
@@ -245,6 +269,7 @@ const InstructionEditor = ({
   onTemplateFormatChange,
   datasetColumns = [],
   datasetJsonSchemas = {},
+  mappedVariables = {},
   // Pass-through ModelSelector lifted-state props — forwarded as-is so the
   // parent form can collect mode / internet / summary / connectors / KBs.
   mode,
@@ -307,16 +332,17 @@ const InstructionEditor = ({
     [datasetColumns, datasetJsonSchemas],
   );
 
-  // JSON column names (lowercase) — any path starting with these is valid
+  // Column names that have nested paths (lowercase) — any path starting with these is valid
   const jsonColumnNames = useMemo(() => {
     const s = new Set();
     datasetColumns.forEach((col) => {
-      if (col?.dataType === "json" && col?.name) {
+      const colId = col?.id || col?.name;
+      if (col?.name && datasetJsonSchemas?.[colId]?.keys?.length) {
         s.add(col.name.toLowerCase());
       }
     });
     return s;
-  }, [datasetColumns]);
+  }, [datasetColumns, datasetJsonSchemas]);
 
   // Jinja-aware input variable set: only top-level inputs (not loop/set vars)
   const jinjaInputVarSet = useMemo(() => {
@@ -325,7 +351,16 @@ const InstructionEditor = ({
     return new Set(vars.map((v) => v.toLowerCase()));
   }, [templateFormat, value]);
 
-  // Variable validator: checks if a variable name is a valid column, JSON path, or Jinja keyword
+  // Set of variable names that have been mapped to a column
+  const mappedVarSet = useMemo(() => {
+    const s = new Set();
+    Object.entries(mappedVariables || {}).forEach(([k, v]) => {
+      if (v) s.add(k.trim().toLowerCase());
+    });
+    return s;
+  }, [mappedVariables]);
+
+  // Variable validator: checks column match, mapped status, JSON path, or Jinja keyword
   const variableValidator = useCallback(
     (varName) => {
       const trimmed = varName.trim();
@@ -338,6 +373,9 @@ const InstructionEditor = ({
         const root = trimmed.split(/[.(\s|]/)[0].toLowerCase();
         if (!jinjaInputVarSet.has(root)) return null;
       }
+
+      // Variables mapped in the mapping panel are valid (green)
+      if (mappedVarSet.has(trimmed.toLowerCase())) return true;
 
       if (!hasDataset) return true; // No dataset → remaining vars are valid
 
@@ -361,6 +399,7 @@ const InstructionEditor = ({
       jsonColumnNames,
       templateFormat,
       jinjaInputVarSet,
+      mappedVarSet,
     ],
   );
 

@@ -499,6 +499,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               selectAllInfo.filters,
               selectAllInfo.search,
             );
+            itemsToAdd = allIds.map((id) => ({
+              source_type: "dataset_row",
+              source_id: id,
+            }));
           } else if (sourceType === "observation_span") {
             allIds = await fetchAllSpanIds(
               selectAllInfo.projectId,
@@ -506,6 +510,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
+            itemsToAdd = allIds.map((id) => ({
+              source_type: "observation_span",
+              source_id: id,
+            }));
           } else {
             // sourceType === "trace": fetch trace IDs then convert to root spans
             const traceIds = await fetchAllTraceIds(

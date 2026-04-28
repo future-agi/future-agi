@@ -865,6 +865,7 @@ export const RunPromptForm = React.forwardRef(
                   updatedText,
                   matches,
                   allColumns,
+                  jsonSchemas,
                 );
                 updatedText = result.text;
                 inValidVariables.push(...result.invalidVariables);
@@ -987,6 +988,7 @@ export const RunPromptForm = React.forwardRef(
                   updatedText,
                   matches,
                   allColumns,
+                  jsonSchemas,
                 );
                 updatedText = result.text;
                 inValidVariables.push(...result.invalidVariables);
