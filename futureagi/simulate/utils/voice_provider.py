@@ -6,8 +6,6 @@ avoid a cross-provider bridge — this is non-overridable. For everything
 else, SYSTEM_VOICE_PROVIDER can pin the simulator's provider; default Vapi.
 """
 
-from __future__ import annotations
-
 import os
 
 
