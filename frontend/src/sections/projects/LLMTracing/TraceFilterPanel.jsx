@@ -149,6 +149,12 @@ const DATE_OPS = [
 
 const BOOLEAN_OPS = [{ value: "is", label: "is" }];
 
+// Direct ID columns on `spans` — the dashboard filter pipeline resolves
+// them via equality only (no col_type, no LIKE/IN expansion), so any
+// other operator silently no-ops. Restrict the UI accordingly.
+const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
+const ID_ONLY_OPS = [{ value: "is", label: "is" }];
+
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
@@ -220,6 +226,14 @@ const getOperators = (fieldType) => {
   if (t === "boolean") return BOOLEAN_OPS;
   if (t === "array") return ARRAY_OPS;
   return STRING_OPS;
+};
+
+// Wrapper that special-cases ID-only fields. Use from FilterRow + apply
+// validation; keep `getOperators` as the pure type → ops mapping (Query
+// tab + AI filter schema rely on the type-only behavior).
+const getOperatorsForFilter = (filter) => {
+  if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
+  return getOperators(filter?.fieldType);
 };
 
 const DEFAULT_OP_FOR_TYPE = {
@@ -609,6 +623,7 @@ function ValuePicker({
   onChange,
   source = "traces",
   property,
+  singleSelect = false,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
@@ -690,13 +705,19 @@ function ValuePicker({
   const toggleValue = useCallback(
     (val) => {
       const strVal = typeof val === "string" ? val : val.value;
+      if (singleSelect) {
+        // Clicking the already-selected value clears; clicking a different
+        // value replaces — standard single-select dropdown UX.
+        onChange(value.includes(strVal) ? [] : [strVal]);
+        return;
+      }
       onChange(
         value.includes(strVal)
           ? value.filter((v) => v !== strVal)
           : [...value, strVal],
       );
     },
-    [value, onChange],
+    [value, onChange, singleSelect],
   );
 
   return (
@@ -809,7 +830,9 @@ function ValuePicker({
           <Typography
             sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
-            Select one or more values (multi-select)
+            {singleSelect
+              ? "Select a single value"
+              : "Select one or more values (multi-select)"}
           </Typography>
         </Box>
         <Divider />
@@ -843,7 +866,9 @@ function ValuePicker({
             }) && (
               <Box
                 onClick={() => {
-                  if (!value.includes(search)) {
+                  if (singleSelect) {
+                    onChange([search]);
+                  } else if (!value.includes(search)) {
                     onChange([...value, search]);
                   }
                   setSearch("");
@@ -983,7 +1008,7 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const ops = getOperators(filter.fieldType);
+  const ops = getOperatorsForFilter(filter);
   const currentOpDef = ops.find((o) => o.value === filter.operator);
 
   const handlePropertySelect = useCallback(
@@ -1015,7 +1040,7 @@ function FilterRow({
   const handleOperatorChange = useCallback(
     (e) => {
       const newOp = e.target.value;
-      const opList = getOperators(filter.fieldType);
+      const opList = getOperatorsForFilter(filter);
       const newDef = opList.find((o) => o.value === newOp);
       const oldDef = opList.find((o) => o.value === filter.operator);
       let newVal = filter.value;
@@ -1235,6 +1260,7 @@ function FilterRow({
         value={filter.value}
         source={source}
         property={properties.find((p) => p.id === filter.field)}
+        singleSelect={ID_ONLY_FIELDS.has(filter.field)}
         onChange={(newVal) => onChange(index, { ...filter, value: newVal })}
       />
     );
@@ -1482,7 +1508,7 @@ const TraceFilterPanel = ({
     const valid = rows.filter((r) => {
       if (!r.field) return false;
       if (NO_VALUE_OPS.has(r.operator)) return true;
-      const ops = getOperators(r.fieldType);
+      const ops = getOperatorsForFilter(r);
       const opDef = ops.find((o) => o.value === r.operator);
       if (opDef?.range)
         return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
