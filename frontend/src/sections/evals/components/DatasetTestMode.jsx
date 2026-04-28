@@ -722,23 +722,88 @@ const DatasetTestMode = React.forwardRef(
             }
           }
         } else {
-          // Dataset mode: mapping sends variable → actual cell values
-          // Map template variables to dataset columns
-          for (const variable of variables) {
-            const mappedColName = mapping[variable];
-            if (mappedColName && currentRow) {
-              const col = columns.find((c) => c.name === mappedColName);
-              if (col) {
-                const cell = currentRow[col.id];
-                evalMapping[variable] = cell?.cell_value ?? cell ?? "";
-                const dt = col.data_type || "text";
-                if (["image", "images"].includes(dt)) {
-                  inputDataTypes[variable] = "image";
-                } else if (dt === "audio") {
-                  inputDataTypes[variable] = "audio";
-                } else {
-                  inputDataTypes[variable] = "text";
+          // Dataset mode: mapping sends variable → actual cell values.
+          // Build a valueMap of all dotted paths from row cells — same
+          // walkValues + resolveMapping pattern as TaskLivePreview.
+          const ARRAY_PEEK_R = 500;
+          const DICT_LIMIT_R = 5000;
+          const valueMap = {};
+          const walkValues = (node, prefix) => {
+            if (Array.isArray(node)) {
+              node.slice(0, ARRAY_PEEK_R).forEach((item, idx) => {
+                const path = prefix ? `${prefix}.${idx}` : String(idx);
+                valueMap[path] = item;
+                if (item && typeof item === "object") {
+                  walkValues(item, path);
                 }
+              });
+              return;
+            }
+            for (const [k, v] of canonicalEntries(node)) {
+              if (k.startsWith("_")) continue;
+              const path = prefix ? `${prefix}.${k}` : k;
+              valueMap[path] = v;
+              if (v && typeof v === "object") {
+                if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT_R) {
+                  walkValues(v, path);
+                }
+              }
+            }
+          };
+
+          // Walk each column's cell value into the valueMap
+          const colDataTypes = {};
+          columns
+            .filter(
+              (c) => c.id && c.name && !["id", "orgId"].includes(c.name),
+            )
+            .forEach((col) => {
+              const cell = currentRow[col.id];
+              let cellValue = cell?.cell_value ?? cell ?? "";
+              valueMap[col.name] = cellValue;
+              colDataTypes[col.name] = col.data_type || "text";
+
+              // Parse JSON strings and walk nested keys
+              if (typeof cellValue === "string") {
+                const trimmed = cellValue.trim();
+                if (
+                  (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+                  (trimmed.startsWith("[") && trimmed.endsWith("]"))
+                ) {
+                  try {
+                    const parsed = JSON.parse(trimmed);
+                    if (parsed && typeof parsed === "object") {
+                      walkValues(parsed, col.name);
+                    }
+                  } catch {
+                    // not valid JSON
+                  }
+                }
+              } else if (cellValue && typeof cellValue === "object") {
+                walkValues(cellValue, col.name);
+              }
+            });
+
+          // Resolve mapping using the valueMap — same as TaskLivePreview
+          for (const variable of variables) {
+            const field = mapping[variable];
+            if (!field) continue;
+            const val = valueMap[field];
+            if (val !== undefined && val !== null) {
+              evalMapping[variable] =
+                typeof val === "object" ? JSON.stringify(val) : String(val);
+
+              // Find the root column for data type detection
+              const rootCol = field.includes(".")
+                ? field.slice(0, field.indexOf("."))
+                : field;
+              const dt = colDataTypes[rootCol] || "text";
+              if (["image", "images"].includes(dt)) {
+                inputDataTypes[variable] = "image";
+              } else if (dt === "audio") {
+                inputDataTypes[variable] = "audio";
+              } else {
+                inputDataTypes[variable] = "text";
               }
             }
           }

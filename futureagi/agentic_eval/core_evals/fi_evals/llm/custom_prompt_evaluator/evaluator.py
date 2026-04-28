@@ -212,8 +212,8 @@ class CustomPromptEvaluator(LLM):
                     )
                 elif "." in stripped and stripped in safe_context:
                     # Dotted variable names (e.g., {{expected.where_conditions}})
-                    # are flat keys in template_context but Jinja2 interprets dots
-                    # as nested object access. Pre-replace before Jinja2 parsing.
+                    # Jinja2 interprets dots as attribute access, but these are
+                    # flat keys — pre-replace them, same approach as spaces above.
                     prompt_to_render = prompt_to_render.replace(
                         "{{" + var_name + "}}", str(safe_context.pop(stripped))
                     )
