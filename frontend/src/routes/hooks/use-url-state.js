@@ -85,13 +85,7 @@ export function useUrlState(key, defaultValue) {
 
     const newValue = parseUrlValue(searchParams.get(key), defaultValue);
     setStateValue(newValue);
-    // Dep array intentionally excludes `value`: the effect should only fire on
-    // external URL changes. Including `value` causes spurious reruns on every
-    // state update, where the stringified comparison can register a false
-    // mismatch (e.g., when state carries a random id not in the URL payload)
-    // and reset the state back to the URL's default.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, key, defaultValue]);
+  }, [searchParams, key, defaultValue, value]);
 
   return [value, setValue, removeValue];
 }
