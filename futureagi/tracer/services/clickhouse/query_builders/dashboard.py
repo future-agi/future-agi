@@ -10,7 +10,7 @@ Supports four metric types:
 - **system_metric** -- columns on the ``spans`` table (latency, tokens, cost, etc.)
 - **eval_metric** -- aggregates from ``tracer_eval_logger FINAL``
 - **annotation_metric** -- aggregates from ``model_hub_score FINAL``
-- **custom_attribute** -- ``span_attr_num`` / ``span_attr_str`` map columns on ``spans``
+- **custom_attribute** -- typed maps on ``spans`` with raw JSON fallback
 """
 
 import logging
@@ -33,6 +33,40 @@ def _sanitize_attr_key(key: str) -> str:
     if not key or not _SAFE_ATTR_KEY_RE.match(key):
         raise ValueError(f"Invalid attribute key: {key!r}")
     return key
+
+
+def _span_col(column: str, table_alias: Optional[str] = None) -> str:
+    return f"{table_alias}.{column}" if table_alias else column
+
+
+def _custom_attr_value_expr(
+    attr_key: str,
+    attr_type: str = "string",
+    table_alias: Optional[str] = None,
+    raw_attrs_expr: Optional[str] = None,
+) -> str:
+    if raw_attrs_expr:
+        raw_expr = raw_attrs_expr
+    else:
+        raw_attrs = _span_col("span_attributes_raw", table_alias)
+        raw_expr = (
+            f"if({raw_attrs} != '{{}}' AND {raw_attrs} != '', {raw_attrs}, '{{}}')"
+        )
+
+    if attr_type == "number":
+        typed_map = _span_col("span_attr_num", table_alias)
+        return (
+            f"if(mapContains({typed_map}, '{attr_key}'), "
+            f"{typed_map}['{attr_key}'], "
+            f"JSONExtractFloat({raw_expr}, '{attr_key}'))"
+        )
+
+    typed_map = _span_col("span_attr_str", table_alias)
+    return (
+        f"if(mapContains({typed_map}, '{attr_key}'), "
+        f"{typed_map}['{attr_key}'], "
+        f"JSONExtractString({raw_expr}, '{attr_key}'))"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -671,7 +705,8 @@ class DashboardQueryBuilder:
             elif bd_type == "custom_attribute":
                 need_spans_join = True
                 attr_key = _sanitize_attr_key(bd_name)
-                bd_expr = f"if(s.span_attr_str['{attr_key}'] != '', s.span_attr_str['{attr_key}'], '(not set)')"
+                attr_expr = _custom_attr_value_expr(attr_key, "string", "s")
+                bd_expr = f"if({attr_expr} != '', {attr_expr}, '(not set)')"
 
             else:
                 bd_expr = "'(not set)'"
@@ -734,9 +769,9 @@ class DashboardQueryBuilder:
             elif f_type == "custom_attribute":
                 need_spans_join = True
                 attr_key = _sanitize_attr_key(f_name)
-                where_parts.append(
-                    f"s.span_attr_str['{attr_key}'] {op_symbol} %({val_key})s"
-                )
+                attr_type = f.get("attribute_type", "string")
+                col = _custom_attr_value_expr(attr_key, attr_type, "s")
+                where_parts.append(f"{col} {op_symbol} %({val_key})s")
                 params[val_key] = _coerce_filter_value(val, op)
 
         # --- Build JOINs ---
@@ -893,18 +928,9 @@ class DashboardQueryBuilder:
             "if(span_attributes_raw != '{}' AND span_attributes_raw != '', "
             "span_attributes_raw, ifNull(os.span_attributes, '{}'))"
         )
-        if attr_type == "number":
-            col_expr = (
-                f"if(mapContains(span_attr_num, '{attr_key}'), "
-                f"span_attr_num['{attr_key}'], "
-                f"JSONExtractFloat({raw_attr_expr}, '{attr_key}'))"
-            )
-        else:
-            col_expr = (
-                f"if(mapContains(span_attr_str, '{attr_key}'), "
-                f"span_attr_str['{attr_key}'], "
-                f"JSONExtractString({raw_attr_expr}, '{attr_key}'))"
-            )
+        col_expr = _custom_attr_value_expr(
+            attr_key, attr_type, raw_attrs_expr=raw_attr_expr
+        )
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
@@ -1149,11 +1175,7 @@ class DashboardQueryBuilder:
             elif bd_type == "custom_attribute":
                 safe_name = _sanitize_attr_key(bd_name)
                 attr_type = bd.get("attribute_type", "string")
-                expr = (
-                    f"span_attr_num['{safe_name}']"
-                    if attr_type == "number"
-                    else f"span_attr_str['{safe_name}']"
-                )
+                expr = _custom_attr_value_expr(safe_name, attr_type)
                 result.append({"type": "column", "expr": expr, "join": None})
 
             elif bd_type == "annotation_metric":
@@ -1386,10 +1408,7 @@ class DashboardQueryBuilder:
                 op = f.get("operator", "")
                 val = f.get("value")
                 attr_type = f.get("attribute_type", "string")
-                if attr_type == "number":
-                    col = f"span_attr_num['{f_name}']"
-                else:
-                    col = f"span_attr_str['{f_name}']"
+                col = _custom_attr_value_expr(f_name, attr_type)
 
                 if op in ("is_set", "is_not_set", "is_numeric", "is_not_numeric"):
                     op_tpl = FILTER_OPERATORS.get(op)

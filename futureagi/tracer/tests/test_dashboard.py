@@ -634,6 +634,74 @@ class TestDashboardQueryBuilder:
         assert "countIf(" in sql
         assert "AS value" in sql
 
+    def test_eval_metric_custom_attribute_breakdown_uses_raw_fallback(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e_score",
+                    "name": "quality",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "SCORE",
+                    "aggregation": "avg",
+                }
+            ],
+            "breakdowns": [
+                {
+                    "type": "custom_attribute",
+                    "name": "livekit.room",
+                    "attribute_type": "string",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert "s.span_attr_str" in sql
+        assert "s.span_attributes_raw" in sql
+        assert "JSONExtractString" in sql
+        assert "breakdown_value" in sql
+
+    def test_eval_metric_custom_attribute_filter_uses_raw_fallback(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e_score",
+                    "name": "quality",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "SCORE",
+                    "aggregation": "avg",
+                }
+            ],
+            "filters": [
+                {
+                    "metric_type": "custom_attribute",
+                    "metric_name": "livekit.score",
+                    "operator": "greater_than",
+                    "value": "0.75",
+                    "attribute_type": "number",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, params, _ = queries[0]
+        assert "s.span_attr_num" in sql
+        assert "s.span_attributes_raw" in sql
+        assert "JSONExtractFloat" in sql
+        assert params["_evf_0_val"] == 0.75
+
     def test_annotation_metric_query(self):
         config = {
             "project_ids": ["proj1"],
@@ -787,6 +855,8 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         assert "span_attr_str" in sql
+        assert "span_attributes_raw" in sql
+        assert "JSONExtractString" in sql
         assert "breakdown_value" in sql
 
 
@@ -1951,6 +2021,8 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         assert "span_attr_str" in sql
+        assert "span_attributes_raw" in sql
+        assert "JSONExtractString" in sql
         assert "llm.model" in sql
 
     def test_eval_filter_frontend_payload(self):
@@ -2032,6 +2104,8 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         assert "span_attr_str" in sql
+        assert "span_attributes_raw" in sql
+        assert "JSONExtractString" in sql
         assert "breakdown_value" in sql
 
     # --- Time ranges ---
