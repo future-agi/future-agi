@@ -10,21 +10,22 @@ if [[ "$branch_name" == "main" || "$branch_name" == "develop" || "$branch_name" 
 fi
 
 # Format: <type>/<ticket-id>-<description> or <type>/<description>
-branch_regex="^(feature|bugfix|hotfix|refactor|docs|test|chore|release)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
+# Types match Conventional Commits prefixes used in CONTRIBUTING.md.
+branch_regex="^(feat|fix|chore|docs|refactor|test|perf)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
 
 if [[ ! $branch_name =~ $branch_regex ]]; then
     echo "❌ Invalid branch name: '$branch_name'"
     echo ""
     echo "Branch name must follow the pattern: <type>/<ticket-id>-<description>"
     echo ""
-    echo "Valid types: feature, bugfix, hotfix, refactor, docs, test, chore, release"
+    echo "Valid types: feat, fix, chore, docs, refactor, test, perf"
     echo ""
     echo "✅ Valid examples:"
-    echo "  - feature/AUTH-123-user-login"
-    echo "  - bugfix/UI-456-button-fix"
-    echo "  - hotfix/PROD-789-critical-fix"
+    echo "  - feat/AUTH-123-user-login"
+    echo "  - fix/UI-456-button-alignment"
     echo "  - refactor/cleanup-utils"
     echo "  - docs/update-readme"
+    echo "  - perf/PERF-500-list-pagination"
     echo ""
     echo "See BRANCH_NAMING_CONVENTION.md for full guidelines."
     exit 1

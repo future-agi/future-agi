@@ -18,19 +18,18 @@ show_usage() {
     echo ""
     echo "Usage: $0 <type> <description> [ticket-id]"
     echo ""
-    echo "Types:"
-    echo "  feature   - New features or enhancements"
-    echo "  bugfix    - Bug fixes"
-    echo "  hotfix    - Critical production fixes"
-    echo "  refactor  - Code refactoring"
+    echo "Types (matches Conventional Commits prefixes in CONTRIBUTING.md):"
+    echo "  feat      - New features or enhancements"
+    echo "  fix       - Bug fixes"
+    echo "  chore     - Maintenance tasks, build changes"
     echo "  docs      - Documentation updates"
+    echo "  refactor  - Code refactoring"
     echo "  test      - Adding or updating tests"
-    echo "  chore     - Maintenance tasks"
-    echo "  release   - Release preparation"
+    echo "  perf      - Performance improvements"
     echo ""
     echo "Examples:"
-    echo "  $0 feature user-authentication AUTH-123"
-    echo "  $0 bugfix login-error BUG-456"
+    echo "  $0 feat user-authentication AUTH-123"
+    echo "  $0 fix login-error BUG-456"
     echo "  $0 docs update-readme"
     echo ""
 }
@@ -38,7 +37,7 @@ show_usage() {
 # Function to validate branch type
 validate_type() {
     local type=$1
-    valid_types=("feature" "bugfix" "hotfix" "refactor" "docs" "test" "chore" "release")
+    valid_types=("feat" "fix" "chore" "docs" "refactor" "test" "perf")
     
     for valid_type in "${valid_types[@]}"; do
         if [[ "$type" == "$valid_type" ]]; then

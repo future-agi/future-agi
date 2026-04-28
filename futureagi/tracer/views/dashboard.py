@@ -66,6 +66,24 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         return 30000 if has_eval_metrics or has_project_breakdown else 10000
 
+    def _normalize_metric_sources(self, metrics):
+        """Route simulation-scoped trace attributes through the trace builder.
+
+        The metric picker can save trace attributes with ``source=simulation``
+        for simulation workflow widgets. Those attributes still live on spans,
+        so sending them to ``SimulationQueryBuilder`` yields empty series.
+        """
+        normalized = []
+        for metric in metrics:
+            metric_copy = dict(metric)
+            if (
+                metric_copy.get("source") == "simulation"
+                and metric_copy.get("type") == "custom_attribute"
+            ):
+                metric_copy["source"] = "traces"
+            normalized.append(metric_copy)
+        return normalized
+
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
@@ -170,6 +188,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     m["source"] = "simulation"
                 else:
                     m["source"] = "traces"
+
+        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
 
         # Partition metrics by source
         # "both" source metrics (e.g. annotations) go to trace_metrics
@@ -2297,6 +2317,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         for m in query_config.get("metrics", []):
             if "source" not in m:
                 m["source"] = "datasets" if workflow == "dataset" else "traces"
+
+        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
 
         trace_metrics = [
             m for m in query_config["metrics"] if m.get("source") == "traces"
