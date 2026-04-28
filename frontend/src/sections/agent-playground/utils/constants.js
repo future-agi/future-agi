@@ -4,6 +4,7 @@ export const NODE_X_OFFSET = 450;
 export const NODE_TYPES = {
   LLM_PROMPT: "llm_prompt",
   AGENT: "agent",
+  API_CALL: "api_call",
 };
 
 export const AGENT_NODE = {
@@ -23,6 +24,13 @@ export const NODE_TYPE_CONFIG = {
     color: "orange.500",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
+  [NODE_TYPES.API_CALL]: {
+    id: NODE_TYPES.API_CALL,
+    title: "API Call",
+    description: "Make HTTP requests to external APIs",
+    iconSrc: "/assets/icons/navbar/ic_api.svg",
+    color: "blue.600",
+  },
 };
 
 export const AGENT_PLAYGROUND_TABS = [
