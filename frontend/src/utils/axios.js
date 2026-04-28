@@ -1261,6 +1261,8 @@ export const endpoints = {
       `/simulate/run-tests/${testId}/delete-test-executions/`,
     rerunSimulation: (testId) =>
       `/simulate/run-tests/${testId}/rerun-test-executions/`,
+    liveCallListenerToken: (callId) =>
+      `/simulate/api/livekit/listener-token/${callId}/`,
   },
   testExecutions: {
     callDetail: (id) => `/simulate/call-executions/${id}/`,

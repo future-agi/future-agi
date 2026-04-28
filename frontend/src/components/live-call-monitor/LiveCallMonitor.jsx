@@ -242,9 +242,9 @@ function RoomContent({ onDisconnected, callId }) {
       >
         <Stack direction="row" spacing={1.5}>
           {displayParticipants.map((p) => {
-            const isAgent = p.display_name === "Agent";
+            const isAgent = p.displayName === "Agent";
             const color = isAgent ? "blue" : "orange";
-            const initials = p.display_name
+            const initials = (p.displayName || "")
               .split(/[-\s]/)
               .filter(Boolean)
               .slice(0, 2)
@@ -296,7 +296,7 @@ function RoomContent({ onDisconnected, callId }) {
                   fontWeight="fontWeightMedium"
                   color="text.primary"
                 >
-                  {p.display_name}
+                  {p.displayName}
                 </Typography>
                 <Typography
                   typography="s3"
