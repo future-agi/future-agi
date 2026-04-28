@@ -28,10 +28,8 @@ from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
-from simulate.serializers.run_test import (
-    CreatePromptSimulationSerializer,
-    RunTestSerializer,
-)
+from simulate.serializers.requests.run_test import CreatePromptSimulationSerializer
+from simulate.serializers.run_test import RunTestSerializer
 from simulate.serializers.scenarios import ScenariosSerializer
 from simulate.views.prompt_simulation import (
     ExecutePromptSimulationView,

@@ -12,6 +12,12 @@ from .requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
 
+# Other serializers
+from .requests.run_test import (
+    CreateRunTestSerializer,
+    UpdateRunTestSerializer,
+)
+
 # Response serializers
 from .response.agent_definition import (
     AgentDefinitionBulkDeleteResponseSerializer,
@@ -31,12 +37,8 @@ from .response.agent_version import (
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
 )
-
-# Other serializers
 from .run_test import (
-    CreateRunTestSerializer,
     RunTestSerializer,
-    UpdateRunTestSerializer,
 )
 from .scenarios import (
     AddScenarioRowsSerializer,

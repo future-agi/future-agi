@@ -29,6 +29,8 @@ from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
 
 logger = structlog.get_logger(__name__)
+from drf_yasg.utils import swagger_auto_schema
+
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.error_localizer_model import (
@@ -59,13 +61,27 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
-from drf_yasg.utils import swagger_auto_schema
+from simulate.serializers.requests.run_test import (
+    AddEvalConfigRequestSerializer,
+    CreateRunTestSerializer,
+    RunTestFilterSerializer,
+    UpdateRunTestSerializer,
+)
 from simulate.serializers.requests.run_test_evals import (
     AddEvalConfigsRequestSerializer,
     EvalConfigUpdateRequestSerializer,
     EvalSummaryComparisonFilterSerializer,
     EvalSummaryFilterSerializer,
     RunNewEvalsOnTestExecutionSerializer,
+)
+from simulate.serializers.response.run_test import (
+    AddEvalConfigResponseSerializer,
+    RunTestErrorResponseSerializer,
+    RunTestExecutionsResponseSerializer,
+    RunTestMessageResponseSerializer,
+    RunTestResponseSerializer,
+    RunTestScenarioItemResponseSerializer,
+    TestExecutionItemResponseSerializer,
 )
 from simulate.serializers.response.run_test_evals import (
     AddEvalConfigsResponseSerializer,
@@ -78,9 +94,7 @@ from simulate.serializers.response.run_test_evals import (
     RunNewEvalsResponseSerializer,
 )
 from simulate.serializers.run_test import (
-    CreateRunTestSerializer,
     RunTestSerializer,
-    UpdateRunTestSerializer,
 )
 from simulate.serializers.test_execution import (
     CallExecutionDetailSerializer,
@@ -158,9 +172,7 @@ def _voice_sim_gate_response(user_organization, gm):
             status=402,
         )
 
-    feat_check = Entitlements.check_feature(
-        str(user_organization.id), "has_voice_sim"
-    )
+    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
     if not feat_check.allowed:
         return gm.forbidden_response(feat_check.reason)
     return None
@@ -177,6 +189,13 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=RunTestFilterSerializer,
+        responses={
+            200: RunTestResponseSerializer(many=True),
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of run tests for the user's organization
@@ -201,12 +220,22 @@ class RunTestListView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            simulation_type = request.query_params.get("simulation_type", "").strip()
-            prompt_template_id = request.query_params.get(
-                "prompt_template_id", ""
+            # Validate and parse query parameters
+            filter_serializer = RunTestFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return self.gm.bad_request(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    }
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
+            simulation_type = filter_serializer.validated_data.get(
+                "simulation_type", ""
             ).strip()
+            prompt_template_id = filter_serializer.validated_data.get(
+                "prompt_template_id"
+            )
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
@@ -285,6 +314,15 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=CreateRunTestSerializer,
+        responses={
+            201: RunTestResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def post(self, request, *args, **kwargs):
         """Create a new RunTest"""
         try:
@@ -293,7 +331,9 @@ class CreateRunTestView(APIView):
                 data=request.data, context={"request": request}
             )
             if not serializer.is_valid():
-                return self.gm.bad_request("Invalid data")
+                return self.gm.bad_request(
+                    {"error": "Invalid data", "details": serializer.errors}
+                )
 
             validated_data = serializer.validated_data
 
@@ -316,13 +356,8 @@ class CreateRunTestView(APIView):
                 organization=user_organization,
             )
 
-            if (
-                agent_definition.agent_type
-                == AgentDefinition.AgentTypeChoices.VOICE
-            ):
-                forbidden = _voice_sim_gate_response(
-                    user_organization, self.gm
-                )
+            if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+                forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
@@ -446,6 +481,13 @@ class RunTestDetailView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """Retrieve a specific RunTest"""
         try:
@@ -470,6 +512,15 @@ class RunTestDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        request_body=UpdateRunTestSerializer,
+        responses={
+            200: RunTestResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update a specific RunTest"""
         try:
@@ -549,6 +600,13 @@ class RunTestDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestMessageResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def delete(self, request, run_test_id, *args, **kwargs):
         """Delete a specific RunTest (soft delete)"""
         try:
@@ -563,9 +621,10 @@ class RunTestDetailView(APIView):
             # Soft delete the run test
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
-            return Response(
-                {"message": "Run test deleted successfully"}, status=status.HTTP_200_OK
+            response_serializer = RunTestMessageResponseSerializer(
+                {"message": "Run test deleted successfully"}
             )
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
 
         except RunTest.DoesNotExist:
             return Response(
@@ -614,9 +673,7 @@ class RunTestExecutionView(APIView):
                 and run_test.agent_definition.agent_type
                 == AgentDefinition.AgentTypeChoices.VOICE
             ):
-                forbidden = _voice_sim_gate_response(
-                    user_organization, self.gm
-                )
+                forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
@@ -971,6 +1028,14 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        query_serializer=RunTestFilterSerializer,
+        responses={
+            200: RunTestResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of run tests for the user's organization
@@ -991,8 +1056,17 @@ class RunTestAPIView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get search query parameter
-            search_query = request.query_params.get("search", "").strip()
+            # Validate and parse query parameters
+            filter_serializer = RunTestFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return Response(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
 
             # Filter run tests by organization (only non-deleted)
             run_tests = (
@@ -1043,6 +1117,13 @@ class TestExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: TestExecutionSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of test executions for the user's organization
@@ -1114,6 +1195,13 @@ class CallExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of call executions for the user's organization
@@ -3950,6 +4038,13 @@ class RunTestScenariosView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestScenarioItemResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get paginated list of scenarios for a specific run test
@@ -4019,7 +4114,10 @@ class RunTestScenariosView(APIView):
                 )
 
             # Return paginated response
-            return paginator.get_paginated_response(scenario_data)
+            scenario_serializer = RunTestScenarioItemResponseSerializer(
+                scenario_data, many=True
+            )
+            return paginator.get_paginated_response(scenario_serializer.data)
 
         except Exception as e:
             return Response(
@@ -4232,7 +4330,9 @@ class DeleteEvalConfigView(APIView):
                 eval_config.save(update_fields=["deleted", "deleted_at"])
 
             return Response(
-                DeleteEvalConfigResponseSerializer({"message": "Evaluation config deleted successfully"}).data,
+                DeleteEvalConfigResponseSerializer(
+                    {"message": "Evaluation config deleted successfully"}
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -4558,23 +4658,27 @@ class UpdateEvalConfigView(APIView):
                 )
 
                 return Response(
-                    EvalConfigUpdateResponseSerializer({
-                        "message": "Evaluation config updated and rerun triggered successfully",
-                        "eval_config_id": str(eval_config.id),
-                        "run_test_id": str(run_test_id),
-                        "test_execution_id": str(test_execution_id),
-                        "call_execution_count": len(call_execution_ids),
-                        "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
-                    }).data,
+                    EvalConfigUpdateResponseSerializer(
+                        {
+                            "message": "Evaluation config updated and rerun triggered successfully",
+                            "eval_config_id": str(eval_config.id),
+                            "run_test_id": str(run_test_id),
+                            "test_execution_id": str(test_execution_id),
+                            "call_execution_count": len(call_execution_ids),
+                            "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
+                        }
+                    ).data,
                     status=status.HTTP_200_OK,
                 )
 
             return Response(
-                EvalConfigUpdateResponseSerializer({
-                    "message": "Evaluation config updated successfully",
-                    "eval_config_id": str(eval_config.id),
-                    "run_test_id": str(run_test_id),
-                }).data,
+                EvalConfigUpdateResponseSerializer(
+                    {
+                        "message": "Evaluation config updated successfully",
+                        "eval_config_id": str(eval_config.id),
+                        "run_test_id": str(run_test_id),
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -4593,6 +4697,13 @@ class RunTestExecutionsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestExecutionsResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get test execution data for a specific run test
@@ -4913,7 +5024,10 @@ class RunTestExecutionsView(APIView):
                 )
 
             # Return paginated response with execution data
-            return paginator.get_paginated_response(execution_data)
+            execution_serializer = TestExecutionItemResponseSerializer(
+                execution_data, many=True
+            )
+            return paginator.get_paginated_response(execution_serializer.data)
 
         except Exception as e:
             traceback.print_exc()
@@ -5241,9 +5355,7 @@ class RunTestEvalSummaryComparisonView(APIView):
             )
 
             # Phase 0.1: replaced raw json.loads with EvalSummaryComparisonFilterSerializer
-            filter_serializer = EvalSummaryComparisonFilterSerializer(
-                data=request.GET
-            )
+            filter_serializer = EvalSummaryComparisonFilterSerializer(data=request.GET)
             if not filter_serializer.is_valid():
                 return self._gm.bad_request_response(filter_serializer.errors)
             execution_ids = filter_serializer.validated_data["execution_ids"]
@@ -5748,9 +5860,7 @@ class CallExecutionRerunView(APIView):
                         "Text/Chat agents only support 'eval_only' rerun type."
                     )
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
-                    forbidden = _voice_sim_gate_response(
-                        user_organization, self._gm
-                    )
+                    forbidden = _voice_sim_gate_response(user_organization, self._gm)
                     if forbidden is not None:
                         return forbidden
 
@@ -6220,9 +6330,7 @@ class TestExecutionRerunView(APIView):
                         "Text/Chat agents only support 'eval_only' rerun type."
                     )
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
-                    forbidden = _voice_sim_gate_response(
-                        user_organization, self._gm
-                    )
+                    forbidden = _voice_sim_gate_response(user_organization, self._gm)
                     if forbidden is not None:
                         return forbidden
 
@@ -6621,11 +6729,13 @@ class RunNewEvalsOnTestExecutionView(APIView):
             )
 
             return Response(
-                RunNewEvalsResponseSerializer({
-                    "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
-                    "run_test_id": str(run_test_id),
-                    "call_execution_count": len(call_execution_ids),
-                }).data,
+                RunNewEvalsResponseSerializer(
+                    {
+                        "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
+                        "run_test_id": str(run_test_id),
+                        "call_execution_count": len(call_execution_ids),
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 

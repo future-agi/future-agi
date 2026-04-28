@@ -8,6 +8,13 @@ from .agent_definition import (
 from .agent_version import (
     AgentVersionCreateRequestSerializer,
 )
+from .run_test import (
+    AddEvalConfigRequestSerializer,
+    CreatePromptSimulationSerializer,
+    CreateRunTestSerializer,
+    RunTestFilterSerializer,
+    UpdateRunTestSerializer,
+)
 from .run_test_evals import (
     AddEvalConfigsRequestSerializer,
     EvalConfigDefinitionSerializer,
@@ -55,6 +62,11 @@ __all__ = [
     "ScenarioEditPromptsRequestSerializer",
     "ScenarioAddRowsRequestSerializer",
     "ScenarioAddColumnsRequestSerializer",
+    "RunTestFilterSerializer",
+    "AddEvalConfigRequestSerializer",
+    "CreateRunTestSerializer",
+    "UpdateRunTestSerializer",
+    "CreatePromptSimulationSerializer",
     # "PersonaCreateRequestSerializer",
     # "PersonaUpdateRequestSerializer",
     # "PersonaDuplicateRequestSerializer",
