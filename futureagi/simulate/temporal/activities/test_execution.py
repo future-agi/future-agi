@@ -204,7 +204,7 @@ def _build_voice_settings(
     """Build voice settings from persona data and simulator agent defaults."""
     from ee.voice.constants.voice_catalog import resolve_voice_id
     from ee.voice.constants.voice_mapper import select_voice_id
-    from simulate.utils.voice_provider import resolve_system_voice_provider
+    from ee.voice.utils.system_provider import resolve_system_voice_provider
     from tracer.models.observability_provider import ProviderChoices
 
     # Voice_id format is determined by the system voice provider (the

@@ -5582,10 +5582,11 @@ def _create_rerun_call_execution(call_execution):
 
     # phone_number_id is only used by VAPI; LiveKit's prepare_call
     # ignores CreateCallExecution.phone_number_id entirely.
-    from simulate.utils.voice_provider import resolve_system_voice_provider
+    from ee.voice.utils.system_provider import resolve_system_voice_provider
 
-    agent_definition = call_execution.test_execution.agent_definition
-    client_provider = agent_definition.provider if agent_definition else None
+    agent_version = call_execution.agent_version
+    snapshot = (agent_version.configuration_snapshot or {}) if agent_version else {}
+    client_provider = snapshot.get("provider")
     system_provider = resolve_system_voice_provider(client_provider)
     if system_provider == "livekit":
         phone_number_id = ""
