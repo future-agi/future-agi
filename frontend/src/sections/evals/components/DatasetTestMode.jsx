@@ -1,5 +1,6 @@
 /* eslint-disable react/prop-types */
 import {
+  Autocomplete,
   Box,
   Chip,
   ClickAwayListener,
