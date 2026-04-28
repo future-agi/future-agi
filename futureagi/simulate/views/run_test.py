@@ -2992,29 +2992,35 @@ class CallExecutionDetailView(APIView):
             # add_trace_details_to_call_executions([response_data])
 
             # Shape parity with the observe drawer: when a trace is linked,
-            # also return the full serialized observation spans array. The
-            # voice drawer's unified data path (`data.observation_span`)
-            # then works the same in simulate and observe modes — same
-            # Attributes tab code path, same Logs code path. If no linkage
-            # exists (e.g. older tests whose spans were never ingested),
-            # this stays absent and the drawer falls back to
-            # `trace_details.attributes` as before.
-            trace_id = (response_data.get("trace_details") or {}).get("trace_id")
-            if trace_id:
-                from tracer.serializers.observation_span import (
-                    ObservationSpanSerializer,
-                )
-
-                trace = (
-                    Trace.objects.filter(id=trace_id)
-                    .prefetch_related("observation_spans")
-                    .first()
-                )
-                if trace:
-                    response_data["observation_span"] = [
-                        ObservationSpanSerializer(span).data
-                        for span in trace.observation_spans.all()
-                    ]
+            # also return the full serialized observation spans array.
+            #
+            # temporarily disabled: prod traces can have 3,000+ spans (top
+            # trace seen: 3,318). The DB fetch is fast (~3ms via
+            # tracer_observation_span_trace_id_8ff7a39d), but
+            # ObservationSpanSerializer runs per-span SerializerMethodField
+            # JSON work and the serialized payload balloons past tens of MB,
+            # blowing the request budget. Re-enable once this is paginated
+            # or moved behind a sub-endpoint. Knock-on effect while
+            # disabled: the voice drawer falls back to
+            # `trace_details.attributes` (same path as older calls with no
+            # span linkage), so Attributes tab still renders; Logs tab is
+            # empty for traces without a provider_call_data fallback.
+            # trace_id = (response_data.get("trace_details") or {}).get("trace_id")
+            # if trace_id:
+            #     from tracer.serializers.observation_span import (
+            #         ObservationSpanSerializer,
+            #     )
+            #
+            #     trace = (
+            #         Trace.objects.filter(id=trace_id)
+            #         .prefetch_related("observation_spans")
+            #         .first()
+            #     )
+            #     if trace:
+            #         response_data["observation_span"] = [
+            #             ObservationSpanSerializer(span).data
+            #             for span in trace.observation_spans.all()
+            #         ]
 
             # Observability-off calls have no ObservationSpan but we still
             # hold the full provider payload on `provider_call_data`. We
