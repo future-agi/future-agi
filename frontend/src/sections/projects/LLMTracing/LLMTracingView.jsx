@@ -1687,10 +1687,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
     wasOnSavedViewRef.current = true;
 
-    if (import.meta.env.MODE !== "production") {
-      // eslint-disable-next-line no-console
-    }
-
     // Apply display settings
     const display = activeViewConfig.display || {};
     if (display.viewMode) setViewMode(display.viewMode);
@@ -1727,9 +1723,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // Primary date filter — stored inside display for backend-whitelist compatibility.
     // Only apply if the saved view has one; old views without it keep the current date.
     if (display.dateFilter) {
-      if (import.meta.env.MODE !== "production") {
-        // eslint-disable-next-line no-console
-      }
       if (selectedTab === "trace") {
         setPrimaryTraceDateFilter(display.dateFilter);
       } else {
