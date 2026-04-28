@@ -14770,12 +14770,13 @@ def get_json_column_schemas(dataset):
     """
     from model_hub.utils.json_path_resolver import (
         extract_json_schema_for_column,
+        parse_json_safely,
     )
 
-    # Get JSON-type columns
+    # Get JSON-type columns + text columns that may contain JSON values
     json_columns = Column.objects.filter(
         dataset=dataset,
-        data_type="json",
+        data_type__in=["json", "text"],
         deleted=False,
     )
 
@@ -14794,16 +14795,25 @@ def get_json_column_schemas(dataset):
                 "sample": json_schema.get("sample"),
             }
         else:
-            # Extract schema from all cells (up to 500 for performance)
-            sample_cells = (
-                Cell.objects.filter(
-                    column=column,
-                    deleted=False,
-                )
+            # Extract schema from cells. For text columns, check a small
+            # sample first to avoid wasting time on non-JSON content.
+            base_qs = (
+                Cell.objects.filter(column=column, deleted=False)
                 .exclude(value__isnull=True)
                 .exclude(value="")
-                .values_list("value", flat=True)[:500]
             )
+
+            if column.data_type == "text":
+                # Quick check: peek at first 3 non-empty cells
+                peek = list(base_qs.values_list("value", flat=True)[:3])
+                has_json = any(
+                    parse_json_safely(v)[1] for v in peek
+                )
+                if not has_json:
+                    continue
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
+            else:
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
 
             if sample_cells:
                 schema = extract_json_schema_for_column(list(sample_cells))

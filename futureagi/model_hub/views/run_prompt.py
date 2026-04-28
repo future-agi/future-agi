@@ -311,6 +311,16 @@ def render_template(
         )
 
 
+class JsonStr(dict):
+    """Dict subclass that renders as its original JSON string via str()/Jinja.
+    Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
+    def __init__(self, data, raw):
+        super().__init__(data)
+        self._raw = raw
+    def __str__(self):
+        return self._raw
+
+
 def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, model_name):
     try:
         media_error = None
@@ -353,15 +363,17 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                     parts = column.name.split(".")
                     current = context
 
-                    # Determine the value to store - parse JSON columns for dot notation access
+                    # Determine the value to store - parse JSON for dot notation access.
+                    # For any column with a JSON string value, parse it into a
+                    # JsonStr dict so {{col.key}} works via Jinja attribute access
+                    # while {{col}} still renders as the original JSON string.
                     cell_value = cell.value if cell.value is not None else ""
-                    if column.data_type == "json" and cell_value:
+                    if cell_value and isinstance(cell_value, str):
                         from model_hub.utils.json_path_resolver import parse_json_safely
 
                         parsed_json, is_valid = parse_json_safely(cell_value)
-                        if is_valid:
-                            # Use parsed dict to enable {{column.property}} access
-                            cell_value = parsed_json
+                        if is_valid and isinstance(parsed_json, dict):
+                            cell_value = JsonStr(parsed_json, cell_value)
 
                     # Create nested objects
                     for i, part in enumerate(parts):

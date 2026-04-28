@@ -255,10 +255,10 @@ export const extractVariableFromAllCols = (
         res[col.headerName] = ["1"];
       }
 
-      // For JSON columns, also add JSON paths from schema
-      if (col?.dataType === "json" && jsonSchemas?.[col?.field]) {
+      // Add JSON paths from schema (covers json columns + text columns with JSON values)
+      if (jsonSchemas?.[col?.field]?.keys?.length) {
         const schema = jsonSchemas[col?.field];
-        schema?.keys?.forEach((path) => {
+        schema.keys.forEach((path) => {
           const fullPath = `${col.headerName}.${path}`;
           if (!res[fullPath]) {
             res[fullPath] = ["1"];
@@ -322,10 +322,10 @@ export const getDropdownOptionsFromCols = (
       isJsonPath: false,
     });
 
-    // If this is a JSON column with schema, add nested paths
-    if (col?.dataType === "json" && jsonSchemas?.[col?.field]) {
+    // Add nested paths from schema (covers json columns + text columns with JSON values)
+    if (jsonSchemas?.[col?.field]?.keys?.length) {
       const schema = jsonSchemas[col?.field];
-      schema?.keys?.forEach((path) => {
+      schema.keys.forEach((path) => {
         options.push({
           id: `${col?.field}.${path}`,
           value: `${col?.headerName}.${path}`,
@@ -441,9 +441,8 @@ export function findInvalidVariables(
         (col) => normalize(col?.headerName) === normalize(baseColumn),
       );
 
-      if (column?.dataType === "json") {
-        // JSON column found - allow any path (will resolve at runtime)
-        // Schema validation is optional - if path doesn't exist, backend returns empty string
+      if (column && (column.dataType === "json" || jsonSchemas?.[column.field]?.keys?.length)) {
+        // Column has nested paths (json type or text with JSON values) — allow any path
         return;
       }
 
@@ -606,7 +605,7 @@ export const DUMMY_MODEL_PARAMS = [
  * @param {Array} allColumns - All columns in the dataset
  * @returns {Object} { text: string, invalidVariables: string[] }
  */
-export const replaceVariablesWithFields = (text, matches, allColumns) => {
+export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchemas = {}) => {
   let updatedText = text;
   const invalidVariables = [];
 
@@ -637,7 +636,7 @@ export const replaceVariablesWithFields = (text, matches, allColumns) => {
           normalizeForComparison(baseColumn).toLowerCase(),
       );
 
-      if (jsonColumn?.dataType === "json") {
+      if (jsonColumn && (jsonColumn.dataType === "json" || jsonSchemas?.[jsonColumn.field]?.keys?.length)) {
         const replacePattern = new RegExp(
           `{{\\s*${rawVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*}}`,
           "g",

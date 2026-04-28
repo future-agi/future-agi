@@ -247,6 +247,54 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
   );
 }
 
+// Walk a JSON value and extract dot-notation keys (max 3 levels deep).
+function extractKeysFromValue(raw) {
+  let parsed = null;
+  if (raw && typeof raw === "object") parsed = raw;
+  else if (typeof raw === "string" && raw.trim()) {
+    try { const p = JSON.parse(raw); if (p && typeof p === "object") parsed = p; } catch { /* not JSON */ }
+  }
+  if (!parsed) return [];
+  const keys = [];
+  const walk = (obj, prefix, depth) => {
+    if (depth > 3 || !obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) {
+      keys.push(`${prefix}[0]`);
+      // Walk first element to discover object keys inside arrays
+      if (obj.length && obj[0] && typeof obj[0] === "object" && !Array.isArray(obj[0])) {
+        for (const k of Object.keys(obj[0])) {
+          keys.push(`${prefix}[0].${k}`);
+        }
+      }
+      return;
+    }
+    for (const k of Object.keys(obj)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      keys.push(path);
+      if (obj[k] && typeof obj[k] === "object") walk(obj[k], path, depth + 1);
+    }
+  };
+  walk(parsed, "", 0);
+  return keys;
+}
+
+// Resolve a dot/bracket path inside a parsed JSON value.
+function resolveNestedValue(raw, jsonPath) {
+  let parsed = null;
+  if (raw && typeof raw === "object") parsed = raw;
+  else if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch { return raw; }
+  }
+  if (!parsed) return raw;
+  const parts = jsonPath.split(/[.[\]]/).filter(Boolean);
+  let cur = parsed;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = /^\d+$/.test(p) ? (Array.isArray(cur) ? cur[parseInt(p, 10)] : undefined) : (typeof cur === "object" ? cur[p] : undefined);
+  }
+  return cur;
+}
+
 const DatasetTestMode = React.forwardRef(
   (
     {
@@ -292,6 +340,7 @@ const DatasetTestMode = React.forwardRef(
 
     // Dataset data
     const [columns, setColumns] = useState([]);
+    const [jsonSchemas, setJsonSchemas] = useState({});
     const [rows, setRows] = useState([]);
     const [totalRows, setTotalRows] = useState(0);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
@@ -423,6 +472,7 @@ const DatasetTestMode = React.forwardRef(
           const jsonSchemas = schemaRes.data?.result || {};
 
           setColumns(cols);
+          setJsonSchemas(jsonSchemas);
           setRows(tableRows);
           setTotalRows(total);
           setCurrentRowIndex(0);
@@ -511,37 +561,51 @@ const DatasetTestMode = React.forwardRef(
       return m;
     }, [extraColumns]);
 
-    // Column names for variable mapping dropdown
-    // When sourceColumns is provided (e.g. workbench mode), use those instead
-    // of dataset columns. sourceColumns may be objects with headerName/field or strings.
-    const columnNames = useMemo(() => {
+    // Build expanded column names (with JSON sub-paths) and name→ID
+    // lookup in one pass. Discovers nested keys from both the backend
+    // JSON schema AND runtime cell-value inspection of the current row.
+    const { columnNames, nameToId } = useMemo(() => {
       if (isWorkbenchMode) {
-        return sourceColumns.map((col) =>
+        const names = sourceColumns.map((col) =>
           typeof col === "string"
             ? col
             : col.headerName || col.field || col.name || col.label || "",
         );
+        return { columnNames: names, nameToId: {} };
       }
-      const base = columns
-        .filter((c) => c.id && c.name && !["id", "orgId"].includes(c.name))
-        .map((c) => c.name);
-      if (!extraColumns?.length) return base;
-      // Virtual columns ("Output", "Prompt Chain" for experiments) render
-      // first so they're prominent in the dropdown AND win auto-mapping
-      // ties — auto-map iterates columnNames in order and takes the first
-      // match, so real dataset columns that happen to collide with eval
-      // variable names shouldn't shadow the experiment virtuals.
+      const names = [];
+      const n2id = {};
+      const seen = new Set();
+      const add = (display, id) => {
+        if (seen.has(display)) return;
+        seen.add(display);
+        names.push(display);
+        if (id) n2id[display] = id;
+      };
+      columns.forEach((c) => {
+        if (!c.id || !c.name || ["id", "orgId"].includes(c.name)) return;
+        add(c.name, c.id);
+        // Collect sub-paths from backend schema + runtime cell values
+        const schemaPaths = jsonSchemas?.[c.id]?.keys || [];
+        const cell = currentRow?.[c.id];
+        const runtimePaths = cell ? extractKeysFromValue(cell?.cell_value ?? cell) : [];
+        const allPaths = new Set([...schemaPaths, ...runtimePaths]);
+        allPaths.forEach((path) => {
+          // Bracket paths: "col[0]" not "col.[0]"
+          const sep = path.startsWith("[") ? "" : ".";
+          add(`${c.name}${sep}${path}`, `${c.id}${sep}${path}`);
+        });
+      });
+      if (!extraColumns?.length) return { columnNames: names, nameToId: n2id };
       const extras = (extraColumns || [])
-        .map((col) =>
-          typeof col === "string"
-            ? col
-            : col.headerName || col.field || col.name || col.label || "",
-        )
+        .map((col) => (typeof col === "string" ? col : col.headerName || col.field || col.name || col.label || ""))
         .filter(Boolean);
       const extraSet = new Set(extras);
-      const baseWithoutExtras = base.filter((n) => !extraSet.has(n));
-      return [...extras, ...baseWithoutExtras];
-    }, [columns, sourceColumns, extraColumns, isWorkbenchMode]);
+      return {
+        columnNames: [...extras, ...names.filter((n) => !extraSet.has(n))],
+        nameToId: n2id,
+      };
+    }, [columns, sourceColumns, extraColumns, isWorkbenchMode, jsonSchemas, currentRow]);
 
     // Workbench mode: map display name → field identifier (e.g. "model_output" → "output_prompt")
     const sourceNameToField = useMemo(() => {
@@ -557,17 +621,19 @@ const DatasetTestMode = React.forwardRef(
       return m;
     }, [sourceColumns, isWorkbenchMode]);
 
-    // Resolve UUID-based mapping values to column names (edit mode).
-    // The saved mapping uses column UUIDs but the dropdown shows names.
-    // Experiment virtual columns are also saved by field ("output",
-    // "prompt_chain"); resolve those to their display names too.
+    // Resolve UUID-based mapping values to display names (edit mode).
+    // Handles both plain UUIDs and "uuid.path" nested references.
     const uuidResolutionDone = React.useRef(false);
     useEffect(() => {
       if (!columns.length && !Object.keys(extraFieldToName).length) return;
       if (uuidResolutionDone.current) return;
       const idToName = {};
       columns.forEach((c) => {
-        if (c.id && c.name) idToName[c.id] = c.name;
+        if (!c.id || !c.name) return;
+        idToName[c.id] = c.name;
+        // Reverse-map nested IDs: "uuid.path" → "col.path"
+        const paths = jsonSchemas?.[c.id]?.keys || [];
+        paths.forEach((p) => { idToName[`${c.id}.${p}`] = `${c.name}.${p}`; });
       });
       setMapping((prev) => {
         const next = { ...prev };
@@ -575,18 +641,27 @@ const DatasetTestMode = React.forwardRef(
         Object.keys(next).forEach((variable) => {
           const val = next[variable];
           if (!val) return;
-          if (idToName[val]) {
-            next[variable] = idToName[val];
-            changed = true;
-          } else if (extraFieldToName[val]) {
-            next[variable] = extraFieldToName[val];
-            changed = true;
-          }
+          if (idToName[val]) { next[variable] = idToName[val]; changed = true; }
+          else if (extraFieldToName[val]) { next[variable] = extraFieldToName[val]; changed = true; }
         });
         if (changed) uuidResolutionDone.current = true;
         return changed ? next : prev;
       });
-    }, [columns, extraFieldToName]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [columns, extraFieldToName, jsonSchemas]);
+
+    // Prune stale mapping keys when variables list changes (instruction edits).
+    useEffect(() => {
+      if (!variables.length) return;
+      const varSet = new Set(variables);
+      setMapping((prev) => {
+        const pruned = {};
+        let changed = false;
+        Object.keys(prev).forEach((k) => {
+          if (varSet.has(k)) pruned[k] = prev[k]; else changed = true;
+        });
+        return changed ? pruned : prev;
+      });
+    }, [variables]);
 
     // Auto-map variables to columns when names match (case-insensitive)
     useEffect(() => {
@@ -665,23 +740,35 @@ const DatasetTestMode = React.forwardRef(
             }
           }
         } else {
-          // Dataset mode: mapping sends variable → actual cell values
-          // Map template variables to dataset columns
+          // Dataset mode: mapping sends variable → actual cell values.
+          // Supports nested paths (e.g. "col.key" → resolve from cell JSON).
           for (const variable of variables) {
             const mappedColName = mapping[variable];
             if (mappedColName && currentRow) {
-              const col = columns.find((c) => c.name === mappedColName);
+              let baseName = mappedColName;
+              let jsonPath = null;
+              const dot = mappedColName.indexOf(".");
+              const bracket = mappedColName.indexOf("[");
+              if (dot > 0 && (bracket < 0 || dot < bracket)) {
+                baseName = mappedColName.substring(0, dot);
+                jsonPath = mappedColName.substring(dot + 1);
+              } else if (bracket > 0) {
+                baseName = mappedColName.substring(0, bracket);
+                jsonPath = mappedColName.substring(bracket);
+              }
+              const col = columns.find((c) => c.name === baseName);
               if (col) {
                 const cell = currentRow[col.id];
-                evalMapping[variable] = cell?.cell_value ?? cell ?? "";
-                const dt = col.data_type || "text";
-                if (["image", "images"].includes(dt)) {
-                  inputDataTypes[variable] = "image";
-                } else if (dt === "audio") {
-                  inputDataTypes[variable] = "audio";
-                } else {
-                  inputDataTypes[variable] = "text";
+                let cellValue = cell?.cell_value ?? cell ?? "";
+                if (jsonPath) {
+                  const resolved = resolveNestedValue(cellValue, jsonPath);
+                  if (resolved !== undefined && resolved !== null) {
+                    cellValue = typeof resolved === "object" ? JSON.stringify(resolved) : String(resolved);
+                  }
                 }
+                evalMapping[variable] = cellValue;
+                const dt = col.data_type || "text";
+                inputDataTypes[variable] = ["image", "images"].includes(dt) ? "image" : dt === "audio" ? "audio" : "text";
               }
             }
           }
@@ -787,17 +874,9 @@ const DatasetTestMode = React.forwardRef(
       hasNonTemplateContext ||
       variables.every((v) => mapping[v]);
 
-    // Build a name→ID lookup so the save payload uses column UUIDs (which the
-    // backend's eval_runner expects) while the test playground uses names.
-    const nameToId = useMemo(() => {
-      const map = {};
-      columns.forEach((c) => {
-        if (c.id && c.name) map[c.name] = c.id;
-      });
-      return map;
-    }, [columns]);
-
-    // Mapping with column IDs for the save payload
+    // Mapping with column IDs for the save payload.
+    // nameToId (from columnMaps memo above) already handles nested paths.
+    // For freeSolo typed paths not in the map, resolve base column → uuid.
     const idMapping = useMemo(() => {
       const m = {};
       if (isWorkbenchMode) {
@@ -806,20 +885,23 @@ const DatasetTestMode = React.forwardRef(
         });
       } else {
         Object.entries(mapping).forEach(([variable, colName]) => {
-          // Extras resolve to their own field (e.g. "Output" → "output") and
-          // bypass the dataset UUID lookup since they don't exist in columns.
-          m[variable] =
-            extraNameToField[colName] || nameToId[colName] || colName;
+          if (!colName) return;
+          if (extraNameToField[colName]) { m[variable] = extraNameToField[colName]; return; }
+          if (nameToId[colName]) { m[variable] = nameToId[colName]; return; }
+          // freeSolo: "col.typed_path" → "uuid.typed_path"
+          const dot = colName.indexOf(".");
+          const bracket = colName.indexOf("[");
+          const split = dot > 0 && (bracket < 0 || dot < bracket) ? dot : bracket > 0 ? bracket : -1;
+          if (split > 0) {
+            const base = colName.substring(0, split);
+            const baseId = nameToId[base];
+            if (baseId) { m[variable] = `${baseId}${colName.substring(split)}`; return; }
+          }
+          m[variable] = colName;
         });
       }
       return m;
-    }, [
-      mapping,
-      nameToId,
-      isWorkbenchMode,
-      sourceNameToField,
-      extraNameToField,
-    ]);
+    }, [mapping, nameToId, isWorkbenchMode, sourceNameToField, extraNameToField]);
     const isReady = (!!selectedDatasetId || isWorkbenchMode) && allMapped;
 
     useEffect(() => {
@@ -1264,6 +1346,7 @@ const DatasetTestMode = React.forwardRef(
                   />
                   <Autocomplete
                     size="small"
+                    freeSolo
                     options={
                       mapping[variable] &&
                       !columnNames.includes(mapping[variable])
@@ -1277,6 +1360,20 @@ const DatasetTestMode = React.forwardRef(
                         [variable]: val || "",
                       }))
                     }
+                    onBlur={(e) => {
+                      const val = e.target.value?.trim();
+                      if (val) setMapping((prev) => ({ ...prev, [variable]: val }));
+                    }}
+                    filterOptions={(opts, { inputValue }) => {
+                      const q = inputValue.toLowerCase();
+                      if (!q) return opts.filter((o) => !o.includes(".") && !o.includes("["));
+                      const showNested = q.includes(".") || q.includes("[");
+                      return opts.filter((o) => {
+                        const lower = o.toLowerCase();
+                        if (!showNested && (lower.includes(".") || lower.includes("["))) return false;
+                        return lower.startsWith(q);
+                      });
+                    }}
                     openOnFocus
                     autoHighlight
                     selectOnFocus
@@ -1308,6 +1405,7 @@ const DatasetTestMode = React.forwardRef(
                     )}
                     renderOption={(props, col) => {
                       const { key, ...rest } = props;
+                      const isNested = col.includes(".") || col.includes("[");
                       return (
                         <Box
                           component="li"
@@ -1317,6 +1415,7 @@ const DatasetTestMode = React.forwardRef(
                             ...rest.sx,
                             fontSize: "12px",
                             fontFamily: "monospace",
+                            ...(isNested && { pl: 3, color: "text.secondary" }),
                           }}
                         >
                           {col}
