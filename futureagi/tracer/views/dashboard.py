@@ -213,40 +213,40 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     ):
                         attrs_by_key[key] = _infer_raw_attr_type(value)
 
-        rows, _cols, _ = ch.execute_read(
-            """
-            SELECT key, argMax(type, cnt) AS type
-            FROM (
-                SELECT key, 'text' AS type, count() AS cnt
-                FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
-                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'number' AS type, count() AS cnt
-                FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
-                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'boolean' AS type, count() AS cnt
-                FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
-                WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                GROUP BY key
+        def _add_typed_map_attrs(rows, attrs_by_key):
+            map_columns = (
+                ("span_attr_str", "text"),
+                ("span_attr_num", "number"),
+                ("span_attr_bool", "boolean"),
             )
-            GROUP BY key ORDER BY key LIMIT 2000
+            for row in rows:
+                for index, (column, attr_type) in enumerate(map_columns):
+                    values = row.get(column, {}) if isinstance(row, dict) else row[index]
+                    if not isinstance(values, dict):
+                        continue
+                    for key in values:
+                        if key and key not in attrs_by_key:
+                            attrs_by_key[key] = attr_type
+
+        typed_rows, _cols, _ = ch.execute_read(
+            """
+            SELECT span_attr_str, span_attr_num, span_attr_bool
+            FROM spans
+            PREWHERE project_id IN %(project_ids)s
+            WHERE _peerdb_is_deleted = 0
+                AND (
+                    notEmpty(span_attr_str)
+                    OR notEmpty(span_attr_num)
+                    OR notEmpty(span_attr_bool)
+                )
+            ORDER BY created_at DESC
+            LIMIT 500
             """,
             {"project_ids": project_ids},
-            timeout_ms=15000,
+            timeout_ms=5000,
         )
         attrs_by_key = {}
-        for row in rows:
-            if isinstance(row, dict):
-                key, attr_type = row.get("key", ""), row.get("type", "string")
-            elif isinstance(row, (list, tuple)) and len(row) >= 2:
-                key, attr_type = row[0], row[1]
-            else:
-                continue
-            if key:
-                attrs_by_key[key] = attr_type
+        _add_typed_map_attrs(typed_rows, attrs_by_key)
 
         for table, column in (
             ("spans", "span_attributes_raw"),

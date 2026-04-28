@@ -337,7 +337,11 @@ class TestMetricsEndpoint:
         mock_ch.execute_read.side_effect = [
             (
                 [
-                    {"key": "typed.attr", "type": "text"},
+                    {
+                        "span_attr_str": {"typed.attr": "value"},
+                        "span_attr_num": {"typed.score": 1.0},
+                        "span_attr_bool": {"typed.enabled": True},
+                    },
                 ],
                 [],
                 1.0,
@@ -367,8 +371,11 @@ class TestMetricsEndpoint:
         typed_sql = mock_ch.execute_read.call_args_list[0].args[0]
         spans_raw_sql = mock_ch.execute_read.call_args_list[1].args[0]
         cdc_raw_sql = mock_ch.execute_read.call_args_list[2].args[0]
-        assert "mapKeys(span_attr_str)" in typed_sql
+        assert "SELECT span_attr_str, span_attr_num, span_attr_bool" in typed_sql
+        assert "ARRAY JOIN" not in typed_sql
+        assert "mapKeys" not in typed_sql
         assert "JSONExtractKeys" not in typed_sql
+        assert "LIMIT 500" in typed_sql
         assert "span_attributes_raw AS attrs" in spans_raw_sql
         assert "span_attributes AS attrs" in cdc_raw_sql
         assert "PREWHERE project_id IN %(project_ids)s" in spans_raw_sql
@@ -381,6 +388,8 @@ class TestMetricsEndpoint:
             {"key": "livekit.customer_id", "type": "text"},
             {"key": "livekit.score", "type": "number"},
             {"key": "typed.attr", "type": "text"},
+            {"key": "typed.enabled", "type": "boolean"},
+            {"key": "typed.score", "type": "number"},
         ]
 
 
