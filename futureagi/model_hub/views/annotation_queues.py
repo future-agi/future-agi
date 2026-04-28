@@ -1076,24 +1076,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         label_id = request.data.get("label_id")
         required = _is_truthy(request.data.get("required", True))
 
-        if required:
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(
-                    str(org.id), "has_required_labels"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
-
         if not label_id:
             return self._gm.bad_request("label_id is required.")
 
