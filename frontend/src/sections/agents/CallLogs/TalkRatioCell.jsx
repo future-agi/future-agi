@@ -5,7 +5,7 @@ import { Box, Tooltip, Typography } from "@mui/material";
 const TalkRatioCell = (params) => {
   const data = params?.data;
   const ratio = data?.talk_ratio;
-  if (!ratio) {
+  if (ratio == null) {
     return (
       <Typography
         variant="body2"
@@ -16,15 +16,30 @@ const TalkRatioCell = (params) => {
     );
   }
 
-  const userPct = ratio.user_pct ?? 0;
-  const botPct = ratio.bot_pct ?? 0;
+  // Backend may return talk_ratio as a scalar (bot_time / user_time) from
+  // trace.py:480 or as an object {user, bot, user_pct, bot_pct} from
+  // observability_providers.py. Normalize both to userPct/botPct.
+  let userPct;
+  let botPct;
+  let userSec;
+  let botSec;
+  if (typeof ratio === "number") {
+    botPct = Math.round((ratio / (ratio + 1)) * 100);
+    userPct = 100 - botPct;
+  } else {
+    userPct = ratio.user_pct ?? 0;
+    botPct = ratio.bot_pct ?? 0;
+    userSec = ratio.user;
+    botSec = ratio.bot;
+  }
+
+  const tooltip =
+    userSec != null || botSec != null
+      ? `User: ${userSec ?? 0}s (${userPct}%) | Bot: ${botSec ?? 0}s (${botPct}%)`
+      : `User: ${userPct}% | Bot: ${botPct}%`;
 
   return (
-    <Tooltip
-      title={`User: ${ratio.user ?? 0}s (${userPct}%) | Bot: ${ratio.bot ?? 0}s (${botPct}%)`}
-      arrow
-      placement="bottom"
-    >
+    <Tooltip title={tooltip} arrow placement="bottom">
       <Box
         sx={{
           display: "flex",
