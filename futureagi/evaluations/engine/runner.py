@@ -138,8 +138,11 @@ def run_eval(request: EvalRequest) -> EvalResult:
         )
 
     # Ensure eval_name is available for protect calls.
+    # Also forward max_tokens from inputs if present.
     if call_type in ("protect", "protect_flash"):
         run_params.setdefault("eval_name", eval_template.name)
+        if "max_tokens" in request.inputs:
+            run_params.setdefault("max_tokens", request.inputs["max_tokens"])
 
     # 3.5. Preprocess inputs (e.g., compute embeddings for CLIP/FID)
     from evaluations.engine.preprocessing import preprocess_inputs
