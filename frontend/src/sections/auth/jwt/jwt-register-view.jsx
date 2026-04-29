@@ -157,7 +157,6 @@ export default function JwtRegisterView() {
         if (typeof window.rdt === "function") {
           trackRedditSignup({
             email: data.email,
-            method: "email",
             userId: response?.result?.user_id,
           });
         }
