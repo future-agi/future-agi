@@ -85,14 +85,13 @@ jobs:
             const [type, description] = branchName.split('/');
 
             const typeEmojis = {
-              'feature': '✨',
-              'bugfix': '🐛',
-              'hotfix': '🚨',
-              'refactor': '♻️',
-              'docs': '📚',
-              'test': '🧪',
+              'feat': '✨',
+              'fix': '🐛',
               'chore': '🔧',
-              'release': '🚀'
+              'docs': '📚',
+              'refactor': '♻️',
+              'test': '🧪',
+              'perf': '⚡'
             };
 
             const emoji = typeEmojis[type] || '📝';
