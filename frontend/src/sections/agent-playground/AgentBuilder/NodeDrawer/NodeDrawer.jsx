@@ -1,8 +1,16 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Divider, IconButton, Stack } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import { useForm, FormProvider } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { enqueueSnackbar } from "notistack";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import NodeConfigurationForm from "./NodeConfigurationForm";
 import NodeDrawerSkeleton from "./NodeDrawerSkeleton";
@@ -13,11 +21,16 @@ import { NODE_TYPE_CONFIG } from "../../utils/constants";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
+  useWorkflowRunStoreShallow,
 } from "../../store";
 import { getDefaultValues, mapNodeDetailToNodeData } from "./nodeFormUtils";
-import { useGetNodeDetail } from "src/api/agent-playground/agent-playground";
+import {
+  useGetNodeDetail,
+  deleteNodeApi,
+} from "src/api/agent-playground/agent-playground";
 import { useQueryClient } from "@tanstack/react-query";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
+import { useSaveDraftContext } from "../saveDraftContext";
 
 const MIN_WIDTH = 450;
 const MAX_WIDTH = 800;
@@ -31,19 +44,31 @@ export default function NodeDrawer({
   onResizeStart,
 }) {
   const queryClient = useQueryClient();
+  const { ensureDraft } = useSaveDraftContext();
   const hadInitialConfigRef = useRef(false);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [discardAction, setDiscardAction] = useState(null); // "close" | "switch" | null
   const [activeNode, setActiveNode] = useState(node ?? null);
   const [pendingNode, setPendingNode] = useState(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  const { setSelectedNode, updateNodeData, currentAgent, setNodeFormDirty } =
-    useAgentPlaygroundStoreShallow((s) => ({
-      setSelectedNode: s.setSelectedNode,
-      updateNodeData: s.updateNodeData,
-      currentAgent: s.currentAgent,
-      setNodeFormDirty: s.setNodeFormDirty,
-    }));
+  const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+
+  const {
+    setSelectedNode,
+    updateNodeData,
+    currentAgent,
+    setNodeFormDirty,
+    deleteNode,
+    setGraphData,
+  } = useAgentPlaygroundStoreShallow((s) => ({
+    setSelectedNode: s.setSelectedNode,
+    updateNodeData: s.updateNodeData,
+    currentAgent: s.currentAgent,
+    setNodeFormDirty: s.setNodeFormDirty,
+    deleteNode: s.deleteNode,
+    setGraphData: s.setGraphData,
+  }));
 
   // Fetch fresh node detail from API when drawer opens
   const { data: nodeDetailData, isFetching: isLoadingNodeDetail } =
@@ -259,6 +284,52 @@ export default function NodeDrawer({
     setPendingNode(null);
   };
 
+  // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
+  const handleDeleteNode = useCallback(async () => {
+    if (!activeNode || isWorkflowRunning) return;
+    setShowDeleteDialog(false);
+
+    const nodeId = activeNode.id;
+    const { nodes, edges } = useAgentPlaygroundStore.getState();
+
+    // Optimistic deletion (also clears selectedNode, which closes the drawer)
+    deleteNode(nodeId);
+    onClose();
+
+    const draftResult = await ensureDraft({ skipDirtyCheck: true });
+
+    if (draftResult === false) {
+      // Rollback
+      setGraphData(nodes, edges);
+      return;
+    }
+
+    if (draftResult === "created") {
+      // Deletion was included in the POST that created the draft
+      return;
+    }
+
+    // Already a draft — fire individual DELETE
+    const { currentAgent: agent } = useAgentPlaygroundStore.getState();
+    try {
+      await deleteNodeApi({
+        graphId: agent?.id,
+        versionId: agent?.versionId,
+        nodeId,
+      });
+    } catch {
+      setGraphData(nodes, edges);
+      enqueueSnackbar("Failed to delete node", { variant: "error" });
+    }
+  }, [
+    activeNode,
+    isWorkflowRunning,
+    deleteNode,
+    onClose,
+    ensureDraft,
+    setGraphData,
+  ]);
+
   const handleClose = () => {
     if (isDirty) {
       setDiscardAction("close");
@@ -321,20 +392,52 @@ export default function NodeDrawer({
               alignItems="flex-start"
             >
               <NodeCard node={NODE_TYPE_CONFIG[activeNode?.type]} readOnly />
-              <IconButton
-                onClick={handleClose}
-                sx={{
-                  color: "text.primary",
-                }}
-              >
-                <SvgColor
-                  src="/assets/icons/ic_close.svg"
-                  sx={{
-                    height: "20px",
-                    width: "20px",
-                  }}
+              <Stack direction="row" spacing={0.25} alignItems="center">
+                <CustomTooltip
+                  show
+                  title="Delete node"
+                  size="small"
+                  arrow
+                  placement="bottom"
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowDeleteDialog(true)}
+                      disabled={isWorkflowRunning}
+                      sx={{
+                        color: "red.500",
+                        "&:hover": {
+                          bgcolor: (theme) =>
+                            theme.palette.mode === "dark"
+                              ? "rgba(255,70,70,0.08)"
+                              : "red.50",
+                        },
+                      }}
+                    >
+                      <SvgColor
+                        src="/assets/icons/ic_delete.svg"
+                        sx={{ height: 18, width: 18 }}
+                      />
+                    </IconButton>
+                  </span>
+                </CustomTooltip>
+                <Divider
+                  orientation="vertical"
+                  flexItem
+                  sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
                 />
-              </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={handleClose}
+                  sx={{ color: "text.primary" }}
+                >
+                  <SvgColor
+                    src="/assets/icons/ic_close.svg"
+                    sx={{ height: 20, width: 20 }}
+                  />
+                </IconButton>
+              </Stack>
             </Stack>
             <Divider
               sx={{
@@ -379,6 +482,25 @@ export default function NodeDrawer({
             sx={{ paddingX: "24px" }}
           >
             Discard
+          </Button>
+        }
+      />
+
+      {/* Delete node confirmation dialog */}
+      <ConfirmDialog
+        open={showDeleteDialog}
+        onClose={() => setShowDeleteDialog(false)}
+        title="Delete Node"
+        content="Are you sure you want to delete this node? This action cannot be undone."
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={handleDeleteNode}
+            sx={{ paddingX: "24px" }}
+          >
+            Delete
           </Button>
         }
       />
