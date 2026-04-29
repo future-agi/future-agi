@@ -124,7 +124,7 @@ class AddDatasetEvalTool(BaseTool):
         # Auto-detect mapping if not provided
         if not params.mapping:
             # Try to auto-map eval template keys to dataset columns by name similarity
-            required_keys = template.required_fields or []
+            required_keys = (template.config or {}).get("required_keys", [])
             auto_mapping = {}
             for key in required_keys:
                 key_lower = key.lower()
