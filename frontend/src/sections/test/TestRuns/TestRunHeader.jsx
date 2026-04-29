@@ -23,6 +23,7 @@ import { useTestRunsSelectedCount } from "../common";
 import { useTestRunSdkStoreShallow } from "./state";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { SIMULATION_TYPE } from "src/components/run-tests/common";
+import { SCENARIO_STATUS } from "src/pages/dashboard/scenarios/common";
 
 const ScenarioPopover = lazy(() => import("./ScenarioPopover"));
 const TestRunsSelection = lazy(() => import("./TestRunsSelection"));
@@ -88,6 +89,16 @@ const TestRunHeader = () => {
   const isAgentDefinitionDeleted =
     !isPromptSimulation &&
     !(testData?.agent_definition ?? testData?.agentDefinition);
+
+  const selectedScenarioIds = new Set(
+    (selectedScenarios || []).map((s) => (typeof s === "string" ? s : s?.id)),
+  );
+  const scenarioDetails =
+    testData?.scenarios_detail ?? testData?.scenariosDetail ?? [];
+  const hasUnreadyScenario = scenarioDetails.some(
+    (s) =>
+      selectedScenarioIds.has(s.id) && s.status !== SCENARIO_STATUS.COMPLETED,
+  );
   const agentType = isPromptSimulation
     ? AGENT_TYPES.CHAT
     : testData?.agent_version?.configuration_snapshot?.agent_type ??
@@ -261,7 +272,8 @@ const TestRunHeader = () => {
                     PERMISSIONS.RUN_SIMULATION_TEST
                   ][role] ||
                   selectedScenarios.length === 0 ||
-                  isAgentDefinitionDeleted
+                  isAgentDefinitionDeleted ||
+                  hasUnreadyScenario
                 }
               >
                 Run New Simulation
