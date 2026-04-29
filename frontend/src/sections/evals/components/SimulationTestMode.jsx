@@ -30,6 +30,7 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { useExecuteCompositeEval } from "../hooks/useCompositeEval";
 
 // Hover-tooltip content for the Columns / Value table. Stringifies
 // primitives and JSON-encodes objects, then caps length so a 50k-char
@@ -176,6 +177,7 @@ const SimulationTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       initialMapping = null,
       initialRunTestId = "",
+      isComposite = false,
     },
     ref,
   ) => {
@@ -262,6 +264,7 @@ const SimulationTestMode = React.forwardRef(
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
+    const executeComposite = useExecuteCompositeEval();
 
     // 1. Fetch run tests (simulations) — infinite-scroll pagination.
     // Page 1 loads on mount; subsequent pages fetch via onScroll on the
@@ -841,29 +844,58 @@ const SimulationTestMode = React.forwardRef(
             }
           }
         }
-        // Auto-context: send the call ID so the evaluator resolves
-        // {{call}}, {{call.transcript}}, {{call.recording_url}} etc.
-        // against the CallExecution fetched server-side.
+        // Auto-context: single-eval playground resolves call_id server-side.
+        // Composite execution expects the concrete call context directly.
         const _callId = currentCall?.id;
-        const { data } = await axios.post(
-          endpoints.develop.eval.evalPlayground,
-          {
-            template_id: tid,
-            model,
-            error_localizer: errorLocalizerEnabled,
-            config: {
-              mapping: evalMapping,
-              ...(Object.keys(codeParams || {}).length > 0
-                ? { params: codeParams }
-                : {}),
-            },
-            ...(_callId ? { call_id: _callId } : {}),
+        const compositePayload = {
+          mapping: evalMapping,
+          model,
+          error_localizer: errorLocalizerEnabled,
+          config: {
+            ...(Object.keys(codeParams || {}).length > 0
+              ? { params: codeParams }
+              : {}),
           },
-        );
+          ...(callDetail ? { call_context: callDetail } : {}),
+        };
+
+        const { data } = isComposite
+          ? {
+              data: {
+                status: true,
+                result: await executeComposite.mutateAsync({
+                  templateId: tid,
+                  payload: compositePayload,
+                }),
+              },
+            }
+          : await axios.post(endpoints.develop.eval.evalPlayground, {
+              template_id: tid,
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: evalMapping,
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...(_callId ? { call_id: _callId } : {}),
+            });
         if (data?.status) {
-          setResult(data.result);
-          onTestResult?.(true, data.result);
-          if (errorLocalizerEnabled && data.result?.log_id) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
@@ -890,8 +922,11 @@ const SimulationTestMode = React.forwardRef(
       currentCall,
       onTestResult,
       errorLocalizerEnabled,
+      isComposite,
       startErrorLocalizerPoll,
       codeParams,
+      model,
+      executeComposite,
     ]);
 
     useImperativeHandle(
@@ -1690,6 +1725,7 @@ SimulationTestMode.propTypes = {
   onClearResult: PropTypes.func,
   initialMapping: PropTypes.object,
   initialRunTestId: PropTypes.string,
+  isComposite: PropTypes.bool,
 };
 
 export default SimulationTestMode;

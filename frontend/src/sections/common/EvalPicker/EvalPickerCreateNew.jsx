@@ -960,6 +960,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
                   />
                 )}
                 {(source === "simulation" ||
@@ -971,6 +972,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
                   />
                 )}
                 {/* Fallback: no source context (standalone composite create page) */}
