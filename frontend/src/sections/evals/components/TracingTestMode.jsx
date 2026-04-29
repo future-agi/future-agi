@@ -215,6 +215,7 @@ const TracingTestMode = React.forwardRef(
       // already-configured eval so the user's previous mapping is preserved).
       initialMapping = null,
       errorLocalizerEnabled = false,
+      isComposite = false,
     },
     ref,
   ) => {
@@ -862,10 +863,9 @@ const TracingTestMode = React.forwardRef(
           }
         }
 
-        // Auto-context IDs — the evaluator resolves {{span}}, {{trace}},
-        // {{session}} references against data fetched server-side by ID.
-        // The backend runs voice-span enrichment (recording, transcript,
-        // metrics) when the span is a Vapi conversation.
+        // Single-eval playground resolves {{span}} / {{trace}} /
+        // {{session}} server-side from IDs. Composite execution expects
+        // the concrete context objects directly.
         const autoCtx = {};
         const _spanId = currentRow?.span_id || currentRow?.spanId;
         const _traceId = currentRow?.trace_id || currentRow?.traceId;
@@ -877,26 +877,55 @@ const TracingTestMode = React.forwardRef(
           autoCtx.session_id = _sessionId;
         if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
 
-        const { data } = await axios.post(
-          endpoints.develop.eval.evalPlayground,
-          {
-            template_id: tid,
-            model,
-            error_localizer: errorLocalizerEnabled,
-            config: {
+        const compositeCtx = {};
+        if (rowType === "Span" && spanDetail) compositeCtx.span_context = spanDetail;
+        if (rowType === "Trace" && currentRow)
+          compositeCtx.trace_context = currentRow;
+        if (rowType === "Session" && currentRow)
+          compositeCtx.session_context = currentRow;
+        if (rowType === "VoiceCall" && currentRow)
+          compositeCtx.trace_context = currentRow;
+
+        const { data } = isComposite
+          ? await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
               mapping: evalMapping,
-              ...(Object.keys(codeParams || {}).length > 0
-                ? { params: codeParams }
-                : {}),
-            },
-            ...autoCtx,
-          },
-        );
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...compositeCtx,
+            })
+          : await axios.post(endpoints.develop.eval.evalPlayground, {
+              template_id: tid,
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: evalMapping,
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...autoCtx,
+            });
 
         if (data?.status) {
-          setResult(data.result);
-          onTestResult?.(true, data.result);
-          if (errorLocalizerEnabled && data.result?.log_id) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
@@ -925,6 +954,7 @@ const TracingTestMode = React.forwardRef(
       rowType,
       onTestResult,
       errorLocalizerEnabled,
+      isComposite,
       startErrorLocalizerPoll,
       codeParams,
       model,
@@ -1895,6 +1925,7 @@ TracingTestMode.propTypes = {
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,
+  isComposite: PropTypes.bool,
 };
 
 export default TracingTestMode;

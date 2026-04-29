@@ -1000,6 +1000,12 @@ const DatasetTestMode = React.forwardRef(
         const { data } = isComposite
           ? await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
               mapping: evalMapping,
+              model,
+              config: {
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
               error_localizer: errorLocalizerEnabled,
               input_data_types: inputDataTypes,
               row_context: rowContext,
@@ -1020,9 +1026,20 @@ const DatasetTestMode = React.forwardRef(
             });
 
         if (data?.status) {
-          setResult(data.result);
-          onTestResult?.(true, data.result);
-          if (errorLocalizerEnabled && data.result?.log_id) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
@@ -1053,6 +1070,8 @@ const DatasetTestMode = React.forwardRef(
       isWorkbenchMode,
       sourceNameToField,
       codeParams,
+      isComposite,
+      model,
     ]);
 
     // Readiness: dataset selected + (all variables mapped OR a non-template
@@ -1638,6 +1657,7 @@ DatasetTestMode.propTypes = {
   initialMapping: PropTypes.object,
   sourceColumns: PropTypes.array,
   extraColumns: PropTypes.array,
+  isComposite: PropTypes.bool,
 };
 
 export default DatasetTestMode;

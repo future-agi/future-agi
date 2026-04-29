@@ -1341,6 +1341,7 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleDatasetReady}
+                  isComposite={isComposite}
                 />
               )}
 
@@ -1356,6 +1357,7 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleTracingReady}
+                  isComposite={isComposite}
                 />
               )}
 
@@ -1371,6 +1373,7 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleSimulationReady}
+                  isComposite={isComposite}
                 />
               )}
 
