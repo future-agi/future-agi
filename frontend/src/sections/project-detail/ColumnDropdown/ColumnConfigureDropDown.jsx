@@ -29,6 +29,86 @@ import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
 
 // ---------------------------------------------------------------------------
+// Aggregate selection state
+// ---------------------------------------------------------------------------
+const SELECTION_STATE = Object.freeze({
+  NONE: "none",
+  SOME: "some",
+  ALL: "all",
+});
+
+const aggregateState = (cols) => {
+  if (!cols || cols.length === 0) return SELECTION_STATE.NONE;
+  const checkedCount = cols.filter((c) => c.isVisible).length;
+  if (checkedCount === 0) return SELECTION_STATE.NONE;
+  if (checkedCount === cols.length) return SELECTION_STATE.ALL;
+  return SELECTION_STATE.SOME;
+};
+
+const toggleMap = (cols, value) =>
+  (cols || []).reduce((acc, c) => {
+    acc[c.id] = value;
+    return acc;
+  }, {});
+
+// ---------------------------------------------------------------------------
+// Bulk-select row (top-level "Select all")
+// ---------------------------------------------------------------------------
+const BulkSelectRow = ({ label, state, onToggle }) => (
+  <Box
+    sx={{
+      display: "flex",
+      alignItems: "center",
+      gap: "4px",
+      px: "4px",
+      py: "2px",
+      borderRadius: "4px",
+      cursor: "pointer",
+      "&:hover": { bgcolor: "action.hover" },
+    }}
+    onClick={() => onToggle(state !== SELECTION_STATE.ALL)}
+  >
+    <Checkbox
+      size="small"
+      checked={state === SELECTION_STATE.ALL}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onToggle(e.target.checked)}
+      sx={{
+        p: 0,
+        width: 16,
+        height: 16,
+        "& .MuiSvgIcon-root": { fontSize: 16 },
+        "&.Mui-checked": { color: "primary.light" },
+      }}
+      inputProps={{ "aria-label": `Toggle ${label}` }}
+    />
+    <Typography
+      variant="body2"
+      noWrap
+      sx={{
+        fontSize: 14,
+        lineHeight: "22px",
+        color: "text.primary",
+        flex: 1,
+        minWidth: 0,
+      }}
+    >
+      {label}
+    </Typography>
+  </Box>
+);
+
+BulkSelectRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  state: PropTypes.oneOf([
+    SELECTION_STATE.NONE,
+    SELECTION_STATE.SOME,
+    SELECTION_STATE.ALL,
+  ]).isRequired,
+  onToggle: PropTypes.func.isRequired,
+};
+
+// ---------------------------------------------------------------------------
 // Draggable column row
 // ---------------------------------------------------------------------------
 const DraggableColumnRow = ({ id, name, checked, onChange }) => {
@@ -252,6 +332,26 @@ const ColumnConfigureDropDown = ({
           }}
         />
       </Box>
+
+      {/* Select-all header (scoped to current search results) */}
+      {filteredColumns.length > 0 && (
+        <Box
+          sx={{
+            px: 0.5,
+            pb: 0.5,
+            flexShrink: 0,
+            borderBottom: `1px solid ${theme.palette.divider}`,
+          }}
+        >
+          <BulkSelectRow
+            label="Select all"
+            state={aggregateState(filteredColumns)}
+            onToggle={(value) =>
+              onColumnChange(toggleMap(filteredColumns, value))
+            }
+          />
+        </Box>
+      )}
 
       {/* Column list */}
       <Box

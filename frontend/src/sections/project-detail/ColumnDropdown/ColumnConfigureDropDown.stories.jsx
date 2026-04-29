@@ -15,6 +15,7 @@ export default meta;
 const Template = (args) => {
   const [open, setOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
+  const [columns, setColumns] = useState(args.initialColumns);
 
   const handleClick = (event) => {
     setAnchorEl(event.currentTarget);
@@ -25,6 +26,13 @@ const Template = (args) => {
     setOpen(false);
   };
 
+  const handleVisibilityChange = (visibilityMap) => {
+    logger.debug("onColumnVisibilityChange", visibilityMap);
+    setColumns((prev) =>
+      prev.map((c) => ({ ...c, isVisible: visibilityMap[c.id] })),
+    );
+  };
+
   return (
     <MemoryRouter>
       <Button onClick={handleClick}>Open Dropdown</Button>
@@ -33,18 +41,38 @@ const Template = (args) => {
         open={open}
         onClose={handleClose}
         anchorEl={anchorEl}
-        columns={[
-          { id: 1, name: "Column 1", isVisible: true, groupBy: "Group 1" },
-          { id: 2, name: "Column 2", isVisible: false, groupBy: "Group 1" },
-          { id: 3, name: "Column 3", isVisible: true, groupBy: "Group 2" },
-          { id: 4, name: "Column 4", isVisible: false, groupBy: "Group 2" },
-        ]}
-        setColumns={(columns) => logger.debug("setColumns called", columns)}
-        defaultGrouping="Default Grouping"
+        columns={columns}
+        setColumns={setColumns}
+        onColumnVisibilityChange={handleVisibilityChange}
       />
     </MemoryRouter>
   );
 };
 
 export const Default = Template.bind({});
-Default.args = {};
+Default.args = {
+  initialColumns: [
+    { id: "1", name: "Column 1", isVisible: true },
+    { id: "2", name: "Column 2", isVisible: false },
+    { id: "3", name: "Column 3", isVisible: true },
+    { id: "4", name: "Column 4", isVisible: false },
+  ],
+};
+
+export const AllSelected = Template.bind({});
+AllSelected.args = {
+  initialColumns: [
+    { id: "1", name: "Column 1", isVisible: true },
+    { id: "2", name: "Column 2", isVisible: true },
+    { id: "3", name: "Column 3", isVisible: true },
+  ],
+};
+
+export const NoneSelected = Template.bind({});
+NoneSelected.args = {
+  initialColumns: [
+    { id: "1", name: "Column 1", isVisible: false },
+    { id: "2", name: "Column 2", isVisible: false },
+    { id: "3", name: "Column 3", isVisible: false },
+  ],
+};
