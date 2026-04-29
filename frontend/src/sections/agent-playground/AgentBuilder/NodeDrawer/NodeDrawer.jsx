@@ -75,8 +75,10 @@ export default function NodeDrawer({
   // can detect unsaved form changes. Tracked whenever the drawer is open.
   useEffect(() => {
     setNodeFormDirty(open && isDirty);
-    return () => setNodeFormDirty(false);
   }, [open, isDirty, setNodeFormDirty]);
+
+  // Clear on unmount so the flag doesn't persist across page navigations.
+  useEffect(() => () => setNodeFormDirty(false), [setNodeFormDirty]);
 
   // After draft creation, the version ID changes and node IDs are remapped.
   // Sync activeNode to the remapped node by matching on label so that
