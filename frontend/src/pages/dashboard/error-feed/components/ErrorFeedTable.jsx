@@ -376,7 +376,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
           {/* ── body ── */}
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
+              Array.from({ length: pageSize }).map((_, i) => (
+                <SkeletonRow key={i} />
+              ))
             ) : rows.length === 0 ? (
               <EmptyState filtered={isFiltered} />
             ) : (

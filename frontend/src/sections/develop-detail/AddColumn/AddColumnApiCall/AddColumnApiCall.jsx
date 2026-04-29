@@ -230,12 +230,14 @@ export const AddColumnApiCallChild = ({
             fieldName="config.outputType"
             options={OutputTypeOptions}
           />
-          <FormTextFieldV2
-            label="Add API Endpoint"
-            size="small"
-            placeholder="Enter api endpoint"
+          <RequestBody
             control={control}
-            fieldName="config.url"
+            contentFieldName="config.url"
+            allColumns={allColumns}
+            placeholder="Enter api endpoint"
+            multiline={false}
+            label="Add API Endpoint"
+            showHelper={false}
           />
 
           <FormSearchSelectFieldControl
@@ -368,7 +370,7 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
         sx: {
           height: "100vh",
           position: "fixed",
-          zIndex: 2,
+          zIndex: 1300,
           boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "10px",
           backgroundColor: "background.paper",

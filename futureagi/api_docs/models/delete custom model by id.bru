@@ -1,0 +1,19 @@
+meta {
+  name: delete custom model by id
+  type: http
+  seq: 12
+}
+
+delete {
+  url: http://localhost:8000/model-hub/custom_models/delete/:model_id/
+  body: none
+  auth: bearer
+}
+
+params:path {
+  model_id: 08c3bcb6-2ef0-45ef-8995-0b92829b779c
+}
+
+auth:bearer {
+  token: {{access_token}}
+}

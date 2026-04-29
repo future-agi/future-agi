@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { Box, Stack, Typography, alpha, useTheme } from "@mui/material";
+import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
@@ -195,11 +195,11 @@ function TracesGrid({ rows, onRowClick }) {
     <Box
       sx={{
         width: "100%",
+        height: 600,
         borderRadius: "8px",
         overflow: "hidden",
         border: "1px solid",
         borderColor: "divider",
-        // autoHeight lets the grid grow to fit all rows; outer tab area scrolls
         "& .ag-root-wrapper": { borderRadius: "8px" },
       }}
     >
@@ -210,7 +210,7 @@ function TracesGrid({ rows, onRowClick }) {
         defaultColDef={defaultColDef}
         rowHeight={40}
         headerHeight={38}
-        domLayout="autoHeight"
+        rowBuffer={10}
         suppressCellFocus
         suppressRowClickSelection
         onRowClicked={(e) => onRowClick?.(e.data?.id)}
@@ -236,7 +236,7 @@ export default function TracesTab({ error }) {
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   const agg = data?.aggregates ?? EMPTY_AGG;
-  const rows = data?.traces ?? [];
+  const rows = useMemo(() => data?.traces ?? [], [data]);
   const total = data?.total ?? 0;
 
   const traceIndex = rows.findIndex((r) => r.id === drawerTraceId);
@@ -246,6 +246,35 @@ export default function TracesTab({ error }) {
   const handleNext = useCallback(() => {
     if (traceIndex < rows.length - 1) setDrawerTraceId(rows[traceIndex + 1].id);
   }, [traceIndex, rows]);
+
+  if (isLoading && !data) {
+    return (
+      <Stack gap={2}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)",
+            gap: 1,
+            mb: 1.5,
+          }}
+        >
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton
+              key={i}
+              variant="rectangular"
+              height={62}
+              sx={{ borderRadius: "6px" }}
+            />
+          ))}
+        </Box>
+        <Skeleton
+          variant="rectangular"
+          height={600}
+          sx={{ borderRadius: "8px" }}
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack gap={2}>

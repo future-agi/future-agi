@@ -1,0 +1,22 @@
+meta {
+  name: Create a ai model
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{host}}:{{port}}/model-hub/ai_models/create/
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+      "modelName" : "This is a test modelds",
+      "modelTypeId" : 2
+  }
+}

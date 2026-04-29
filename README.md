@@ -22,17 +22,15 @@
   Variants: light + dark; swap via <picture>.
 -->
 <a href="https://futureagi.com">
-  <img alt="Future AGI — make AI agents reliable" src="frontend/public/assets/readme/banner.png" width="100%">
+  <img alt="Future AGI — make AI agents reliable" src="frontend/public/assets/readme/Logo.png" width="100%">
 </a>
 
 # AI Agents hallucinate. Fix it faster.
 
-**The open-source platform for making AI agents reliable** — evaluations, tracing, simulations, guardrails, gateway, optimization. One loop, on your infrastructure.
+**The open-source platform for shipping self-improving AI agents.** Evaluations, tracing, simulations, guardrails, gateway, optimization. Everything runs on one platform and one feedback loop, from first prototype to live deployment.
 
 <p>
-  <a href="https://github.com/future-agi/future-agi-temp/blob/dev/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
-  <a href="https://github.com/future-agi/future-agi/stargazers"><img src="https://img.shields.io/github/stars/future-agi/future-agi?style=flat-square&color=yellow" alt="GitHub stars"></a>
-  <a href="https://hub.docker.com/r/futureagi/future-agi"><img src="https://img.shields.io/docker/pulls/futureagi/future-agi?style=flat-square" alt="Docker pulls"></a>
+  <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
   <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm" alt="npm"></a>
   <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
@@ -71,7 +69,7 @@
 
 ## Why Future AGI?
 
-AI agents don't fail at launch. They fail in production, and most teams fight that with a stitched-together stack of evals, observability, and guardrails that never close the loop.
+Most AI agents fail in production, and teams end up stitching together evals, observability, and guardrails that never close the loop.
 FutureAGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
 The result: agents that don't just get monitored, they self-improve.
 
@@ -130,8 +128,7 @@ pip install ai-evaluation
 **One command, full stack.**
 
 ```bash
-git clone \
-  https://github.com/future-agi/future-agi
+git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 cp futureagi/.env.example futureagi/.env
 docker compose up -d
@@ -202,110 +199,64 @@ const response = await openai.chat.completions.create({
 
 ---
 
-##  Core features
+## Core features
 
 Six pillars. Each one replaces a tool you probably have.
 
-### 1. Simulate — test agents at scale before users meet them
+<table>
+<tr>
+<td width="33%" valign="top">
 
-<!--
-  [MARKETING] feature-simulate.png
-  What:    Simulate tab with a voice-agent conversation playing, persona
-           panel visible on the left, transcript on the right.
-  Size:    2400 × 960, PNG, dark theme default.
--->
-<!--
-<img src=".github/assets/feature-simulate.png" alt="Simulate — run voice and text agents against persona-driven scenarios at scale" width="100%">
--->
-Run your agent against **thousands of multi-turn conversations** — realistic personas, adversarial inputs, domain edge cases. Text **and voice** (LiveKit, VAPI, Retell, Pipecat). Full audio + transcript capture. Scores fed straight into Evaluate.
+### 🧪 Simulate
+Thousands of multi-turn conversations against realistic personas, adversarial inputs, and edge cases. Text **and voice** (LiveKit, VAPI, Retell, Pipecat).
 
-<sub> [Simulation docs →](https://docs.futureagi.com/docs/simulation)  ·  [Agent Playground →](https://docs.futureagi.com/docs/agent-playground)  ·  [Datasets →](https://docs.futureagi.com/docs/dataset)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/simulation)</sub>
 
-### 2.  Evaluate — 50+ metrics, unified `evaluate()` API
+</td>
+<td width="33%" valign="top">
 
-<!--
-  [MARKETING] feature-evals.png
-  What:    Evals dashboard — a run table with rows of passes/fails +
-           per-metric score distribution histogram on the right.
-  Size:    2400 × 960, PNG.
--->
-<!--
-<img src=".github/assets/feature-evals.png" alt="Evaluate — 50+ metrics, LLM-as-judge, and custom rubrics in one API" width="100%">
--->
-Groundedness · faithfulness · tool-use correctness · RAG context relevance · hallucination · answer completeness · PII · toxicity · bias · tone · custom rubrics. **LLM-as-judge + heuristic + ML** under one `evaluate()` call. Run on datasets, live traces, or in CI.
+### 📊 Evaluate
+50+ metrics under one `evaluate()` call: groundedness, hallucination, tool-use correctness, PII, tone, custom rubrics. **LLM-as-judge + heuristic + ML.**
 
-<sub> [Evaluation docs →](https://docs.futureagi.com/docs/evaluation)  ·  [Error Feeds →](https://docs.futureagi.com/docs/error-feed)  ·  [Prompts →](https://docs.futureagi.com/docs/prompt)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/evaluation)</sub>
 
-### 3.  Protect — real-time guardrails for production
+</td>
+<td width="33%" valign="top">
 
-<!--
-  [MARKETING] feature-guardrails.png
-  What:    Protect/Guardrails page — left: rule list with toggles
-           (PII, Injection, Jailbreak…); right: live feed of blocked
-           requests with the reason shown per row.
-  Size:    2400 × 960, PNG.
--->
-<!--
-<img src=".github/assets/feature-guardrails.png" alt="Protect — 18 built-in guardrails + 15 third-party vendor adapters, inline in the request path" width="100%">
--->
-**18 built-in scanners** (jailbreak, prompt injection, PII, secrets, code injection, content moderation, …) **+ 15 third-party vendor adapters** (Lakera, Aporia, AWS Bedrock, Azure, Presidio, Llama Guard, Pangea, Enkrypt, Lasso, HiddenLayer, Gray Swan, DynamoAI, CrowdStrike, IBM, Zscaler). Inline in the gateway or standalone SDK.
+### 🛡️ Protect
+18 built-in scanners (PII, jailbreak, injection, …) + 15 vendor adapters (Lakera, Presidio, Llama Guard, …). Inline in gateway or standalone SDK.
 
-<sub> [Protect docs →](https://docs.futureagi.com/docs/protect)  ·  [Gateway guardrails →](https://docs.futureagi.com/docs/command-center/features/guardrails)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/protect)</sub>
 
-### 4.  Monitor — OpenTelemetry-native tracing for every agent
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
 
-<!--
-  [MARKETING] feature-observe.png
-  What:    Trace detail view — timeline (Gantt-style) of spans, LLM call
-           highlighted with its prompt/response on the right pane, token
-           count and cost headers across the top.
-  Size:    2400 × 960, PNG.
--->
-<!--
-<img src=".github/assets/feature-observe.png" alt="Monitor — OpenTelemetry-native tracing across 50+ AI frameworks" width="100%">
--->
-**50+ framework instrumentors** (LangChain, LlamaIndex, CrewAI, AutoGen, DSPy, Haystack…). Span graphs · latency · token cost · live dashboards. Export to Jaeger, Datadog, Grafana — or Future AGI. Zero-config.
+### 👁️ Monitor
+OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewAI, DSPy…). Span graphs, latency, token cost, live dashboards. Zero-config.
 
-<sub> [Observability docs →](https://docs.futureagi.com/docs/observe)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/observe)</sub>
 
-### 5.  Agent Command Center — the AI gateway built in
+</td>
+<td width="33%" valign="top">
 
-<!--
-  [MARKETING] feature-gateway.png
-  What:    Gateway dashboard — provider routing stack (OpenAI → Anthropic
-           fallback visible), cost/token graphs, guardrail events feed,
-           and a "Shadow Experiment" card showing mirrored traffic.
-  Size:    2400 × 960, PNG.
--->
-<!--
-<img src=".github/assets/feature-gateway.png" alt="Agent Command Center — OpenAI-compatible gateway with 100+ providers, 15 routing strategies, and inline guardrails" width="100%">
--->
-One OpenAI-compatible endpoint, **100+ providers** (hosted + self-hosted). **15 routing strategies** (latency-aware · cost-opt · shadow · failover · circuit breaker…). **Exact + semantic caching** across 10 backends. **Virtual keys, budgets, rate limits, MCP, A2A.**
+### 🎛️ Agent Command Center
+OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
 
-**Benchmarks** (single Mac, 4 vCPU container = t3.xlarge profile):
+<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./futureagi/agentcc-gateway/README.md#-benchmarks)</sub>
 
-- **~9.9 ns** weighted target selection (faster than Bifrost's published ~10 ns)
-- **~28 900 req/s** sustained at 100 % success, **P99 ≤ 21 ms** (**~5.7× Bifrost's 5 k rps** on the same resource profile)
-- **~2.8 ms P95** end-to-end at ~1 k RPS (**~2.9× faster than LiteLLM's 8 ms**)
-- **+0.5 % throughput, +1.4 ms P95** to add 3 inline guardrails
+</td>
+<td width="33%" valign="top">
 
-<sub> [Gateway docs →](https://docs.futureagi.com/docs/command-center)  ·  [ Full benchmarks →](./futureagi/agentcc-gateway/README.md#-benchmarks)  ·  [ vs Portkey / Bifrost / LiteLLM / Helicone / Kong →](./futureagi/agentcc-gateway/README.md#-how-we-compare-to-the-rest)</sub>
+### 🔁 Optimize
+Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-Prompt, Random). Production traces feed back as training data.
 
-### 6. Optimize — close the loop automatically
+<sub>[Docs →](https://docs.futureagi.com/docs/optimization)</sub>
 
-<!--
-  [MARKETING] feature-optimize.png
-  What:    Optimization run view — before/after prompt diff on the left,
-           metric lift chart on the right, algorithm selector at top
-           (GEPA highlighted).
-  Size:    2400 × 960, PNG.
--->
-<!--
-<img src=".github/assets/feature-optimize.png" alt="Optimize — 6 prompt-optimization algorithms plus feedback loops from production traces" width="100%">
--->
-**Six algorithms**: Random Search · Bayesian · **ProTeGi** · Meta-Prompt · **PromptWizard** · **GEPA** (evolutionary). Plug in any LLM via LiteLLM; optimize against any of the 50+ eval metrics. Production traces feed back as training data.
-
-<sub> [Optimization docs →](https://docs.futureagi.com/docs/optimization)  ·  [Knowledge Base →](https://docs.futureagi.com/docs/knowledge-base)</sub>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -344,10 +295,10 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
            → platform (simulate · eval · monitor · optimize) → data layer.
   Size:    ~1400w, vector SVG (existing file 1200×760 in dark palette).
 -->
-<picture>
+<!-- <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture.svg">
   <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
-</picture>
+</picture> -->
 
 **Runtime:** Python 3.11+ (Django 4.2 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
 **Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
@@ -432,16 +383,16 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 <tbody>
 <tr><td>Open source</td><td align="center">✅<br><sub>Apache 2.0</sub></td><td align="center">✅<br><sub>MIT</sub></td><td align="center">✅<br><sub>Elastic v2</sub></td><td align="center">❌</td><td align="center">✅<br><sub>Apache 2.0</sub></td></tr>
 <tr><td>Self-host</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">❌</td><td align="center">✅</td></tr>
-<tr><td>LLM tracing (OpenTelemetry)</td><td align="center">✅</td><td align="center">⚠️<br><sub>Partial</sub></td><td align="center">✅</td><td align="center">❌</td><td align="center">❌</td></tr>
+<tr><td>LLM tracing (OpenTelemetry)</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">⚠️<br><sub>via OpenLLMetry</sub></td></tr>
 <tr><td>Evaluation suites</td><td align="center">✅<br><sub>50+ metrics</sub></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">⚠️<br><sub>Limited</sub></td></tr>
 <tr><td><b>Agent simulation</b></td><td align="center">✅</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td><b>Voice agent eval</b></td><td align="center">✅</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td><b>LLM gateway built in</b></td><td align="center">✅<br><sub>100+ providers</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">✅</td></tr>
-<tr><td><b>Guardrails built in</b></td><td align="center">✅<br><sub>18 + 15 adapters</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">⚠️<br><sub>Basic</sub></td></tr>
+<tr><td><b>Voice agent eval</b></td><td align="center">✅</td><td align="center">❌</td><td align="center">⚠️<br><sub>Cookbook</sub></td><td align="center">❌</td><td align="center">❌</td></tr>
+<tr><td><b>LLM gateway built in</b></td><td align="center">✅<br><sub>100+ providers</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td><b>Guardrails built in</b></td><td align="center">✅<br><sub>18 + 15 adapters</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
 <tr><td><b>Prompt optimization</b></td><td align="center">✅<br><sub>6 algorithms</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td>Prompt management</td><td align="center">✅</td><td align="center">✅</td><td align="center">⚠️</td><td align="center">✅</td><td align="center">❌</td></tr>
-<tr><td>Datasets & experiments</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">❌</td></tr>
-<tr><td>No-code eval builder</td><td align="center">✅</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">❌</td></tr>
+<tr><td>Prompt management</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td>Datasets & experiments</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
+<tr><td>No-code eval builder</td><td align="center">✅</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">⚠️</td></tr>
 </tbody>
 </table>
 
@@ -483,45 +434,43 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 <tr valign="top">
 <td>
 
-- [x] OpenTelemetry-native tracing
-- [x] 50+ evaluation metrics
-- [x] Agent Command Center (gateway)
-- [x] Voice agent simulations
-- [x] Agent IDE
-- [x] Prompt optimization (6 algos)
-- [x] ClickHouse analytics
-- [x] MCP server support
-- [x] Apache 2.0 licensing
-- [x] Error-feed root-cause v2
+- [x] Prompt optimization engine
+- [x] Taxonomy-based Feed Clustering
+- [x] Agent Runs in Dataset Experiments
+- [x] Simulate from Production Calls
+- [x] LiveKit Configuration via UI
+- [x] System Metric Filtering for Voice
+- [x] Agent Playground
+- [x] Dashboards
+- [x] Access platform via MCP
+- [x] Annotation Queues
+- [x] Command Center (Prism)
+- [x] Open source Future AGI stack
+- [x] Eval Explanation Output Size Control 
+
 
 </td>
 <td>
 
-- [ ] Public OSS launch 
-- [ ] Self-hosted Helm chart v1
-- [ ] AWS Marketplace listing
-- [ ] One-click cloud-deploy buttons
+- [ ] Agent Changelog & Diff View
+- [ ] Smart Queue Assignment
+- [ ] Essential Node Library for Agent Builder
+- [ ] Full Execution Tracing for Agents
+- [ ] Multi-modal Support for Agents
 
 </td>
 <td>
 
-- [ ] SSO (SAML + OIDC)
-- [ ] SCIM provisioning
-- [ ] Audit-log retention tiers
-- [ ] Distributed tracing across multi-agent graphs
-- [ ] Auto-tuned rubrics from human feedback
-- [ ] Per-tenant budgeting
-- [ ] Public benchmark harness + leaderboard
+- [ ] Agent Changelog & Diff View
+- [ ] Smart Queue Assignment
 
 </td>
 <td>
 
-- [ ] CUA eval suite
-- [ ] Emotion-aware voice scoring
-- [ ] On-device / air-gapped eval runtime
-- [ ] Prompt version control with branches
-- [ ] Federated evals across tenants
-- [ ] Marketplace for community evaluators
+- [ ] Import agents to Agent Playground
+- [ ] Simulating CUA agents
+- [ ] Simulating Coding agents
+- [ ] Scheduled Simulations
 
 </td>
 </tr>
@@ -552,9 +501,9 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 |---|---|
 | 💬 [**Discord**](https://discord.gg/UjZ2gRT5p) | Real-time help from the team and community |
 | 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
-| 🐦 [**Twitter / X**](https://twitter.com/futureagi) | Release announcements |
+| 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
 | 📝 [**Blog**](https://futureagi.com/blog) | Engineering & research posts |
-| 📺 [**YouTube**](https://youtube.com/@futureagi) | Walkthroughs & demos |
+| 📺 [**YouTube**](https://www.youtube.com/@Future_AGI) | Walkthroughs & demos |
 | 📊 [**Status**](https://status.futureagi.com) | Cloud uptime + incident history |
 | 📧 **support@futureagi.com** | Cloud account / billing |
 | 🔐 **security@futureagi.com** | Private vulnerability disclosure (24h ack — see [SECURITY.md](SECURITY.md)) |

@@ -28,7 +28,7 @@ function padToRange(data, days = 14) {
   return Array.from(buckets.values());
 }
 
-export default function ErrorTrendSparkline({ data }) {
+function ErrorTrendSparkline({ data }) {
   const chartRef = useRef(null);
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -164,3 +164,5 @@ export default function ErrorTrendSparkline({ data }) {
 ErrorTrendSparkline.propTypes = {
   data: PropTypes.array,
 };
+
+export default React.memo(ErrorTrendSparkline);

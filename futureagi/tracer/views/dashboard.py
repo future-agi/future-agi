@@ -20,22 +20,54 @@ from tracer.services.clickhouse.client import (
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.query_builders.dashboard import (
+    METRIC_UNITS,
     SYSTEM_METRICS,
     DashboardQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_FILTER_COLUMNS,
+    DATASET_METRIC_UNITS,
     DatasetQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SIMULATION_FILTER_COLUMNS,
+    SIMULATION_METRIC_UNITS,
     SIMULATION_SYSTEM_METRICS,
+    _STRING_DIMENSION_METRICS,
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
+
+
+def _customer_attribute_metric_aliases():
+    from tracer.utils.filters import FilterEngine
+
+    aliases = {}
+    for metric_id, definition in FilterEngine.VOICE_METRIC_DEFINITIONS.items():
+        json_keys = definition.get("json_keys") or []
+        if len(json_keys) == 1:
+            aliases[json_keys[0]] = metric_id
+    return aliases
+
+
+def _suppress_customer_attribute_metric_aliases(metric_entries):
+    aliases = _customer_attribute_metric_aliases()
+    exposed_metric_names = {
+        metric.get("name")
+        for metric in metric_entries
+        if metric.get("category") != "custom_attribute"
+    }
+    return [
+        metric
+        for metric in metric_entries
+        if not (
+            metric.get("category") == "custom_attribute"
+            and aliases.get(metric.get("name")) in exposed_metric_names
+        )
+    ]
 
 
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -53,6 +85,108 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         if self.action in ("create", "update", "partial_update"):
             return DashboardCreateUpdateSerializer
         return DashboardSerializer
+
+    def _get_trace_query_timeout_ms(self, trace_config):
+        """Use a longer timeout for high-cardinality or wide trace queries."""
+        has_eval_metrics = any(
+            m.get("type") == "eval_metric" for m in trace_config.get("metrics", [])
+        )
+        has_project_breakdown = any(
+            bd.get("name") == "project"
+            for bd in trace_config.get("breakdowns", [])
+            if bd.get("source", "traces") in ("traces", "both", "all", "")
+        )
+        return 30000 if has_eval_metrics or has_project_breakdown else 10000
+
+    def _empty_simulation_metric_result(self, metric):
+        return (
+            {
+                "id": metric.get("id", ""),
+                "name": metric.get("displayName")
+                or metric.get("display_name")
+                or metric.get("name", ""),
+                "type": metric.get("type", "system_metric"),
+                "aggregation": metric.get("aggregation", "avg"),
+                "source": "simulation",
+            },
+            [],
+        )
+
+    def _format_merged_metric_results(self, query_config, all_metric_results):
+        formatter = DatasetQueryBuilder({**query_config, "metrics": query_config["metrics"]})
+        start_date, end_date = formatter.parse_time_range()
+        from tracer.services.clickhouse.query_builders.dashboard_base import (
+            _generate_time_buckets,
+        )
+
+        all_buckets = _generate_time_buckets(start_date, end_date, formatter.granularity)
+        unit_map = {**METRIC_UNITS, **DATASET_METRIC_UNITS, **SIMULATION_METRIC_UNITS}
+        formatted_metrics = []
+        for metric_info, rows in all_metric_results:
+            formatted_metrics.append(
+                formatter._format_metric_result(metric_info, rows, all_buckets, unit_map)
+            )
+
+        return {
+            "metrics": formatted_metrics,
+            "time_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+            },
+            "granularity": formatter.granularity,
+        }
+
+    def _run_simulation_queries(self, simulation_config, fetch_rows):
+        results = []
+        for metric in simulation_config.get("metrics", []):
+            metric_config = {**simulation_config, "metrics": [metric]}
+            try:
+                builder = SimulationQueryBuilder(metric_config)
+                sql, params, metric_info = builder.build_all_queries()[0]
+                metric_info["source"] = "simulation"
+                results.append((metric_info, fetch_rows(sql, params)))
+            except Exception as e:
+                logger.warning(
+                    "Simulation query failed",
+                    metric_name=metric.get("id") or metric.get("name"),
+                    error=str(e),
+                )
+                results.append(self._empty_simulation_metric_result(metric))
+        return results
+
+    def _run_simulation_analytics_queries(self, analytics, simulation_config):
+        return self._run_simulation_queries(
+            simulation_config,
+            lambda sql, params: analytics.execute_ch_query(
+                sql, params, timeout_ms=10000
+            ).data,
+        )
+
+    def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
+        def _fetch_rows(sql, params):
+            rows, column_types, _ = ch_client.execute_read(sql, params)
+            col_names = [ct[0] for ct in column_types]
+            return [dict(zip(col_names, row)) for row in rows]
+
+        return self._run_simulation_queries(simulation_config, _fetch_rows)
+
+    def _normalize_metric_sources(self, metrics):
+        """Route simulation-scoped trace attributes through the trace builder.
+
+        The metric picker can save trace attributes with ``source=simulation``
+        for simulation workflow widgets. Those attributes still live on spans,
+        so sending them to ``SimulationQueryBuilder`` yields empty series.
+        """
+        normalized = []
+        for metric in metrics:
+            metric_copy = dict(metric)
+            if (
+                metric_copy.get("source") == "simulation"
+                and metric_copy.get("type") == "custom_attribute"
+            ):
+                metric_copy["source"] = "traces"
+            normalized.append(metric_copy)
+        return normalized
 
     def list(self, request, *args, **kwargs):
         try:
@@ -159,6 +293,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 else:
                     m["source"] = "traces"
 
+        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
+
         # Partition metrics by source
         # "both" source metrics (e.g. annotations) go to trace_metrics
         trace_metrics = [
@@ -231,8 +367,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 trace_config["workspace_id"] = str(request.workspace.id)
 
                 builder = DashboardQueryBuilder(trace_config)
-                # Eval metrics scan large tables — use longer timeout
-                query_timeout = 30000 if has_eval_metrics else 10000
+                query_timeout = self._get_trace_query_timeout_ms(trace_config)
                 for sql, params, metric_info in builder.build_all_queries():
                     metric_info["source"] = "traces"
                     result = analytics.execute_ch_query(
@@ -270,33 +405,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             if simulation_metrics:
                 sim_config = {**query_config, "metrics": simulation_metrics}
                 sim_config["workspace_id"] = str(request.workspace.id)
-
-                try:
-                    builder = SimulationQueryBuilder(sim_config)
-                    for sql, params, metric_info in builder.build_all_queries():
-                        metric_info["source"] = "simulation"
-                        result = analytics.execute_ch_query(
-                            sql, params, timeout_ms=10000
-                        )
-                        all_metric_results.append((metric_info, result.data))
-                except Exception as e:
-                    logger.warning(
-                        f"Simulation query failed (tables may not exist): {e}"
-                    )
-                    # Return empty series for each simulation metric
-                    for m in simulation_metrics:
-                        all_metric_results.append(
-                            (
-                                {
-                                    "id": m.get("id", ""),
-                                    "name": m.get("name", ""),
-                                    "type": m.get("type", "system_metric"),
-                                    "aggregation": m.get("aggregation", "avg"),
-                                    "source": "simulation",
-                                },
-                                [],
-                            )
-                        )
+                all_metric_results.extend(
+                    self._run_simulation_analytics_queries(analytics, sim_config)
+                )
 
             # --- Resolve project UUIDs to names in breakdown values ---
             has_project_breakdown = any(
@@ -355,8 +466,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             merged_config = {**query_config, "metrics": query_config["metrics"]}
             if dataset_metrics:
                 merged_config["workspace_id"] = str(request.workspace.id)
-            formatter = DatasetQueryBuilder(merged_config)
-            response = formatter.format_results(all_metric_results)
+            response = self._format_merged_metric_results(
+                merged_config,
+                all_metric_results,
+            )
             return self._gm.success_response(response)
 
         except Exception as e:
@@ -1115,7 +1228,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "category": "system_metric",
                         "source": "simulation",
                         "type": "number",
-                        "unit": "%",
+                        "unit": "/min",
                     },
                     {
                         "name": "ai_interruptions",
@@ -1131,7 +1244,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "category": "system_metric",
                         "source": "simulation",
                         "type": "number",
-                        "unit": "%",
+                        "unit": "/min",
                     },
                     {
                         "name": "stop_time_after_interruption",
@@ -1163,7 +1276,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "category": "system_metric",
                         "source": "simulation",
                         "type": "number",
-                        "unit": "",
+                        "unit": "%",
                     },
                 ]
             )
@@ -1326,6 +1439,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                 ]
             )
+
+            for metric in metrics:
+                if metric.get("source") == "simulation" and metric.get("type") == "string":
+                    metric["allowed_aggregations"] = ["count", "count_distinct"]
+
+            metrics = _suppress_customer_attribute_metric_aliases(metrics)
 
             # (Simulation eval metrics are now covered by the central
             #  EvalTemplate listing in section 3 above.)
@@ -1890,15 +2009,33 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if not col_expr:
                     return self._gm.success_response({"values": []})
 
-                sql = (
-                    f"SELECT DISTINCT {col_expr} AS val "
-                    f"FROM model_hub_cell AS c FINAL "
-                    f"WHERE c._peerdb_is_deleted = 0 "
-                    f"AND dictGet('dataset_dict', 'workspace_id', c.dataset_id) = toUUID(%(workspace_id)s) "
-                    f"AND {col_expr} != '' "
-                    f"ORDER BY val "
-                    f"LIMIT 500"
-                )
+                if metric_name == "dataset":
+                    sql = (
+                        "SELECT DISTINCT name AS val "
+                        "FROM model_hub_dataset FINAL "
+                        "WHERE _peerdb_is_deleted = 0 "
+                        "AND deleted = 0 "
+                        "AND workspace_id = toUUID(%(workspace_id)s) "
+                        "AND name != '' "
+                        "ORDER BY val "
+                        "LIMIT 500"
+                    )
+                else:
+                    sql = (
+                        f"SELECT DISTINCT {col_expr} AS val "
+                        f"FROM model_hub_cell AS c FINAL "
+                        f"WHERE c._peerdb_is_deleted = 0 "
+                        f"AND c.dataset_id IN ("
+                        f"SELECT id FROM model_hub_dataset FINAL "
+                        f"WHERE _peerdb_is_deleted = 0 "
+                        f"AND deleted = 0 "
+                        f"AND workspace_id = toUUID(%(workspace_id)s)"
+                        f") "
+                        f"AND {col_expr} != '' "
+                        f"ORDER BY val "
+                        f"LIMIT 500"
+                    )
+
                 result = analytics.execute_ch_query(
                     sql, {"workspace_id": workspace_id}, timeout_ms=5000
                 )
@@ -2050,9 +2187,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     f"SELECT DISTINCT {col_expr} AS val "
                     f"FROM simulate_call_execution AS c FINAL "
                     f"WHERE c._peerdb_is_deleted = 0 "
+                    f"AND c.deleted = 0 "
                     f"AND dictGetOrDefault('simulate_scenario_dict', 'workspace_id', "
                     f"c.scenario_id, NULL) = toUUID(%(workspace_id)s) "
-                    f"AND {col_expr} != '' "
+                    f"AND {self._simulation_filter_value_presence_expr(metric_name, col_expr)} "
                     f"ORDER BY val "
                     f"LIMIT 500"
                 )
@@ -2071,6 +2209,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(
                 "Failed to fetch filter values. Please try again later."
             )
+
+    def _simulation_filter_value_presence_expr(self, metric_name, col_expr):
+        if metric_name in _STRING_DIMENSION_METRICS:
+            return f"{col_expr} IS NOT NULL AND {col_expr} != ''"
+        return f"{col_expr} IS NOT NULL"
 
     @action(detail=False, methods=["get"], url_path="simulation-agents")
     def simulation_agents(self, request):
@@ -2269,6 +2412,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             if "source" not in m:
                 m["source"] = "datasets" if workflow == "dataset" else "traces"
 
+        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
+
         trace_metrics = [
             m for m in query_config["metrics"] if m.get("source") == "traces"
         ]
@@ -2303,9 +2448,12 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "Some project_ids are invalid or not in this workspace"
                     )
             builder = DashboardQueryBuilder(trace_config)
+            query_timeout = self._get_trace_query_timeout_ms(trace_config)
             for sql, params, metric_info in builder.build_all_queries():
                 metric_info["source"] = "traces"
-                rows, column_types, _ = ch_client.execute_read(sql, params)
+                rows, column_types, _ = ch_client.execute_read(
+                    sql, params, timeout_ms=query_timeout
+                )
                 col_names = [ct[0] for ct in column_types]
                 row_dicts = [dict(zip(col_names, row)) for row in rows]
                 metric_results.append((metric_info, row_dicts))
@@ -2324,29 +2472,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         if simulation_metrics:
             sim_config = {**query_config, "metrics": simulation_metrics}
             sim_config["workspace_id"] = str(workspace.id)
-            try:
-                builder = SimulationQueryBuilder(sim_config)
-                for sql, params, metric_info in builder.build_all_queries():
-                    metric_info["source"] = "simulation"
-                    rows, column_types, _ = ch_client.execute_read(sql, params)
-                    col_names = [ct[0] for ct in column_types]
-                    row_dicts = [dict(zip(col_names, row)) for row in rows]
-                    metric_results.append((metric_info, row_dicts))
-            except Exception as e:
-                logger.warning(f"Simulation query failed (tables may not exist): {e}")
-                for m in simulation_metrics:
-                    metric_results.append(
-                        (
-                            {
-                                "id": m.get("id", ""),
-                                "name": m.get("name", ""),
-                                "type": m.get("type", "system_metric"),
-                                "aggregation": m.get("aggregation", "avg"),
-                                "source": "simulation",
-                            },
-                            [],
-                        )
-                    )
+            metric_results.extend(
+                self._run_simulation_clickhouse_queries(ch_client, sim_config)
+            )
 
         # Format using DatasetQueryBuilder (compatible format_results)
         formatter_config = {**query_config, "workspace_id": str(workspace.id)}

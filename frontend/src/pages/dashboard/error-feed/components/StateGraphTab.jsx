@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Box, Stack, Typography, alpha, useTheme } from "@mui/material";
+import { Box, Skeleton, Stack, Typography, alpha, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
@@ -402,11 +402,19 @@ DivergenceDiagram.propTypes = {
 
 export default function StateGraphTab({ error }) {
   const clusterId = error?.clusterId;
-  const { data: detail } = useErrorFeedDetail(clusterId);
+  const { data: detail, isLoading: isDetailLoading } =
+    useErrorFeedDetail(clusterId);
   const failTraceId = detail?.representativeTrace?.traceId;
   const successTraceId = detail?.successTrace?.traceId;
-  const { data: failData } = useGetTraceDetail(failTraceId);
-  const { data: successData } = useGetTraceDetail(successTraceId);
+  const { data: failData, isLoading: isFailLoading } =
+    useGetTraceDetail(failTraceId);
+  const { data: successData, isLoading: isSuccessLoading } =
+    useGetTraceDetail(successTraceId);
+  const isLoading = Boolean(
+    isDetailLoading ||
+      (failTraceId && isFailLoading && !failData) ||
+      (successTraceId && isSuccessLoading && !successData),
+  );
   const failSteps = useMemo(
     () =>
       extractSteps(failData?.observation_spans || failData?.observationSpans),
@@ -419,6 +427,18 @@ export default function StateGraphTab({ error }) {
       ),
     [successData],
   );
+
+  if (isLoading) {
+    return (
+      <Stack gap={2}>
+        <Skeleton
+          variant="rectangular"
+          height={420}
+          sx={{ borderRadius: "8px" }}
+        />
+      </Stack>
+    );
+  }
 
   if (!failTraceId && !successTraceId) {
     return (

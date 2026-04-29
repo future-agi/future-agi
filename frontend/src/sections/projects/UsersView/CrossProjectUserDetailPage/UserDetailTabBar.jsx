@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useRef,
+  startTransition,
 } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Divider } from "@mui/material";
@@ -14,12 +15,16 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import FixedTab from "src/components/observe-tabs/FixedTab";
 import CustomViewTab from "src/components/observe-tabs/CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetWorkspaceSavedViews,
   useCreateWorkspaceSavedView,
   useUpdateWorkspaceSavedView,
   useDeleteWorkspaceSavedView,
+  SAVED_VIEWS_KEY,
 } from "src/api/project/saved-views";
+import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { useSearchParams } from "react-router-dom";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 
@@ -43,17 +48,61 @@ const FIXED_TABS = [
 // - Custom workspace-saved views (personal) whose config captures the active
 //   subTab + filter/display state so clicking one jumps to that subTab and
 //   restores its config via the parent's imperative api refs.
-const UserDetailTabBar = ({
-  activeTab,
-  onTabChange,
-  getConfigFor,
-  applyConfigFor,
-}) => {
+const UserDetailTabBar = ({ activeTab, onTabChange }) => {
   const { data: savedViewsData } =
     useGetWorkspaceSavedViews(USER_DETAIL_TAB_TYPE);
   const customViews = useMemo(
     () => savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [],
     [savedViewsData],
+  );
+
+  const queryClient = useQueryClient();
+  const { getViewConfig, setActiveViewConfig } = useObserveHeader();
+  const [, setSearchParams] = useSearchParams();
+
+  // Pre-seed the URL-synced state keys for the target sub-tab from the saved
+  // view's config. Lets useUrlState read correct values on mount / refresh so
+  // the sub-view doesn't do a double-fetch (defaults then saved).
+  const seedUrlForView = useCallback(
+    (subTab, config) => {
+      if (!config) return;
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          const display = config.display || {};
+          if (subTab === "sessions") {
+            if (display.dateFilter) {
+              next.set(
+                "sessionDateFilter",
+                JSON.stringify(display.dateFilter),
+              );
+            }
+            if (display.cellHeight) {
+              next.set("sessionCellHeight", JSON.stringify(display.cellHeight));
+            }
+            if (display.showCompare !== undefined) {
+              next.set(
+                "sessionShowCompare",
+                JSON.stringify(display.showCompare),
+              );
+            }
+          } else if (subTab === "traces") {
+            if (display.dateFilter) {
+              next.set(
+                "primaryTraceDateFilter",
+                JSON.stringify(display.dateFilter),
+              );
+            }
+            if (config.filters) {
+              next.set("primaryTraceFilter", JSON.stringify(config.filters));
+            }
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
   );
 
   const { mutate: createSavedView } =
@@ -67,36 +116,73 @@ const UserDetailTabBar = ({
   const [isSavingView, setIsSavingView] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
 
-  // Apply config only on real tab transitions — React Query refetches would
-  // otherwise stomp in-progress state.
+  // Apply config only on real tab transitions. Read from the React Query
+  // cache directly to avoid a stale-closure race right after create — the
+  // mutation's optimistic setQueryData has the new view before the
+  // `customViews` prop closure re-renders.
   const lastAppliedTabRef = useRef(null);
 
   useEffect(() => {
     if (lastAppliedTabRef.current === activeTab) return;
 
-    // Fixed tab (sessions/traces): reset that sub-tab's state to defaults
+    // Fixed tab (sessions/traces): hard-reset the URL down to just `userTab`
+    // so any filter/date/display params left over from a previous saved view
+    // are wiped. useUrlState's external-sync then resets each sub-view's
+    // state to its default.
+    //
+    // The FixedTab onClick handler below already runs this reset
+    // synchronously in the click event tick — that's the primary path and
+    // is what guarantees `setActiveViewConfig(null)` lands in the same
+    // commit as the subTab swap (a `useEffect` reset would be one commit
+    // too late and the newly-mounted sub-view would read the stale custom
+    // config). This branch survives as a safety net for non-click activeTab
+    // transitions, e.g. handleClose at line ~230 calling
+    // `onTabChange("sessions","sessions")` after deleting an active view.
     if (FIXED_TABS.some((t) => t.key === activeTab)) {
+      setSearchParams(new URLSearchParams({ userTab: activeTab }), {
+        replace: true,
+      });
       lastAppliedTabRef.current = activeTab;
-      applyConfigFor?.(activeTab, null);
+      setActiveViewConfig(null);
       return;
     }
 
-    // Custom view
     const id = activeTab?.startsWith?.("view-") ? activeTab.slice(5) : null;
     if (!id) {
       lastAppliedTabRef.current = activeTab;
       return;
     }
-    const view = customViews.find((v) => v.id === id);
+    const cached = queryClient.getQueryData([
+      SAVED_VIEWS_KEY,
+      "workspace",
+      USER_DETAIL_TAB_TYPE,
+    ]);
+    const cachedResult = cached?.data?.result;
+    const cachedList =
+      cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+    const view = cachedList.find((v) => v.id === id) ??
+      customViews.find((v) => v.id === id);
     if (view?.config) {
       const subTab = view.config.sub_tab || view.config.subTab || "sessions";
-      // Push the sub-tab switch up to the parent
+      // Seed URL state first so the sub-view can read correct filter/date
+      // values on its first render, avoiding a default-then-saved double fetch
+      // (the flash). Apply via setActiveViewConfig still handles non-URL
+      // state (extraFilters, display.cellHeight, etc.).
+      seedUrlForView(subTab, view.config);
       onTabChange?.(activeTab, subTab);
-      applyConfigFor?.(subTab, view.config);
+      startTransition(() => setActiveViewConfig(view.config));
       lastAppliedTabRef.current = activeTab;
     }
-    // If not found yet — retry once customViews loads
-  }, [activeTab, applyConfigFor, onTabChange, customViews]);
+    // If not found yet — retry once customViews dep changes (React Query
+    // refetch will land and customViews will include the new view).
+  }, [
+    activeTab,
+    setActiveViewConfig,
+    onTabChange,
+    customViews,
+    queryClient,
+    seedUrlForView,
+  ]);
 
   const handleSaveViewConfirm = useCallback(
     (name) => {
@@ -112,7 +198,10 @@ const UserDetailTabBar = ({
         targetSubTab =
           view?.config?.sub_tab || view?.config?.subTab || "sessions";
       }
-      const inner = getConfigFor?.(targetSubTab) || {};
+      // Live snapshot of the currently-mounted sub-view (LLMTracingView /
+      // SessionsView register their buildViewConfig on the shared
+      // ObserveHeaderContext).
+      const inner = getViewConfig?.() ?? {};
       const config = { ...inner, sub_tab: targetSubTab };
       createSavedView(
         { name, config },
@@ -131,7 +220,7 @@ const UserDetailTabBar = ({
         },
       );
     },
-    [activeTab, customViews, createSavedView, getConfigFor, onTabChange],
+    [activeTab, customViews, createSavedView, getViewConfig, onTabChange],
   );
 
   const handleClose = useCallback(
@@ -182,7 +271,20 @@ const UserDetailTabBar = ({
             icon={tab.icon}
             shortcut={tab.shortcut}
             isActive={activeTab === tab.key}
-            onClick={(key) => onTabChange?.(key, key)}
+            onClick={(key) => {
+              // Reset context + URL synchronously in the click event so they
+              // batch with setActiveTab/setSubTab into one commit. Otherwise
+              // the newly-mounted sub-view (e.g. LLMTracingView remounting on
+              // sessions→traces) reads the stale custom-view config from
+              // context during its first render and re-writes the saved
+              // display state back into the URL before the apply useEffect
+              // gets a chance to clear it.
+              setActiveViewConfig(null);
+              setSearchParams(new URLSearchParams({ userTab: key }), {
+                replace: true,
+              });
+              onTabChange?.(key, key);
+            }}
           />
         ))}
       </Box>
@@ -223,6 +325,12 @@ const UserDetailTabBar = ({
             onClick={(key) => {
               const subTab =
                 view.config?.sub_tab || view.config?.subTab || "sessions";
+              // Seed URL synchronously in the same click tick so the tab
+              // switch, URL params, and sub-view mount all happen in one
+              // React commit. Without this the sub-view mounts first with
+              // defaults, fetches, then the apply-effect seeds the URL and
+              // triggers a second fetch (the flash).
+              seedUrlForView(subTab, view.config);
               onTabChange?.(key, subTab);
             }}
             onClose={handleClose}
@@ -242,6 +350,7 @@ const UserDetailTabBar = ({
         type="black"
       >
         <ButtonBase
+          data-create-view-btn
           onClick={(e) => setSaveViewAnchor(e.currentTarget)}
           sx={{
             display: "inline-flex",
@@ -275,8 +384,6 @@ const UserDetailTabBar = ({
 UserDetailTabBar.propTypes = {
   activeTab: PropTypes.string.isRequired,
   onTabChange: PropTypes.func.isRequired,
-  getConfigFor: PropTypes.func.isRequired,
-  applyConfigFor: PropTypes.func.isRequired,
 };
 
 export default UserDetailTabBar;

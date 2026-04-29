@@ -282,8 +282,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         "Instructions must contain at least one template variable (e.g. {{input}})";
     }
 
-    // Mapping
-    if (!sourceReady) next.mapping = "Map all variables before saving";
+    // Mapping — no dataset to map against in the composite child-picker flow,
+    // so skip this check. Matches the canSave bypass below.
+    if (!sourceReady && source !== "composite") {
+      next.mapping = "Map all variables before saving";
+    }
 
     // pass_threshold must be 0–1
     if (passThreshold < 0 || passThreshold > 1) {
@@ -313,6 +316,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     code,
     instructions,
     sourceReady,
+    source,
     passThreshold,
     outputType,
     choiceScores,
@@ -494,11 +498,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   ]);
 
   const isComposite = mode === "composite";
+  // `source === "composite"` means this drawer was opened from a composite's
+  // child picker with no dataset bound — there's no variable mapping to
+  // complete here, so don't gate saving on `sourceReady`.
   const canSave = isComposite
     ? !!name.trim() && selectedChildren.length > 0
     : name.trim() &&
       (evalType === "code" ? code.trim() : instructions.trim()) &&
-      sourceReady;
+      (source === "composite" || sourceReady);
 
   // Variables from instructions
   const variables = useMemo(() => {
@@ -777,7 +784,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onTemplateFormatChange={setTemplateFormat}
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
-                    variableMapping={sourceMapping}
+                    mappedVariables={sourceMapping}
                   />
                   {errors.instructions && (
                     <Typography variant="caption" color="error.main">

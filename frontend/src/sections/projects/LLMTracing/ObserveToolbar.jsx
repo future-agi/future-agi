@@ -49,6 +49,8 @@ const ObserveToolbar = ({
   setDateFilter,
   // Filter
   hasActiveFilter,
+  canSaveView,
+  onSaveView,
   isFilterOpen,
   onFilterToggle,
   filters,
@@ -467,14 +469,21 @@ const ObserveToolbar = ({
             }}
           />
 
-          {/* Save view — appears when filters are active (traces only) */}
-          {isTraces && hasActiveFilter && (
+          {/* Save view — updates the currently-active saved view in place
+              when its state has diverged from the saved baseline. The "+"
+              button in the tab bar handles save-as-new. */}
+          {canSaveView && (
             <Button
               variant="outlined"
               size="small"
               startIcon={<Iconify icon="mdi:content-save-outline" width={16} />}
-              onClick={(e) => {
-                // Find the "+" button in the tab bar and click it to open the save view popover
+              onClick={() => {
+                if (typeof onSaveView === "function") {
+                  onSaveView();
+                  return;
+                }
+                // Fallback: open create-new popover via the "+" button if no
+                // explicit save handler was wired (e.g. an older mount path).
                 const createBtn = document.querySelector(
                   "[data-create-view-btn]",
                 );
@@ -486,8 +495,9 @@ const ObserveToolbar = ({
                 borderColor: "primary.main",
                 color: "primary.main",
                 "&:hover": {
-                  bgcolor: "primary.lighter",
+                  bgcolor: "action.hover",
                   borderColor: "primary.main",
+                  color: "primary.main",
                 },
               }}
             >
@@ -572,6 +582,8 @@ ObserveToolbar.propTypes = {
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   hasActiveFilter: PropTypes.bool,
+  canSaveView: PropTypes.bool,
+  onSaveView: PropTypes.func,
   isFilterOpen: PropTypes.bool,
   onFilterToggle: PropTypes.func,
   filters: PropTypes.array,

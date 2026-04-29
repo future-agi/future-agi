@@ -33,9 +33,9 @@ const FieldSelection = ({
     // Note: dataType can be in col.dataType or col.col.dataType depending on context
     allColumns.forEach((col) => {
       const dataType = col?.dataType || col?.col?.dataType;
-      if (dataType === "json" && jsonSchemas?.[col?.field]) {
+      if (jsonSchemas?.[col?.field]?.keys?.length) {
         const schema = jsonSchemas[col?.field];
-        schema?.keys?.forEach((path) => {
+        schema.keys.forEach((path) => {
           baseOptions.push({
             label: `${col.headerName}.${path}`,
             value: `${col.field}.${path}`,

@@ -214,22 +214,30 @@ def _fetch_sessions_batch(cluster_ids: List[str]) -> dict:
 
 
 def _fetch_latest_trace_id_batch(cluster_ids: List[str]) -> dict:
-    """Return {cluster_id: latest_trace_id_str}."""
+    """Return {cluster_id: latest_trace_id_str}.
+
+    Single Postgres DISTINCT ON query — relies on the
+    (cluster, -created_at) index to pick the newest membership row per
+    cluster without a per-cluster round-trip.
+    """
     if not cluster_ids:
         return {}
 
-    result: dict = {}
-    # One query per cluster is acceptable here — cluster_ids is page-size (≤100)
-    for cid in cluster_ids:
-        latest = (
-            ErrorClusterTraces.objects.filter(cluster__cluster_id=cid)
-            .order_by("-created_at")
-            .values_list("trace_id", flat=True)
-            .first()
+    rows = (
+        ErrorClusterTraces.objects.filter(
+            cluster__cluster_id__in=cluster_ids,
+            trace_id__isnull=False,
         )
-        if latest:
-            result[cid] = str(latest)
-    return result
+        .order_by("cluster__cluster_id", "-created_at")
+        .distinct("cluster__cluster_id")
+        .values("cluster__cluster_id", "trace_id")
+    )
+
+    return {
+        str(r["cluster__cluster_id"]): str(r["trace_id"])
+        for r in rows
+        if r["trace_id"]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1024,6 +1032,21 @@ def _get_root_span(trace_id: str) -> Optional[ObservationSpan]:
     )
 
 
+def _get_root_spans_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: ObservationSpan} — first root span per trace."""
+    if not trace_ids:
+        return {}
+    rows = ObservationSpan.objects.filter(trace_id__in=trace_ids).filter(
+        models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id="")
+    )
+    out: dict = {}
+    for span in rows:
+        tid = str(span.trace_id)
+        if tid not in out:
+            out[tid] = span
+    return out
+
+
 def _get_trace_totals(
     trace_id: str,
 ) -> tuple[Optional[int], Optional[int], Optional[int]]:
@@ -1036,12 +1059,57 @@ def _get_trace_totals(
     return agg["latency"], agg["prompt"], agg["completion"]
 
 
+def _get_trace_totals_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans."""
+    if not trace_ids:
+        return {}
+    rows = (
+        ObservationSpan.objects.filter(trace_id__in=trace_ids)
+        .values("trace_id")
+        .annotate(
+            latency=Sum("latency_ms"),
+            prompt=Sum("prompt_tokens"),
+            completion=Sum("completion_tokens"),
+        )
+    )
+    return {
+        str(r["trace_id"]): (r["latency"], r["prompt"], r["completion"]) for r in rows
+    }
+
+
 def _get_trace_score(trace_id: str) -> Optional[float]:
     """Average EvalLogger.output_float across the trace."""
     agg = EvalLogger.objects.filter(trace_id=trace_id).aggregate(
         avg=Avg("output_float")
     )
     return agg["avg"]
+
+
+def _get_trace_scores_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: avg_output_float}."""
+    if not trace_ids:
+        return {}
+    rows = (
+        EvalLogger.objects.filter(trace_id__in=trace_ids)
+        .values("trace_id")
+        .annotate(avg=Avg("output_float"))
+    )
+    return {str(r["trace_id"]): r["avg"] for r in rows}
+
+
+def _get_scan_results_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: TraceScanResult} — first scan result per trace."""
+    if not trace_ids:
+        return {}
+    rows = TraceScanResult.objects.filter(trace_id__in=trace_ids).only(
+        "id", "trace_id", "meta", "key_moments"
+    )
+    out: dict = {}
+    for sr in rows:
+        tid = str(sr.trace_id)
+        if tid not in out:
+            out[tid] = sr
+    return out
 
 
 def _highlight_text(text: str, terms: List[str], hl: str) -> object:
@@ -1107,16 +1175,34 @@ def _build_representative_trace(
     has_issues: bool,
     pass_reel: Optional[List[dict]] = None,
     highlight_terms: Optional[List[str]] = None,
+    *,
+    root: Optional[ObservationSpan] = None,
+    totals: Optional[Tuple[Optional[int], Optional[int], Optional[int]]] = None,
+    score: Optional[float] = None,
+    scan_result: Optional[TraceScanResult] = None,
+    _prefetched: bool = False,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
+
+    Prefetched values (``root``, ``totals``, ``score``, ``scan_result``)
+    can be supplied by ``_fetch_representative_traces`` to avoid the per-
+    trace round-trips. Pass ``_prefetched=True`` to skip the single-trace
+    fallbacks even when a prefetched value is missing (i.e. genuine None
+    rather than "not provided").
 
     ``highlight_terms`` should come from ``_cluster_highlight_terms`` — a
     TF-IDF ranking computed once per cluster — so every trace in the same
     cluster lights up the same distinctive words.
     """
-    root = _get_root_span(str(trace.id))
-    latency, prompt_tokens, completion_tokens = _get_trace_totals(str(trace.id))
-    score = _get_trace_score(str(trace.id))
+    trace_id_str = str(trace.id)
+
+    if not _prefetched and root is None:
+        root = _get_root_span(trace_id_str)
+    if not _prefetched and totals is None:
+        totals = _get_trace_totals(trace_id_str)
+    latency, prompt_tokens, completion_tokens = totals or (None, None, None)
+    if not _prefetched and score is None:
+        score = _get_trace_score(trace_id_str)
 
     model = root.model if root else None
     input_text = None
@@ -1131,11 +1217,12 @@ def _build_representative_trace(
 
     turns = None
     fail_reel: List[dict] = []
-    scan_result = (
-        TraceScanResult.objects.filter(trace_id=trace.id)
-        .only("id", "meta", "key_moments")
-        .first()
-    )
+    if not _prefetched and scan_result is None:
+        scan_result = (
+            TraceScanResult.objects.filter(trace_id=trace.id)
+            .only("id", "meta", "key_moments")
+            .first()
+        )
     if scan_result:
         if scan_result.meta:
             turns = scan_result.meta.get("turn_count")
@@ -1245,26 +1332,48 @@ def _fetch_representative_traces(
         .select_related("trace")
         .order_by("-created_at")
     )
-    ect_rows = qs[: limit * 3] if limit else qs  # over-fetch for dedupe when limited
+    ect_rows = list(
+        qs[: limit * 3] if limit else qs
+    )  # over-fetch for dedupe when limited
 
-    result: List[RepresentativeTrace] = []
+    # First pass: dedupe by trace id so the batch helpers below only fetch
+    # what we'll actually emit.
+    deduped: List[Trace] = []
     seen_ids: set = set()
     for ect in ect_rows:
-        if not ect.trace or str(ect.trace.id) in seen_ids:
+        if not ect.trace:
             continue
-        result.append(
-            _build_representative_trace(
-                ect.trace,
-                has_issues=True,
-                pass_reel=pass_reel,
-                highlight_terms=highlight_terms,
-            )
-        )
-        seen_ids.add(str(ect.trace.id))
-        if limit and len(result) >= limit:
+        tid = str(ect.trace.id)
+        if tid in seen_ids:
+            continue
+        seen_ids.add(tid)
+        deduped.append(ect.trace)
+        if limit and len(deduped) >= limit:
             break
 
-    return result
+    if not deduped:
+        return []
+
+    trace_ids = [str(t.id) for t in deduped]
+    roots = _get_root_spans_batch(trace_ids)
+    totals = _get_trace_totals_batch(trace_ids)
+    scores = _get_trace_scores_batch(trace_ids)
+    scans = _get_scan_results_batch(trace_ids)
+
+    return [
+        _build_representative_trace(
+            trace,
+            has_issues=True,
+            pass_reel=pass_reel,
+            highlight_terms=highlight_terms,
+            root=roots.get(str(trace.id)),
+            totals=totals.get(str(trace.id)),
+            score=scores.get(str(trace.id)),
+            scan_result=scans.get(str(trace.id)),
+            _prefetched=True,
+        )
+        for trace in deduped
+    ]
 
 
 def get_overview(cluster_id: str) -> Optional[OverviewResponse]:
