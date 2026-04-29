@@ -184,18 +184,22 @@ class TestGetAgentSuggestions:
         assert "scenario_name" in suggestions
         assert agent_def == mock_agent_def
 
-    @patch("tracer.utils.replay_session.get_system_prompt")
     @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
     def test_generates_defaults_when_no_agent_definition(
-        self, mock_get_agent_def_from_sessions, mock_get_prompt
+        self, mock_get_agent_def_from_sessions
     ):
-        """Should generate default suggestions when no agent_def exists."""
+        """Should generate default suggestions when no agent_def exists.
+
+        The system prompt is intentionally NOT copied into agent_description —
+        for text agents it lives on AgentVersion.configuration_snapshot, and
+        for voice agents on the external provider config; duplicating it into
+        description pollutes the scenario card UI.
+        """
         mock_project = MagicMock()
         mock_project.name = "New Project"
         mock_project.id = uuid.uuid4()
 
         mock_get_agent_def_from_sessions.return_value = None
-        mock_get_prompt.return_value = "System prompt from traces"
 
         exists, suggestions, agent_def = get_agent_suggestions(
             mock_project, "trace", [str(uuid.uuid4())], False
@@ -203,16 +207,13 @@ class TestGetAgentSuggestions:
 
         assert exists is False
         assert "New Project" in suggestions["agent_name"]
-        assert suggestions["agent_description"] == "System prompt from traces"
+        assert suggestions["agent_description"] == ""
         assert suggestions["agent_type"] == "text"
         assert suggestions["version_name"] is None
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session.get_system_prompt")
     @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
-    def test_handles_agent_definition_not_found(
-        self, mock_get_agent_def_from_sessions, mock_get_prompt
-    ):
+    def test_handles_agent_definition_not_found(self, mock_get_agent_def_from_sessions):
         """Should generate defaults when no agent_def is found from replay sessions."""
         mock_project = MagicMock()
         mock_project.name = "Project"
@@ -220,7 +221,6 @@ class TestGetAgentSuggestions:
         mock_project.organization = MagicMock()
 
         mock_get_agent_def_from_sessions.return_value = None
-        mock_get_prompt.return_value = None
 
         exists, suggestions, agent_def = get_agent_suggestions(
             mock_project, "trace", [], False

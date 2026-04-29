@@ -139,6 +139,20 @@ const StyledStepConnector = styled(StepConnector)(({ theme }) => ({
   },
 }));
 
+const SCENARIO_DESCRIPTION_PREVIEW_CHARS = 200;
+
+// Replay scenarios store the full system prompt in `description`, which
+// dwarfs the card and looks broken even with CSS line-clamp. Cap the
+// rendered text so the card stays compact regardless of source.
+const previewScenarioDescription = (scenario) => {
+  const raw =
+    scenario?.description || scenario?.source || "No description available";
+  if (typeof raw !== "string") return raw;
+  return raw.length > SCENARIO_DESCRIPTION_PREVIEW_CHARS
+    ? `${raw.slice(0, SCENARIO_DESCRIPTION_PREVIEW_CHARS).trimEnd()}…`
+    : raw;
+};
+
 const CreateRunTestPage = ({ open, onClose }) => {
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -1163,9 +1177,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                   overflow: "hidden",
                                 }}
                               >
-                                {scenario.description ||
-                                  scenario.source ||
-                                  "No description available"}
+                                {previewScenarioDescription(scenario)}
                               </Typography>
                             }
                           />
@@ -1899,9 +1911,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {scenario.description ||
-                                scenario.source ||
-                                "No description"}
+                              {previewScenarioDescription(scenario)}
                             </Typography>
                           </Box>
                           <Typography variant="body2" fontWeight={600}>
