@@ -111,6 +111,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Active tab ("trace" | "spans") — controls which filter fields are shown
+  selectedTab,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -389,7 +391,9 @@ const ObserveToolbar = ({
                 ? "sessions"
                 : mode === "users"
                   ? "users"
-                  : "traces"
+                  : selectedTab === "spans"
+                    ? "spans"
+                    : "traces"
             }
             onApply={(newFilters) => {
               setPanelFilters(newFilters);

@@ -117,7 +117,8 @@ class ClickHouseFilterBuilder:
         "node_type": "observation_type",
         "user": "end_user_id",
         "name": "name",
-        "trace_name": "trace_name",
+        "span_name": "name",
+        "trace_name": "name",
         "start_time": "start_time",
         "end_time": "end_time",
         "created_at": "created_at",
@@ -381,9 +382,7 @@ class ClickHouseFilterBuilder:
         if col_id == "user_id":
             if filter_value is None or filter_value == "":
                 return None
-            values = (
-                filter_value if isinstance(filter_value, list) else [filter_value]
-            )
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
             values = [str(v) for v in values if v not in (None, "")]
             if not values:
                 return None
@@ -414,8 +413,10 @@ class ClickHouseFilterBuilder:
         if col_type == self.SYSTEM_METRIC and col_id not in self.SYSTEM_METRIC_MAP:
             try:
                 import uuid as _uuid
+
                 _uuid.UUID(str(col_id))
                 from model_hub.models.evals_metric import EvalTemplate
+
                 if EvalTemplate.no_workspace_objects.filter(
                     id=col_id, deleted=False
                 ).exists():
@@ -497,9 +498,8 @@ class ClickHouseFilterBuilder:
             # column so OTel attribute aliases (e.g.
             # ``gen_ai.usage.total_tokens``) are caught.
             mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
-            is_root_only = (
-                col_id in self.ROOT_ONLY_SYSTEM_METRICS
-                or (mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS)
+            is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
+                mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
             )
             root_clause = (
                 "AND (parent_span_id IS NULL OR parent_span_id = '') "
@@ -636,8 +636,18 @@ class ClickHouseFilterBuilder:
         elif filter_op == "is_not_null":
             return f"({column} IS NOT NULL AND {column} != '')"
         elif filter_op == "contains":
+            if isinstance(filter_value, list):
+                # Multi-select option pickers send filterOp="contains" with a list.
+                # Treat as IN rather than a LIKE substring match.
+                values = (
+                    [str(v).lower() for v in filter_value] if ci else list(filter_value)
+                )
+                self._params[param] = tuple(values)
+                col_expr = f"lower({column})" if ci else column
+                return f"{col_expr} IN %({param})s"
             self._params[param] = f"%{filter_value}%"
-            return f"{column} LIKE %({param})s"
+            col_expr = f"lower({column})" if ci else column
+            return f"{col_expr} LIKE %({param})s"
         elif filter_op == "not_contains":
             self._params[param] = f"%{filter_value}%"
             return f"{column} NOT LIKE %({param})s"
@@ -731,8 +741,8 @@ class ClickHouseFilterBuilder:
         dispatches on the template's output type (SCORE / PASS_FAIL / CHOICE)
         to compare the correct column in ``tracer_eval_logger``.
         """
-        from tracer.models.custom_eval_config import CustomEvalConfig
         from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
 
         project_ids = getattr(self, "project_ids", None)
 
@@ -747,9 +757,11 @@ class ClickHouseFilterBuilder:
                 cfg_qs = cfg_qs.filter(project_id__in=project_ids)
             config_ids = [str(x) for x in cfg_qs.values_list("id", flat=True)]
 
-            tmpl = EvalTemplate.no_workspace_objects.filter(
-                id=eval_id, deleted=False
-            ).values("config").first()
+            tmpl = (
+                EvalTemplate.no_workspace_objects.filter(id=eval_id, deleted=False)
+                .values("config")
+                .first()
+            )
             if tmpl and isinstance(tmpl.get("config"), dict):
                 ot = (
                     (tmpl["config"].get("output") or "")

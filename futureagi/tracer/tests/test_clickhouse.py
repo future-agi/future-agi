@@ -2982,6 +2982,75 @@ class TestSpanListQueryBuilderComprehensive:
         query, _ = builder.build()
         assert "name DESC" in query
 
+    def test_filter_by_span_name(self):
+        """span_name filter should map to the ClickHouse 'name' column."""
+        from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+
+        builder = SpanListQueryBuilder(
+            project_id="proj-1",
+            filters=[
+                {
+                    "column_id": "span_name",
+                    "filter_config": {
+                        "col_type": "system_metric",
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "my-span",
+                    },
+                }
+            ],
+        )
+        query, params = builder.build()
+        assert "span_name" not in query, "Should not reference raw 'span_name' column"
+        assert any(
+            "my-span" in str(v) for v in params.values()
+        ), "Filter value should be in params"
+
+    def test_filter_by_trace_name(self):
+        """trace_name filter should use the root-span 'name' column (always populated)."""
+        from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+
+        builder = SpanListQueryBuilder(
+            project_id="proj-1",
+            filters=[
+                {
+                    "column_id": "trace_name",
+                    "filter_config": {
+                        "col_type": "system_metric",
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "my-trace",
+                    },
+                }
+            ],
+        )
+        query, params = builder.build()
+        assert "trace_name" not in query, "Should not reference raw 'trace_name' column"
+        assert any(
+            "my-trace" in str(v) for v in params.values()
+        ), "Filter value should be in params"
+
+    def test_filter_node_type_multiselect(self):
+        """Multi-select node_type filter should generate IN clause, not LIKE."""
+        from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+
+        builder = SpanListQueryBuilder(
+            project_id="proj-1",
+            filters=[
+                {
+                    "column_id": "node_type",
+                    "filter_config": {
+                        "filter_type": "option",
+                        "filter_op": "contains",
+                        "filter_value": ["chain", "llm"],
+                    },
+                }
+            ],
+        )
+        query, params = builder.build()
+        assert "LIKE" not in query, "Multi-select should use IN, not LIKE"
+        assert "IN" in query, "Should generate IN clause for multi-select"
+
     # ------------------------------------------------------------------
     # Count query
     # ------------------------------------------------------------------
