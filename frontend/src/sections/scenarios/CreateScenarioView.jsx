@@ -467,7 +467,9 @@ const CreateScenarioView = () => {
     // @ts-ignore
     try {
       const data = await mutateAsync(payload);
-      navigate(`/dashboard/simulate/scenarios/${data?.data?.scenario?.id}`);
+      navigate(`/dashboard/simulate/scenarios/${data?.data?.scenario?.id}`, {
+        replace: true,
+      });
     } catch (error) {
       enqueueSnackbar(error?.message, { variant: "error" });
       return;
