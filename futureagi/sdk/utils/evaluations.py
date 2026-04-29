@@ -75,29 +75,35 @@ def _log_and_deduct_cost_for_standalone_eval(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
-    # Dual-write: emit usage event for new billing system
-    try:
+    # Dual-write: emit usage event for new billing system.
+    # Protect evals emit a separate cost-based event after completion.
+    _protect_call_types = (
+        _get_api_call_type("protect"),
+        _get_api_call_type("protect_flash"),
+    )
+    if api_call_type not in _protect_call_types:
         try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
 
-        emit(
-            UsageEvent(
-                org_id=str(user.organization.id),
-                event_type=api_call_type,
-                properties={
-                    "source": "standalone_v2",
-                    "source_id": str(eval_template.id),
-                },
+            emit(
+                UsageEvent(
+                    org_id=str(user.organization.id),
+                    event_type=api_call_type,
+                    properties={
+                        "source": "standalone_v2",
+                        "source_id": str(eval_template.id),
+                    },
+                )
             )
-        )
-    except Exception:
-        pass  # Metering failure must not break the action
+        except Exception:
+            pass  # Metering failure must not break the action
 
     return api_call_log_row
 
@@ -399,7 +405,9 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs, workspace=workspace
+            user, eval_template, True, protect_inputs,
+            model="protect_flash" if protect_flash else "protect",
+            workspace=workspace,
         )
 
         try:
@@ -450,6 +458,55 @@ def _run_protect(
         api_call_log_row.config = json.dumps(config_dict)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
+
+        # Emit usage event with actual cost after eval completion
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+
+            billing_config = BillingConfig.get()
+            token_usage = (result.metadata or {}).get("token_usage", {})
+            from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                calculate_total_cost,
+            )
+            # Resolve model alias for pricing lookup
+            if protect_flash:
+                protect_model = "protect_flash"
+            else:
+                from ee.protect.helper import ProtectHelper
+                protect_model = ProtectHelper.resolve_alias(eval_template.name, is_flash=False)
+            cost_info = calculate_total_cost(protect_model, token_usage)
+            llm_cost = cost_info.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee()
+            actual_cost = llm_cost + per_run_fee
+            credits = billing_config.calculate_ai_credits(actual_cost)
+
+            emit(
+                UsageEvent(
+                    org_id=str(user.organization.id),
+                    event_type=_get_api_call_type(
+                        "protect_flash" if protect_flash else "protect"
+                    ),
+                    amount=credits,
+                    properties={
+                        "source": "standalone_v2",
+                        "source_id": str(eval_template.id),
+                        "raw_cost_usd": str(actual_cost),
+                    },
+                )
+            )
+        except Exception:
+            pass
 
         logger.info(f"Protect Eval | Completed: user: {user.id}")
         return formatted

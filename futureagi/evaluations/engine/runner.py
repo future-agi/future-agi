@@ -96,12 +96,9 @@ def run_eval(request: EvalRequest) -> EvalResult:
         )
 
     call_type = request.inputs.get("call_type", "")
-    if call_type in ("protect", "protect_flash") and eval_type_id != "DeterministicEvaluator":
-        eval_type_id = "DeterministicEvaluator"
-        # Patch template config so format_eval_value uses DeterministicEvaluator branch
-        eval_template.config = {**eval_template.config, "eval_type_id": "DeterministicEvaluator"}
-        if not request.model:
-            request.model = "protect_flash" if call_type == "protect_flash" else "protect"
+    # Set a default model for protect calls if not provided.
+    if call_type in ("protect", "protect_flash") and not request.model:
+        request.model = "protect_flash" if call_type == "protect_flash" else "protect"
 
     is_futureagi = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -139,6 +136,10 @@ def run_eval(request: EvalRequest) -> EvalResult:
             organization_id=request.organization_id,
             workspace_id=request.workspace_id,
         )
+
+    # Ensure eval_name is available for protect calls.
+    if call_type in ("protect", "protect_flash"):
+        run_params.setdefault("eval_name", eval_template.name)
 
     # 3.5. Preprocess inputs (e.g., compute embeddings for CLIP/FID)
     from evaluations.engine.preprocessing import preprocess_inputs

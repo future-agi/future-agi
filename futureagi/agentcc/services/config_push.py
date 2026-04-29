@@ -3,6 +3,8 @@ Config Push Service — pushes per-org configs from Django to the Go gateway.
 Called when org configs are created, activated, or deleted.
 """
 
+import os
+
 import structlog
 from django.conf import settings as django_settings
 
@@ -262,7 +264,7 @@ def _inject_fi_credentials(checks, org_id):
         if org_key:
             cfg.setdefault("api_key", org_key.api_key)
             cfg.setdefault("secret_key", org_key.secret_key)
-            cfg.setdefault("base_url", django_settings.BASE_URL)
+            cfg.setdefault("base_url", os.getenv("FI_BASE_URL") or django_settings.BASE_URL)
             cfg.setdefault("call_type", "protect")
             fi_check["config"] = cfg
             logger.info(
