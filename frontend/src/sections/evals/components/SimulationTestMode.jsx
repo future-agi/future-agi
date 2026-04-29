@@ -544,20 +544,18 @@ const SimulationTestMode = React.forwardRef(
           }
 
           // -- Call-level runtime vocabulary — nested under `call.*`. --
-          const callType = callData.call_type || callData.simulation_call_type;
+          // simulation_call_type is the modality (text/voice); call_type is the direction (Inbound/Outbound).
+          const callType = callData.simulation_call_type || callData.call_type;
           const isTextCall =
             typeof callType === "string" &&
             ["text", "chat", "prompt"].includes(callType.toLowerCase());
 
           if (isTextCall) {
-            const rawTranscript =
-              typeof callData.transcript === "string"
-                ? callData.transcript
-                : "";
-            const { user, assistant } = splitChatTranscript(rawTranscript);
-            flat.call.transcript = rawTranscript;
-            flat.call.user_chat_transcript = user;
-            flat.call.assistant_chat_transcript = assistant;
+            flat.call.transcript = callData.transcript_text || "";
+            flat.call.user_chat_transcript =
+              callData.user_chat_transcript || "";
+            flat.call.assistant_chat_transcript =
+              callData.assistant_chat_transcript || "";
           } else {
             // Voice sim: pull recordings from the serializer's
             // `recordings` dict / `audio_url`, with provider_call_data
