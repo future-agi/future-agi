@@ -1342,6 +1342,7 @@ const TestPlayground = React.forwardRef(
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
                 />
               )}
 
@@ -1358,6 +1359,7 @@ const TestPlayground = React.forwardRef(
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleTracingReady}
                   isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
                 />
               )}
 
@@ -1374,6 +1376,7 @@ const TestPlayground = React.forwardRef(
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleSimulationReady}
                   isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
                 />
               )}
 

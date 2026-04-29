@@ -30,7 +30,10 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import { useExecuteCompositeEval } from "../hooks/useCompositeEval";
+import {
+  useExecuteCompositeEval,
+  useExecuteCompositeEvalAdhoc,
+} from "../hooks/useCompositeEval";
 
 // Hover-tooltip content for the Columns / Value table. Stringifies
 // primitives and JSON-encodes objects, then caps length so a 50k-char
@@ -178,6 +181,7 @@ const SimulationTestMode = React.forwardRef(
       initialMapping = null,
       initialRunTestId = "",
       isComposite = false,
+      compositeAdhocConfig = null,
     },
     ref,
   ) => {
@@ -265,6 +269,7 @@ const SimulationTestMode = React.forwardRef(
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
     const executeComposite = useExecuteCompositeEval();
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // 1. Fetch run tests (simulations) — infinite-scroll pagination.
     // Page 1 loads on mount; subsequent pages fetch via onScroll on the
@@ -860,15 +865,25 @@ const SimulationTestMode = React.forwardRef(
         };
 
         const { data } = isComposite
-          ? {
-              data: {
-                status: true,
-                result: await executeComposite.mutateAsync({
-                  templateId: tid,
-                  payload: compositePayload,
-                }),
-              },
-            }
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    ...compositePayload,
+                  }),
+                },
+              }
+            : {
+                data: {
+                  status: true,
+                  result: await executeComposite.mutateAsync({
+                    templateId: tid,
+                    payload: compositePayload,
+                  }),
+                },
+              }
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -923,10 +938,12 @@ const SimulationTestMode = React.forwardRef(
       onTestResult,
       errorLocalizerEnabled,
       isComposite,
+      compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
       model,
       executeComposite,
+      executeCompositeAdhoc,
     ]);
 
     useImperativeHandle(
@@ -1726,6 +1743,7 @@ SimulationTestMode.propTypes = {
   initialMapping: PropTypes.object,
   initialRunTestId: PropTypes.string,
   isComposite: PropTypes.bool,
+  compositeAdhocConfig: PropTypes.object,
 };
 
 export default SimulationTestMode;
