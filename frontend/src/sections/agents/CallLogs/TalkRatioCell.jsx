@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Tooltip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const TalkRatioCell = (params) => {
   const data = params?.data;
@@ -16,9 +17,8 @@ const TalkRatioCell = (params) => {
     );
   }
 
-  // Backend may return talk_ratio as a scalar (bot_time / user_time) from
-  // trace.py:480 or as an object {user, bot, user_pct, bot_pct} from
-  // observability_providers.py. Normalize both to userPct/botPct.
+  // talk_ratio may arrive as a scalar (bot_time / user_time) or as an object
+  // ({user, bot, user_pct, bot_pct}). Normalize both shapes to userPct/botPct.
   let userPct;
   let botPct;
   let userSec;
@@ -39,7 +39,7 @@ const TalkRatioCell = (params) => {
       : `User: ${userPct}% | Bot: ${botPct}%`;
 
   return (
-    <Tooltip title={tooltip} arrow placement="bottom">
+    <CustomTooltip title={tooltip} arrow placement="bottom" show>
       <Box
         sx={{
           display: "flex",
@@ -82,7 +82,7 @@ const TalkRatioCell = (params) => {
           {userPct}:{botPct}
         </Typography>
       </Box>
-    </Tooltip>
+    </CustomTooltip>
   );
 };
 
