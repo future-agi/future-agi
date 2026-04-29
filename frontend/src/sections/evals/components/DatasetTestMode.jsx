@@ -30,6 +30,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -502,6 +503,7 @@ const DatasetTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       initialMapping = null,
       isComposite = false,
+      compositeAdhocConfig = null,
       sourceColumns,
       extraColumns,
     },
@@ -558,6 +560,7 @@ const DatasetTestMode = React.forwardRef(
     // resulting error_details into `result` for EvalResultDisplay.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // 1. Fetch dataset list — paginated + searchable
     const fetchDatasets = useCallback(async (page, search, append) => {
@@ -998,18 +1001,37 @@ const DatasetTestMode = React.forwardRef(
 
         // Composite evals use the composite execute endpoint
         const { data } = isComposite
-          ? await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-              mapping: evalMapping,
-              model,
-              config: {
-                ...(Object.keys(codeParams || {}).length > 0
-                  ? { params: codeParams }
-                  : {}),
-              },
-              error_localizer: errorLocalizerEnabled,
-              input_data_types: inputDataTypes,
-              row_context: rowContext,
-            })
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    config: {
+                      ...(Object.keys(codeParams || {}).length > 0
+                        ? { params: codeParams }
+                        : {}),
+                    },
+                    error_localizer: errorLocalizerEnabled,
+                    input_data_types: inputDataTypes,
+                    row_context: rowContext,
+                  }),
+                },
+              }
+            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
+                mapping: evalMapping,
+                model,
+                config: {
+                  ...(Object.keys(codeParams || {}).length > 0
+                    ? { params: codeParams }
+                    : {}),
+                },
+                error_localizer: errorLocalizerEnabled,
+                input_data_types: inputDataTypes,
+                row_context: rowContext,
+              })
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -1071,7 +1093,9 @@ const DatasetTestMode = React.forwardRef(
       sourceNameToField,
       codeParams,
       isComposite,
+      compositeAdhocConfig,
       model,
+      executeCompositeAdhoc,
     ]);
 
     // Readiness: dataset selected + (all variables mapped OR a non-template
@@ -1658,6 +1682,7 @@ DatasetTestMode.propTypes = {
   sourceColumns: PropTypes.array,
   extraColumns: PropTypes.array,
   isComposite: PropTypes.bool,
+  compositeAdhocConfig: PropTypes.object,
 };
 
 export default DatasetTestMode;

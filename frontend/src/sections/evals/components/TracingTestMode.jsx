@@ -44,6 +44,7 @@ import {
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const ROW_TYPES = ["Span", "Trace", "Session"];
 
@@ -216,6 +217,7 @@ const TracingTestMode = React.forwardRef(
       initialMapping = null,
       errorLocalizerEnabled = false,
       isComposite = false,
+      compositeAdhocConfig = null,
     },
     ref,
   ) => {
@@ -331,6 +333,7 @@ const TracingTestMode = React.forwardRef(
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // ── Fetch project list (skip when project is pre-selected/locked) ──
     useEffect(() => {
@@ -887,17 +890,35 @@ const TracingTestMode = React.forwardRef(
           compositeCtx.trace_context = currentRow;
 
         const { data } = isComposite
-          ? await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-              mapping: evalMapping,
-              model,
-              error_localizer: errorLocalizerEnabled,
-              config: {
-                ...(Object.keys(codeParams || {}).length > 0
-                  ? { params: codeParams }
-                  : {}),
-              },
-              ...compositeCtx,
-            })
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    error_localizer: errorLocalizerEnabled,
+                    config: {
+                      ...(Object.keys(codeParams || {}).length > 0
+                        ? { params: codeParams }
+                        : {}),
+                    },
+                    ...compositeCtx,
+                  }),
+                },
+              }
+            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
+                mapping: evalMapping,
+                model,
+                error_localizer: errorLocalizerEnabled,
+                config: {
+                  ...(Object.keys(codeParams || {}).length > 0
+                    ? { params: codeParams }
+                    : {}),
+                },
+                ...compositeCtx,
+              })
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -955,9 +976,11 @@ const TracingTestMode = React.forwardRef(
       onTestResult,
       errorLocalizerEnabled,
       isComposite,
+      compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
       model,
+      executeCompositeAdhoc,
     ]);
 
     useImperativeHandle(
@@ -1926,6 +1949,7 @@ TracingTestMode.propTypes = {
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
+  compositeAdhocConfig: PropTypes.object,
 };
 
 export default TracingTestMode;
