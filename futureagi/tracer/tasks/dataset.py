@@ -230,6 +230,12 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
                     if field_name == "child_spans":
                         # Virtual field: recursively collected child span data
                         value = child_spans_cache.get(observation_span.id, [])
+                    elif field_name == "eval_metrics":
+                        value = dict(eval_metrics_cache.get(observation_span.id, {}))
+                    elif field_name == "annotation_metrics":
+                        value = dict(
+                            annotation_metrics_cache.get(observation_span.id, {})
+                        )
                     else:
                         try:
                             value = getattr(observation_span, field_name, None)
