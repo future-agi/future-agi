@@ -483,8 +483,11 @@ def _run_protect(
             if protect_flash:
                 protect_model = "protect_flash"
             else:
-                from ee.protect.helper import ProtectHelper
-                protect_model = ProtectHelper.resolve_alias(eval_template.name, is_flash=False)
+                try:
+                    from ee.protect.helper import ProtectHelper
+                    protect_model = ProtectHelper.resolve_alias(eval_template.name, is_flash=False)
+                except ImportError:
+                    protect_model = f"protect_{eval_template.name}"
             cost_info = calculate_total_cost(protect_model, token_usage)
             llm_cost = cost_info.get("total_cost", 0)
             per_run_fee = billing_config.get_eval_per_run_fee()
