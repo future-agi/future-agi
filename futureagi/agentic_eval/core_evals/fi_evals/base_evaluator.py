@@ -149,15 +149,52 @@ class BaseEvaluator(ABC):
             eval_results=[eval_result],
         )
 
-    def guard(self, **kwargs):
+    def guard(self, max_retries: int = 1, **kwargs):
         """
-        Guard
+        Evaluate the input and return a GuardResult.
+
+        When *max_retries* > 1 a reflexion loop is used: if the evaluation
+        fails the specific failure *reason* is fed back to the next attempt
+        as ``kwargs["feedback"]``, giving the underlying evaluator a chance
+        to correct borderline outputs before a hard block is issued.
+
+        Args:
+            max_retries: Maximum number of evaluation attempts (default 1,
+                         i.e. no retry — original behaviour is preserved).
+                         Values above 3 are clamped to 3 to avoid runaway
+                         costs on persistent failures.
+            **kwargs:    Arguments forwarded to ``_evaluate``.
+
+        Returns:
+            GuardResult with *passed*, *reason*, *runtime*, and *attempts*.
         """
-        eval_result = self._evaluate(**kwargs)
-        passed = not eval_result["failure"]
-        reason = eval_result["reason"]
-        runtime = eval_result["runtime"]
-        return GuardResult(passed=passed, reason=reason, runtime=runtime)
+        max_retries = max(1, min(max_retries, 3))
+        total_runtime = 0
+
+        for attempt in range(1, max_retries + 1):
+            eval_result = self._evaluate(**kwargs)
+            passed = not eval_result["failure"]
+            reason = eval_result["reason"]
+            total_runtime += eval_result["runtime"]
+
+            if passed:
+                return GuardResult(
+                    passed=True,
+                    reason=reason,
+                    runtime=total_runtime,
+                    attempts=attempt,
+                )
+
+            # Feed the failure reason back so the next attempt has context
+            if attempt < max_retries:
+                kwargs["feedback"] = reason
+
+        return GuardResult(
+            passed=False,
+            reason=reason,
+            runtime=total_runtime,
+            attempts=max_retries,
+        )
 
     def _run_batch_generator_async(
         self, data: list[DataPoint], max_parallel_evals: int

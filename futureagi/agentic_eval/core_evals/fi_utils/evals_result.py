@@ -124,3 +124,4 @@ class GuardResult(BaseModel):
     passed: bool
     reason: str
     runtime: int
+    attempts: int = 1
