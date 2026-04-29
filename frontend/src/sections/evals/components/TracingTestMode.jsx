@@ -42,6 +42,7 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { JsonValueTree } from "./DatasetTestMode";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
@@ -889,6 +890,10 @@ const TracingTestMode = React.forwardRef(
         if (rowType === "VoiceCall" && currentRow)
           compositeCtx.trace_context = currentRow;
 
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
+
         const { data } = isComposite
           ? compositeAdhocConfig
             ? {
@@ -899,11 +904,7 @@ const TracingTestMode = React.forwardRef(
                     mapping: evalMapping,
                     model,
                     error_localizer: errorLocalizerEnabled,
-                    config: {
-                      ...(Object.keys(codeParams || {}).length > 0
-                        ? { params: codeParams }
-                        : {}),
-                    },
+                    config: compositeConfig,
                     ...compositeCtx,
                   }),
                 },
@@ -912,11 +913,7 @@ const TracingTestMode = React.forwardRef(
                 mapping: evalMapping,
                 model,
                 error_localizer: errorLocalizerEnabled,
-                config: {
-                  ...(Object.keys(codeParams || {}).length > 0
-                    ? { params: codeParams }
-                    : {}),
-                },
+                config: compositeConfig,
                 ...compositeCtx,
               })
           : await axios.post(endpoints.develop.eval.evalPlayground, {

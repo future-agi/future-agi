@@ -297,7 +297,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         }}
       >
         <Typography variant="body2" color="text.disabled">
-          No data available
+          No output for the selected inputs.
         </Typography>
       </Box>
     );

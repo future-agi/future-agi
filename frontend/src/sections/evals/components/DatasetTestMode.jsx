@@ -29,6 +29,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
@@ -921,6 +922,9 @@ const DatasetTestMode = React.forwardRef(
         const inputDataTypes = {};
         const rowContext = {};
         const imageUrls = [];
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
 
         if (isWorkbenchMode) {
           // Workbench mode: mapping sends variable → field name (e.g. input_prompt)
@@ -1009,11 +1013,7 @@ const DatasetTestMode = React.forwardRef(
                     ...compositeAdhocConfig,
                     mapping: evalMapping,
                     model,
-                    config: {
-                      ...(Object.keys(codeParams || {}).length > 0
-                        ? { params: codeParams }
-                        : {}),
-                    },
+                    config: compositeConfig,
                     error_localizer: errorLocalizerEnabled,
                     input_data_types: inputDataTypes,
                     row_context: rowContext,
@@ -1023,11 +1023,7 @@ const DatasetTestMode = React.forwardRef(
             : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
                 mapping: evalMapping,
                 model,
-                config: {
-                  ...(Object.keys(codeParams || {}).length > 0
-                    ? { params: codeParams }
-                    : {}),
-                },
+                config: compositeConfig,
                 error_localizer: errorLocalizerEnabled,
                 input_data_types: inputDataTypes,
                 row_context: rowContext,
