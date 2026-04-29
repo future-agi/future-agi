@@ -66,6 +66,7 @@ import { canonicalEntries } from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
+  buildCompositeSourceModeProps,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
@@ -278,6 +279,17 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       ([key]) => !variableSet.has(key),
     );
   }, [functionParamsSchema, variables]);
+
+  const compositeSourceModeProps = useMemo(
+    () =>
+      buildCompositeSourceModeProps({
+        isComposite,
+        fullEval,
+        compositeDetail,
+        compositeChildWeights,
+      }),
+    [isComposite, fullEval, compositeDetail, compositeChildWeights],
+  );
 
   const hasValidPromptMessages = useMemo(
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
@@ -1435,7 +1447,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
@@ -1454,7 +1466,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onReadyChange={handleSourceReadyChange}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {(source === "simulation" || source === "test") && (
@@ -1470,7 +1482,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "create-simulate" && (
@@ -1514,7 +1526,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "composite" && (

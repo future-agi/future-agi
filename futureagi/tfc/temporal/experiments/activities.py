@@ -830,12 +830,10 @@ def _create_skipped_eval_cells(
 
     from model_hub.models.choices import CellStatus, SourceChoices
     from model_hub.models.develop_dataset import Column, Row
+    from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
     from model_hub.views.eval_runner import bulk_update_or_create_cells
 
-    output_type = user_eval_metric.template.config.get("output", "boolean")
-    data_type = {"reason": "text", "score": "float", "choices": "array"}.get(
-        output_type, "boolean"
-    )
+    data_type = infer_eval_result_column_data_type(user_eval_metric.template)
 
     eval_column, _ = Column.objects.get_or_create(
         name=user_eval_metric.name,

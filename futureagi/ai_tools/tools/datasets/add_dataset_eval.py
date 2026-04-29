@@ -64,6 +64,7 @@ class AddDatasetEvalTool(BaseTool):
         from ai_tools.resolvers import resolve_dataset, resolve_eval_template
         from model_hub.models.develop_dataset import Column
         from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+        from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
         from model_hub.utils.eval_validators import validate_eval_template_org_access
 
         # Resolve dataset by name or UUID
@@ -255,18 +256,7 @@ class AddDatasetEvalTool(BaseTool):
 
                 dataset = Dataset.objects.get(id=dataset.id)
 
-                # Determine output data type from template
-                output_type = "boolean"
-                if template.config and isinstance(template.config, dict):
-                    output_map = {
-                        "reason": "text",
-                        "score": "float",
-                        "choices": "array",
-                        "Pass/Fail": "boolean",
-                    }
-                    output_type = output_map.get(
-                        template.config.get("output", ""), "boolean"
-                    )
+                output_type = infer_eval_result_column_data_type(template)
 
                 col = Column(
                     name=eval_name,

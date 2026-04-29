@@ -56,6 +56,7 @@ from model_hub.serializers.experiments import (
 )
 from model_hub.services.dataset_snapshot import create_dataset_snapshot
 from model_hub.tasks.experiment_runner import process_experiments
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
@@ -1149,13 +1150,9 @@ class DatasetExperimentsView(APIView):
                             em = eval_metric_map.get(eval_id) if eval_id else None
                             if em:
                                 col_status = em.status
-                                output_type = em.template.config.get("output")
-                                data_type = {
-                                    "reason": "text",
-                                    "score": "float",
-                                    "numeric": "float",
-                                    "choices": "array",
-                                }.get(output_type, "boolean")
+                                data_type = infer_eval_result_column_data_type(
+                                    em.template
+                                )
                                 choices_map = em.template.config.get("choices_map", {})
                                 group = {
                                     "id": str(eval_id),

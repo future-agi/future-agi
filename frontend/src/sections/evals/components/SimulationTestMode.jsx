@@ -28,6 +28,7 @@ import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import {
@@ -852,15 +853,14 @@ const SimulationTestMode = React.forwardRef(
         // Auto-context: single-eval playground resolves call_id server-side.
         // Composite execution expects the concrete call context directly.
         const _callId = currentCall?.id;
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
         const compositePayload = {
           mapping: evalMapping,
           model,
           error_localizer: errorLocalizerEnabled,
-          config: {
-            ...(Object.keys(codeParams || {}).length > 0
-              ? { params: codeParams }
-              : {}),
-          },
+          config: compositeConfig,
           ...(callDetail ? { call_context: callDetail } : {}),
         };
 

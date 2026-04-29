@@ -654,7 +654,7 @@ const EvaluationDrawerChild = ({
               // Dataset adds are also save-only now: the user runs evals
               // manually from the dataset grid rather than auto-running on
               // add, which would otherwise queue work the user didn't ask for.
-              run: module !== "run-optimization" && (module !== "dataset" || isComposite),
+              run: module !== "run-optimization" && module !== "dataset",
               // Mirror the workbench path: surface error_localizer at the top
               // level so EditAndRunUserEvalView can update eval_metric.error_localizer.
               error_localizer: runConfig.error_localizer_enabled ?? false,
