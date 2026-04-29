@@ -117,8 +117,7 @@ class ClickHouseFilterBuilder:
         "node_type": "observation_type",
         "user": "end_user_id",
         "name": "name",
-        "span_name": "name",
-        "trace_name": "name",
+        "trace_name": "trace_name",
         "start_time": "start_time",
         "end_time": "end_time",
         "created_at": "created_at",
@@ -636,18 +635,8 @@ class ClickHouseFilterBuilder:
         elif filter_op == "is_not_null":
             return f"({column} IS NOT NULL AND {column} != '')"
         elif filter_op == "contains":
-            if isinstance(filter_value, list):
-                # Multi-select option pickers send filterOp="contains" with a list.
-                # Treat as IN rather than a LIKE substring match.
-                values = (
-                    [str(v).lower() for v in filter_value] if ci else list(filter_value)
-                )
-                self._params[param] = tuple(values)
-                col_expr = f"lower({column})" if ci else column
-                return f"{col_expr} IN %({param})s"
             self._params[param] = f"%{filter_value}%"
-            col_expr = f"lower({column})" if ci else column
-            return f"{col_expr} LIKE %({param})s"
+            return f"{column} LIKE %({param})s"
         elif filter_op == "not_contains":
             self._params[param] = f"%{filter_value}%"
             return f"{column} NOT LIKE %({param})s"

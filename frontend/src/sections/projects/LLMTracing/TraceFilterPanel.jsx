@@ -1328,24 +1328,13 @@ const TraceFilterPanel = ({
   const properties = useMemo(() => {
     if (propertiesOverride) return propertiesOverride;
     // Start with static trace fields (trace_name, status, model, etc.)
-    // In spans view, replace "Trace Name" (id: "name") with "Span Name" (id: "span_name")
-    const staticProps = TRACE_FILTER_FIELDS.map((f) => {
-      if (source === "spans" && f.value === "name") {
-        return {
-          id: "span_name",
-          name: "Span Name",
-          category: "system",
-          type: "string",
-        };
-      }
-      return {
-        id: f.value,
-        name: f.label,
-        category: "system",
-        type: f.type === "enum" ? "string" : f.type,
-        ...(f.choices ? { choices: f.choices } : {}),
-      };
-    });
+    const staticProps = TRACE_FILTER_FIELDS.map((f) => ({
+      id: f.value,
+      name: f.label,
+      category: "system",
+      type: f.type === "enum" ? "string" : f.type,
+      ...(f.choices ? { choices: f.choices } : {}),
+    }));
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
@@ -1360,7 +1349,7 @@ const TraceFilterPanel = ({
         type: f.type || "string",
       }));
     return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride, source]);
+  }, [dynamicProperties, filterFields, propertiesOverride]);
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
   const effectiveCategories = categoriesOverride ?? CATEGORIES;
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
