@@ -1163,8 +1163,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                   overflow: "hidden",
                                 }}
                               >
-                                {scenario?.description ||
-                                  scenario?.source ||
+                                {scenario.description ||
+                                  scenario.source ||
                                   "No description available"}
                               </Typography>
                             }
@@ -1899,9 +1899,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {scenario?.description ||
-                                scenario?.source ||
-                                "No description available"}
+                              {scenario.description ||
+                                scenario.source ||
+                                "No description"}
                             </Typography>
                           </Box>
                           <Typography variant="body2" fontWeight={600}>
