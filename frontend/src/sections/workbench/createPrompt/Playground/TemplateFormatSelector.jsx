@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, MenuItem, Popover, Typography } from "@mui/material";
+import { ButtonBase, MenuItem, Popover, Typography, Box } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 
@@ -25,8 +25,11 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
 
   return (
     <>
-      <Box
-        onClick={(e) => !disabled && setAnchorEl(e.currentTarget)}
+      <ButtonBase
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={(e) => setAnchorEl(e.currentTarget)}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -73,7 +76,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
             transition: "transform 0.2s",
           }}
         />
-      </Box>
+      </ButtonBase>
       <Popover
         open={open}
         anchorEl={anchorEl}

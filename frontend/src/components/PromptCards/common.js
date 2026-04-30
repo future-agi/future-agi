@@ -99,7 +99,7 @@ export const placeEditBolt = (
     jinjaInputVars = new Set(extractJinjaVariables(fullText));
 
     // Scan {% %} blocks for input variable references
-    const jinjaBlockRegex = /\{%-?(.*?)-?%\}/g;
+    const jinjaBlockRegex = /\{%-?([\s\S]*?)-?%\}/g;
     index = 0;
     newDelta.ops.forEach((op) => {
       if (typeof op.insert === "string") {

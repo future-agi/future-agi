@@ -247,6 +247,8 @@ export function mapPatchResponseToStoreData(response) {
               presencePenalty: pt.presence_penalty,
               tools: pt.tools || [],
               toolChoice: pt.tool_choice || "auto",
+              // Intentionally snake_case — mirrors API contract shape;
+              // read by buildPatchPayload and getDefaultValues via configuration.template_format
               template_format: pt.template_format || "mustache",
             },
           },

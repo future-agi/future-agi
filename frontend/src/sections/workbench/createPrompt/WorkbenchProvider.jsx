@@ -557,9 +557,7 @@ const WorkbenchProvider = ({ children }) => {
         ...normalizeConfigurationForLoad(data?.prompt_config?.[0]?.configuration),
       });
       const savedFormat = data?.prompt_config?.[0]?.configuration?.template_format;
-      if (savedFormat) {
-        setTemplateFormat(savedFormat);
-      }
+      setTemplateFormat(savedFormat || "mustache");
     }
     if (data?.output?.length && !results?.[0]?.output?.length) {
       setResultsByIndex(0, {
