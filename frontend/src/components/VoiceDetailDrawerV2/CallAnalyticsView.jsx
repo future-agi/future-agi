@@ -10,11 +10,8 @@ import {
   useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  computeCallMetrics,
-  enrichTurns,
-  formatClock,
-} from "./transcriptUtils";
+import { fmtMs } from "src/utils/utils";
+import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -26,12 +23,6 @@ const fmtDuration = (seconds) => {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
-};
-
-const fmtMs = (ms) => {
-  if (ms == null || !Number.isFinite(ms)) return "—";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${Math.round(ms)}ms`;
 };
 
 const fmtMoney = (n) => {
@@ -184,7 +175,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     { label: "Turns", value: fmtNumber(turnCount), hint: "Speech turns" },
     {
       label: "Latency",
-      value: avgLatency != null ? fmtMs(avgLatency) : "—",
+      value: avgLatency != null ? fmtMs(avgLatency, { forceMs: true }) : "—",
       hint: "Avg agent response latency",
     },
     { label: "User / AI", value: talkRatioValue, hint: "Talk time split (%)" },
@@ -195,13 +186,17 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     },
     {
       label: "Silence",
-      value: silenceTotal > 0 ? `${silenceTotal.toFixed(1)}s` : "0s",
+      value:
+        silenceTotal > 0 ? fmtMs(silenceTotal * 1000, { forceMs: false }) : "0ms",
       hint: "Dead air (> 0.3s gaps)",
       tone: silenceTotal > 10 ? "warn" : "default",
     },
     {
       label: "TTFW",
-      value: timeToFirstWord != null ? formatClock(timeToFirstWord) : "—",
+      value:
+        timeToFirstWord != null
+          ? fmtMs(timeToFirstWord * 1000, { forceMs: true })
+          : "—",
       hint: "Time to first word",
     },
   ];
