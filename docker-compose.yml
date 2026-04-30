@@ -521,7 +521,11 @@ services:
 
 volumes:
   postgres-data:
+    external: true
+    name: core-backend_database-data
   clickhouse-data:
+    external: true
+    name: core-backend_clickhouse_data
   redis-data:
   minio-data:
   peerdb-catalog-data:
