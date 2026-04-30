@@ -180,7 +180,7 @@ services:
     build:
       context: ./futureagi/agentcc-gateway
     ports:
-      - "${GATEWAY_PORT:-8090}:8080"
+      - "${GATEWAY_PORT:-8090}:8090"
     env_file:
       - .env
     environment:
@@ -190,10 +190,10 @@ services:
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/Vertex_AI_Creds.json
     volumes:
-      # Default to the shipped example config. Override by creating
-      # `futureagi/agentcc-gateway/config.yaml`.
-      - ./futureagi/agentcc-gateway/config.example.yaml:/app/config.yaml:ro
+      - ./futureagi/${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
+      - ./futureagi/Vertex_AI_Creds.json:/app/Vertex_AI_Creds.json:ro
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
