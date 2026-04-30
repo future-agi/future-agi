@@ -304,12 +304,12 @@ class CreateScenarioView(APIView):
         """
         Create a new scenario by copying the specified dataset
         """
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None) or request.user.organization
+        check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
+
         try:
-            from tfc.ee_gating import EEFeature, check_ee_feature
-
-            org = getattr(request, "organization", None) or request.user.organization
-            check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
-
             serializer = CreateScenarioSerializer(
                 data=request.data, context={"request": request}
             )

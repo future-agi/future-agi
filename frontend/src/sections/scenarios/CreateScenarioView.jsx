@@ -467,9 +467,13 @@ const CreateScenarioView = () => {
     // @ts-ignore
     try {
       const data = await mutateAsync(payload);
-      navigate(`/dashboard/simulate/scenarios/${data?.data?.scenario?.id}`);
+      navigate(`/dashboard/simulate/scenarios/${data?.data?.scenario?.id}`, {
+        replace: true,
+      });
     } catch (error) {
-      enqueueSnackbar(error?.message, { variant: "error" });
+      const message =
+        error?.error || error?.message || "Failed to create scenario";
+      enqueueSnackbar(message, { variant: "error" });
       return;
     }
   };
