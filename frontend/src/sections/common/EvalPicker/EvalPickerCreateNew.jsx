@@ -112,6 +112,29 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Union of every child template's required_keys — drives the top
   // TestPlayground so the user sees inputs for all child variables.
   const compositeUnionKeys = useCompositeChildrenUnionKeys(selectedChildren);
+  const compositeAdhocConfig = useMemo(
+    () =>
+      mode !== "composite"
+        ? null
+        : {
+            child_template_ids: selectedChildren.map((c) => c.child_id),
+            aggregation_enabled: aggregationEnabled,
+            aggregation_function: aggregationFunction,
+            composite_child_axis: compositeChildAxis || "",
+            child_weights:
+              Object.keys(childWeights || {}).length > 0 ? childWeights : null,
+            pass_threshold: passThreshold ?? 0.5,
+          },
+    [
+      mode,
+      selectedChildren,
+      aggregationEnabled,
+      aggregationFunction,
+      compositeChildAxis,
+      childWeights,
+      passThreshold,
+    ],
+  );
 
   // Draft management
   const [draftId, setDraftId] = useState(null);
@@ -955,6 +978,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
@@ -967,6 +991,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {(source === "simulation" ||
@@ -978,6 +1004,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {/* Fallback: no source context (standalone composite create page) */}
@@ -1002,6 +1030,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}
                       isComposite
+                      compositeAdhocConfig={compositeAdhocConfig}
                       showVersions={false}
                       onTestResult={handleTestResult}
                       onColumnsLoaded={handleColumnsLoaded}

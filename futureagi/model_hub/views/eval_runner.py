@@ -56,6 +56,7 @@ from model_hub.serializers.eval_runner import (
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import prepare_user_eval_config  # noqa: E402
 from model_hub.utils.json_path_resolver import (  # noqa: E402
     parse_json_safely,
@@ -848,13 +849,7 @@ class EvaluationRunner:
         logger.info(
             " ----- INSIDE EvaluationRunner : function _get_column_config -----"
         )
-        output_type = self.eval_template.config.get("output")
-        output_type = {
-            "reason": "text",
-            "score": "float",
-            "numeric": "float",
-            "choices": "array",
-        }.get(output_type, "boolean")
+        output_type = infer_eval_result_column_data_type(self.eval_template)
 
         source = SourceChoices.EVALUATION.value
         source_id = self.user_eval_metric_id
