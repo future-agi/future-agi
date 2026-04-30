@@ -215,20 +215,25 @@ class LLMPromptRunner(BaseNodeRunner):
             # Resolve all input variables, then render through Jinja2
             from model_hub.views.run_prompt import render_template, TEMPLATE_FORMAT_JINJA2
 
-            # Build context by resolving each input variable
+            # Build context by resolving each input variable.
+            # Dot-notation keys (e.g. "Node1.response") must be nested into
+            # dicts so Jinja2 attribute lookup ({{ Node1.response }}) works.
             context = {}
             for key, value in inputs.items():
                 resolved = value
                 if isinstance(resolved, str):
-                    # Try parsing JSON strings into native types for Jinja2 iteration
-                    import json as _json
                     try:
-                        parsed = _json.loads(resolved)
+                        parsed = json.loads(resolved)
                         if isinstance(parsed, (list, dict)):
                             resolved = parsed
                     except (ValueError, TypeError):
                         pass
-                context[key] = resolved
+                # Nest dot-notation keys: "Node1.response" -> context["Node1"]["response"]
+                parts = key.split(".")
+                target = context
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = resolved
 
             return render_template(text, context, TEMPLATE_FORMAT_JINJA2)
 

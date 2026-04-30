@@ -924,7 +924,7 @@ export const RunPromptForm = React.forwardRef(
           .map((c) => c.text)
           .join("\n");
         const jinjaVars = extractJinjaVariables(allText);
-        const columnNames = allColumns.map((c) =>
+        const columnNames = (allColumns || []).map((c) =>
           (c.headerName || "").toLowerCase(),
         );
         jinjaVars.forEach((v) => {

@@ -1334,7 +1334,7 @@ const WorkbenchProvider = ({ children }) => {
 
       saveAndDraftAll(saveDraftIndexes);
     },
-    [saveAndDraftAll, setVariableData, prompts],
+    [saveAndDraftAll, setVariableData, prompts, templateFormat],
   );
 
   const setPlaceholdersDataModified = useCallback(
