@@ -76,6 +76,7 @@ class ClickHouseFilterBuilder:
         "completion_tokens",
         "cost",
         "avg_cost",
+        "latency",
         "latency_ms",
         "avg_latency",
         "name",  # trace name = root span name; restrict to root spans to avoid child-span false positives
@@ -93,6 +94,7 @@ class ClickHouseFilterBuilder:
     # ``_build_span_attr_condition`` and matching any-span (TH-4044).
     SYSTEM_METRIC_MAP: Dict[str, str] = {
         "avg_latency": "latency_ms",
+        "latency": "latency_ms",
         "latency_ms": "latency_ms",
         "avg_cost": "cost",
         "cost": "cost",
@@ -177,9 +179,14 @@ class ClickHouseFilterBuilder:
     }
 
     # Filter operation -> SQL operator
+    # Includes frontend-friendly aliases (`equal_to`, `not_equal_to`) so that
+    # callers sending those names hit the right operator instead of falling
+    # through to the `=` default in `_build_column_condition`.
     OP_MAP: Dict[str, str] = {
         "equals": "=",
+        "equal_to": "=",
         "not_equals": "!=",
+        "not_equal_to": "!=",
         "greater_than": ">",
         "less_than": "<",
         "greater_than_or_equal": ">=",
@@ -582,7 +589,7 @@ class ClickHouseFilterBuilder:
             self._params[p_lo] = filter_value[0]
             self._params[p_hi] = filter_value[1]
             inner = f"{exists} AND {map_col}['{key}'] BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
+        elif filter_op in ("not_in_between", "not_between") and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -653,7 +660,7 @@ class ClickHouseFilterBuilder:
             self._params[p_lo] = filter_value[0]
             self._params[p_hi] = filter_value[1]
             return f"{column} BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
+        elif filter_op in ("not_in_between", "not_between") and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -707,7 +714,7 @@ class ClickHouseFilterBuilder:
             self._params[p_lo] = filter_value[0]
             self._params[p_hi] = filter_value[1]
             return f"({expr}) BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
+        elif filter_op in ("not_in_between", "not_between") and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -896,7 +903,7 @@ class ClickHouseFilterBuilder:
                     f"JSONExtractFloat(value, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             elif (
-                filter_op == "not_in_between"
+                filter_op in ("not_in_between", "not_between")
                 and isinstance(filter_value, list)
                 and len(filter_value) == 2
             ):

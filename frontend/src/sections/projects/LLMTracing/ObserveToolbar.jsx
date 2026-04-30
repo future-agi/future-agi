@@ -185,35 +185,59 @@ const ObserveToolbar = ({
       setPanelFilters(null);
       return;
     }
-    const opReverseMap = {
+    const stringOpReverseMap = {
       equals: "is",
       not_equals: "is_not",
+      in: "is",
+      not_in: "is_not",
       contains: "contains",
       not_contains: "not_contains",
       starts_with: "starts_with",
     };
-    const NUMBER_OP_SET = new Set([
-      "equal_to",
-      "not_equal_to",
-      "greater_than",
-      "greater_than_or_equal",
-      "less_than",
-      "less_than_or_equal",
+    // API → panel for numeric ops. The frontend sends canonical backend
+    // names (`equals`, `not_equals`, `not_in_between`); the panel's
+    // NUMBER_OPS uses friendlier values (`equal_to`, `not_equal_to`,
+    // `not_between`). Translate back so the operator dropdown rehydrates.
+    const numberOpReverseMap = {
+      equals: "equal_to",
+      equal_to: "equal_to",
+      not_equals: "not_equal_to",
+      not_equal_to: "not_equal_to",
+      greater_than: "greater_than",
+      greater_than_or_equal: "greater_than_or_equal",
+      less_than: "less_than",
+      less_than_or_equal: "less_than_or_equal",
+      between: "between",
+      not_in_between: "not_between",
+      not_between: "not_between",
+    };
+    const RANGE_OPS = new Set([
       "between",
       "not_between",
+      "not_in_between",
     ]);
-    const RANGE_OPS = new Set(["between", "not_between"]);
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
-      const isNumberOp = NUMBER_OP_SET.has(rawOp);
+      const rawType = gf.filter_config?.filter_type;
+      const isNumberType =
+        rawType === "number" || rawOp in numberOpReverseMap;
       const isRange = RANGE_OPS.has(rawOp);
       const rawVal = gf.filter_config?.filter_value;
       let value;
-      if (isRange && rawVal) {
-        value = String(rawVal)
-          .split(",")
-          .map((v) => v.trim());
-      } else if (isNumberOp) {
+      if (isRange) {
+        // Range values may arrive as a 2-element array (post-fix) or a
+        // joined string (legacy). Normalize to a 2-element array of
+        // strings so the panel's TextField inputs hydrate correctly.
+        if (Array.isArray(rawVal)) {
+          value = rawVal.map((v) => (v == null ? "" : String(v)));
+        } else if (rawVal != null) {
+          value = String(rawVal)
+            .split(",")
+            .map((v) => v.trim());
+        } else {
+          value = ["", ""];
+        }
+      } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
       } else {
         value = rawVal
@@ -235,17 +259,16 @@ const ObserveToolbar = ({
         field: gf.column_id,
         fieldName: gf.display_name,
         fieldCategory: colTypeReverseMap[rawColType] || "system",
-        fieldType: isNumberOp
+        fieldType: isNumberType
           ? "number"
-          : gf.filter_config?.filter_type === "number"
-            ? "number"
-            : gf.filter_config?.filter_type === "categorical"
-              ? "categorical"
-              : gf.filter_config?.filter_type === "text" &&
-                  rawColType === "ANNOTATION"
-                ? "text"
-                : "string",
-        operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
+          : rawType === "categorical"
+            ? "categorical"
+            : rawType === "text" && rawColType === "ANNOTATION"
+              ? "text"
+              : "string",
+        operator: isNumberType
+          ? numberOpReverseMap[rawOp] || rawOp
+          : stringOpReverseMap[rawOp] || rawOp,
         value,
       };
     });
@@ -407,15 +430,18 @@ const ObserveToolbar = ({
                 contains: "contains",
                 not_contains: "not_contains",
                 equals: "equals",
-                // Number operators — pass through directly
-                equal_to: "equal_to",
-                not_equal_to: "not_equal_to",
+                // Number operators — translate to backend names. The backend
+                // OP_MAP only knows `equals`/`not_equals`/`not_in_between`,
+                // and falls back to `=` for unknown ops, which silently
+                // collapses `not_equal_to`/`not_between` into equality.
+                equal_to: "equals",
+                not_equal_to: "not_equals",
                 greater_than: "greater_than",
                 greater_than_or_equal: "greater_than_or_equal",
                 less_than: "less_than",
                 less_than_or_equal: "less_than_or_equal",
                 between: "between",
-                not_between: "not_between",
+                not_between: "not_in_between",
               };
               const typeMap = {
                 string: "text",
@@ -430,6 +456,7 @@ const ObserveToolbar = ({
                 eval: "EVAL_METRIC",
                 annotation: "ANNOTATION",
               };
+              const RANGE_OPS = new Set(["between", "not_in_between"]);
               const apiFilters = newFilters.map((f) => {
                 const baseOp = opMap[f.operator] || f.operator;
                 // Multi-value picks (enum / choices) come in as arrays. For
@@ -439,7 +466,15 @@ const ObserveToolbar = ({
                 let filterOp = baseOp;
                 let filterValue = f.value;
                 if (Array.isArray(filterValue)) {
-                  if (filterValue.length === 1) {
+                  if (RANGE_OPS.has(baseOp)) {
+                    // Range ops require a 2-element list; keep numbers
+                    // numeric so the backend's list-type check matches.
+                    filterValue = filterValue.map((v) =>
+                      f.fieldType === "number" && v !== "" && v !== null
+                        ? Number(v)
+                        : v,
+                    );
+                  } else if (filterValue.length === 1) {
                     filterValue = filterValue[0];
                   } else if (filterValue.length > 1) {
                     if (baseOp === "equals") filterOp = "in";

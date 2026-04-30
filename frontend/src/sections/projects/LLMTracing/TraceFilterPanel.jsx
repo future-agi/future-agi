@@ -220,7 +220,6 @@ const NO_VALUE_OPS = new Set([
 // System metrics to exclude — not useful as trace filters
 const EXCLUDED_METRICS = new Set([
   "project",
-  "latency",
   "error_rate",
   "tokens",
   "input_tokens",

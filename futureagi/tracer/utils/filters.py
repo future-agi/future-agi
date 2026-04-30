@@ -106,6 +106,7 @@ class FilterEngine:
     DEFAULT_FIELD_MAP = {
         "avg_cost": "row_avg_cost",
         "avg_latency": "row_avg_latency_ms",
+        "latency": "latency_ms",
         "node_type": "node_type",
         "trace_id": "trace_id",
         "span_id": "id",
@@ -488,6 +489,7 @@ class FilterEngine:
             if column_id in [
                 "avg_score",
                 "avg_latency",
+                "latency",
                 "avg_cost",
                 "node_type",
                 "trace_id",
