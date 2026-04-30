@@ -3,11 +3,11 @@ package prometheus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-	"fmt"
 
 	"github.com/futureagi/agentcc-gateway/internal/metrics"
 	"github.com/futureagi/agentcc-gateway/internal/models"

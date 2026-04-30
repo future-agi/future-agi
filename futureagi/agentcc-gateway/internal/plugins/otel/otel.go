@@ -70,8 +70,8 @@ func NewWithExporter(exp otelpkg.SpanExporter, sampleRate float64, enabled bool)
 	}
 }
 
-func (p *Plugin) Name() string     { return "otel" }
-func (p *Plugin) Priority() int    { return 999 }
+func (p *Plugin) Name() string         { return "otel" }
+func (p *Plugin) Priority() int        { return 999 }
 func (p *Plugin) IsPostParallel() bool { return true } // Span export, safe to parallelize.
 
 // Metrics returns the plugin's metrics counters.

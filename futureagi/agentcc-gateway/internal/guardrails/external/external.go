@@ -92,7 +92,7 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	return g
 }
 
-func (g *ExternalGuardrail) Name() string           { return g.name }
+func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the external provider.

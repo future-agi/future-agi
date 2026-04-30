@@ -28,19 +28,21 @@ type ErrorResponse struct {
 }
 
 type ErrorDetail struct {
-	Message string  `json:"message"`
-	Type    string  `json:"type"`
-	Param   *string `json:"param"`
-	Code    string  `json:"code"`
+	Message  string                 `json:"message"`
+	Type     string                 `json:"type"`
+	Param    *string                `json:"param"`
+	Code     string                 `json:"code"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // APIError is an error that carries HTTP status and OpenAI error details.
 type APIError struct {
-	Status  int
-	Type    string
-	Code    string
-	Message string
-	Param   *string
+	Status   int
+	Type     string
+	Code     string
+	Message  string
+	Param    *string
+	Metadata map[string]interface{}
 }
 
 func (e *APIError) Error() string {
@@ -89,18 +91,27 @@ func ErrGatewayTimeout(message string) *APIError {
 	return &APIError{Status: http.StatusGatewayTimeout, Type: ErrTypeGatewayTimeout, Code: "gateway_timeout", Message: message}
 }
 
-func ErrGuardrailBlocked(code, message string) *APIError {
-	return &APIError{Status: http.StatusForbidden, Type: ErrTypeGuardrail, Code: code, Message: message}
+func ErrGuardrailBlocked(code, message string, attempts int) *APIError {
+	return &APIError{
+		Status:  http.StatusForbidden,
+		Type:    ErrTypeGuardrail,
+		Code:    code,
+		Message: message,
+		Metadata: map[string]interface{}{
+			"reflexion_attempts": attempts,
+		},
+	}
 }
 
 // WriteError writes an OpenAI-compatible error JSON response.
 func WriteError(w http.ResponseWriter, err *APIError) {
 	resp := ErrorResponse{
 		Error: ErrorDetail{
-			Message: err.Message,
-			Type:    err.Type,
-			Code:    err.Code,
-			Param:   err.Param,
+			Message:  err.Message,
+			Type:     err.Type,
+			Code:     err.Code,
+			Param:    err.Param,
+			Metadata: err.Metadata,
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")

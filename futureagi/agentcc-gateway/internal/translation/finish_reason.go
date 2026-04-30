@@ -17,15 +17,15 @@ var anthropicFinishReasons = map[string]string{
 
 var googleFinishReasons = map[string]string{
 	// Standard terminal reasons.
-	"STOP":      "stop",
+	"STOP":       "stop",
 	"MAX_TOKENS": "length",
 
 	// Safety / content-policy reasons all map to content_filter.
-	"SAFETY":              "content_filter",
-	"RECITATION":          "content_filter",
-	"BLOCKLIST":           "content_filter",
-	"PROHIBITED_CONTENT":  "content_filter",
-	"SPII":                "content_filter",
+	"SAFETY":             "content_filter",
+	"RECITATION":         "content_filter",
+	"BLOCKLIST":          "content_filter",
+	"PROHIBITED_CONTENT": "content_filter",
+	"SPII":               "content_filter",
 
 	// Degenerate / unspecified reasons fall back to "stop".
 	"MALFORMED_FUNCTION_CALL":   "stop",
@@ -37,10 +37,10 @@ var googleFinishReasons = map[string]string{
 // The /v1/chat/completions Cohere inbound endpoint is out of scope for Phase 2
 // but the table is defined here so it's available when Agent C picks this up.
 var cohereFinishReasons = map[string]string{
-	"COMPLETE":   "stop",
-	"MAX_TOKENS": "length",
-	"TOOL_CALL":  "tool_calls",
-	"ERROR":      "stop",
+	"COMPLETE":    "stop",
+	"MAX_TOKENS":  "length",
+	"TOOL_CALL":   "tool_calls",
+	"ERROR":       "stop",
 	"ERROR_TOXIC": "content_filter",
 	"USER_CANCEL": "stop",
 }

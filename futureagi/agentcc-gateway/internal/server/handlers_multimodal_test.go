@@ -1135,9 +1135,9 @@ func TestMultimodalUnknownModel(t *testing.T) {
 			srv.httpServer.Handler.ServeHTTP(w, req)
 
 			// Unknown models handled by the mock return a non-JSON 404, which may
-		// surface as: 404 (model not found in registry), 501 (provider doesn't
-		// implement the interface), or 502 (upstream returned non-JSON error
-		// body and ErrUpstreamProvider defaults to 502).
+			// surface as: 404 (model not found in registry), 501 (provider doesn't
+			// implement the interface), or 502 (upstream returned non-JSON error
+			// body and ErrUpstreamProvider defaults to 502).
 			if w.Code != http.StatusNotFound && w.Code != http.StatusNotImplemented && w.Code != http.StatusBadGateway {
 				t.Errorf("status = %d, want 404, 501, or 502 for unknown model. Body: %s", w.Code, w.Body.String())
 			}

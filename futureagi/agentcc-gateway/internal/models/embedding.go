@@ -5,7 +5,7 @@ import "encoding/json"
 // EmbeddingRequest represents an OpenAI-compatible embedding request.
 type EmbeddingRequest struct {
 	Model          string          `json:"model"`
-	Input          json.RawMessage `json:"input"`           // string or []string
+	Input          json.RawMessage `json:"input"`                     // string or []string
 	EncodingFormat string          `json:"encoding_format,omitempty"` // "float" | "base64"
 	Dimensions     *int            `json:"dimensions,omitempty"`
 	User           string          `json:"user,omitempty"`

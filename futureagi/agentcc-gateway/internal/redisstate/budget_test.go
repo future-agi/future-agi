@@ -156,7 +156,7 @@ func TestBudgetStore_Redis_SeedSpend(t *testing.T) {
 
 	org := "seed-org-" + ts
 	modelSpend := map[string]float64{
-		"gpt-4o":  15.50,
+		"gpt-4o":   15.50,
 		"claude-3": 8.25,
 	}
 

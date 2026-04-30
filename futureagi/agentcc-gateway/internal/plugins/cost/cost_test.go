@@ -65,12 +65,12 @@ func testDB() *modeldb.ModelDB {
 
 func testPlugin() *Plugin {
 	db := testDB()
-	return New(true, func() *modeldb.ModelDB { return db }, nil)
+	return New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 }
 
 func disabledPlugin() *Plugin {
 	db := testDB()
-	return New(false, func() *modeldb.ModelDB { return db }, nil)
+	return New(false, func() *modeldb.ModelDB { return db }, nil, nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +238,7 @@ func TestProcessResponse_ResolvedModelPreferred(t *testing.T) {
 			Pricing: modeldb.PricingInfo{InputPerToken: 1.0 / 1_000_000, OutputPerToken: 2.0 / 1_000_000},
 		},
 	}, nil)
-	p := New(true, func() *modeldb.ModelDB { return db }, nil)
+	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 
 	rc := newRC("requested-model-y", 1000, 500)
 	rc.ResolvedModel = "resolved-model-x"
@@ -278,7 +278,7 @@ func TestProcessResponse_CachedCost(t *testing.T) {
 
 func TestProcessResponse_NilModelDB(t *testing.T) {
 	t.Parallel()
-	p := New(true, func() *modeldb.ModelDB { return nil }, nil)
+	p := New(true, func() *modeldb.ModelDB { return nil }, nil, nil)
 	rc := newRC("gpt-4o", 1000, 500)
 
 	p.ProcessResponse(context.Background(), rc)

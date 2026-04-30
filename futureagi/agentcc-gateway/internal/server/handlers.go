@@ -1223,7 +1223,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	}
 
 	if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-		h.handleNonStreamWithFailover(ctx, w, rc, effectiveFailover, orgCfg)
+		h.handleNonStreamWithFailover(ctx, w, rc, provider, effectiveFailover, orgCfg)
 		return
 	}
 
@@ -1307,7 +1307,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return err
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1323,7 +1323,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	json.NewEncoder(w).Encode(rc.Response)
 }
 
-func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
+func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 
@@ -1438,7 +1438,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1471,7 +1471,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	// Run pre-plugins, initiate streaming, then post-plugins will run after.
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteError(w, models.ErrInternal(err.Error()))
 		return
 	}
@@ -1517,7 +1517,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		if detach {
 			pluginCtx = context.Background()
 		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		h.engine.RunPostPlugins(pluginCtx, rc, provider)
 		if detach {
 			return nil
 		}
@@ -1549,8 +1549,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
-					if res := streamChecker.Finish(streamCtx); res.Blocked {
-						sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
+					if res := streamChecker.Finish(streamCtx, nil); res.Blocked {
+						sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message, 0))
 					} else if res.Disclaimer != "" {
 						disclaimer := res.Disclaimer
 						disclaimerChunk := models.StreamChunk{
@@ -1588,9 +1588,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
-				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
+				if res := streamChecker.ProcessChunk(streamCtx, chunk, nil); res.Blocked {
 					rc.Flags.GuardrailTriggered = true
-					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
+					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message, 0))
 					finalizeStream(false)
 					return
 				}

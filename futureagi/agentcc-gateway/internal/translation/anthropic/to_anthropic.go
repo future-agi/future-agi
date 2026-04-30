@@ -384,4 +384,3 @@ func generateMsgID() string {
 func reverseMapFinishReasonForStream(openaiReason string) string {
 	return reverseMapFinishReason(openaiReason)
 }
-

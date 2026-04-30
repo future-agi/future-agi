@@ -33,7 +33,7 @@ func New(cfg map[string]interface{}) *LanguageGuardrail {
 	return g
 }
 
-func (g *LanguageGuardrail) Name() string           { return "language-detection" }
+func (g *LanguageGuardrail) Name() string            { return "language-detection" }
 func (g *LanguageGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check detects non-Latin/non-allowed scripts that might indicate language mismatch attacks.

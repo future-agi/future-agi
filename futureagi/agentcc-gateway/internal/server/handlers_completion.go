@@ -196,7 +196,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleCompletionStream(ctx, w, rc, provider)
 	} else if native, ok := provider.(nativeTextCompletionProvider); ok {
-		h.handleCompletionNative(ctx, w, rc, native, &req)
+		h.handleCompletionNative(ctx, w, rc, provider, native, &req)
 	} else {
 		h.handleCompletionNonStream(ctx, w, rc, provider)
 	}
@@ -243,11 +243,11 @@ func isLegacyCompletionModel(model string) bool {
 // rc.Response.Model keep working uniformly — they don't need to branch on
 // completion vs chat format. The assistant message content mirrors the first
 // choice's text so logs remain human-readable.
-func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider nativeTextCompletionProvider, req *models.CompletionRequest) {
+func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, baseProvider providers.Provider, native nativeTextCompletionProvider, req *models.CompletionRequest) {
 	var nativeResp *models.CompletionResponse
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.TextCompletion(ctx, req)
+		resp, err := native.TextCompletion(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, baseProvider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -305,7 +305,7 @@ func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.Respons
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -341,7 +341,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteError(w, models.ErrInternal(err.Error()))
 		return
 	}
@@ -375,7 +375,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		if detach {
 			pluginCtx = context.Background()
 		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		h.engine.RunPostPlugins(pluginCtx, rc, provider)
 	}
 
 	for {

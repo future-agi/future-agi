@@ -347,8 +347,8 @@ func TestCustomInjectionPatterns_InvalidRegexSkipped(t *testing.T) {
 		"provider":        "mcp_security",
 		"validate_inputs": true,
 		"custom_patterns": []interface{}{
-			`[invalid(regex`,  // Invalid regex
-			`(?i)\bVALID\b`,   // Valid
+			`[invalid(regex`, // Invalid regex
+			`(?i)\bVALID\b`,  // Valid
 		},
 	})
 
@@ -497,7 +497,7 @@ func TestPerToolRateLimit_UnlimitedToolPasses(t *testing.T) {
 
 func TestCheckToolRateLimit_Internal(t *testing.T) {
 	g := New("test-mcp", map[string]interface{}{
-		"provider":        "mcp_security",
+		"provider": "mcp_security",
 		"tool_rate_limits": map[string]interface{}{
 			"t1": float64(3),
 		},

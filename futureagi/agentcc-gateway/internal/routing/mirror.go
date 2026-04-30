@@ -33,12 +33,12 @@ type MirrorRule struct {
 // ProductionInfo carries production-side data needed to build a ShadowResult.
 // Passed to ExecuteAsync so the goroutine can build the complete comparison.
 type ProductionInfo struct {
-	RequestID    string
-	Model        string
-	Response     string // first 2000 chars of response text
-	LatencyMs    int64
-	Tokens       int // total tokens
-	StatusCode   int
+	RequestID  string
+	Model      string
+	Response   string // first 2000 chars of response text
+	LatencyMs  int64
+	Tokens     int // total tokens
+	StatusCode int
 }
 
 // Mirror manages traffic mirroring for shadow testing.

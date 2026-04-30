@@ -230,7 +230,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			return nil
 		}
 
-		err = engine.Process(ctx, rc, providerCall)
+		err = engine.Process(ctx, rc, provider, providerCall)
 		meta := make(map[string]string, len(rc.Metadata))
 		for k, v := range rc.Metadata {
 			meta[k] = v
@@ -323,7 +323,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			if err := engine.Process(ctx, rc, providerCall); err != nil {
+			if err := engine.Process(ctx, rc, provider, providerCall); err != nil {
 				rc.Release()
 				return nil, err
 			}
@@ -505,7 +505,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			return nil
 		}
 
-		err = engine.Process(ctx, rc, providerCall)
+		err = engine.Process(ctx, rc, provider, providerCall)
 		meta := make(map[string]string, len(rc.Metadata))
 		for k, v := range rc.Metadata {
 			meta[k] = v

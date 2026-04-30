@@ -241,7 +241,7 @@ func TestPlugin_ModelAccessDenied(t *testing.T) {
 
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-	rc.Model = "claude-3-opus"           // test-key only allows gpt-4o
+	rc.Model = "claude-3-opus" // test-key only allows gpt-4o
 	rc.Provider = "openai"
 	rc.Metadata["authorization"] = "Bearer sk-agentcc-test-key-123"
 

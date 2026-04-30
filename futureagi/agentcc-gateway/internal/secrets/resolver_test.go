@@ -329,7 +329,7 @@ func TestResolveProviderSecrets_WithVault(t *testing.T) {
 
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"openai": {BaseURL: "https://api.openai.com", APIKey: "vault://secret/data/openai#api_key", APIFormat: "openai"},
+			"openai":    {BaseURL: "https://api.openai.com", APIKey: "vault://secret/data/openai#api_key", APIFormat: "openai"},
 			"anthropic": {BaseURL: "https://api.anthropic.com", APIKey: "sk-plain", APIFormat: "anthropic"},
 		},
 		Secrets: config.SecretsConfig{

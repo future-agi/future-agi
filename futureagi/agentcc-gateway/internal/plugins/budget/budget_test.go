@@ -353,9 +353,9 @@ func TestPerOrg_TeamLevelBlocks(t *testing.T) {
 
 	// Record team spend.
 	rc := makeRC("gpt-4o", "openai", map[string]string{
-		"key_org_id":     "org-1",
-		"key_team":       "engineering",
-		"cost":           "50.00",
+		"key_org_id": "org-1",
+		"key_team":   "engineering",
+		"cost":       "50.00",
 	})
 	rc.Response = &models.ChatCompletionResponse{}
 	p.ProcessResponse(context.Background(), rc)
@@ -444,9 +444,9 @@ func TestPerOrg_TagLevelBlocks(t *testing.T) {
 	p := New(nil, testPricing(), false, store)
 
 	rc := makeRC("gpt-4o", "openai", map[string]string{
-		"key_org_id":   "org-1",
-		"tag:project":  "alpha",
-		"cost":         "20.00",
+		"key_org_id":  "org-1",
+		"tag:project": "alpha",
+		"cost":        "20.00",
 	})
 	rc.Response = &models.ChatCompletionResponse{}
 	p.ProcessResponse(context.Background(), rc)

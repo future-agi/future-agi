@@ -15,8 +15,8 @@ type mockPlugin struct {
 	onResp   func(ctx context.Context, rc *models.RequestContext) PluginResult
 }
 
-func (m *mockPlugin) Name() string    { return m.name }
-func (m *mockPlugin) Priority() int   { return m.priority }
+func (m *mockPlugin) Name() string  { return m.name }
+func (m *mockPlugin) Priority() int { return m.priority }
 func (m *mockPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) PluginResult {
 	if m.onReq != nil {
 		return m.onReq(ctx, rc)
@@ -39,7 +39,7 @@ func TestEnginePassThrough(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
-	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := engine.Process(context.Background(), rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		providerCalled = true
 		rc.Response = &models.ChatCompletionResponse{ID: "test"}
 		return nil
@@ -83,7 +83,7 @@ func TestEngineShortCircuit(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
-	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := engine.Process(context.Background(), rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		providerCalled = true
 		return nil
 	})
@@ -121,7 +121,7 @@ func TestEngineErrorShortCircuit(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
-	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := engine.Process(context.Background(), rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		providerCalled = true
 		return nil
 	})
@@ -159,7 +159,7 @@ func TestEngineProviderError(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
-	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := engine.Process(context.Background(), rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		return models.ErrUpstreamProvider(500, "provider broke")
 	})
 
@@ -195,7 +195,7 @@ func TestEnginePluginOrdering(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
-	engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+	engine.Process(context.Background(), rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		order = append(order, "provider")
 		return nil
 	})
@@ -220,7 +220,7 @@ func TestEngineContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel before processing.
 
-	err := engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := engine.Process(ctx, rc, nil, func(ctx context.Context, rc *models.RequestContext) error {
 		t.Error("provider should not be called when context is cancelled")
 		return nil
 	})

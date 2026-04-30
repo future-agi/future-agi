@@ -348,9 +348,9 @@ type RequestLoggingConfig struct {
 
 // CostTrackingConfig controls per-request cost calculation.
 type CostTrackingConfig struct {
-	Enabled          bool                       `yaml:"enabled" json:"enabled"`
-	CustomPricing    map[string]CustomPricing   `yaml:"custom_pricing" json:"custom_pricing"`
-	AliasCostFactors map[string]float64         `yaml:"alias_cost_factors" json:"alias_cost_factors"`
+	Enabled          bool                     `yaml:"enabled" json:"enabled"`
+	CustomPricing    map[string]CustomPricing `yaml:"custom_pricing" json:"custom_pricing"`
+	AliasCostFactors map[string]float64       `yaml:"alias_cost_factors" json:"alias_cost_factors"`
 }
 
 // CustomPricing allows overriding model pricing.
@@ -495,13 +495,16 @@ type StreamingGuardrailConfig struct {
 
 // GuardrailRuleConfig defines a single guardrail rule.
 type GuardrailRuleConfig struct {
-	Name      string                 `yaml:"name" json:"name"`
-	Stage     string                 `yaml:"stage" json:"stage"`   // "pre" or "post"
-	Mode      string                 `yaml:"mode" json:"mode"`     // "sync" or "async"
-	Action    string                 `yaml:"action" json:"action"` // "block", "warn", "log"
-	Threshold float64                `yaml:"threshold" json:"threshold"`
-	Timeout   time.Duration          `yaml:"timeout" json:"timeout"`
-	Config    map[string]interface{} `yaml:"config" json:"config"`
+	Name               string                 `yaml:"name" json:"name"`
+	Stage              string                 `yaml:"stage" json:"stage"`   // "pre" or "post"
+	Mode               string                 `yaml:"mode" json:"mode"`     // "sync" or "async"
+	Action             string                 `yaml:"action" json:"action"` // "block", "warn", "log"
+	Threshold          float64                `yaml:"threshold" json:"threshold"`
+	Timeout            time.Duration          `yaml:"timeout" json:"timeout"`
+	OnBlock            string                 `yaml:"on_block,omitempty" mapstructure:"on_block,omitempty" json:"on_block,omitempty"`
+	ReflectMaxAttempts int                    `yaml:"reflect_max_attempts,omitempty" mapstructure:"reflect_max_attempts,omitempty" json:"reflect_max_attempts,omitempty"`
+	ReflectTempBump    float64                `yaml:"reflect_temperature_bump,omitempty" mapstructure:"reflect_temperature_bump,omitempty" json:"reflect_temperature_bump,omitempty"`
+	Config             map[string]interface{} `yaml:"config" json:"config"`
 }
 
 // RoutingConfig controls load balancing and multi-provider routing.

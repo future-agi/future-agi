@@ -125,7 +125,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, _ *models.RequestContext) pi
 // if they were text explodes the estimate — a 5-minute audio clip
 // ( ≈6 MB base64 ) gets estimated at ~1.5M tokens and blows the 1.5x
 // safety threshold, so the request is falsely rejected with
-// ``input_too_large`` before the provider ever sees it.
+// “input_too_large“ before the provider ever sees it.
 //
 // When we detect structured content (a JSON array of content parts),
 // we tally text parts at 4 chars/token and attribute a modest fixed
@@ -150,7 +150,7 @@ func estimateTokens(req *models.ChatCompletionRequest) int {
 
 // Fixed per-block byte allotments for multimodal parts, expressed in
 // the same 4-chars-per-token space as textual content so the caller's
-// ``/ 4`` step translates them into realistic token counts.
+// “/ 4“ step translates them into realistic token counts.
 //   - image: ~258 tokens for a standard tile → 1032 char-equivalents
 //   - audio: ~1500 tokens for up to ~45s (most eval clips) → 6000
 //   - pdf  : ~2000 tokens / page, assume 1 page baseline → 8000
@@ -164,7 +164,7 @@ const (
 )
 
 // estimateContentBytes returns a character-count estimate of a single
-// message's ``content`` field that is safe for multimodal blocks.
+// message's “content“ field that is safe for multimodal blocks.
 func estimateContentBytes(content json.RawMessage) int {
 	// Fast path: a plain JSON string → count its characters directly.
 	trimmed := bytes.TrimSpace(content)

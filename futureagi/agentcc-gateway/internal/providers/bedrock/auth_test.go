@@ -226,7 +226,7 @@ func TestHashSHA256_Correctness(t *testing.T) {
 			want:  "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
 		},
 		{
-			name: "JSON body",
+			name:  "JSON body",
 			input: []byte(`{"key":"value"}`),
 			want: func() string {
 				h := sha256.Sum256([]byte(`{"key":"value"}`))
@@ -341,7 +341,7 @@ func TestSignRequest_SetsRequiredHeaders(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -390,7 +390,7 @@ func TestSignRequest_AuthorizationContainsCredentialAndSignedHeaders(t *testing.
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -432,9 +432,9 @@ func TestSignRequest_WithSessionToken(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-		SessionToken:   "FwoGZXIvYXdzEBYaDHqa0AP",
+		SessionToken:    "FwoGZXIvYXdzEBYaDHqa0AP",
 	}
 
 	if err := signRequest(req, creds, "us-east-1", "bedrock"); err != nil {
@@ -462,7 +462,7 @@ func TestSignRequest_WithoutSessionToken(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -489,7 +489,7 @@ func TestSignRequest_NilBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -519,7 +519,7 @@ func TestSignRequest_BodyPreservedAfterSigning(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -545,7 +545,7 @@ func TestSignRequest_CredentialScopeContainsRegionAndService(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 
@@ -563,7 +563,7 @@ func TestSignRequest_CredentialScopeContainsRegionAndService(t *testing.T) {
 
 func TestSignRequest_DifferentRegionsProduceDifferentSignatures(t *testing.T) {
 	creds := &Credentials{
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 	}
 

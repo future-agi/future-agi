@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
-	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 

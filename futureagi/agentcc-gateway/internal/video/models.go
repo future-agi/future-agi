@@ -16,32 +16,32 @@ const (
 
 // VideoJob represents a video generation job.
 type VideoJob struct {
-	ID              string            `json:"id"`
-	OrgID           string            `json:"org_id,omitempty"`
-	Status          string            `json:"status"`
-	Model           string            `json:"model"`
-	Provider        string            `json:"provider,omitempty"`
-	ProviderJobID   string            `json:"-"`
-	Prompt          string            `json:"prompt"`
-	Duration        float64           `json:"duration,omitempty"`
-	Size            string            `json:"size,omitempty"`
-	FPS             int               `json:"fps,omitempty"`
-	NumVariants     int               `json:"n,omitempty"`
-	Style           string            `json:"style,omitempty"`
-	AspectRatio     string            `json:"aspect_ratio,omitempty"`
-	Progress        int               `json:"progress"`
-	Videos          []VideoOutput     `json:"videos,omitempty"`
-	Error           *VideoError       `json:"error,omitempty"`
-	Usage           *VideoUsage       `json:"usage,omitempty"`
-	Cost            float64           `json:"cost,omitempty"`
-	ClientMetadata  map[string]string `json:"metadata,omitempty"`
-	RemixSourceID   string            `json:"remix_source,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	ExpiresAt       time.Time         `json:"expires_at"`
-	PollFailures    int               `json:"-"`
-	mu              sync.Mutex
+	ID             string            `json:"id"`
+	OrgID          string            `json:"org_id,omitempty"`
+	Status         string            `json:"status"`
+	Model          string            `json:"model"`
+	Provider       string            `json:"provider,omitempty"`
+	ProviderJobID  string            `json:"-"`
+	Prompt         string            `json:"prompt"`
+	Duration       float64           `json:"duration,omitempty"`
+	Size           string            `json:"size,omitempty"`
+	FPS            int               `json:"fps,omitempty"`
+	NumVariants    int               `json:"n,omitempty"`
+	Style          string            `json:"style,omitempty"`
+	AspectRatio    string            `json:"aspect_ratio,omitempty"`
+	Progress       int               `json:"progress"`
+	Videos         []VideoOutput     `json:"videos,omitempty"`
+	Error          *VideoError       `json:"error,omitempty"`
+	Usage          *VideoUsage       `json:"usage,omitempty"`
+	Cost           float64           `json:"cost,omitempty"`
+	ClientMetadata map[string]string `json:"metadata,omitempty"`
+	RemixSourceID  string            `json:"remix_source,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	StartedAt      *time.Time        `json:"started_at,omitempty"`
+	CompletedAt    *time.Time        `json:"completed_at,omitempty"`
+	ExpiresAt      time.Time         `json:"expires_at"`
+	PollFailures   int               `json:"-"`
+	mu             sync.Mutex
 }
 
 // VideoOutput represents a generated video variant.

@@ -114,7 +114,7 @@ func New(name string, cfg map[string]interface{}) *MCPSecGuardrail {
 	return g
 }
 
-func (g *MCPSecGuardrail) Name() string           { return g.name }
+func (g *MCPSecGuardrail) Name() string            { return g.name }
 func (g *MCPSecGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // IsMCPSecConfig returns true if the config specifies an MCP security guardrail.

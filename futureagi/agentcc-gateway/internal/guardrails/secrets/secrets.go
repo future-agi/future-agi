@@ -62,7 +62,7 @@ func New(cfg map[string]interface{}) *SecretsGuardrail {
 	return g
 }
 
-func (g *SecretsGuardrail) Name() string           { return "secret-detection" }
+func (g *SecretsGuardrail) Name() string            { return "secret-detection" }
 func (g *SecretsGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for secrets.
@@ -159,17 +159,17 @@ func buildDetectors(enabled map[string]bool) []secretDetector {
 
 func defaultPatterns() map[string]string {
 	return map[string]string{
-		"aws_access_key": `\bAKIA[0-9A-Z]{16}\b`,
-		"aws_secret_key": `(?i)(?:aws_secret_access_key|secret_key)\s*[=:]\s*[A-Za-z0-9/+=]{40}`,
-		"github_token":   `\bgh[psoart]_[A-Za-z0-9_]{36,}\b`,
-		"gitlab_token":   `\bglpat\-[A-Za-z0-9\-]{20,}\b`,
-		"slack_token":    `\bxox[bpsar]\-[A-Za-z0-9\-]+\b`,
-		"stripe_key":     `\b[sp]k_(?:live|test)_[A-Za-z0-9]{20,}\b`,
-		"openai_key":     `\bsk\-[A-Za-z0-9]{20,}\b`,
-		"private_key":    `-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----`,
+		"aws_access_key":    `\bAKIA[0-9A-Z]{16}\b`,
+		"aws_secret_key":    `(?i)(?:aws_secret_access_key|secret_key)\s*[=:]\s*[A-Za-z0-9/+=]{40}`,
+		"github_token":      `\bgh[psoart]_[A-Za-z0-9_]{36,}\b`,
+		"gitlab_token":      `\bglpat\-[A-Za-z0-9\-]{20,}\b`,
+		"slack_token":       `\bxox[bpsar]\-[A-Za-z0-9\-]+\b`,
+		"stripe_key":        `\b[sp]k_(?:live|test)_[A-Za-z0-9]{20,}\b`,
+		"openai_key":        `\bsk\-[A-Za-z0-9]{20,}\b`,
+		"private_key":       `-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----`,
 		"connection_string": `(?:mongodb|postgres|postgresql|mysql|redis|amqp)://[^\s]+:[^\s@]+@[^\s]+`,
-		"jwt":            `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`,
-		"password_assign": `(?i)(?:password|passwd|pwd|secret)\s*[=:]\s*[^\s,;]{8,}`,
+		"jwt":               `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`,
+		"password_assign":   `(?i)(?:password|passwd|pwd|secret)\s*[=:]\s*[^\s,;]{8,}`,
 	}
 }
 

@@ -17,9 +17,9 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // SpendSummary mirrors the Django spend-summary endpoint response.
 type SpendSummary struct {
-	Period      string                      `json:"period"`
-	PeriodStart string                      `json:"period_start"`
-	Orgs        map[string]OrgSpendSummary  `json:"orgs"`
+	Period      string                     `json:"period"`
+	PeriodStart string                     `json:"period_start"`
+	Orgs        map[string]OrgSpendSummary `json:"orgs"`
 }
 
 // OrgSpendSummary holds aggregated spend for a single org.

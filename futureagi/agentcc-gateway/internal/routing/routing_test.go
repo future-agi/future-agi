@@ -1737,7 +1737,6 @@ func TestRetryer_Backoff_CappedAtMaxDelay(t *testing.T) {
 	}
 }
 
-
 // 17. TestFailover_Execute_WithRetry — failover with retry: first provider fails
 // 500 twice (retry kicks in), then succeeds on a different provider.
 func TestFailover_Execute_WithRetry(t *testing.T) {
@@ -2176,7 +2175,7 @@ func TestCBRegistry_ConcurrentGet(t *testing.T) {
 // 1. TestModelFallbacks_GetChain — returns configured fallback chain
 func TestModelFallbacks_GetChain(t *testing.T) {
 	mf := NewModelFallbacks(map[string][]string{
-		"gpt-4o":         {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
+		"gpt-4o":                   {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
 		"claude-sonnet-4-20250514": {"gpt-4o"},
 	})
 

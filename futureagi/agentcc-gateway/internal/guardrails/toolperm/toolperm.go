@@ -54,7 +54,7 @@ func New(name string, cfg map[string]interface{}) *ToolPermGuardrail {
 	return g
 }
 
-func (g *ToolPermGuardrail) Name() string           { return g.name }
+func (g *ToolPermGuardrail) Name() string            { return g.name }
 func (g *ToolPermGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // IsToolPermConfig returns true if the config specifies a tool permission guardrail.

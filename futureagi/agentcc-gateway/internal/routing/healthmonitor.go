@@ -32,10 +32,10 @@ type providerStats struct {
 
 // HealthMonitor tracks per-provider health metrics.
 type HealthMonitor struct {
-	mu       sync.RWMutex
-	stats    map[string]*providerStats
-	tracker  *LatencyTracker
-	cbReg    *CircuitBreakerRegistry
+	mu      sync.RWMutex
+	stats   map[string]*providerStats
+	tracker *LatencyTracker
+	cbReg   *CircuitBreakerRegistry
 }
 
 // NewHealthMonitor creates a health monitor.

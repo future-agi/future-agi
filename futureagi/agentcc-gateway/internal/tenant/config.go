@@ -7,35 +7,35 @@ package tenant
 
 // OrgConfig holds the merged configuration for a single organization.
 type OrgConfig struct {
-	Providers    map[string]*ProviderConfig `json:"providers,omitempty"`
-	Guardrails   *GuardrailConfig           `json:"guardrails,omitempty"`
-	Routing      *RoutingConfig             `json:"routing,omitempty"`
-	Cache        *CacheConfig               `json:"cache,omitempty"`
-	RateLimiting *RateLimitConfig           `json:"rate_limiting,omitempty"`
-	Budgets      *BudgetsConfig             `json:"budgets,omitempty"`
-	CostTracking *CostTrackingConfig        `json:"cost_tracking,omitempty"`
-	IPACL        *IPACLConfig               `json:"ip_acl,omitempty"`
-	Alerting     *AlertingConfig            `json:"alerting,omitempty"`
-	Privacy      *PrivacyConfig             `json:"privacy,omitempty"`
-	ToolPolicy   *ToolPolicyConfig          `json:"tool_policy,omitempty"`
+	Providers     map[string]*ProviderConfig `json:"providers,omitempty"`
+	Guardrails    *GuardrailConfig           `json:"guardrails,omitempty"`
+	Routing       *RoutingConfig             `json:"routing,omitempty"`
+	Cache         *CacheConfig               `json:"cache,omitempty"`
+	RateLimiting  *RateLimitConfig           `json:"rate_limiting,omitempty"`
+	Budgets       *BudgetsConfig             `json:"budgets,omitempty"`
+	CostTracking  *CostTrackingConfig        `json:"cost_tracking,omitempty"`
+	IPACL         *IPACLConfig               `json:"ip_acl,omitempty"`
+	Alerting      *AlertingConfig            `json:"alerting,omitempty"`
+	Privacy       *PrivacyConfig             `json:"privacy,omitempty"`
+	ToolPolicy    *ToolPolicyConfig          `json:"tool_policy,omitempty"`
 	MCP           *MCPOrgConfig              `json:"mcp,omitempty"`
 	Audit         *AuditOrgConfig            `json:"audit,omitempty"`
 	A2A           *A2AOrgConfig              `json:"a2a,omitempty"`
 	ModelDatabase *ModelDatabaseOrgConfig    `json:"model_database,omitempty"`
-	ModelMap       map[string]string          `json:"model_map,omitempty"`
+	ModelMap      map[string]string          `json:"model_map,omitempty"`
 }
 
 // ProviderConfig holds per-org provider settings.
 type ProviderConfig struct {
-	APIKey         string   `json:"api_key"`
-	BaseURL        string   `json:"base_url,omitempty"`
-	APIFormat      string   `json:"api_format,omitempty"`
-	Models         []string `json:"models,omitempty"`
-	Timeout        int      `json:"timeout,omitempty"` // seconds
-	Weight         float64  `json:"weight,omitempty"`
-	Enabled        bool     `json:"enabled"`
-	MaxConcurrent  int      `json:"max_concurrent,omitempty"`
-	ConnPoolSize   int      `json:"conn_pool_size,omitempty"`
+	APIKey        string   `json:"api_key"`
+	BaseURL       string   `json:"base_url,omitempty"`
+	APIFormat     string   `json:"api_format,omitempty"`
+	Models        []string `json:"models,omitempty"`
+	Timeout       int      `json:"timeout,omitempty"` // seconds
+	Weight        float64  `json:"weight,omitempty"`
+	Enabled       bool     `json:"enabled"`
+	MaxConcurrent int      `json:"max_concurrent,omitempty"`
+	ConnPoolSize  int      `json:"conn_pool_size,omitempty"`
 
 	// AWS Bedrock credentials (per-org, pushed from Django).
 	AWSAccessKeyID     string `json:"aws_access_key_id,omitempty"`
@@ -70,8 +70,8 @@ type RoutingConfig struct {
 	Strategy            string              `json:"strategy,omitempty"` // "round_robin", "weighted", "least_latency", "cost_optimized", "fastest"
 	FallbackEnabled     bool                `json:"fallback_enabled,omitempty"`
 	FallbackStatusCodes []int               `json:"fallback_on_status_codes,omitempty"`
-	ModelFallbacks      map[string][]string  `json:"model_fallbacks,omitempty"`
-	ConditionalRoutes   []ConditionalRoute   `json:"conditional_routes,omitempty"`
+	ModelFallbacks      map[string][]string `json:"model_fallbacks,omitempty"`
+	ConditionalRoutes   []ConditionalRoute  `json:"conditional_routes,omitempty"`
 	DefaultModel        string              `json:"default_model,omitempty"`
 
 	// Advanced routing features (Phase 12A)
@@ -83,11 +83,11 @@ type RoutingConfig struct {
 	AccessGroups map[string]*AccessGroup  `json:"access_groups,omitempty"`
 
 	// Reliability features
-	Failover       *FailoverConfig          `json:"failover,omitempty"`
-	CircuitBreaker *CircuitBreakerConfig    `json:"circuit_breaker,omitempty"`
-	Retry          *RetryConfig             `json:"retry,omitempty"`
-	Mirror         *MirrorConfig            `json:"mirror,omitempty"`
-	ModelTimeouts  map[string]string        `json:"model_timeouts,omitempty"` // model -> duration string e.g. "30s"
+	Failover       *FailoverConfig       `json:"failover,omitempty"`
+	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty"`
+	Retry          *RetryConfig          `json:"retry,omitempty"`
+	Mirror         *MirrorConfig         `json:"mirror,omitempty"`
+	ModelTimeouts  map[string]string     `json:"model_timeouts,omitempty"` // model -> duration string e.g. "30s"
 }
 
 // ConditionalRoute defines a metadata-based routing rule.
@@ -100,10 +100,10 @@ type ConditionalRoute struct {
 
 // ComplexityRoutingConfig routes requests to different models based on prompt complexity.
 type ComplexityRoutingConfig struct {
-	Enabled     bool                           `json:"enabled"`
-	DefaultTier string                         `json:"default_tier,omitempty"`
-	Tiers       map[string]*ComplexityTier     `json:"tiers,omitempty"`
-	Weights     map[string]float64             `json:"weights,omitempty"` // signal weights for scoring
+	Enabled     bool                       `json:"enabled"`
+	DefaultTier string                     `json:"default_tier,omitempty"`
+	Tiers       map[string]*ComplexityTier `json:"tiers,omitempty"`
+	Weights     map[string]float64         `json:"weights,omitempty"` // signal weights for scoring
 }
 
 // ComplexityTier maps a complexity tier to a model/provider.
@@ -133,12 +133,12 @@ type ScheduledConfig struct {
 
 // AdaptiveRoutingConfig dynamically adjusts provider weights based on real-time performance.
 type AdaptiveRoutingConfig struct {
-	Enabled          bool                `json:"enabled"`
-	LearningRequests int                 `json:"learning_requests,omitempty"`
-	UpdateInterval   string              `json:"update_interval,omitempty"` // duration string
-	SmoothingFactor  float64             `json:"smoothing_factor,omitempty"`
-	MinWeight        float64             `json:"min_weight,omitempty"`
-	SignalWeights    *SignalWeights      `json:"signal_weights,omitempty"`
+	Enabled          bool           `json:"enabled"`
+	LearningRequests int            `json:"learning_requests,omitempty"`
+	UpdateInterval   string         `json:"update_interval,omitempty"` // duration string
+	SmoothingFactor  float64        `json:"smoothing_factor,omitempty"`
+	MinWeight        float64        `json:"min_weight,omitempty"`
+	SignalWeights    *SignalWeights `json:"signal_weights,omitempty"`
 }
 
 // SignalWeights configures how different performance signals affect adaptive routing weights.
@@ -193,8 +193,8 @@ type RetryConfig struct {
 
 // MirrorConfig controls traffic mirroring per org.
 type MirrorConfig struct {
-	Enabled bool          `json:"enabled"`
-	Rules   []MirrorRule  `json:"rules,omitempty"`
+	Enabled bool         `json:"enabled"`
+	Rules   []MirrorRule `json:"rules,omitempty"`
 }
 
 // MirrorRule defines a single traffic mirroring rule.
@@ -207,10 +207,10 @@ type MirrorRule struct {
 
 // CacheConfig holds per-org cache settings.
 type CacheConfig struct {
-	Enabled    bool              `json:"enabled"`
-	Backend    string            `json:"backend,omitempty"`    // "memory", "disk", "redis", "s3", "azure-blob", "gcs"
-	DefaultTTL int               `json:"default_ttl,omitempty"` // seconds
-	MaxEntries int               `json:"max_entries,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Backend    string `json:"backend,omitempty"`     // "memory", "disk", "redis", "s3", "azure-blob", "gcs"
+	DefaultTTL int    `json:"default_ttl,omitempty"` // seconds
+	MaxEntries int    `json:"max_entries,omitempty"`
 
 	// L1 backend-specific configs
 	Disk      *DiskCacheConfig      `json:"disk,omitempty"`
@@ -249,12 +249,12 @@ type RedisCacheConfig struct {
 
 // S3CacheConfig holds S3 cache settings.
 type S3CacheConfig struct {
-	Bucket         string `json:"bucket,omitempty"`
-	Prefix         string `json:"prefix,omitempty"`
-	Region         string `json:"region,omitempty"`
-	AccessKeyID    string `json:"access_key_id,omitempty"`
+	Bucket          string `json:"bucket,omitempty"`
+	Prefix          string `json:"prefix,omitempty"`
+	Region          string `json:"region,omitempty"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
-	Compress       bool   `json:"compress,omitempty"`
+	Compress        bool   `json:"compress,omitempty"`
 }
 
 // AzureBlobCacheConfig holds Azure Blob Storage cache settings.
@@ -277,14 +277,14 @@ type GCSCacheConfig struct {
 
 // SemanticCacheConfig holds L2 semantic/vector cache settings.
 type SemanticCacheConfig struct {
-	Enabled    bool              `json:"enabled"`
-	Backend    string            `json:"backend,omitempty"` // "qdrant", "weaviate", "pinecone"
-	Threshold  float64           `json:"threshold,omitempty"`
-	Dimensions int               `json:"dimensions,omitempty"`
-	MaxEntries int               `json:"max_entries,omitempty"`
-	Qdrant     *QdrantConfig     `json:"qdrant,omitempty"`
-	Weaviate   *WeaviateConfig   `json:"weaviate,omitempty"`
-	Pinecone   *PineconeConfig   `json:"pinecone,omitempty"`
+	Enabled    bool            `json:"enabled"`
+	Backend    string          `json:"backend,omitempty"` // "qdrant", "weaviate", "pinecone"
+	Threshold  float64         `json:"threshold,omitempty"`
+	Dimensions int             `json:"dimensions,omitempty"`
+	MaxEntries int             `json:"max_entries,omitempty"`
+	Qdrant     *QdrantConfig   `json:"qdrant,omitempty"`
+	Weaviate   *WeaviateConfig `json:"weaviate,omitempty"`
+	Pinecone   *PineconeConfig `json:"pinecone,omitempty"`
 }
 
 // QdrantConfig holds Qdrant vector DB settings.
@@ -346,8 +346,8 @@ type BudgetsConfig struct {
 // BudgetLevelConfig defines a spend budget at any hierarchy level.
 type BudgetLevelConfig struct {
 	Limit    float64            `json:"limit"`
-	Period   string             `json:"period,omitempty"`     // overrides default_period
-	Hard     *bool              `json:"hard,omitempty"`       // nil = default true
+	Period   string             `json:"period,omitempty"` // overrides default_period
+	Hard     *bool              `json:"hard,omitempty"`   // nil = default true
 	PerModel map[string]float64 `json:"per_model,omitempty"`
 }
 
@@ -372,35 +372,35 @@ type IPACLConfig struct {
 
 // AlertingConfig holds per-org alerting settings.
 type AlertingConfig struct {
-	Enabled  bool                `json:"enabled"`
-	Rules    []*AlertRuleConfig  `json:"rules,omitempty"`
+	Enabled  bool                  `json:"enabled"`
+	Rules    []*AlertRuleConfig    `json:"rules,omitempty"`
 	Channels []*AlertChannelConfig `json:"channels,omitempty"`
 }
 
 // AlertRuleConfig configures a single alert rule for an org.
 type AlertRuleConfig struct {
-	Name      string  `json:"name"`
-	Metric    string  `json:"metric"`              // error_count, request_count, cost_total, latency_avg, tokens_total
-	Condition string  `json:"condition"`            // ">=", ">", "<=", "<", "=="
-	Threshold float64 `json:"threshold"`
-	Window    string  `json:"window,omitempty"`     // duration string e.g. "5m"
-	Cooldown  string  `json:"cooldown,omitempty"`   // duration string e.g. "15m"
-	Channels  []string `json:"channels,omitempty"`  // channel names to notify
+	Name      string   `json:"name"`
+	Metric    string   `json:"metric"`    // error_count, request_count, cost_total, latency_avg, tokens_total
+	Condition string   `json:"condition"` // ">=", ">", "<=", "<", "=="
+	Threshold float64  `json:"threshold"`
+	Window    string   `json:"window,omitempty"`   // duration string e.g. "5m"
+	Cooldown  string   `json:"cooldown,omitempty"` // duration string e.g. "15m"
+	Channels  []string `json:"channels,omitempty"` // channel names to notify
 }
 
 // AlertChannelConfig configures an alert notification channel.
 type AlertChannelConfig struct {
 	Name    string            `json:"name"`
-	Type    string            `json:"type"`              // "webhook", "slack", "log"
+	Type    string            `json:"type"` // "webhook", "slack", "log"
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // PrivacyConfig holds per-org PII redaction settings.
 type PrivacyConfig struct {
-	Enabled  bool                    `json:"enabled"`
-	Mode     string                  `json:"mode,omitempty"` // "full", "patterns", "none"
-	Patterns []*RedactPatternConfig  `json:"redact_patterns,omitempty"`
+	Enabled  bool                   `json:"enabled"`
+	Mode     string                 `json:"mode,omitempty"` // "full", "patterns", "none"
+	Patterns []*RedactPatternConfig `json:"redact_patterns,omitempty"`
 }
 
 // RedactPatternConfig defines a named regex pattern for PII redaction.
@@ -420,9 +420,9 @@ type ToolPolicyConfig struct {
 
 // MCPOrgConfig holds per-org MCP (Model Context Protocol) settings.
 type MCPOrgConfig struct {
-	Enabled    bool                          `json:"enabled"`
+	Enabled    bool                           `json:"enabled"`
 	Servers    map[string]*MCPServerOrgConfig `json:"servers,omitempty"`
-	Guardrails *MCPGuardrailOrgConfig        `json:"guardrails,omitempty"`
+	Guardrails *MCPGuardrailOrgConfig         `json:"guardrails,omitempty"`
 }
 
 // MCPServerOrgConfig configures a single upstream MCP server for an org.
@@ -469,9 +469,9 @@ type AuditSinkConfig struct {
 
 // A2AOrgConfig holds per-org A2A (Agent-to-Agent) protocol settings.
 type A2AOrgConfig struct {
-	Enabled bool                        `json:"enabled"`
-	Card    *A2ACardConfig              `json:"card,omitempty"`
-	Agents  map[string]*A2AAgentConfig  `json:"agents,omitempty"`
+	Enabled bool                       `json:"enabled"`
+	Card    *A2ACardConfig             `json:"card,omitempty"`
+	Agents  map[string]*A2AAgentConfig `json:"agents,omitempty"`
 }
 
 // A2ACardConfig holds per-org agent card customization.
@@ -491,7 +491,7 @@ type A2AAgentConfig struct {
 
 // A2AAuthConfig holds auth settings for an external A2A agent.
 type A2AAuthConfig struct {
-	Type   string `json:"type,omitempty"`   // "bearer", "api_key", "none"
+	Type   string `json:"type,omitempty"` // "bearer", "api_key", "none"
 	Token  string `json:"token,omitempty"`
 	Header string `json:"header,omitempty"`
 }

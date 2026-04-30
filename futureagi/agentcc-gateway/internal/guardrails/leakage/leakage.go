@@ -16,8 +16,8 @@ type LeakageGuardrail struct {
 }
 
 type leakagePattern struct {
-	name    string
-	regex   *regexp.Regexp
+	name  string
+	regex *regexp.Regexp
 }
 
 // New creates a LeakageGuardrail.
@@ -27,7 +27,7 @@ func New(cfg map[string]interface{}) *LeakageGuardrail {
 	}
 }
 
-func (g *LeakageGuardrail) Name() string           { return "data-leakage-prevention" }
+func (g *LeakageGuardrail) Name() string            { return "data-leakage-prevention" }
 func (g *LeakageGuardrail) Stage() guardrails.Stage { return guardrails.StagePost }
 
 // Check detects data leakage and code injection patterns in responses.

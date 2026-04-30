@@ -46,7 +46,7 @@ func NewRealtimeHandler(tracker *realtime.SessionTracker, registry *providers.Re
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.ReadBufferSize,
 			WriteBufferSize: cfg.WriteBufferSize,
-			CheckOrigin: makeOriginChecker(cfg.AllowedOrigins),
+			CheckOrigin:     makeOriginChecker(cfg.AllowedOrigins),
 		},
 		logger: slog.Default(),
 	}

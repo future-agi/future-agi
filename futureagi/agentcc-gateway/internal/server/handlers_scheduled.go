@@ -14,11 +14,11 @@ import (
 
 // scheduledSubmitRequest is the API request body for submitting a scheduled job.
 type scheduledSubmitRequest struct {
-	ScheduledAt string                          `json:"scheduled_at"` // RFC3339
-	Delay       string                          `json:"delay"`        // Go duration string
-	Request     json.RawMessage                 `json:"request"`
-	WebhookURL  string                          `json:"webhook_url"`
-	Metadata    map[string]string               `json:"metadata"`
+	ScheduledAt string            `json:"scheduled_at"` // RFC3339
+	Delay       string            `json:"delay"`        // Go duration string
+	Request     json.RawMessage   `json:"request"`
+	WebhookURL  string            `json:"webhook_url"`
+	Metadata    map[string]string `json:"metadata"`
 }
 
 // SubmitScheduled handles POST /v1/scheduled.

@@ -148,7 +148,7 @@ func TestCategoryFiltering(t *testing.T) {
 }
 
 func TestAllCategoriesWhenEmpty(t *testing.T) {
-	g := New(nil) // all categories enabled
+	g := New(nil)                                                   // all categories enabled
 	r := g.Check(context.Background(), makeInput("You are stupid")) // toxicity
 	if r.Pass {
 		t.Fatal("expected detection with all categories enabled")
@@ -160,8 +160,8 @@ func TestAllCategoriesWhenEmpty(t *testing.T) {
 func TestWeights_HighWeight(t *testing.T) {
 	// With weight 3.0 on toxicity, a single match should produce higher aggregate.
 	g := New(map[string]interface{}{
-		"categories": []interface{}{"toxicity", "violence"},
-		"weights":    map[string]interface{}{"toxicity": float64(3.0)},
+		"categories":         []interface{}{"toxicity", "violence"},
+		"weights":            map[string]interface{}{"toxicity": float64(3.0)},
 		"category_threshold": 3,
 	})
 	r := g.Check(context.Background(), makeInput("You are stupid"))

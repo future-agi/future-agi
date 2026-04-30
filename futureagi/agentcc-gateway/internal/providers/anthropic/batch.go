@@ -19,21 +19,21 @@ type anthropicBatchRequest struct {
 
 // anthropicBatchRequestItem is a single request within a batch.
 type anthropicBatchRequestItem struct {
-	CustomID string           `json:"custom_id"`
+	CustomID string            `json:"custom_id"`
 	Params   *anthropicRequest `json:"params"`
 }
 
 // anthropicBatchResponse is the response from POST /v1/messages/batches
 // and GET /v1/messages/batches/{id}.
 type anthropicBatchResponse struct {
-	ID               string                    `json:"id"`
-	Type             string                    `json:"type"`
-	ProcessingStatus string                    `json:"processing_status"`
-	RequestCounts    anthropicBatchCounts      `json:"request_counts"`
-	CreatedAt        string                    `json:"created_at"`
-	EndedAt          *string                   `json:"ended_at,omitempty"`
-	ExpiresAt        string                    `json:"expires_at,omitempty"`
-	ResultsURL       *string                   `json:"results_url,omitempty"`
+	ID               string               `json:"id"`
+	Type             string               `json:"type"`
+	ProcessingStatus string               `json:"processing_status"`
+	RequestCounts    anthropicBatchCounts `json:"request_counts"`
+	CreatedAt        string               `json:"created_at"`
+	EndedAt          *string              `json:"ended_at,omitempty"`
+	ExpiresAt        string               `json:"expires_at,omitempty"`
+	ResultsURL       *string              `json:"results_url,omitempty"`
 }
 
 // anthropicBatchCounts tracks per-status request counts in a batch.

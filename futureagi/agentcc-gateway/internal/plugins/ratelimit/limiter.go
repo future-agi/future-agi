@@ -14,9 +14,9 @@ type Limiter interface {
 }
 
 const (
-	windowDuration   = 60 * time.Second
-	cleanupInterval  = 5 * time.Minute
-	staleThreshold   = 2 * windowDuration // evict entries idle for 2 full windows
+	windowDuration  = 60 * time.Second
+	cleanupInterval = 5 * time.Minute
+	staleThreshold  = 2 * windowDuration // evict entries idle for 2 full windows
 )
 
 type windowState struct {

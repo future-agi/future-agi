@@ -33,8 +33,8 @@ func TestStreamChecker_AccumulatesText(t *testing.T) {
 		FailureAction: "stop",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	sc.ProcessChunk(context.Background(), makeChunk("Hello "))
-	sc.ProcessChunk(context.Background(), makeChunk("world"))
+	sc.ProcessChunk(context.Background(), makeChunk("Hello "), nil)
+	sc.ProcessChunk(context.Background(), makeChunk("world"), nil)
 
 	if sc.AccumulatedText() != "Hello world" {
 		t.Errorf("accumulated = %q, want 'Hello world'", sc.AccumulatedText())
@@ -54,7 +54,7 @@ func TestStreamChecker_NoBlockWithoutGuardrails(t *testing.T) {
 		FailureAction: "stop",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	res := sc.ProcessChunk(context.Background(), makeChunk("Hello world this is a test"))
+	res := sc.ProcessChunk(context.Background(), makeChunk("Hello world this is a test"), nil)
 	if res.Blocked {
 		t.Fatal("should not block with no guardrails")
 	}
@@ -89,7 +89,7 @@ func TestStreamChecker_BlocksOnTrigger(t *testing.T) {
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
 	// Send enough content to trigger a check.
-	res := sc.ProcessChunk(context.Background(), makeChunk("This is more than ten characters of content"))
+	res := sc.ProcessChunk(context.Background(), makeChunk("This is more than ten characters of content"), nil)
 	if !res.Blocked {
 		t.Fatal("expected block when guardrail triggers")
 	}
@@ -125,7 +125,7 @@ func TestStreamChecker_DisclaimerMode(t *testing.T) {
 		FailureAction: "disclaimer",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	res := sc.ProcessChunk(context.Background(), makeChunk("Some long content that exceeds the interval"))
+	res := sc.ProcessChunk(context.Background(), makeChunk("Some long content that exceeds the interval"), nil)
 	if res.Blocked {
 		t.Fatal("disclaimer mode should not block")
 	}
@@ -160,13 +160,13 @@ func TestStreamChecker_IntervalRespected(t *testing.T) {
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
 	// Send 5 chars — not enough for a check.
-	sc.ProcessChunk(context.Background(), makeChunk("Hello"))
+	sc.ProcessChunk(context.Background(), makeChunk("Hello"), nil)
 	if checkCount != 0 {
 		t.Errorf("expected 0 checks after 5 chars, got %d", checkCount)
 	}
 
 	// Send 20 more — should trigger a check.
-	sc.ProcessChunk(context.Background(), makeChunk("This is twenty chars!"))
+	sc.ProcessChunk(context.Background(), makeChunk("This is twenty chars!"), nil)
 	if checkCount != 1 {
 		t.Errorf("expected 1 check after 25 chars, got %d", checkCount)
 	}
@@ -197,13 +197,13 @@ func TestStreamChecker_FinishRunsCheck(t *testing.T) {
 		FailureAction: "stop",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	sc.ProcessChunk(context.Background(), makeChunk("Short"))
+	sc.ProcessChunk(context.Background(), makeChunk("Short"), nil)
 	if checkCount != 0 {
 		t.Fatalf("no check expected yet, got %d", checkCount)
 	}
 
 	// Finish should run the final check.
-	sc.Finish(context.Background())
+	sc.Finish(context.Background(), nil)
 	if checkCount != 1 {
 		t.Errorf("expected 1 check on finish, got %d", checkCount)
 	}
@@ -235,14 +235,14 @@ func TestStreamChecker_FinishNoDoubleCheck(t *testing.T) {
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
 	// Send enough to trigger a check.
-	sc.ProcessChunk(context.Background(), makeChunk("Hello World!"))
+	sc.ProcessChunk(context.Background(), makeChunk("Hello World!"), nil)
 	if checkCount != 1 {
 		t.Fatalf("expected 1 check, got %d", checkCount)
 	}
 
 	// Finish should NOT re-check since we just checked at this length.
 	// But we'll add a tiny bit more content to test.
-	res := sc.Finish(context.Background())
+	res := sc.Finish(context.Background(), nil)
 	// lastCheckLen should equal accumulated len, so Finish skips.
 	if res.Blocked {
 		t.Fatal("should not block")
@@ -262,7 +262,7 @@ func TestStreamChecker_EmptyStreamFinish(t *testing.T) {
 		FailureAction: "stop",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	res := sc.Finish(context.Background())
+	res := sc.Finish(context.Background(), nil)
 	if res.Blocked {
 		t.Fatal("empty stream should not block")
 	}
@@ -302,7 +302,7 @@ func TestStreamChecker_WithPolicy(t *testing.T) {
 		FailureAction: "stop",
 	}, p, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	res := sc.ProcessChunk(context.Background(), makeChunk("Lots of content exceeding interval"))
+	res := sc.ProcessChunk(context.Background(), makeChunk("Lots of content exceeding interval"), nil)
 	if res.Blocked {
 		t.Fatal("policy should disable the blocker")
 	}
@@ -341,8 +341,8 @@ func TestStreamChecker_SynthesizesCorrectResponse(t *testing.T) {
 		FailureAction: "stop",
 	}, nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
 
-	sc.ProcessChunk(context.Background(), makeChunk("Hello "))
-	sc.ProcessChunk(context.Background(), makeChunk("World"))
+	sc.ProcessChunk(context.Background(), makeChunk("Hello "), nil)
+	sc.ProcessChunk(context.Background(), makeChunk("World"), nil)
 
 	if capturedContent != "Hello World" {
 		t.Errorf("captured = %q, want 'Hello World'", capturedContent)
@@ -358,8 +358,8 @@ type countingGuardrail struct {
 	callCount *int
 }
 
-func (g *countingGuardrail) Name() string  { return g.name }
-func (g *countingGuardrail) Stage() Stage  { return g.stage }
+func (g *countingGuardrail) Name() string { return g.name }
+func (g *countingGuardrail) Stage() Stage { return g.stage }
 func (g *countingGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	*g.callCount++
 	return g.result
@@ -371,8 +371,8 @@ type inspectorGuardrail struct {
 	onCheck func(*CheckInput) *CheckResult
 }
 
-func (g *inspectorGuardrail) Name() string  { return g.name }
-func (g *inspectorGuardrail) Stage() Stage  { return g.stage }
+func (g *inspectorGuardrail) Name() string { return g.name }
+func (g *inspectorGuardrail) Stage() Stage { return g.stage }
 func (g *inspectorGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	return g.onCheck(input)
 }

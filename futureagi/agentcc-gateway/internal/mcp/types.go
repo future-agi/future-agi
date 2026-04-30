@@ -20,11 +20,11 @@ const ProtocolVersion = "2025-11-25"
 // Message is a JSON-RPC 2.0 message (request, response, or notification).
 type Message struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`      // number or string; nil for notifications
-	Method  string          `json:"method,omitempty"`   // present for requests/notifications
-	Params  json.RawMessage `json:"params,omitempty"`   // present for requests/notifications
-	Result  json.RawMessage `json:"result,omitempty"`   // present for success responses
-	Error   *RPCError       `json:"error,omitempty"`    // present for error responses
+	ID      json.RawMessage `json:"id,omitempty"`     // number or string; nil for notifications
+	Method  string          `json:"method,omitempty"` // present for requests/notifications
+	Params  json.RawMessage `json:"params,omitempty"` // present for requests/notifications
+	Result  json.RawMessage `json:"result,omitempty"` // present for success responses
+	Error   *RPCError       `json:"error,omitempty"`  // present for error responses
 }
 
 // IsRequest returns true if this message is a request (has method and id).
@@ -168,10 +168,10 @@ type PromptsCapability struct {
 
 // Tool describes an MCP tool exposed by a server.
 type Tool struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
-	InputSchema  json.RawMessage `json:"inputSchema"`
-	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  json.RawMessage  `json:"inputSchema"`
+	OutputSchema json.RawMessage  `json:"outputSchema,omitempty"`
 	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
 }
 
@@ -303,15 +303,15 @@ func ValidateToolName(name string) bool {
 // --- MCP Method Constants ---
 
 const (
-	MethodInitialize          = "initialize"
-	MethodInitialized         = "notifications/initialized"
-	MethodToolsList           = "tools/list"
-	MethodToolsCall           = "tools/call"
-	MethodResourcesList       = "resources/list"
-	MethodResourcesRead       = "resources/read"
-	MethodPromptsList         = "prompts/list"
-	MethodPromptsGet          = "prompts/get"
-	MethodPing                = "ping"
-	MethodToolsListChanged    = "notifications/tools/list_changed"
-	MethodCancelled           = "notifications/cancelled"
+	MethodInitialize       = "initialize"
+	MethodInitialized      = "notifications/initialized"
+	MethodToolsList        = "tools/list"
+	MethodToolsCall        = "tools/call"
+	MethodResourcesList    = "resources/list"
+	MethodResourcesRead    = "resources/read"
+	MethodPromptsList      = "prompts/list"
+	MethodPromptsGet       = "prompts/get"
+	MethodPing             = "ping"
+	MethodToolsListChanged = "notifications/tools/list_changed"
+	MethodCancelled        = "notifications/cancelled"
 )

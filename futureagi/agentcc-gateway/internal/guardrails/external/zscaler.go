@@ -23,7 +23,7 @@ type zscalerRequest struct {
 }
 
 type zscalerResponse struct {
-	Matched    bool                `json:"matched"`
+	Matched    bool               `json:"matched"`
 	Violations []zscalerViolation `json:"violations"`
 }
 

@@ -12,10 +12,10 @@ import (
 // It maps organization IDs to their merged OrgConfig. All methods are safe
 // for concurrent use.
 type Store struct {
-	mu          sync.RWMutex
-	configs     map[string]*OrgConfig
-	configHash  map[string][32]byte      // SHA-256 of serialized config per org
-	onChange    func(orgID string)        // optional callback fired when an org config changes
+	mu         sync.RWMutex
+	configs    map[string]*OrgConfig
+	configHash map[string][32]byte // SHA-256 of serialized config per org
+	onChange   func(orgID string)  // optional callback fired when an org config changes
 }
 
 // NewStore creates a new empty tenant config store.
@@ -89,11 +89,12 @@ func (s *Store) LoadBulk(configs map[string]*OrgConfig) {
 }
 
 // MergeBulk merges successfully parsed org configs into the store.
-// - Orgs in parsedConfigs are added or updated.
-// - Orgs present in the control plane response (allOrgIDs) but NOT in
-//   parsedConfigs failed to parse — their existing store entries are preserved.
-// - Orgs in the store that are NOT in allOrgIDs were removed from the control
-//   plane — they are deleted from the store.
+//   - Orgs in parsedConfigs are added or updated.
+//   - Orgs present in the control plane response (allOrgIDs) but NOT in
+//     parsedConfigs failed to parse — their existing store entries are preserved.
+//   - Orgs in the store that are NOT in allOrgIDs were removed from the control
+//     plane — they are deleted from the store.
+//
 // Fires the onChange callback for each org that was added, updated, or removed.
 func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[string]struct{}) {
 	s.mu.Lock()
