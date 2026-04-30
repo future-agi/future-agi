@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCompositeSourceModeProps } from "./evalPickerConfigUtils";
+import {
+  buildCompositeSourceModeProps,
+  getSourceModeVariables,
+} from "./evalPickerConfigUtils";
 
 describe("buildCompositeSourceModeProps", () => {
   it("does not expose adhoc config for non-composite evals", () => {
@@ -49,5 +52,27 @@ describe("buildCompositeSourceModeProps", () => {
         pass_threshold: 0.7,
       },
     });
+  });
+});
+
+describe("getSourceModeVariables", () => {
+  it("returns base variables for non-composite evals", () => {
+    expect(
+      getSourceModeVariables({
+        isComposite: false,
+        variables: ["input"],
+        compositeUnionKeys: ["child_input"],
+      }),
+    ).toEqual(["input"]);
+  });
+
+  it("returns composite union keys for composite evals", () => {
+    expect(
+      getSourceModeVariables({
+        isComposite: true,
+        variables: ["input"],
+        compositeUnionKeys: ["child_input", "child_output"],
+      }),
+    ).toEqual(["child_input", "child_output"]);
   });
 });
