@@ -47,6 +47,7 @@ import { QueryInput } from "src/components/filter-panel";
 // ---------------------------------------------------------------------------
 const TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
+  { value: "span_name", label: "Span Name", type: "string" },
   {
     value: "status",
     label: "Status",
