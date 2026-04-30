@@ -132,7 +132,7 @@ export default function ContentPanel({ item }) {
   if (sourceType === "call_execution") {
     return (
       <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
-        <SimulationContent content={content} />
+        <SimulationContent hideAnnotationTab={true} content={content} />
       </Box>
     );
   }
@@ -669,6 +669,7 @@ function VoiceCallContent({ traceId }) {
         data={drawerData}
         onClose={() => {}}
         hasPrev={false}
+        hideAnnotationTab={true}
         hasNext={false}
         scenarioId={drawerData.scenarioId}
         embedded
@@ -1181,7 +1182,7 @@ PrototypeContent.propTypes = {
 // ---------------------------------------------------------------------------
 // Simulation Content — reuses the same components as the Call Log Details drawer
 // ---------------------------------------------------------------------------
-function SimulationContent({ content }) {
+function SimulationContent({ content, hideAnnotationTab=false }) {
   const callId = content?.call_id;
 
   const { data: callData, isLoading } = useQuery({
@@ -1469,6 +1470,7 @@ function SimulationContent({ content }) {
               status={drawerData.status}
               simulationCallType={drawerData.simulationCallType}
               sessionId={drawerData.sessionId}
+              hideAnnotationTab={hideAnnotationTab}
             />
           </Box>
         </Grid>
@@ -1479,6 +1481,7 @@ function SimulationContent({ content }) {
 
 SimulationContent.propTypes = {
   content: PropTypes.object,
+    hideAnnotationTab: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
