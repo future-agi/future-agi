@@ -142,6 +142,7 @@ SortablePromptCard.propTypes = {
   onImprovePrompt: PropTypes.func,
   existingRoles: PropTypes.array,
   allowAttachment: PropTypes.bool,
+  jinjaMode: PropTypes.bool,
 };
 
 const PromptSection = ({
@@ -550,6 +551,7 @@ PromptSection.propTypes = {
   syncSystemPrompt: PropTypes.func,
   placeholders: PropTypes.array,
   setPlaceholders: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
 
 export default PromptSection;

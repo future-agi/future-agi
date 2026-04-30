@@ -150,6 +150,7 @@ SortablePromptCard.propTypes = {
   dropdownOptions: PropTypes.array,
   mentionEnabled: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
 
 export default function PromptMessageRow({
@@ -498,4 +499,5 @@ PromptMessageRow.propTypes = {
   dropdownOptions: PropTypes.array,
   mentionEnabled: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
