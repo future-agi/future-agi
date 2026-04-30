@@ -1,0 +1,41 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting tools
+        run: pip install ruff black
+
+      - name: Get changed Python files
+        id: changed
+        run: |
+          base=${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          files=$(git diff --name-only "$base"...HEAD -- 'futureagi/**.py' | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "Changed Python files: $files"
+
+      - name: ruff
+        if: steps.changed.outputs.files != ''
+        run: ruff check ${{ steps.changed.outputs.files }}
+
+      - name: black
+        if: steps.changed.outputs.files != ''
+        run: black --check ${{ steps.changed.outputs.files }}
