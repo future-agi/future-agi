@@ -418,9 +418,8 @@ class CreateScenarioView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to create scenario: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to create scenario: {str(e)}"
             )
 
     def _create_temp_scenario(self, request, validated_data):
