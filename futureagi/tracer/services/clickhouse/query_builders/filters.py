@@ -381,9 +381,7 @@ class ClickHouseFilterBuilder:
         if col_id == "user_id":
             if filter_value is None or filter_value == "":
                 return None
-            values = (
-                filter_value if isinstance(filter_value, list) else [filter_value]
-            )
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
             values = [str(v) for v in values if v not in (None, "")]
             if not values:
                 return None
@@ -414,8 +412,10 @@ class ClickHouseFilterBuilder:
         if col_type == self.SYSTEM_METRIC and col_id not in self.SYSTEM_METRIC_MAP:
             try:
                 import uuid as _uuid
+
                 _uuid.UUID(str(col_id))
                 from model_hub.models.evals_metric import EvalTemplate
+
                 if EvalTemplate.no_workspace_objects.filter(
                     id=col_id, deleted=False
                 ).exists():
@@ -497,9 +497,8 @@ class ClickHouseFilterBuilder:
             # column so OTel attribute aliases (e.g.
             # ``gen_ai.usage.total_tokens``) are caught.
             mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
-            is_root_only = (
-                col_id in self.ROOT_ONLY_SYSTEM_METRICS
-                or (mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS)
+            is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
+                mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
             )
             root_clause = (
                 "AND (parent_span_id IS NULL OR parent_span_id = '') "
@@ -731,8 +730,8 @@ class ClickHouseFilterBuilder:
         dispatches on the template's output type (SCORE / PASS_FAIL / CHOICE)
         to compare the correct column in ``tracer_eval_logger``.
         """
-        from tracer.models.custom_eval_config import CustomEvalConfig
         from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
 
         project_ids = getattr(self, "project_ids", None)
 
@@ -747,9 +746,11 @@ class ClickHouseFilterBuilder:
                 cfg_qs = cfg_qs.filter(project_id__in=project_ids)
             config_ids = [str(x) for x in cfg_qs.values_list("id", flat=True)]
 
-            tmpl = EvalTemplate.no_workspace_objects.filter(
-                id=eval_id, deleted=False
-            ).values("config").first()
+            tmpl = (
+                EvalTemplate.no_workspace_objects.filter(id=eval_id, deleted=False)
+                .values("config")
+                .first()
+            )
             if tmpl and isinstance(tmpl.get("config"), dict):
                 ot = (
                     (tmpl["config"].get("output") or "")

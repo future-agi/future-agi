@@ -3444,6 +3444,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }
               }}
               isSimulator={projectSource === PROJECT_SOURCE.SIMULATOR}
+              isSpansView={selectedTab === "spans"}
               excludeSimulationCalls={!!excludeSimulationCalls}
               onToggleSimulationCalls={() =>
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)
