@@ -84,6 +84,7 @@ const WorkbenchProvider = ({ children }) => {
   const [promptName, setPromptName] = useState("");
   const [openSelectModel, setOpenSelectModel] = useState(null);
   const [valuesChanged, setValuesChanged] = useState(false);
+  const [templateFormat, setTemplateFormat] = useState("mustache");
   const stoppedIds = useRef([]);
   const runningVersionIndexMapping = useRef({});
   const activeSocketsRef = useRef({});
@@ -555,6 +556,10 @@ const WorkbenchProvider = ({ children }) => {
         ...modelConfigDefault,
         ...normalizeConfigurationForLoad(data?.prompt_config?.[0]?.configuration),
       });
+      const savedFormat = data?.prompt_config?.[0]?.configuration?.template_format;
+      if (savedFormat) {
+        setTemplateFormat(savedFormat);
+      }
     }
     if (data?.output?.length && !results?.[0]?.output?.length) {
       setResultsByIndex(0, {
@@ -720,6 +725,7 @@ const WorkbenchProvider = ({ children }) => {
       const configuration = normalizeConfigurationForSave(currentConfig);
       configuration["tool_choice"] =
         currentConfig?.tools?.length > 0 ? "auto" : "";
+      configuration["template_format"] = templateFormat || "mustache";
 
       const selectedVersion = selectedVersions[index];
 
@@ -732,7 +738,7 @@ const WorkbenchProvider = ({ children }) => {
         return acc;
       }, {});
 
-      const finalVariables = getVariables(currentPrompts, variableData);
+      const finalVariables = getVariables(currentPrompts, variableData, templateFormat);
 
       const sanitizedMessages = currentPrompts?.map(({ id, ...rest }) => {
         return {
@@ -777,6 +783,7 @@ const WorkbenchProvider = ({ children }) => {
       variableData,
       placeholders,
       placeholderData,
+      templateFormat,
     ],
   );
 
@@ -1010,6 +1017,14 @@ const WorkbenchProvider = ({ children }) => {
       setSelectedVersions,
     ],
   );
+
+  // Auto-save when user changes template format (skip initial load from API).
+  const templateFormatUserChanged = useRef(false);
+  useEffect(() => {
+    if (!templateFormatUserChanged.current) return;
+    saveAndDraftAll();
+    templateFormatUserChanged.current = false;
+  }, [templateFormat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRestoreVersion = (version) => {
     setSelectedVersionByIndex(0, (prev) => {
@@ -1308,7 +1323,7 @@ const WorkbenchProvider = ({ children }) => {
       setVariableData(...v);
       const saveDraftIndexes = prompts.reduce(
         (acc, { prompts: currentPrompts }, i) => {
-          const finalVariables = getVariables(currentPrompts, v[0]);
+          const finalVariables = getVariables(currentPrompts, v[0], templateFormat);
           if (Object.keys(finalVariables).length) {
             acc.push(i);
           }
@@ -1416,6 +1431,11 @@ const WorkbenchProvider = ({ children }) => {
         pushStoppedIds,
         closeSocketByIndex,
         setModelConfig,
+        templateFormat,
+        setTemplateFormat: (v) => {
+          templateFormatUserChanged.current = true;
+          setTemplateFormat(v);
+        },
       }}
     >
       {children}

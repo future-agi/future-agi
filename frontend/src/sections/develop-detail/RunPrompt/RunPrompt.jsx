@@ -13,6 +13,7 @@ import {
   Stack,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import PropTypes from "prop-types";
 import React, {
   useImperativeHandle,
@@ -443,24 +444,43 @@ export const RunPromptForm = React.forwardRef(
     const userChangedModelRef = useRef(false);
     // Track which model the current modelParameters state belongs to
     const modelParametersModelRef = useRef(watchedModel);
+    const watchedTemplateFormat = watch("config.template_format");
 
-    watchedMessages?.forEach((message) => {
-      if (!message) return;
-      const content = message.content;
-      if (Array.isArray(content)) {
-        content.forEach((part) => {
-          if (part.type === "text" && part.text) {
-            const invalids = findInvalidVariables(
-              part.text,
-              allColumns,
-              jsonSchemas,
-              derivedVariables,
-            );
-            allInvalidVariables.push(...invalids);
-          }
-        });
-      }
-    });
+    if (watchedTemplateFormat === "jinja") {
+      // Jinja mode: use AST extraction to find real input variables,
+      // then validate those against dataset columns.
+      const allText = (watchedMessages || [])
+        .flatMap((m) => m?.content || [])
+        .filter((c) => c?.type === "text" && c?.text)
+        .map((c) => c.text)
+        .join("\n");
+      const jinjaVars = extractJinjaVariables(allText);
+      const normalize = (s) => (s || "").toLowerCase();
+      jinjaVars.forEach((v) => {
+        const isValid = allColumns?.some(
+          (col) => normalize(col?.headerName) === normalize(v),
+        );
+        if (!isValid) allInvalidVariables.push(v);
+      });
+    } else {
+      watchedMessages?.forEach((message) => {
+        if (!message) return;
+        const content = message.content;
+        if (Array.isArray(content)) {
+          content.forEach((part) => {
+            if (part.type === "text" && part.text) {
+              const invalids = findInvalidVariables(
+                part.text,
+                allColumns,
+                jsonSchemas,
+                derivedVariables,
+              );
+              allInvalidVariables.push(...invalids);
+            }
+          });
+        }
+      });
+    }
 
     const validateForm = async () => {
       try {
@@ -843,6 +863,8 @@ export const RunPromptForm = React.forwardRef(
         ? originalResponseFormat
         : getResponseFormat(originalResponseFormat); // fallback
 
+      const isJinja = data?.config?.template_format === "jinja";
+
       buildRunPromptConfig(data, modelParameters, reasoningState, modelType);
 
       const configEntries = {
@@ -853,27 +875,38 @@ export const RunPromptForm = React.forwardRef(
           let content = rest.content;
 
           if (Array.isArray(content)) {
-            content = content.map((part) => {
-              if (part.type === "text" && part.text) {
-                let updatedText = sanitizeContent(part.text);
+            if (isJinja) {
+              // Jinja mode: sanitize text but skip per-{{ }} variable replacement.
+              // Variable validation is done below via extractJinjaVariables.
+              content = content.map((part) => {
+                if (part.type === "text" && part.text) {
+                  return { ...part, text: sanitizeContent(part.text) };
+                }
+                return part;
+              });
+            } else {
+              content = content.map((part) => {
+                if (part.type === "text" && part.text) {
+                  let updatedText = sanitizeContent(part.text);
 
-                // Extract all variables in the format {{ variable }}
-                const variablePattern = /{{\s*([^{}]+?)\s*}}/g;
-                const matches = [...updatedText.matchAll(variablePattern)];
+                  // Extract all variables in the format {{ variable }}
+                  const variablePattern = /{{\s*([^{}]+?)\s*}}/g;
+                  const matches = [...updatedText.matchAll(variablePattern)];
 
-                const result = replaceVariablesWithFields(
-                  updatedText,
-                  matches,
-                  allColumns,
-                  jsonSchemas,
-                );
-                updatedText = result.text;
-                inValidVariables.push(...result.invalidVariables);
+                  const result = replaceVariablesWithFields(
+                    updatedText,
+                    matches,
+                    allColumns,
+                    jsonSchemas,
+                  );
+                  updatedText = result.text;
+                  inValidVariables.push(...result.invalidVariables);
 
-                return { ...part, text: updatedText };
-              }
-              return part;
-            });
+                  return { ...part, text: updatedText };
+                }
+                return part;
+              });
+            }
           }
 
           return {
@@ -882,6 +915,24 @@ export const RunPromptForm = React.forwardRef(
           };
         }),
       };
+
+      // In Jinja mode, validate input variables (from AST) against dataset columns
+      if (isJinja) {
+        const allText = configEntries.messages
+          .flatMap((m) => m.content)
+          .filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text)
+          .join("\n");
+        const jinjaVars = extractJinjaVariables(allText);
+        const columnNames = allColumns.map((c) =>
+          (c.headerName || "").toLowerCase(),
+        );
+        jinjaVars.forEach((v) => {
+          if (!columnNames.includes(v.toLowerCase())) {
+            inValidVariables.push(v);
+          }
+        });
+      }
 
       // Rename camelCase config keys to snake_case for the API
       const camelToSnakeMap = {

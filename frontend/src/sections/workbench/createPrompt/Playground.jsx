@@ -30,6 +30,7 @@ const Playground = () => {
     setImportDatasetDrawerOpen,
     setVariableData,
     setPlaceholdersByIndex,
+    templateFormat,
   } = usePromptWorkbenchContext();
 
   const {
@@ -54,7 +55,7 @@ const Playground = () => {
     setVariableDrawerOpen(true);
   };
 
-  const variables = useExtractAllVariables(prompts);
+  const variables = useExtractAllVariables(prompts, templateFormat);
 
   return (
     <Box

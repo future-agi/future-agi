@@ -5,14 +5,27 @@ import {
   KNOWN_FORMAT_VALUES,
 } from "../nodeFormUtils";
 
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
+
 /**
  * Extract variables from content blocks
  * @param {Array} content - Array of content blocks
+ * @param {string} [templateFormat] - "jinja" for Jinja2 AST extraction, otherwise regex
  * @returns {Array} Array of variable names found in the content
  */
-export const extractVariablesFromContent = (content) => {
+export const extractVariablesFromContent = (content, templateFormat) => {
   if (!Array.isArray(content)) return [];
 
+  if (templateFormat === "jinja") {
+    // Collect all text, then use Jinja2 AST extraction
+    const allText = content
+      .filter((block) => block.type === "text" && block.text)
+      .map((block) => block.text)
+      .join("\n");
+    return extractJinjaVariables(allText);
+  }
+
+  // Default: mustache {{ }} regex
   const variables = new Set();
   const variablePattern = /{{\s*([^{}]+?)\s*}}/g;
 
@@ -95,6 +108,7 @@ export function buildPromptNodePayload(
     ...sliderValues,
     responseFormat: resolvedFormat,
     reasoning,
+    template_format: formData.templateFormat || "mustache",
   };
 
   // Build payload matching workbench format
@@ -169,6 +183,7 @@ export function buildPatchPayload(nodeUpdate, config) {
       tools: promptPayloadConfig?.tools || cfg.modelConfig?.tools || [],
       tool_choice:
         promptPayloadConfig?.tool_choice || cfg.modelConfig?.toolChoice || "",
+      template_format: promptPayloadConfig?.template_format || cfg.templateFormat || "mustache",
       save_prompt_version: false,
     };
   }
@@ -204,6 +219,7 @@ export function mapPatchResponseToStoreData(response) {
     storeData.config = {
       prompt_template_id: pt.prompt_template_id,
       prompt_version_id: pt.prompt_version_id,
+      templateFormat: pt.template_format || "mustache",
       modelConfig: {
         model: pt.model || "",
         modelDetail: pt.model_detail || {},
@@ -231,6 +247,7 @@ export function mapPatchResponseToStoreData(response) {
               presencePenalty: pt.presence_penalty,
               tools: pt.tools || [],
               toolChoice: pt.tool_choice || "auto",
+              template_format: pt.template_format || "mustache",
             },
           },
         ],

@@ -54,6 +54,7 @@ const SortablePromptCard = ({
   onImprovePrompt,
   existingRoles,
   allowAttachment = false,
+  jinjaMode = false,
 }) => {
   const {
     attributes,
@@ -117,6 +118,7 @@ const SortablePromptCard = ({
         }}
         hideExpandedHeader
         showEditEmbed
+        jinjaMode={jinjaMode}
       />
     </Box>
   );
@@ -168,6 +170,7 @@ const PromptSection = ({
     loadingPrompt,
     openSelectModel,
     setOpenSelectModel,
+    templateFormat,
   } = usePromptWorkbenchContext();
 
   const [openGeneratePromptDrawer, setOpenGeneratePromptDrawer] = useState({
@@ -413,6 +416,7 @@ const PromptSection = ({
                     }
                     existingRoles={existingRoles}
                     allowAttachment={isChatModel}
+                    jinjaMode={templateFormat === "jinja"}
                   />
                 );
               })}

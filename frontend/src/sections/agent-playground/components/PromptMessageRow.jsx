@@ -45,6 +45,7 @@ const SortablePromptCard = ({
   dropdownOptions,
   mentionEnabled,
   variableValidator,
+  jinjaMode = false,
 }) => {
   const {
     attributes,
@@ -110,6 +111,7 @@ const SortablePromptCard = ({
                 mentionEnabled={mentionEnabled}
                 variableValidator={variableValidator}
                 allVariablesValid={!variableValidator}
+                jinjaMode={jinjaMode}
               />
               {
                 // @ts-ignore
@@ -158,6 +160,7 @@ export default function PromptMessageRow({
   dropdownOptions = [],
   mentionEnabled = false,
   variableValidator,
+  jinjaMode = false,
 }) {
   const theme = useTheme();
   const { formState } = useFormContext();
@@ -356,6 +359,7 @@ export default function PromptMessageRow({
               dropdownOptions={dropdownOptions}
               mentionEnabled={mentionEnabled}
               variableValidator={variableValidator}
+              jinjaMode={jinjaMode}
             />
           ))}
         </SortableContext>
