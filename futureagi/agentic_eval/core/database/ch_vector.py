@@ -130,7 +130,10 @@ class ClickHouseVectorDB:
         """
         start_time = datetime.now()
 
-        self.client.execute(create_table_query)
+        self.client.execute(
+            create_table_query,
+            settings={"data_type_default_nullable": 0},
+        )
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
