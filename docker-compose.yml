@@ -520,15 +520,8 @@ services:
 
 
 volumes:
-  # Aliased onto the legacy volumes so the 9 GB Postgres + 3.4 GB ClickHouse
-  # data from the old core-backend setup stays mounted. Drop `external: true`
-  # and the `name:` override on a fresh machine to let Compose create them.
   postgres-data:
-    external: true
-    name: core-backend_database-data
   clickhouse-data:
-    external: true
-    name: core-backend_clickhouse_data
   redis-data:
   minio-data:
   peerdb-catalog-data:
