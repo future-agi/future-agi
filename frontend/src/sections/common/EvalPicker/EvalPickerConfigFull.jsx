@@ -67,6 +67,7 @@ import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
+  getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
@@ -289,6 +290,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         compositeChildWeights,
       }),
     [isComposite, fullEval, compositeDetail, compositeChildWeights],
+  );
+
+  const sourceModeVariables = useMemo(
+    () =>
+      getSourceModeVariables({
+        isComposite,
+        variables,
+        compositeUnionKeys,
+      }),
+    [isComposite, variables, compositeUnionKeys],
   );
 
   const hasValidPromptMessages = useMemo(
@@ -1458,7 +1469,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={isComposite ? compositeUnionKeys : variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1473,7 +1484,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={isComposite ? compositeUnionKeys : variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1500,7 +1511,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1510,6 +1521,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "custom" && (

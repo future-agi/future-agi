@@ -110,3 +110,9 @@ export const buildCompositeSourceModeProps = ({
     },
   };
 };
+
+export const getSourceModeVariables = ({
+  isComposite,
+  variables = [],
+  compositeUnionKeys = [],
+}) => (isComposite ? compositeUnionKeys : variables);
