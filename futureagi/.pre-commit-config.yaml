@@ -16,13 +16,20 @@ repos:
       - id: check-docstring-first
       - id: debug-statements
 
-  # Python linting, import sorting, and formatting (replaces black + isort)
+  # Python linting and import sorting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.2
+    rev: v0.15.12
     hooks:
       - id: ruff
         args: [--fix]
-      - id: ruff-format
+
+  # Python formatting
+  - repo: https://github.com/psf/black
+    rev: 26.3.1
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=88]
 
 default_language_version:
   python: python3

@@ -43,10 +43,10 @@ test-shell:
 # Code Quality
 lint:
 	@ruff check . --fix
-	@ruff format . --check
+	@black --check .
 
 format:
-	@ruff format .
+	@black .
 	@ruff check . --fix
 
 mypy:
