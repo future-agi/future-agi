@@ -3717,6 +3717,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
                 "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
+                "avg_agent_latency_ms": attrs.get("avg_agent_latency_ms"),
+                "user_wpm": attrs.get(CallAttributes.USER_WPM),
+                "bot_wpm": attrs.get(CallAttributes.BOT_WPM),
+                "user_interruption_count": attrs.get("user_interruption_count"),
+                "ai_interruption_count": attrs.get("ai_interruption_count"),
             }
             if stored_duration is not None:
                 result["duration_seconds"] = stored_duration
@@ -4025,6 +4030,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
             "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
+            "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms")
+            or span_attr_num.get("avg_agent_latency_ms"),
+            "user_wpm": span_attrs.get(CallAttributes.USER_WPM)
+            or span_attr_num.get(CallAttributes.USER_WPM),
+            "bot_wpm": span_attrs.get(CallAttributes.BOT_WPM)
+            or span_attr_num.get(CallAttributes.BOT_WPM),
+            "user_interruption_count": span_attrs.get("user_interruption_count")
+            or span_attr_num.get("user_interruption_count"),
+            "ai_interruption_count": span_attrs.get("ai_interruption_count")
+            or span_attr_num.get("ai_interruption_count"),
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
