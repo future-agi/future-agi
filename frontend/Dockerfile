@@ -5,24 +5,13 @@ FROM node:20.17 AS build
 
 WORKDIR /app
 
-# Install deps first, before any ARG/ENV that could change between builds.
-# Putting build-args above this layer would invalidate `yarn install` every
-# time a VITE_* value changes — those values aren't needed for the install,
-# only for `yarn build` below.
+# Keep ARG/ENV below this RUN so VITE_* changes don't bust the install cache.
 COPY package.json yarn.lock ./
-# BuildKit cache mount keeps yarn's package cache on the host between
-# builds, so even if this layer's cache misses (e.g. after Dockerfile
-# changes or CI eviction), yarn doesn't re-download from npm — it resolves
-# from the local cache and finishes in seconds.
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked \
     yarn install --frozen-lockfile
 
 COPY . ./
 
-# Build args forwarded from docker-compose. Vite reads env vars prefixed
-# VITE_ at build time and bakes them into the bundle. Keep this list in sync
-# with the build.args block in docker-compose.yml / docker-compose.frontend.yml
-# and the VITE_* keys in the root .env / .env.example.
 ARG VITE_HOST_API=http://localhost:8000
 ARG VITE_ASSETS_API=
 ARG VITE_ENVIRONMENT=production

@@ -1,13 +1,7 @@
-# ============================================================================
-# Future AGI — OSS backend image
-# Builds on top of the public `futureagi/future-agi` base image, which already
-# has the system deps (supervisor, nginx, ffmpeg, build tools, libxmlsec1, …)
-# and the Python requirements pre-installed. This keeps `docker compose up`
-# from re-running the slow apt-get + uv pip install chain on every build.
-# Build context: ./futureagi (see docker-compose.yml).
-# ============================================================================
+# Future AGI — OSS backend image. Builds on the public base image which has
+# the system deps + Python requirements pre-installed.
 
-FROM futureagi/future-agi:v1.8.19_base
+FROM futureagi/future-agi:v1.8.19_base@sha256:173e862bbae2ef29dc29d9266db41e9932a1728058ba2b21c759a56328dff8db
 
 COPY . .
 

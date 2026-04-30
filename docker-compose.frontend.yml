@@ -21,10 +21,6 @@ services:
     build:
       context: ./frontend
       args:
-        # Baked into the Vite bundle at build time. Keep in sync with the
-        # ARG / ENV list in frontend/Dockerfile and the VITE_* keys in .env.
-        # If you change any of these, rebuild with
-        #   docker compose -f docker-compose.frontend.yml build
         VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
         VITE_ASSETS_API: ${VITE_ASSETS_API:-}
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-production}
