@@ -27,8 +27,8 @@ jobs:
       - name: Get changed Python files
         id: changed
         run: |
-          base=${{ github.event.pull_request.base.sha || 'HEAD~1' }}
-          files=$(git diff --name-only "$base"...HEAD -- 'futureagi/**.py' | tr '\n' ' ')
+          merge_base=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          files=$(git diff --name-only "$merge_base" HEAD -- '*.py' | tr '\n' ' ')
           echo "files=$files" >> $GITHUB_OUTPUT
           echo "Changed Python files: $files"
 
