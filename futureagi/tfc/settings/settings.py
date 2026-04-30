@@ -413,8 +413,17 @@ ANYMAIL = {
         "MAILGUN_SENDER_DOMAIN"
     ),  # your Mailgun domain, if needed
 }
-EMAIL_BACKEND = (
-    "anymail.backends.mailgun.EmailBackend"  # or sendgrid.EmailBackend, or...
+# Email backend — env-overridable. When self-hosting without an ESP, set
+# EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend so password,
+# reset, and invite emails print to stdout (`docker compose logs backend`)
+# instead of silently failing through anymail. The default below auto-falls-
+# back to the console backend when MAILGUN_API_KEY is unset, so a fresh
+# self-host install can complete its first signup without any extra config.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "anymail.backends.mailgun.EmailBackend"
+    if os.getenv("MAILGUN_API_KEY")
+    else "django.core.mail.backends.console.EmailBackend",
 )
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"
