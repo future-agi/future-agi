@@ -364,17 +364,26 @@ const EvaluationDrawerChild = ({
                     disableDeleteReason="An experiment must have at least one evaluation"
                     onDeleteEvalClick={async (evalItem) => {
                       try {
-                        await axios.delete(
-                          endpoints.develop.eval.deleteEval(id, evalItem.id),
-                          {
-                            data: {
-                              delete_column: true,
-                              ...(module === "experiment" && experimentId
-                                ? { experiment_id: experimentId }
-                                : {}),
+                        if (module === "workbench") {
+                          await axios.delete(
+                            endpoints.develop.runPrompt.deleteEvalConfig(
+                              id,
+                              evalItem.id,
+                            ),
+                          );
+                        } else {
+                          await axios.delete(
+                            endpoints.develop.eval.deleteEval(id, evalItem.id),
+                            {
+                              data: {
+                                delete_column: true,
+                                ...(module === "experiment" && experimentId
+                                  ? { experiment_id: experimentId }
+                                  : {}),
+                              },
                             },
-                          },
-                        );
+                          );
+                        }
                         enqueueSnackbar(`${evalItem.name} deleted`, {
                           variant: "success",
                         });
