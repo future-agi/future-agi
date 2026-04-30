@@ -1332,7 +1332,7 @@ const TraceFilterPanel = ({
     // In the spans view, replace "Trace Name" with "Span Name"
     const staticProps = TRACE_FILTER_FIELDS.map((f) => {
       if (isSpansView && f.value === "name") {
-        return { id: "span_name", name: "Span Name", category: "system", type: "string" };
+        return { id: "name", name: "Span Name", category: "system", type: "string" };
       }
       return {
         id: f.value,
