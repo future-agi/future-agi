@@ -47,6 +47,7 @@ import { QueryInput } from "src/components/filter-panel";
 // ---------------------------------------------------------------------------
 const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
+  { value: "span_name", label: "Span Name", type: "string" },
   {
     value: "status",
     label: "Status",
@@ -1368,6 +1369,7 @@ const TraceFilterPanel = ({
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
+  isSpansView = false,
 }) => {
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
@@ -1382,17 +1384,22 @@ const TraceFilterPanel = ({
     if (propertiesOverride) return propertiesOverride;
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
-    // trace or span tab.
+    // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
     const ID_FIELDS = new Set(["trace_id", "span_id"]);
-    const staticProps = getTraceFilterFields(tab).map((f) => ({
-      id: f.value,
-      name: f.label,
-      // trace_id / span_id are direct column filters — omit category so
-      // col_type is not injected (the backend handles them without it).
-      ...(!ID_FIELDS.has(f.value) && { category: "system" }),
-      type: f.type === "enum" ? "string" : f.type,
-      ...(f.choices ? { choices: f.choices } : {}),
-    }));
+    const staticProps = getTraceFilterFields(tab).map((f) => {
+      if (isSpansView && f.value === "name") {
+        return { id: "name", name: "Span Name", category: "system", type: "string" };
+      }
+      return {
+        id: f.value,
+        name: f.label,
+        // trace_id / span_id are direct column filters — omit category so
+        // col_type is not injected (the backend handles them without it).
+        ...(!ID_FIELDS.has(f.value) && { category: "system" }),
+        type: f.type === "enum" ? "string" : f.type,
+        ...(f.choices ? { choices: f.choices } : {}),
+      };
+    });
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
@@ -1407,7 +1414,7 @@ const TraceFilterPanel = ({
         type: f.type || "string",
       }));
     return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride, tab]);
+  }, [dynamicProperties, filterFields, propertiesOverride, tab, isSpansView]);
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
   const effectiveCategories = categoriesOverride ?? CATEGORIES;
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
@@ -1798,6 +1805,7 @@ TraceFilterPanel.propTypes = {
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(TraceFilterPanel);

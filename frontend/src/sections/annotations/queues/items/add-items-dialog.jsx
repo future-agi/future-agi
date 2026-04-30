@@ -543,25 +543,9 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
           setIsResolving(false);
         }
       } else {
-        let ids = Array.from(selectedIds);
-        let effectiveSourceType = sourceType;
-
-        if (sourceType === "trace") {
-          const rootSpanMap = await fetchRootSpans(ids);
-          const originalCount = ids.length;
-          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-          effectiveSourceType = "observation_span";
-          const droppedCount = originalCount - ids.length;
-          if (droppedCount > 0) {
-            enqueueSnackbar(
-              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-              { variant: "warning" },
-            );
-          }
-        }
-
+        const ids = Array.from(selectedIds);
         itemsToAdd = ids.map((id) => ({
-          source_type: effectiveSourceType,
+          source_type: sourceType,
           source_id: id,
         }));
       }

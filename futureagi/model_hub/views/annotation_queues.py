@@ -1076,24 +1076,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         label_id = request.data.get("label_id")
         required = _is_truthy(request.data.get("required", True))
 
-        if required:
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(
-                    str(org.id), "has_required_labels"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
-
         if not label_id:
             return self._gm.bad_request("label_id is required.")
 
@@ -2157,27 +2139,23 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             .select_related("label")
             .order_by("order")
         )
-        # For items pending review, return all annotations so reviewers
-        # can see the annotator's submitted values. Only expose to users
-        # with reviewer or manager role to prevent information leaks.
+        # Reviewers and managers always see every annotator's scores —
+        # the role is the privacy boundary, and view-only mode would be
+        # useless without the values it's trying to display. Regular
+        # annotators only see their own scores.
         is_reviewer = AnnotationQueueAnnotator.objects.filter(
             queue_id=queue_id,
             user=request.user,
             role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
             deleted=False,
         ).exists()
-        review_status_pending = "pending_review"
-        if item.review_status == review_status_pending and is_reviewer:
-            annotations = Score.objects.filter(
-                queue_item=item,
-                deleted=False,
-            ).select_related("label")
-        else:
-            annotations = Score.objects.filter(
-                queue_item=item,
-                annotator=request.user,
-                deleted=False,
-            ).select_related("label")
+        annotations_qs = Score.objects.filter(
+            queue_item=item,
+            deleted=False,
+        ).select_related("label")
+        if not is_reviewer:
+            annotations_qs = annotations_qs.filter(annotator=request.user)
+        annotations = annotations_qs
 
         # Compute overall progress (all items in queue, unfiltered).
         progress_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
@@ -2209,14 +2187,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             ),
         )
 
-        # Adjacent items for prefetching — only items the user can annotate
-        # (assigned to them, or unassigned)
-        annotatable_qs = QueueItem.objects.filter(
-            queue_id=queue_id, deleted=False
-        ).filter(
-            Q(assignments__user=request.user, assignments__deleted=False)
-            | ~Q(assignments__deleted=False)
-        )
+        # Adjacent items for prefetching — items the user can annotate
+        # (assigned to them, or unassigned). Reviewers/managers also get
+        # items assigned to others, so they can navigate the full queue
+        # in view-only mode.
+        if is_reviewer:
+            annotatable_qs = QueueItem.objects.filter(
+                queue_id=queue_id, deleted=False
+            )
+        else:
+            annotatable_qs = QueueItem.objects.filter(
+                queue_id=queue_id, deleted=False
+            ).filter(
+                Q(assignments__user=request.user, assignments__deleted=False)
+                | ~Q(assignments__deleted=False)
+            )
         next_item = (
             annotatable_qs.filter(order__gt=item.order)
             .order_by("order", "created_at")

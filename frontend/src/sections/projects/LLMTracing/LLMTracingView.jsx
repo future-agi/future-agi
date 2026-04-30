@@ -1750,10 +1750,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
 
     // Apply filters — replace unconditionally so switching views clears stale filters.
-    const nextFilters = (activeViewConfig.filters || []).map((f) => ({
-      ...f,
-      id: f.id || getRandomId(),
-    }));
+    // Guard with Array.isArray: UsersView writes `filters` as an object
+    // ({extraFilters, dateFilter}), and that config can briefly leak into this
+    // view's apply effect during cross-tab transitions (the route change is
+    // queued in startTransition while activeViewConfig updates synchronously).
+    const rawFilters = activeViewConfig.filters;
+    const nextFilters = (Array.isArray(rawFilters) ? rawFilters : []).map(
+      (f) => ({
+        ...f,
+        id: f.id || getRandomId(),
+      }),
+    );
     if (selectedTab === "trace") {
       setPrimaryTraceFilters(nextFilters);
     } else {
@@ -1761,15 +1768,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
 
     // Apply extraFilters unconditionally (independent of compare mode).
-    setExtraFilters(activeViewConfig.extraFilters || []);
+    setExtraFilters(
+      Array.isArray(activeViewConfig.extraFilters)
+        ? activeViewConfig.extraFilters
+        : [],
+    );
 
     // Compare state — always replace, regardless of current showCompare state.
-    const nextCompareFilters = (activeViewConfig.compareFilters || []).map(
-      (f) => ({
-        ...f,
-        id: f.id || getRandomId(),
-      }),
-    );
+    const rawCompareFilters = activeViewConfig.compareFilters;
+    const nextCompareFilters = (
+      Array.isArray(rawCompareFilters) ? rawCompareFilters : []
+    ).map((f) => ({
+      ...f,
+      id: f.id || getRandomId(),
+    }));
     if (selectedTab === "trace") {
       setCompareTraceFilters(nextCompareFilters);
       if (activeViewConfig.compareDateFilter !== undefined) {
@@ -3453,6 +3465,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }
               }}
               isSimulator={projectSource === PROJECT_SOURCE.SIMULATOR}
+              isSpansView={selectedTab === "spans"}
               excludeSimulationCalls={!!excludeSimulationCalls}
               onToggleSimulationCalls={() =>
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)

@@ -115,6 +115,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Spans view — swaps "Trace Name" filter label to "Span Name"
+  isSpansView = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -389,6 +391,7 @@ const ObserveToolbar = ({
             filterFields={filterFields}
             tab={tab}
             isSimulator={isSimulator}
+            isSpansView={isSpansView}
             source={
               mode === "sessions"
                 ? "sessions"
@@ -637,6 +640,7 @@ ObserveToolbar.propTypes = {
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(ObserveToolbar);
