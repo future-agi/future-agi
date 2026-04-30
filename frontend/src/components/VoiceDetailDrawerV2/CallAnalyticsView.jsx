@@ -10,6 +10,7 @@ import {
   useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { fmtMs } from "src/utils/utils";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,12 +23,6 @@ const fmtDuration = (seconds) => {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
-};
-
-const fmtMs = (ms, { forceMs = false } = {}) => {
-  if (ms == null || !Number.isFinite(ms)) return "—";
-  if (!forceMs && ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${Math.round(ms)}ms`;
 };
 
 const fmtMoney = (n) => {
@@ -192,7 +187,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     {
       label: "Silence",
       value:
-        silenceTotal > 0 ? fmtMs(silenceTotal * 1000, { forceMs: true }) : "0ms",
+        silenceTotal > 0 ? fmtMs(silenceTotal * 1000, { forceMs: false }) : "0ms",
       hint: "Dead air (> 0.3s gaps)",
       tone: silenceTotal > 10 ? "warn" : "default",
     },

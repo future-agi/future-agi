@@ -2,12 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-
-function fmtMs(v, { forceMs = false } = {}) {
-  if (v == null || !Number.isFinite(v)) return "-";
-  if (!forceMs && v >= 1000) return `${(v / 1000).toFixed(2)}s`;
-  return `${Math.round(v)}ms`;
-}
+import { fmtMs } from "src/utils/utils";
 
 const PIPELINE_STAGES = [
   { key: "endpointingLatencyAverage", label: "Endpointing" },
