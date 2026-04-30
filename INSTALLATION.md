@@ -41,7 +41,7 @@ First boot builds the backend image from source (~10–15 minutes on a modern la
 
 When the backend logs `Application startup complete`, open:
 
-- **Frontend**: <http://localhost:3000>
+- **Frontend**: <http://localhost:3031>
 - **Backend API**: <http://localhost:8000>
 - **PeerDB UI**: <http://localhost:3001> (user/pass: `peerdb` / `peerdb`)
 
@@ -80,7 +80,7 @@ docker compose ps          # check status
 docker compose logs -f backend   # tail a service's logs
 ```
 
-Use this for self-hosted evaluation or production. Binds the frontend publicly on `0.0.0.0:3000` and keeps all data stores on `127.0.0.1` so only the host can reach them. Put a reverse proxy (nginx, Caddy, Traefik) in front of the frontend for HTTPS.
+Use this for self-hosted evaluation or production. Binds the frontend publicly on `0.0.0.0:3031` and keeps all data stores on `127.0.0.1` so only the host can reach them. Put a reverse proxy (nginx, Caddy, Traefik) in front of the frontend for HTTPS.
 
 ### Mode 2 — Development mode
 
@@ -156,7 +156,7 @@ All ports are configurable via `.env`. Defaults:
 
 | Service | Port | URL |
 |---|---|---|
-| Frontend | `3000` | <http://localhost:3000> |
+| Frontend | `3031` | <http://localhost:3031> |
 | Backend API | `8000` | <http://localhost:8000> |
 | Gateway (LLM proxy) | `8090` | internal only by default |
 | Model serving (embeddings) | `8080` | internal only by default |

@@ -5,7 +5,7 @@
 #   cp .env.example .env
 #   docker compose up
 #
-# Open http://localhost:3000 once the frontend logs "ready".
+# Open http://localhost:3031 once the frontend logs "ready".
 # First boot builds the backend image (~10 min). Subsequent boots are instant.
 #
 # For hot-reload development (volume mounts, per-queue workers, exposed DB
@@ -50,9 +50,9 @@ x-backend-env: &backend-env
   CODE_EXECUTOR_URL: http://code-executor:8060
   SERVING_URL: http://serving:8080
 
-  # Database — point Django's pgbouncer-aware config at postgres directly.
-  # Single-instance self-host doesn't need connection pooling; layer pgbouncer
-  # back in for multi-backend production if you want it.
+  # Database — Django's settings read connection details from PGBOUNCER_*.
+  # OSS self-host has no real pgbouncer service; we point those at postgres
+  # directly so the same Django config works in both topologies.
   PG_HOST: postgres
   PG_PORT: 5432
   PG_USER: ${PG_USER:-futureagi}
@@ -114,7 +114,7 @@ services:
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
         VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3031}:80"
     depends_on:
       - backend
     restart: unless-stopped

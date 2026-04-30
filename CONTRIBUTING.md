@@ -26,7 +26,7 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 Before we can merge your first pull request, you'll need to sign our Contributor License Agreement. This is a one-click process that runs automatically on your first PR — you'll see a link to sign, we merge after.
 
-The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). The full text is at [CLA.md](CLA.md).
+The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). The full text will be linked in the bot prompt when you open your first PR.
 
 ---
 
@@ -42,7 +42,7 @@ cd future-agi
 ### 2. Start the stack
 
 ```bash
-cp futureagi/.env.example futureagi/.env
+cp .env.example .env
 docker compose up -d
 ```
 
@@ -51,17 +51,17 @@ The backend will be at `http://localhost:8000`, the frontend at `http://localhos
 ### 3. Install git hooks
 
 ```bash
-# From repo root — installs husky hooks and lint-staged tooling.
+# From repo root — installs Husky hooks and lint-staged tooling.
 yarn install
 
-# For Python hooks (black, isort, mypy, Django system checks):
+# For Python hooks (ruff lint + format):
 cd futureagi && make pre-commit-install
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+On every commit, staged files are checked automatically:
 
-- `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- `frontend/src/**` → ESLint + Prettier (via lint-staged)
+- `futureagi/**/*.py` → ruff lint + ruff format (via pre-commit)
 
 Branch names are validated on `git push`.
 
@@ -75,7 +75,7 @@ cd futureagi && make test
 cd frontend && yarn test
 ```
 
-Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/CLAUDE.md](frontend/CLAUDE.md).
+Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/TESTING.md](frontend/TESTING.md).
 
 ---
 
@@ -134,8 +134,7 @@ Framework integrations live in the `traceAI` SDK (separate repo). For Python: [g
 
 We follow:
 
-- **Python:** PEP 8 via Ruff + Black (line length 88)
-- **Imports:** `isort` with Black profile
+- **Python:** PEP 8 via ruff (line length 88); `ruff format` replaces Black, `ruff check --fix` handles imports
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)
@@ -153,7 +152,7 @@ Before requesting review:
 - [ ] Tests added or updated
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
-- [ ] [CHANGELOG.md](CHANGELOG.md) updated if user-facing
+- [ ] Release notes updated if user-facing (add an entry to the GitHub release)
 - [ ] No hardcoded secrets, URLs, or PII
 - [ ] CLA signed (bot will prompt on first PR)
 
@@ -165,17 +164,16 @@ Your PR will be reviewed by a maintainer within **3 business days**. If it's bee
 
 ```
 future-agi/
-├── futureagi/        # Django backend (Python)
-│   ├── tracer/       # OpenTelemetry ingest + trace APIs
-│   ├── agentic_eval/ # Evaluation framework
-│   ├── simulate/     # Agent simulation
-│   ├── accounts/     # Auth, orgs, workspaces
-│   ├── model_hub/    # LLM / embedding hub
-│   ├── tfc/          # Django project settings + routing
+├── futureagi/              # Django backend (Python)
+│   ├── tracer/             # OpenTelemetry ingest + trace APIs
+│   ├── agentic_eval/       # Evaluation framework
+│   ├── simulate/           # Agent simulation
+│   ├── accounts/           # Auth, orgs, workspaces
+│   ├── model_hub/          # LLM / embedding hub
+│   ├── agentcc-gateway/    # Prism LLM gateway (Go)
+│   ├── tfc/                # Django project settings + routing
 │   └── ...
-├── frontend/         # React + Vite (JavaScript)
-├── agentcc-gateway/  # Prism LLM gateway (Go)
-└── docs/             # Internal design docs (→ future-agi/internal-docs)
+└── frontend/               # React + Vite (JavaScript)
 ```
 
 ---
@@ -184,7 +182,7 @@ future-agi/
 
 We release a new version of the Docker images roughly every two weeks, and SDK minor versions as features land. We follow [SemVer](https://semver.org/).
 
-Release notes live in [CHANGELOG.md](CHANGELOG.md).
+Release notes live in [GitHub Releases](https://github.com/future-agi/future-agi/releases).
 
 ---
 
