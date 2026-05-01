@@ -29,7 +29,11 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import { canonicalEntries, canonicalKeys } from "src/utils/utils";
+import {
+  canonicalEntries,
+  canonicalKeys,
+  stripAttributePathPrefix,
+} from "src/utils/utils";
 
 import {
   InlineAudio,
@@ -659,13 +663,11 @@ const TracingTestMode = React.forwardRef(
         }
       };
       walk(source, "");
-      // Strip `span_attributes.` prefix and dedupe against top-level keys.
+      // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
       const seen = new Set();
       const flattened = [];
       keys.forEach((k) => {
-        const short = k.startsWith("span_attributes.")
-          ? k.slice("span_attributes.".length)
-          : k;
+        const short = stripAttributePathPrefix(k);
         if (seen.has(short)) return;
         seen.add(short);
         flattened.push(short);
