@@ -1368,3 +1368,10 @@ export const tokenMatchesLeaf = (tok, pathLower, valueLower, words) => {
   }
   return false;
 };
+
+// Strip the voice-detail wrapper (`observation_span.<n>.[span_attributes.]`)
+// and bare `span_attributes.` so the saved mapping uses bare attribute paths.
+export const stripAttributePathPrefix = (key) =>
+  String(key ?? "")
+    .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
+    .replace(/^span_attributes\./, "");
