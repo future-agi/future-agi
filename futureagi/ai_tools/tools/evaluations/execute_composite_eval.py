@@ -55,16 +55,18 @@ class ExecuteCompositeEvalTool(BaseTool):
             execute_composite_children_sync,
         )
 
-        # ── 1. Load composite template ──
-        try:
-            parent = EvalTemplate.no_workspace_objects.get(
-                id=params.composite_eval_id,
-                deleted=False,
-                template_type="composite",
-            )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found(
-                "Composite eval template", params.composite_eval_id
+        # ── 1. Load composite template (by name or UUID) ──
+        from ai_tools.resolvers import resolve_eval_template
+
+        parent, err = resolve_eval_template(
+            params.composite_eval_id, context.organization
+        )
+        if err:
+            return ToolResult.error(err, error_code="NOT_FOUND")
+        if getattr(parent, "template_type", "single") != "composite":
+            return ToolResult.error(
+                f"'{parent.name}' is not a composite eval.",
+                error_code="VALIDATION_ERROR",
             )
 
         # ── 2. Load children ──
