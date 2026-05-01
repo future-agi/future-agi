@@ -17,6 +17,7 @@ import NavGatewayPanel from "./NavGatewayPanel";
 import FalconAISidebar from "src/sections/falcon-ai/FalconAISidebar";
 import FalconAIFab from "src/sections/falcon-ai/components/FalconAIFab";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import { Typography } from "@mui/material";
@@ -28,6 +29,7 @@ export default function DashboardLayout({ children }) {
   const settings = useSettingsContext();
   const isSOSMode = localStorage.getItem("sosMode");
   const router = useRouter();
+  const { isOSS } = useDeploymentMode();
   const pendingNavigation = useFalconStore((s) => s.pendingNavigation);
   const clearPendingNavigation = useFalconStore(
     (s) => s.clearPendingNavigation,
@@ -107,9 +109,9 @@ export default function DashboardLayout({ children }) {
         {navComponent}
         <NavGatewayPanel />
         <Main>{children}</Main>
-        <FalconAISidebar />
+        {!isOSS && <FalconAISidebar />}
       </Box>
-      <FalconAIFab />
+      {!isOSS && <FalconAIFab />}
     </>
   );
 }

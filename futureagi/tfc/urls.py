@@ -133,6 +133,20 @@ urlpatterns = [
 
 if has_ee("ee.usage"):
     urlpatterns += [path("usage/", include("ee.usage.urls"))]
+else:
+    # OSS-only stub for the deployment-info endpoint that ee.usage normally
+    # provides. The frontend's useDeploymentMode hook (and several layouts /
+    # eval components built on top of it) calls this on every dashboard page.
+    # Without this stub the hook stays in error state, downstream components
+    # remount in a tight loop, and the dashboard flickers heavily on OSS.
+    from django.http import JsonResponse  # noqa: E402
+    urlpatterns += [
+        path(
+            "usage/v2/deployment-info/",
+            lambda request: JsonResponse({"result": {"mode": "oss"}}),
+            name="deployment-info-oss-stub",
+        ),
+    ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
