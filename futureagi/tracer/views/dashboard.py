@@ -1846,6 +1846,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             if metric_type == "system_metric":
                 col_map = {
+                    "trace_id": "trace_id",
+                    "span_id": "id",
                     "project": "toString(project_id)",
                     "model": "model",
                     "status": "status",

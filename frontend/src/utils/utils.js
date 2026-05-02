@@ -911,6 +911,32 @@ export function formatMs(ms) {
   return `${(ms / 86_400_000).toFixed(1)}d`;
 }
 
+/**
+ * Lightweight ms ↔ s formatter used by voice analytics surfaces.
+ *
+ * Differs from formatMs:
+ *   - Tops out at seconds (no minutes/hours/days)
+ *   - Optional forceMs flag to keep the unit in milliseconds at all
+ *     magnitudes (so a 4060ms latency reads as "4060ms", not "4.06s")
+ *   - Configurable empty placeholder so callers that want a dash, an
+ *     em-dash, or null can all share the helper
+ *
+ * @param {number|null|undefined} ms
+ * @param {Object}  [opts]
+ * @param {boolean} [opts.forceMs=false]      Always render in milliseconds.
+ * @param {number}  [opts.secondsDecimals=2]  Decimal places when switching to seconds.
+ * @param {string|null} [opts.emptyText="—"]  Returned for null/NaN/Infinity input.
+ * @returns {string|null}
+ */
+export const fmtMs = (
+  ms,
+  { forceMs = false, secondsDecimals = 2, emptyText = "—" } = {},
+) => {
+  if (ms == null || !Number.isFinite(ms)) return emptyText;
+  if (!forceMs && ms >= 1000) return `${(ms / 1000).toFixed(secondsDecimals)}s`;
+  return `${Math.round(ms)}ms`;
+};
+
 export const formatPercentage = (value) => {
   if (value == null || isNaN(value)) return "-";
   return value % 1 === 0 ? `${value}%` : `${value?.toFixed(2)}%`;
@@ -1342,3 +1368,10 @@ export const tokenMatchesLeaf = (tok, pathLower, valueLower, words) => {
   }
   return false;
 };
+
+// Strip the voice-detail wrapper (`observation_span.<n>.[span_attributes.]`)
+// and bare `span_attributes.` so the saved mapping uses bare attribute paths.
+export const stripAttributePathPrefix = (key) =>
+  String(key ?? "")
+    .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
+    .replace(/^span_attributes\./, "");

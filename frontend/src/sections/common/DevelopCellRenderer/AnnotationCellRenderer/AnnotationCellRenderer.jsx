@@ -1,17 +1,13 @@
-import { Box, Chip, useTheme } from "@mui/material";
-import React, { useMemo } from "react";
+import { Box, useTheme } from "@mui/material";
+import React from "react";
 import PropTypes from "prop-types";
 import RenderAnnotationInfo from "./RenderAnnotationInfo";
+import { renderAnnotationValue } from "./renderAnnotationValue";
 
 const AnnotationCellRenderer = ({ value, annotationData }) => {
   const theme = useTheme();
-  const finalArray = useMemo(() => {
-    try {
-      return JSON.parse(value?.replaceAll("'", '"'));
-    } catch (e) {
-      return [];
-    }
-  }, [value]);
+  const inner = renderAnnotationValue(value, theme);
+  if (inner === null) return null;
 
   return (
     <Box
@@ -30,22 +26,11 @@ const AnnotationCellRenderer = ({ value, annotationData }) => {
           display: "flex",
           gap: 1,
           flexWrap: "wrap",
+          alignItems: "center",
           overflow: "hidden",
         }}
       >
-        {finalArray?.map((item) => (
-          <Chip
-            key={item}
-            label={item}
-            size="small"
-            color="primary"
-            sx={{
-              backgroundColor: theme.palette.action.hover,
-              color: theme.palette.primary.main,
-              fontWeight: 400,
-            }}
-          />
-        ))}
+        {inner}
       </Box>
       <RenderAnnotationInfo annotationData={annotationData} />
     </Box>

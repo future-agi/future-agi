@@ -1,7 +1,8 @@
 import { Box, Button } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
-import React from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import {
@@ -28,6 +29,7 @@ export default function BuilderActions({ width, hasNodes = true }) {
     setValidationErrorNodeIds,
     clearValidationErrors,
     clearAllExecutionStates,
+    isNodeFormDirty,
   } = useAgentPlaygroundStoreShallow((s) => ({
     isDraft: s.currentAgent?.is_draft ?? true,
     nodes: s.nodes,
@@ -37,6 +39,7 @@ export default function BuilderActions({ width, hasNodes = true }) {
     setValidationErrorNodeIds: s.setValidationErrorNodeIds,
     clearValidationErrors: s.clearValidationErrors,
     clearAllExecutionStates: s.clearAllExecutionStates,
+    isNodeFormDirty: s._isNodeFormDirty,
   }));
 
   const { hasRun, showOutput, outputPanelHeight, setShowOutput } =
@@ -59,7 +62,13 @@ export default function BuilderActions({ width, hasNodes = true }) {
     cancelLoadingTemplate: state.cancelLoadingTemplate,
   }));
 
-  const handleRunWorkflow = () => {
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+
+  const handleRunWorkflow = ({ skipDirtyCheck = false } = {}) => {
+    if (!skipDirtyCheck && isNodeFormDirty) {
+      setShowUnsavedDialog(true);
+      return;
+    }
     if (isDraft) {
       clearValidationErrors();
       clearAllExecutionStates();
@@ -219,6 +228,28 @@ export default function BuilderActions({ width, hasNodes = true }) {
         open={showStopConfirmDialog}
         onClose={handleCancelStop}
         onConfirm={handleConfirmStop}
+      />
+
+      {/* Unsaved node form changes dialog */}
+      <ConfirmDialog
+        open={showUnsavedDialog}
+        onClose={() => setShowUnsavedDialog(false)}
+        title="Unsaved Changes"
+        content="You have unsaved node changes. Running now will use the last saved configuration."
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setShowUnsavedDialog(false);
+              handleRunWorkflow({ skipDirtyCheck: true });
+            }}
+            sx={{ paddingX: "24px" }}
+          >
+            Run Anyway
+          </Button>
+        }
       />
     </>
   );

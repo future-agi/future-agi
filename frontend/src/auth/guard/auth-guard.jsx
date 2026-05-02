@@ -121,7 +121,6 @@ function Container({ children }) {
         if (typeof window.rdt === "function") {
           trackRedditSignup({
             email: user.email,
-            method: provider,
             userId: String(user.id),
           });
         }

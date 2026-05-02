@@ -2,7 +2,8 @@
 # Dev overlay — for Future AGI engineers, not external OSS users.
 #
 # Adds to docker-compose.yml:
-#   - volume mounts for hot reload (backend + worker)
+#   - volume mounts for hot reload (frontend + backend + worker)
+#   - frontend runs Vite dev server (HMR) instead of the nginx prod bundle
 #   - per-queue workers (tasks_s / tasks_l / tasks_xl / trace_ingestion /
 #     agent_compass) so queue-specific behavior can be tested
 #   - Temporal UI + admin tools
@@ -39,6 +40,28 @@ services:
   # --------------------------------------------------------------------------
   # Hot reload — replace the built-in code with live-mounted source
   # --------------------------------------------------------------------------
+
+  frontend:
+    build:
+      # Use the dev stage from frontend/Dockerfile (node + deps, no nginx).
+      target: dev
+    # Bind-mount source for HMR; anonymous volume preserves the image's
+    # node_modules so we don't need a host-side `yarn install`. If you change
+    # package.json, rebuild: `docker compose build frontend`.
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports: !override
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      # Required on macOS/Windows: Docker bind mounts don't propagate FS
+      # events into the container, so Vite's chokidar watcher needs polling
+      # to see edits. Costs a bit of CPU; remove if you're on Linux.
+      VITE_USE_POLLING: "true"
+      # Vite reads VITE_* from process.env at startup in dev mode.
+      VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
+      VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
+      VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
 
   backend:
     volumes:

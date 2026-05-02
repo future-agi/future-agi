@@ -46,6 +46,7 @@ const TestDetailDrawerRightSection = ({
   simulationCallType,
   sessionId,
   provider,
+  hideAnnotationTab=false,
 }) => {
   const [currentRightTab, setCurrentRightTab] = useState(
     simulationCallType === AGENT_TYPES.CHAT ? "evaluations" : "callAnalytics",
@@ -98,14 +99,15 @@ const TestDetailDrawerRightSection = ({
         value: TEST_DETAIL_RIGHT_TABS.FLOW_ANALYSIS,
       });
     }
-
-    t.push({
-      label: "Annotations",
-      value: TEST_DETAIL_RIGHT_TABS.ANNOTATIONS,
-    });
+    if (!hideAnnotationTab) {
+      t.push({
+        label: "Annotations",
+        value: TEST_DETAIL_RIGHT_TABS.ANNOTATIONS,
+      });
+    }
 
     return t;
-  }, [scenarioGraph]);
+  }, [scenarioGraph, hideAnnotationTab, simulationCallType]);
 
   const { nodes, edges } = useMemo(() => {
     const currentPath = flowAnalysis?.analysis?.currentPath;
@@ -418,6 +420,7 @@ TestDetailDrawerRightSection.propTypes = {
   simulationCallType: PropTypes.string,
   sessionId: PropTypes.string,
   provider: PropTypes.string,
+  hideAnnotationTab: PropTypes.bool,
 };
 
 export default TestDetailDrawerRightSection;

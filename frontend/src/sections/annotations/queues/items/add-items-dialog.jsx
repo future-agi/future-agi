@@ -557,7 +557,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
         // Voice/simulator projects keep `source_type: "trace"` — matches
         // the "Add to queue" flow on the voice observability page so the
         // queue badge says "Trace" (not "Span") and the annotator drawer
-        // resolves the call via the trace FK.
+        // resolves the call via the trace FK. For regular tracing
+        // projects, remap trace -> root span so the queue items match the
+        // annotator workspace's span-oriented UI (consistent with the
+        // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
           const rootSpanMap = await fetchRootSpans(ids);
           const originalCount = ids.length;

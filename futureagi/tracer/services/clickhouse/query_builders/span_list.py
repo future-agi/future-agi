@@ -129,8 +129,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             model,
             provider,
             end_user_id,
-            created_at,
-            span_attributes_raw
+            created_at
         FROM {self.TABLE}
         {self.project_where()}
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
@@ -152,7 +151,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             return "", {}
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
-        SELECT id, input, output
+        SELECT id, input, output, span_attributes_raw
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
         WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0

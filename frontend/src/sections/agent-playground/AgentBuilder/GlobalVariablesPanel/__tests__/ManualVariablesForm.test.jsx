@@ -42,6 +42,7 @@ function renderForm(props = {}, storeOverrides = {}) {
       country: { id: "cell-2", columnId: "col-2", value: "Japan" },
     },
     graphId: "graph-1",
+    variables: { city: "Tokyo", country: "Japan" },
     ...props,
   };
 
@@ -68,8 +69,8 @@ describe("ManualVariablesForm", () => {
     mockUpdateCell.mockResolvedValue({});
   });
 
-  it("renders empty state when globalVariables is empty", () => {
-    renderForm({}, { globalVariables: {} });
+  it("renders empty state when variables is empty", () => {
+    renderForm({ variables: {} });
     expect(screen.getByTestId("empty-variable")).toBeInTheDocument();
   });
 

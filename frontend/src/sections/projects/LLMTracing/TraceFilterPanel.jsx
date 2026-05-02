@@ -39,8 +39,9 @@ import { QueryInput } from "src/components/filter-panel";
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
 // ---------------------------------------------------------------------------
-const TRACE_FILTER_FIELDS = [
+const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
+  { value: "span_name", label: "Span Name", type: "string" },
   {
     value: "status",
     label: "Status",
@@ -68,6 +69,32 @@ const TRACE_FILTER_FIELDS = [
   { value: "span_kind", label: "Span Kind", type: "string" },
   { value: "tag", label: "Tag", type: "string" },
 ];
+
+const TRACE_ID_FIELD = {
+  value: "trace_id",
+  label: "Trace ID",
+  type: "string",
+};
+
+const SPAN_ID_FIELD = {
+  value: "span_id",
+  label: "Span ID",
+  type: "string",
+};
+
+// Prepend id filters based on which LLM Tracing tab the filter panel
+// renders in:
+//   `tab` === "trace"  → Trace ID
+//   `tab` === "spans"  → Trace ID + Span ID
+//   otherwise          → no id fields (preserves behavior for non-LLMTracing
+//                        consumers such as sessions/users).
+// Exported for direct unit testing.
+export const getTraceFilterFields = (tab) => {
+  if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
+  if (tab === "spans")
+    return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
+  return BASE_TRACE_FILTER_FIELDS;
+};
 
 // ---------------------------------------------------------------------------
 // Category config for dashboard-style property picker
@@ -116,6 +143,12 @@ const DATE_OPS = [
 ];
 
 const BOOLEAN_OPS = [{ value: "is", label: "is" }];
+
+// Direct ID columns on `spans` — the dashboard filter pipeline resolves
+// them via equality only (no col_type, no LIKE/IN expansion), so any
+// other operator silently no-ops. Restrict the UI accordingly.
+const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
+const ID_ONLY_OPS = [{ value: "is", label: "is" }];
 
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
@@ -188,6 +221,14 @@ const getOperators = (fieldType) => {
   if (t === "boolean") return BOOLEAN_OPS;
   if (t === "array") return ARRAY_OPS;
   return STRING_OPS;
+};
+
+// Wrapper that special-cases ID-only fields. Use from FilterRow + apply
+// validation; keep `getOperators` as the pure type → ops mapping (Query
+// tab + AI filter schema rely on the type-only behavior).
+const getOperatorsForFilter = (filter) => {
+  if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
+  return getOperators(filter?.fieldType);
 };
 
 const DEFAULT_OP_FOR_TYPE = {
@@ -588,6 +629,7 @@ function ValuePicker({
   onChange,
   source = "traces",
   property,
+  singleSelect = false,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
@@ -670,14 +712,22 @@ function ValuePicker({
 
   const toggleValue = useCallback(
     (val) => {
+      // Use the shared helper to read the picker option's stable value
+      // (handles both string and {value, label} object shapes).
       const strVal = getPickerOptionValue(val);
+      if (singleSelect) {
+        // Clicking the already-selected value clears; clicking a different
+        // value replaces — standard single-select dropdown UX.
+        onChange(value.includes(strVal) ? [] : [strVal]);
+        return;
+      }
       onChange(
         selectedValues.includes(strVal)
           ? selectedValues.filter((v) => v !== strVal)
           : [...selectedValues, strVal],
       );
     },
-    [selectedValues, onChange],
+    [selectedValues, value, onChange, singleSelect],
   );
 
   const customSearchValue = search.trim();
@@ -800,7 +850,9 @@ function ValuePicker({
           <Typography
             sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
-            Select one or more values (multi-select)
+            {singleSelect
+              ? "Select a single value"
+              : "Select one or more values (multi-select)"}
           </Typography>
         </Box>
         <Divider />
@@ -824,6 +876,9 @@ function ValuePicker({
                 : FREE_TEXT_NO_OPTIONS_TEXT}
             </Typography>
           )}
+          {/* Custom-value row is rendered below in the showCustomValueRow
+              block — keeps a single source of truth for the "Specify"
+              fallback (search did not match any fetched option). */}
           {filtered.map((opt) => {
             const strVal = getPickerOptionValue(opt);
             const label = getPickerOptionLabel(opt);
@@ -875,7 +930,11 @@ function ValuePicker({
               {filtered.length > 0 && <Divider />}
               <Box
                 onClick={() => {
-                  if (!selectedValues.includes(customSearchValue)) {
+                  // singleSelect: replace the selection. Otherwise: append
+                  // (but skip if the value is already selected).
+                  if (singleSelect) {
+                    onChange([customSearchValue]);
+                  } else if (!selectedValues.includes(customSearchValue)) {
                     onChange([...selectedValues, customSearchValue]);
                   }
                   setSearch("");
@@ -961,7 +1020,7 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const ops = getOperators(filter.fieldType);
+  const ops = getOperatorsForFilter(filter);
   const currentOpDef = ops.find((o) => o.value === filter.operator);
   const rowFreeSoloValues =
     typeof freeSoloValues === "function"
@@ -997,7 +1056,7 @@ function FilterRow({
   const handleOperatorChange = useCallback(
     (e) => {
       const newOp = e.target.value;
-      const opList = getOperators(filter.fieldType);
+      const opList = getOperatorsForFilter(filter);
       const newDef = opList.find((o) => o.value === newOp);
       const oldDef = opList.find((o) => o.value === filter.operator);
       let newVal = filter.value;
@@ -1218,6 +1277,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
+        singleSelect={ID_ONLY_FIELDS.has(filter.field)}
         onChange={(newVal) => onChange(index, { ...filter, value: newVal })}
       />
     );
@@ -1315,6 +1375,7 @@ const TraceFilterPanel = ({
   onApply,
   filterFields,
   source = "traces",
+  tab = null,
   projectId: projectIdProp,
   properties: propertiesOverride,
   ValuePickerOverride,
@@ -1325,6 +1386,7 @@ const TraceFilterPanel = ({
   defaultRow: defaultRowOverride,
   isSimulator = false,
   freeSoloValues = false,
+  isSpansView = false,
 }) => {
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
@@ -1337,14 +1399,24 @@ const TraceFilterPanel = ({
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
     if (propertiesOverride) return propertiesOverride;
-    // Start with static trace fields (trace_name, status, model, etc.)
-    const staticProps = TRACE_FILTER_FIELDS.map((f) => ({
-      id: f.value,
-      name: f.label,
-      category: "system",
-      type: f.type === "enum" ? "string" : f.type,
-      ...(f.choices ? { choices: f.choices } : {}),
-    }));
+    // Start with static trace fields (trace_name, status, model, etc.) —
+    // prepend trace_id / span_id when rendered inside the LLM Tracing
+    // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
+    const ID_FIELDS = new Set(["trace_id", "span_id"]);
+    const staticProps = getTraceFilterFields(tab).map((f) => {
+      if (isSpansView && f.value === "name") {
+        return { id: "name", name: "Span Name", category: "system", type: "string" };
+      }
+      return {
+        id: f.value,
+        name: f.label,
+        // trace_id / span_id are direct column filters — omit category so
+        // col_type is not injected (the backend handles them without it).
+        ...(!ID_FIELDS.has(f.value) && { category: "system" }),
+        type: f.type === "enum" ? "string" : f.type,
+        ...(f.choices ? { choices: f.choices } : {}),
+      };
+    });
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
@@ -1359,7 +1431,7 @@ const TraceFilterPanel = ({
         type: f.type || "string",
       }));
     return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride]);
+  }, [dynamicProperties, filterFields, propertiesOverride, tab, isSpansView]);
   const propertyById = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p])),
     [properties],
@@ -1489,7 +1561,7 @@ const TraceFilterPanel = ({
     const valid = rows.filter((r) => {
       if (!r.field) return false;
       if (NO_VALUE_OPS.has(r.operator)) return true;
-      const ops = getOperators(r.fieldType);
+      const ops = getOperatorsForFilter(r);
       const opDef = ops.find((o) => o.value === r.operator);
       if (opDef?.range)
         return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
@@ -1781,6 +1853,7 @@ TraceFilterPanel.propTypes = {
   onApply: PropTypes.func.isRequired,
   filterFields: PropTypes.array,
   source: PropTypes.string,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   projectId: PropTypes.string,
   properties: PropTypes.array,
   ValuePickerOverride: PropTypes.elementType,
@@ -1791,6 +1864,7 @@ TraceFilterPanel.propTypes = {
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(TraceFilterPanel);

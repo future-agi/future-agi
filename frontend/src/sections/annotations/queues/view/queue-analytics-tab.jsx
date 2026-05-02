@@ -250,7 +250,7 @@ export default function QueueAnalyticsTab({ queueId }) {
       const { default: axiosInstance } = await import("src/utils/axios");
       const response = await axiosInstance.get(
         `/model-hub/annotation-queues/${queueId}/export/`,
-        { params: { format }, responseType: "blob" },
+        { params: { export_format: format }, responseType: "blob" },
       );
       const blob = new Blob([response.data]);
       const url = URL.createObjectURL(blob);
