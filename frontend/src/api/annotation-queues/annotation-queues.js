@@ -16,6 +16,21 @@ import { scoreKeys } from "src/api/scores/scores";
 const extractData = (d, fallback = null) =>
   d.data?.result ?? d.data?.results ?? d.data ?? fallback;
 
+export const extractErrorMessage = (error, fallback) => {
+  const payload = error?.response?.data || error;
+  const message =
+    payload?.result ||
+    payload?.detail ||
+    payload?.message ||
+    payload?.error ||
+    payload?.non_field_errors ||
+    fallback;
+
+  if (Array.isArray(message)) return message.join(", ");
+  if (message && typeof message === "object") return JSON.stringify(message);
+  return message || fallback;
+};
+
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
@@ -24,6 +39,7 @@ export const annotationQueueEndpoints = {
   create: "/model-hub/annotation-queues/",
   detail: (id) => `/model-hub/annotation-queues/${id}/`,
   restore: (id) => `/model-hub/annotation-queues/${id}/restore/`,
+  hardDelete: (id) => `/model-hub/annotation-queues/${id}/hard-delete/`,
   updateStatus: (id) => `/model-hub/annotation-queues/${id}/update-status/`,
 };
 
@@ -58,7 +74,7 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.detail(id),
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
-    select: (d) => d.data,
+    select: (d) => extractData(d),
     enabled: !!id,
     ...options,
   });
@@ -99,15 +115,45 @@ export const useUpdateAnnotationQueue = () => {
   });
 };
 
-export const useDeleteAnnotationQueue = () => {
+// "Delete" in the UI is a soft archive — the queue gets `deleted=true` and
+// rules attached to it go dormant. Restoration brings them back. For
+// truly destructive removal use `useHardDeleteAnnotationQueue` below.
+export const useArchiveAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => axios.delete(annotationQueueEndpoints.detail(id)),
     onSuccess: () => {
+      enqueueSnackbar("Queue archived. Rules paused; you can restore later.", {
+        variant: "info",
+      });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
       enqueueSnackbar("Failed to archive queue", { variant: "error" });
+    },
+  });
+};
+
+// Backwards-compat alias — call sites still use this name.
+export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
+
+export const useHardDeleteAnnotationQueue = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }) =>
+      axios.post(annotationQueueEndpoints.hardDelete(id), {
+        force: true,
+        confirm_name: name,
+      }),
+    onSuccess: () => {
+      enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+    },
+    onError: (error) => {
+      enqueueSnackbar(
+        extractErrorMessage(error, "Failed to delete queue"),
+        { variant: "error" },
+      );
     },
   });
 };
@@ -117,7 +163,9 @@ export const useRestoreAnnotationQueue = () => {
   return useMutation({
     mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id)),
     onSuccess: () => {
-      enqueueSnackbar("Queue restored", { variant: "success" });
+      enqueueSnackbar("Queue restored. Rule cadence reset.", {
+        variant: "success",
+      });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
@@ -533,8 +581,10 @@ export const useCreateAutomationRule = () => {
         queryKey: automationRuleKeys.all(variables.queueId),
       });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to create rule", { variant: "error" });
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to create rule"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -730,7 +780,18 @@ export const useGetOrCreateDefaultQueue = () => {
         ...(datasetId && { dataset_id: datasetId }),
         ...(agentDefinitionId && { agent_definition_id: agentDefinitionId }),
       }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      // Backend returns action ∈ {"created", "restored", "fetched"}.
+      // "restored" means a previously archived default queue for this scope
+      // came back online — surface it explicitly so users understand their
+      // old rules + items are now visible again.
+      const result = response?.data?.result || response?.data || {};
+      if (result.action === "restored") {
+        enqueueSnackbar(
+          "Restored your archived default queue. Rules and items are back.",
+          { variant: "info" },
+        );
+      }
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {

@@ -314,8 +314,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          cpus: '4.0'
+          memory: 10G
+    mem_limit: 10g
+    memswap_limit: 10g
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s

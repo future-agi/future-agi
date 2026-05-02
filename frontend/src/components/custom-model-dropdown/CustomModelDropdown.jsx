@@ -33,6 +33,9 @@ const CustomModelDropdown = ({
   customTrigger,
   onModelTypeChange,
   modelType,
+  // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+  // eslint-disable-next-line no-unused-vars
+  shrink: _shrink,
   ...rest
 }) => {
   const btnRef = useRef(null);

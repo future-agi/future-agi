@@ -23,6 +23,9 @@ const FormSearchSelectFieldState = React.forwardRef(
       multiple = false,
       placeholder = "Select Option",
       sx,
+      // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+      // eslint-disable-next-line no-unused-vars
+      shrink: _shrink,
       ...rest
     },
     ref,

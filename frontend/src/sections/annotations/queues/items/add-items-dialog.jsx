@@ -415,6 +415,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
   const [selectionMode, setSelectionMode] = useState("manual");
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectAllInfo, setSelectAllInfo] = useState(null);
+  // Voice/simulator projects route trace selections through CallLogsGrid;
+  // those selections must keep `source_type: "trace"` (matching the voice
+  // obs page's "Add to queue") instead of being converted to root spans.
+  const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
@@ -438,6 +442,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
     setSelectionMode("manual");
     setSelectedIds(new Set());
     setSelectAllInfo(null);
+    setIsVoiceTraceSelection(false);
   }, []);
 
   const handleSubmit = async () => {
@@ -467,6 +472,9 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               project_id: selectAllInfo.projectId,
               filter: selectAllInfo.filters || [],
               exclude_ids: Array.from(selectAllInfo.excludedIds || []),
+              ...(sourceType === "trace" && isVoiceTraceSelection
+                ? { is_voice_call: true }
+                : {}),
             },
           },
           {
@@ -546,7 +554,11 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
         let ids = Array.from(selectedIds);
         let effectiveSourceType = sourceType;
 
-        if (sourceType === "trace") {
+        // Voice/simulator projects keep `source_type: "trace"` — matches
+        // the "Add to queue" flow on the voice observability page so the
+        // queue badge says "Trace" (not "Span") and the annotator drawer
+        // resolves the call via the trace FK.
+        if (sourceType === "trace" && !isVoiceTraceSelection) {
           const rootSpanMap = await fetchRootSpans(ids);
           const originalCount = ids.length;
           ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
@@ -726,6 +738,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               <TraceSelector
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
+                onVoiceProjectChange={setIsVoiceTraceSelection}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1483,7 +1496,7 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll }) {
+function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1528,6 +1541,12 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
   // Matches the main LLM Tracing page for simulator projects.
   const { data: projectDetails } = useGetProjectDetails(projectId, !!projectId);
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
+
+  // Surface voice/simulator state to the parent so handleSubmit knows to
+  // keep `source_type: "trace"` instead of resolving to root spans.
+  useEffect(() => {
+    onVoiceProjectChange?.(isVoiceProject);
+  }, [isVoiceProject, onVoiceProjectChange]);
 
   // Fetch versions for prototype projects
   const { data: versions } = useQuery({
@@ -2076,6 +2095,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
 TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
+  onVoiceProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------

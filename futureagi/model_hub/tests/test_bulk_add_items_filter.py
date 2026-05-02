@@ -699,3 +699,183 @@ class TestAddItemsFilterModeCallExecution:
         assert err.get("type") == "selection_too_large"
         assert err.get("total_matching") == 3
         assert err.get("cap") == 2
+
+
+# --------------------------------------------------------------------------
+# Manual add-items + filter-mode + non-created_at filters on call_execution.
+#
+# Before _apply_call_execution_filters existed, the resolver only honored
+# created_at filters and silently match-all'd everything else. The fixture
+# below seeds calls with mixed status/duration so we can prove status
+# and duration_seconds filters now actually narrow the result.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded_mixed_call_executions(db, organization, workspace):
+    from simulate.models.agent_definition import AgentDefinition
+    from simulate.models.run_test import RunTest
+    from simulate.models.scenarios import Scenarios
+    from simulate.models.test_execution import CallExecution, TestExecution
+
+    agent_def = AgentDefinition.objects.create(
+        agent_name="ce-mixed-agent",
+        inbound=True,
+        description="mixed-status fixture",
+        organization=organization,
+        workspace=workspace,
+    )
+    run = RunTest.objects.create(name="ce-mixed-run", organization=organization)
+    te = TestExecution.objects.create(run_test=run, agent_definition=agent_def)
+    scen = Scenarios.objects.create(
+        name="ce-mixed-scenario",
+        source="mixed",
+        organization=organization,
+        workspace=workspace,
+    )
+    completed_short = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="completed", duration_seconds=10,
+    )
+    completed_long = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="completed", duration_seconds=120,
+    )
+    failed = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="failed", duration_seconds=30,
+    )
+    return agent_def, completed_short, completed_long, failed
+
+
+@pytest.mark.django_db
+class TestAddItemsFilterModeCallExecutionRichFilters:
+    def test_filter_mode_status_filter_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "status",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "completed",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # Only the 2 completed calls — NOT the failed one. Pre-fix this
+        # would have added all 3 because the filter was silently dropped.
+        assert resp.data["result"]["added"] == 2
+        assert resp.data["result"]["total_matching"] == 2
+
+    def test_filter_mode_duration_range_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "duration_seconds",
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "less_than",
+                                "filter_value": 60,
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # 10s + 30s match; 120s excluded.
+        assert resp.data["result"]["added"] == 2
+        assert resp.data["result"]["total_matching"] == 2
+
+    def test_filter_mode_unsupported_column_returns_400(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "totally_made_up_column",
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "equals",
+                                "filter_value": "x",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        # ValueError from resolver -> bad_request. Better than the old
+        # silent match-all behaviour.
+        assert resp.status_code == 400, resp.data
+        body = resp.data.get("result") or resp.data.get("message") or ""
+        assert "totally_made_up_column" in str(body) or "cannot apply" in str(body)
+
+    def test_filter_mode_combined_status_and_duration(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "status",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "completed",
+                            },
+                        },
+                        {
+                            "column_id": "duration_seconds",
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "less_than",
+                                "filter_value": 60,
+                            },
+                        },
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # Only completed_short (10s, completed) matches both filters.
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["total_matching"] == 1

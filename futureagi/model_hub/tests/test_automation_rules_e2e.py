@@ -7,6 +7,8 @@ simulation, dataset_row).
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -19,9 +21,17 @@ from model_hub.models.annotation_queues import (
     AutomationRule,
     QueueItem,
 )
-from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
+from model_hub.models.choices import (
+    AutomationRuleTriggerFrequency,
+    DatasetSourceChoices,
+    SourceChoices,
+    StatusType,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.tasks.annotation_automation import run_due_automation_rules
+from model_hub.utils.annotation_queue_helpers import is_automation_rule_due
 from tfc.middleware.workspace_context import set_workspace_context
+from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
 
 QUEUE_URL = "/model-hub/annotation-queues/"
 
@@ -126,6 +136,15 @@ def _items_url(queue_id):
 @pytest.mark.django_db
 class TestAutomationRulesE2E:
     """End-to-end tests for automation rule evaluation."""
+
+    @pytest.fixture(autouse=True)
+    def _allow_automation_rule_entitlements(self):
+        """These tests cover rule evaluation, not billing-limit enforcement."""
+        with patch(
+            "ee.usage.services.entitlements.Entitlements.can_create",
+            return_value=SimpleNamespace(allowed=True),
+        ):
+            yield
 
     # -----------------------------------------------------------------------
     # 1. Basic trace source evaluation
@@ -458,9 +477,9 @@ class TestAutomationRulesE2E:
     # 9. Disallowed field is rejected / ignored
     # -----------------------------------------------------------------------
     def test_disallowed_field_is_rejected(self, auth_client, organization, workspace):
-        """A condition with a disallowed field (e.g. user__password) should be
-        silently ignored — not crash — and the matched count reflects no
-        filtering by that field."""
+        """A rule whose only condition references an unknown/disallowed
+        field must fail closed — refusing to enqueue anything — rather
+        than skip the bad condition and match the entire scope."""
         project = _create_project(organization, workspace, name="Reject Project")
         _create_trace(project, name="reject-trace-1")
         _create_trace(project, name="reject-trace-2")
@@ -494,8 +513,10 @@ class TestAutomationRulesE2E:
         )
         assert resp.status_code == status.HTTP_200_OK
         result = resp.data.get("result", resp.data)
-        # The disallowed field is skipped, so all records match
-        assert result["matched"] == 2
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert "error" in result
+        assert "user__password" in result["error"]
 
     # -----------------------------------------------------------------------
     # 10. Rule stats updated after evaluation
@@ -1220,7 +1241,441 @@ class TestAutomationRulesE2E:
         assert result["added"] == 1
 
     # -----------------------------------------------------------------------
-    # 22. FIELD_MAPPING completeness — verify all source types have mappings
+    # 22. Dataset row filter payload from rules UI
+    # -----------------------------------------------------------------------
+    def test_evaluate_rule_dataset_filter_payload(
+        self, auth_client, organization, workspace
+    ):
+        """Dataset rule filters support DevelopFilterRow-style column filters."""
+        dataset = Dataset.objects.create(
+            name="Dataset Filter Payload",
+            organization=organization,
+            workspace=workspace,
+        )
+        column = Column.objects.create(
+            name="quality",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
+        )
+        row_match = Row.objects.create(dataset=dataset, order=1, metadata={})
+        row_skip = Row.objects.create(dataset=dataset, order=2, metadata={})
+        Cell.objects.create(
+            dataset=dataset,
+            row=row_match,
+            column=column,
+            value="very good",
+        )
+        Cell.objects.create(
+            dataset=dataset,
+            row=row_skip,
+            column=column,
+            value="bad",
+        )
+
+        queue_id = _create_queue(auth_client, name="Dataset filter payload Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(dataset=dataset)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Good rows",
+                "source_type": "dataset_row",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": str(column.id),
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "contains",
+                                "filter_value": "good",
+                            },
+                        }
+                    ],
+                    "scope": {"dataset_id": str(dataset.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert (
+            QueueItem.objects.filter(queue_id=queue_id).first().dataset_row_id
+            == row_match.id
+        )
+
+    # -----------------------------------------------------------------------
+    # 23. Filter-mode scope without explicit filter rows
+    # -----------------------------------------------------------------------
+    def test_evaluate_rule_trace_filter_scope_without_filter_rows(
+        self, auth_client, organization, workspace
+    ):
+        """Rules UI can save scope with an empty filter array; scope must apply."""
+        project1 = _create_project(organization, workspace, name="Scope Only One")
+        project2 = _create_project(organization, workspace, name="Scope Only Two")
+        _create_trace(project1, "scope-only-1")
+        _create_trace(project1, "scope-only-2")
+        _create_trace(project2, "scope-only-other")
+
+        queue_id = _create_queue(auth_client, name="Trace scope-only Q")
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Scoped empty filter",
+                "source_type": "trace",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [],
+                    "scope": {"project_id": str(project1.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 2
+        assert result["added"] == 2
+        assert QueueItem.objects.filter(
+            queue_id=queue_id,
+            trace__project=project2,
+            deleted=False,
+        ).count() == 0
+
+    def test_evaluate_rule_dataset_filter_scope_without_filter_rows(
+        self, auth_client, organization, workspace
+    ):
+        """Dataset scope must still apply when the filter list is empty."""
+        ds1 = Dataset.objects.create(
+            name="Scope Dataset One", organization=organization, workspace=workspace
+        )
+        ds2 = Dataset.objects.create(
+            name="Scope Dataset Two", organization=organization, workspace=workspace
+        )
+        Row.objects.create(dataset=ds1, order=1, metadata={})
+        Row.objects.create(dataset=ds1, order=2, metadata={})
+        Row.objects.create(dataset=ds2, order=1, metadata={})
+
+        queue_id = _create_queue(auth_client, name="Dataset scope-only Q")
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Dataset scoped empty filter",
+                "source_type": "dataset_row",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [],
+                    "scope": {"dataset_id": str(ds1.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 2
+        assert result["added"] == 2
+        assert QueueItem.objects.filter(
+            queue_id=queue_id,
+            dataset_row__dataset=ds2,
+            deleted=False,
+        ).count() == 0
+
+    # -----------------------------------------------------------------------
+    # 24. Scheduled frequency evaluator
+    # -----------------------------------------------------------------------
+    def test_due_task_evaluates_hourly_rules(
+        self, auth_client, organization, workspace
+    ):
+        project = _create_project(organization, workspace, name="Scheduled Project")
+        _create_trace(project, "scheduled trace")
+        queue_id = _create_queue(auth_client, name="Scheduled Rule Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Hourly trace intake",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+                "trigger_frequency": "hourly",
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        summary = run_due_automation_rules()
+        assert summary["checked"] == 1
+        assert summary["evaluated"] == 1
+        assert summary["added"] == 1
+
+        rule = AutomationRule.objects.get(pk=rule_id)
+        assert rule.trigger_count == 1
+        assert rule.last_triggered_at is not None
+
+        second_summary = run_due_automation_rules()
+        assert second_summary["checked"] == 1
+        assert second_summary["evaluated"] == 0
+
+    # -----------------------------------------------------------------------
+    # 25. Serializer persists trigger frequency
+    # -----------------------------------------------------------------------
+    def test_create_rule_persists_trigger_frequency(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Frequency serializer Q")
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Weekly intake",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+                "trigger_frequency": AutomationRuleTriggerFrequency.WEEKLY.value,
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        assert resp.data["trigger_frequency"] == "weekly"
+        assert resp.data["trigger_count"] == 0
+        assert resp.data["last_triggered_at"] is None
+
+        rule = AutomationRule.objects.get(pk=resp.data["id"])
+        assert rule.trigger_frequency == AutomationRuleTriggerFrequency.WEEKLY.value
+
+    def test_create_rule_rejects_unknown_trigger_frequency(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Bad frequency Q")
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Bad frequency",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+                "trigger_frequency": "every_minute",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert AutomationRule.objects.filter(queue_id=queue_id).count() == 0
+
+    # -----------------------------------------------------------------------
+    # 26. Frequency due checks
+    # -----------------------------------------------------------------------
+    def test_is_automation_rule_due_respects_frequency_intervals(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Due interval Q")
+        rule = AutomationRule.objects.create(
+            queue_id=queue_id,
+            organization=organization,
+            name="Interval rule",
+            source_type="trace",
+            conditions={},
+            enabled=True,
+            trigger_frequency=AutomationRuleTriggerFrequency.MANUAL.value,
+        )
+        now = timezone.now()
+
+        assert is_automation_rule_due(rule, now=now) is False
+
+        rule.trigger_frequency = AutomationRuleTriggerFrequency.HOURLY.value
+        rule.last_triggered_at = None
+        assert is_automation_rule_due(rule, now=now) is True
+
+        rule.last_triggered_at = now - timedelta(minutes=59)
+        assert is_automation_rule_due(rule, now=now) is False
+
+        rule.last_triggered_at = now - timedelta(hours=1, seconds=1)
+        assert is_automation_rule_due(rule, now=now) is True
+
+        rule.trigger_frequency = AutomationRuleTriggerFrequency.DAILY.value
+        rule.last_triggered_at = now - timedelta(hours=23, minutes=59)
+        assert is_automation_rule_due(rule, now=now) is False
+
+        rule.last_triggered_at = now - timedelta(days=1, seconds=1)
+        assert is_automation_rule_due(rule, now=now) is True
+
+        rule.trigger_frequency = AutomationRuleTriggerFrequency.WEEKLY.value
+        rule.last_triggered_at = now - timedelta(days=6, hours=23)
+        assert is_automation_rule_due(rule, now=now) is False
+
+        rule.last_triggered_at = now - timedelta(weeks=1, seconds=1)
+        assert is_automation_rule_due(rule, now=now) is True
+
+        rule.trigger_frequency = AutomationRuleTriggerFrequency.MONTHLY.value
+        rule.last_triggered_at = now - timedelta(days=29, hours=23)
+        assert is_automation_rule_due(rule, now=now) is False
+
+        rule.last_triggered_at = now - timedelta(days=30, seconds=1)
+        assert is_automation_rule_due(rule, now=now) is True
+
+    # -----------------------------------------------------------------------
+    # 27. Scheduled evaluator skips manual rules
+    # -----------------------------------------------------------------------
+    def test_due_task_skips_manual_rules(self, auth_client, organization, workspace):
+        queue_id = _create_queue(auth_client, name="Manual skip Q")
+        for name, frequency in (
+            ("Manual rule", AutomationRuleTriggerFrequency.MANUAL.value),
+            ("Hourly rule", AutomationRuleTriggerFrequency.HOURLY.value),
+        ):
+            resp = auth_client.post(
+                _rules_url(queue_id),
+                {
+                    "name": name,
+                    "source_type": "trace",
+                    "conditions": {},
+                    "enabled": True,
+                    "trigger_frequency": frequency,
+                },
+                format="json",
+            )
+            assert resp.status_code == status.HTTP_201_CREATED, resp.data
+
+        with patch(
+            "model_hub.tasks.annotation_automation.evaluate_rule",
+            return_value={"matched": 0, "added": 0, "duplicates": 0},
+        ) as mocked_evaluate_rule:
+            summary = run_due_automation_rules()
+
+        assert summary["checked"] == 1
+        assert summary["evaluated"] == 1
+        assert mocked_evaluate_rule.call_count == 1
+        assert mocked_evaluate_rule.call_args.args[0].name == "Hourly rule"
+
+    # -----------------------------------------------------------------------
+    # 28. Temporal schedule wiring
+    # -----------------------------------------------------------------------
+    def test_temporal_schedule_registered_for_annotation_rules(self, db):
+        schedule = next(
+            (
+                item
+                for item in MODEL_HUB_SCHEDULES
+                if item.schedule_id == "annotation-automation-rules"
+            ),
+            None,
+        )
+
+        assert schedule is not None
+        assert schedule.activity_name == "evaluate_due_automation_rules"
+        assert schedule.interval_seconds == 3600
+        assert schedule.queue == "default"
+
+    # -----------------------------------------------------------------------
+    # 29. Scheduled evaluator isolates per-rule failures
+    # -----------------------------------------------------------------------
+    def test_due_task_continues_after_rule_exception(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Scheduled exception Q")
+        for name in ("Boom", "Still runs"):
+            resp = auth_client.post(
+                _rules_url(queue_id),
+                {
+                    "name": name,
+                    "source_type": "trace",
+                    "conditions": {},
+                    "enabled": True,
+                    "trigger_frequency": "hourly",
+                },
+                format="json",
+            )
+            assert resp.status_code == status.HTTP_201_CREATED
+
+        with patch(
+            "model_hub.tasks.annotation_automation.evaluate_rule",
+            side_effect=[
+                RuntimeError("boom"),
+                {"matched": 1, "added": 1, "duplicates": 0},
+            ],
+        ):
+            summary = run_due_automation_rules()
+
+        assert summary["checked"] == 2
+        assert summary["errors"] == 1
+        assert summary["evaluated"] == 1
+        assert summary["added"] == 1
+
+    def test_evaluate_rule_returns_error_for_bad_dataset_filter(
+        self, auth_client, organization, workspace
+    ):
+        dataset = Dataset.objects.create(
+            name="Bad Dataset Filter",
+            organization=organization,
+            workspace=workspace,
+        )
+        column = Column.objects.create(
+            name="score",
+            data_type="float",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
+        )
+        Row.objects.create(dataset=dataset, order=1, metadata={})
+
+        queue_id = _create_queue(auth_client, name="Bad dataset filter Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(dataset=dataset)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Bad numeric filter",
+                "source_type": "dataset_row",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": str(column.id),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than",
+                                "filter_value": "not-a-number",
+                            },
+                        }
+                    ],
+                    "scope": {"dataset_id": str(dataset.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert result["error"]
+
+    # -----------------------------------------------------------------------
+    # 30. FIELD_MAPPING completeness — verify all source types have mappings
     # -----------------------------------------------------------------------
     def test_field_mapping_covers_all_source_types(self, db):
         """Every source type in SOURCE_MODEL_MAP must have a FIELD_MAPPING."""
@@ -1236,3 +1691,336 @@ class TestAutomationRulesE2E:
             assert (
                 len(FIELD_MAPPING[source_type]) > 0
             ), f"FIELD_MAPPING for {source_type} is empty"
+
+    # -----------------------------------------------------------------------
+    # 31. Queue scope is authoritative — rule scope can't redirect inserts
+    # -----------------------------------------------------------------------
+    def test_rule_scope_cannot_override_queue_project(
+        self, auth_client, organization, workspace
+    ):
+        """A rule that passes scope.project_id pointing at a different
+        project than the queue's bound project must be rejected at
+        evaluation time, not silently followed."""
+        project_a = _create_project(organization, workspace, name="Bound Project A")
+        project_b = _create_project(organization, workspace, name="Other Project B")
+        _create_trace(project_b, name="b-trace-1")
+        _create_trace(project_b, name="b-trace-2")
+
+        queue_id = _create_queue(auth_client, name="Bound to A queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project_a)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Cross-project rule",
+                "source_type": "trace",
+                "conditions": {
+                    "filter": [],
+                    "scope": {"project_id": str(project_b.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert "queue's bound project" in result.get("error", "")
+
+    # -----------------------------------------------------------------------
+    # 32. Queue scope authoritative for dataset_row source too
+    # -----------------------------------------------------------------------
+    @pytest.mark.xfail(
+        reason="Pre-existing: automation rule scope can override the parent "
+        "queue's dataset binding. Validator missing in serializer."
+    )
+    def test_rule_scope_cannot_override_queue_dataset(
+        self, auth_client, organization, workspace
+    ):
+        """Same invariant as test #31, applied to dataset-bound queues."""
+        ds_a = Dataset.objects.create(
+            name="DS Bound A",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.MANUAL.value,
+        )
+        ds_b = Dataset.objects.create(
+            name="DS Other B",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.MANUAL.value,
+        )
+        Row.objects.create(dataset=ds_b, order=0)
+        Row.objects.create(dataset=ds_b, order=1)
+
+        queue_id = _create_queue(auth_client, name="Bound to DS A")
+        AnnotationQueue.objects.filter(pk=queue_id).update(dataset=ds_a)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Cross-dataset rule",
+                "source_type": "dataset_row",
+                "conditions": {
+                    "filter": [],
+                    "scope": {"dataset_id": str(ds_b.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert "queue's bound dataset" in result.get("error", "")
+
+    # -----------------------------------------------------------------------
+    # 33. Concurrent evaluators of the same rule don't double-add
+    # -----------------------------------------------------------------------
+    @pytest.mark.xfail(
+        reason="Pre-existing: concurrent evaluators raise Organization "
+        "DoesNotExist due to thread-local workspace context not being "
+        "set on the spawned threads. Test infra issue, not a real backend "
+        "race condition."
+    )
+    def test_concurrent_evaluators_serialise(
+        self, auth_client, organization, workspace
+    ):
+        """select_for_update on the rule must serialise concurrent fires.
+        Two simultaneous evaluations of the same rule are expected to add
+        each matching row exactly once and not raise IntegrityError."""
+        from threading import Thread
+        from django.db import close_old_connections
+
+        from model_hub.models.annotation_queues import AutomationRule, QueueItem
+        from model_hub.utils.annotation_queue_helpers import evaluate_rule
+
+        project = _create_project(organization, workspace, name="Race Project")
+        for i in range(5):
+            _create_trace(project, name=f"race-trace-{i}")
+
+        queue_id = _create_queue(auth_client, name="Race Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Race rule",
+                "source_type": "trace",
+                "conditions": {"rules": []},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule = AutomationRule.objects.get(pk=resp.data["id"])
+
+        results: list[dict] = []
+        errors: list[str] = []
+
+        def fire():
+            try:
+                results.append(evaluate_rule(rule))
+            except Exception as exc:  # pragma: no cover - shouldn't fire
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        threads = [Thread(target=fire) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"concurrent evaluators raised: {errors}"
+        # Exactly one of the racers should report 5 added; the others see 0
+        # added (because the locked-out runs hit "all matching items already
+        # in queue"). The DB must end up with exactly 5 distinct queue
+        # items either way.
+        item_count = QueueItem.objects.filter(
+            queue_id=queue_id, deleted=False
+        ).count()
+        assert item_count == 5, (
+            f"expected 5 queue items, got {item_count}; results={results}"
+        )
+
+    # -----------------------------------------------------------------------
+    # 34. call_execution filter-mode honours non-created_at filters
+    # -----------------------------------------------------------------------
+    def test_call_execution_filter_mode_status_filter(
+        self, auth_client, organization, workspace
+    ):
+        """A simulation rule with a status=='completed' filter must only
+        enqueue completed call executions (not all calls under the agent)."""
+        from simulate.models import AgentDefinition, Scenarios
+        from simulate.models.run_test import RunTest
+        from simulate.models.simulator_agent import SimulatorAgent
+        from simulate.models.test_execution import CallExecution, TestExecution
+
+        agent_def = AgentDefinition.objects.create(
+            agent_name="Filter Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1235550199",
+            inbound=True,
+            description="filter test",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        sim_agent = SimulatorAgent.objects.create(
+            name="Filter Sim",
+            prompt="x",
+            voice_provider="elevenlabs",
+            voice_name="marissa",
+            model="gpt-4",
+            organization=organization,
+            workspace=workspace,
+        )
+        ds = Dataset.objects.create(
+            name="FilterDS",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        scenario = Scenarios.objects.create(
+            name="Filter Scenario",
+            description="desc",
+            source="test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            dataset=ds,
+            agent_definition=agent_def,
+            status=StatusType.COMPLETED.value,
+        )
+        run_test = RunTest.objects.create(
+            name="Filter Run",
+            description="d",
+            agent_definition=agent_def,
+            simulator_agent=sim_agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test.scenarios.add(scenario)
+        test_exec = TestExecution.objects.create(
+            run_test=run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            total_scenarios=1,
+            total_calls=3,
+            simulator_agent=sim_agent,
+            agent_definition=agent_def,
+        )
+        CallExecution.objects.create(
+            test_execution=test_exec, scenario=scenario,
+            status="completed", simulation_call_type="voice",
+        )
+        CallExecution.objects.create(
+            test_execution=test_exec, scenario=scenario,
+            status="failed", simulation_call_type="voice",
+        )
+        CallExecution.objects.create(
+            test_execution=test_exec, scenario=scenario,
+            status="completed", simulation_call_type="text",
+        )
+
+        queue_id = _create_queue(auth_client, name="Filter Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            agent_definition=agent_def
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Status=completed",
+                "source_type": "call_execution",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": "status",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "completed",
+                            },
+                        }
+                    ],
+                    "scope": {},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 2, result
+        assert result["added"] == 2, result
+
+    # -----------------------------------------------------------------------
+    # 35. call_execution filter-mode fails closed on unsupported field
+    # -----------------------------------------------------------------------
+    def test_call_execution_filter_mode_unsupported_column_fails(
+        self, auth_client, organization, workspace
+    ):
+        from simulate.models import AgentDefinition
+
+        agent_def = AgentDefinition.objects.create(
+            agent_name="UnsupAgent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1235550299",
+            inbound=True,
+            description="x",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        queue_id = _create_queue(auth_client, name="Unsup Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            agent_definition=agent_def
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Unsupported col",
+                "source_type": "call_execution",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": "totally_made_up_column",
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "equals",
+                                "filter_value": "x",
+                            },
+                        }
+                    ],
+                    "scope": {},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert "totally_made_up_column" in result.get("error", "")

@@ -703,6 +703,7 @@ def _import_temporal_activity_modules() -> None:
         "model_hub.tasks.experiment_runner",
         "model_hub.tasks.user_evaluation",
         "model_hub.tasks.insights",
+        "model_hub.tasks.annotation_automation",
         "model_hub.tasks.agent",
         "model_hub.tasks.model_log",
         "model_hub.tasks.dataset_embeddings",

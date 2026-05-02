@@ -231,6 +231,7 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  refreshParentGrid,
 }) => {
   const navigate = useNavigate();
 
@@ -1495,6 +1496,12 @@ const TraceDetailDrawerV2 = ({
             queryClient.invalidateQueries({
               queryKey: ["annotation-queues", "for-source"],
             });
+            // The trace grid uses AG Grid's server-side row model with its
+            // own row cache — invalidating React Query keys is not enough to
+            // refresh the annotation column shown for this trace's row.
+            // Ask the parent grid to refresh so the new annotation surfaces
+            // without a full page reload.
+            refreshParentGrid?.();
           }}
           showHeader
         />
@@ -1584,6 +1591,7 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  refreshParentGrid: PropTypes.func,
 };
 
 export default React.memo(TraceDetailDrawerV2);

@@ -312,7 +312,7 @@ export default function QueueDetailView() {
       )}
       {currentTab === "rules" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
-          <AutomationRulesTab queueId={queueId} />
+          <AutomationRulesTab queueId={queueId} queue={queue} />
         </Box>
       )}
 

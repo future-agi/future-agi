@@ -498,34 +498,45 @@ class TestAutoCompleteQueueItems:
         thumbs_label,
         queue_setup,
     ):
-        """Queue item auto-completes when all required labels are scored."""
+        """Queue item auto-completes when all required labels are scored.
+
+        Auto-complete now runs in ``transaction.on_commit`` (so a side-effect
+        failure can't poison the Score write transaction). Pytest's default
+        ``django_db`` mark wraps the test in a transaction that rolls back,
+        so on_commit hooks never fire. Wrap calls in
+        ``captureOnCommitCallbacks(execute=True)`` to force them to run.
+        """
+        from django.test import TestCase
+
         queue, item = queue_setup
 
         # Score first label
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(star_label.id),
-                "value": {"rating": 4},
-            },
-            format="json",
-        )
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(star_label.id),
+                    "value": {"rating": 4},
+                },
+                format="json",
+            )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
         # Score second required label → should auto-complete
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(thumbs_label.id),
-                "value": {"value": "up"},
-            },
-            format="json",
-        )
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(thumbs_label.id),
+                    "value": {"value": "up"},
+                },
+                format="json",
+            )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 

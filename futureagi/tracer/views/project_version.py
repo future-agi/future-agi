@@ -569,24 +569,42 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     deleted=False,
                 )
 
+                # Project version annotation rollup. Reads from the unified
+                # ``Score`` model — the JSON paths (``value__value``,
+                # ``value__selected__contains``) match Score.value's schema.
+                # Pre-deprecation this queried ``TraceAnnotation`` (whose
+                # value lives in typed columns ``annotation_value_float``
+                # etc.), so those JSON paths returned no rows. Swapping to
+                # Score makes the query correct.
                 metric_subquery = (
-                    TraceAnnotation.objects.filter(
+                    Score.objects.filter(
                         observation_span__project_version_id=OuterRef(
                             "project_version_id"
                         ),
-                        annotation_label__id=label.id,
+                        label_id=label.id,
                         observation_span__project__organization=getattr(
                             request, "organization", None
                         )
                         or request.user.organization,
+                        deleted=False,
                     )
-                    .values("annotation_label__id")
+                    .values("label_id")
                     .annotate(
+                        # Score stores numeric labels as ``{"value": <float>}``
+                        # but STAR labels as ``{"rating": <float>}`` (see
+                        # tracer/views/annotation.py:_to_score_value).
+                        # Coalesce both so star ratings show up in rollups.
                         annotation_float_score=Round(
                             Avg(
-                                Cast(
-                                    KeyTextTransform("value", "value"),
-                                    FloatField(),
+                                Coalesce(
+                                    Cast(
+                                        KeyTextTransform("value", "value"),
+                                        FloatField(),
+                                    ),
+                                    Cast(
+                                        KeyTextTransform("rating", "value"),
+                                        FloatField(),
+                                    ),
                                 )
                             ),
                             2,
@@ -643,7 +661,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                                     Score.objects.filter(
                                         **score_base_filter,
                                     )
-                                    .exclude(value__value__isnull=True)
+                                    # Numeric stores ``{value: float}``; STAR
+                                    # stores ``{rating: float}``. Existence
+                                    # check accepts either path so star
+                                    # ratings aren't filtered out.
+                                    .filter(
+                                        Q(value__value__isnull=False)
+                                        | Q(value__rating__isnull=False)
+                                    )
                                     .filter(
                                         label__type__in=[
                                             AnnotationTypeChoices.NUMERIC.value,
@@ -1516,24 +1541,37 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     deleted=False,
                 )
 
+                # Same Score-based rollup as the first metric_subquery —
+                # see comment above for context.
                 metric_subquery = (
-                    TraceAnnotation.objects.filter(
+                    Score.objects.filter(
                         observation_span__project_version_id=OuterRef(
                             "project_version_id"
                         ),
-                        annotation_label__id=label.id,
+                        label_id=label.id,
                         observation_span__project__organization=getattr(
                             request, "organization", None
                         )
                         or request.user.organization,
+                        deleted=False,
                     )
-                    .values("annotation_label__id")
+                    .values("label_id")
                     .annotate(
+                        # Score stores numeric labels as ``{"value": <float>}``
+                        # but STAR labels as ``{"rating": <float>}`` (see
+                        # tracer/views/annotation.py:_to_score_value).
+                        # Coalesce both so star ratings show up in rollups.
                         annotation_float_score=Round(
                             Avg(
-                                Cast(
-                                    KeyTextTransform("value", "value"),
-                                    FloatField(),
+                                Coalesce(
+                                    Cast(
+                                        KeyTextTransform("value", "value"),
+                                        FloatField(),
+                                    ),
+                                    Cast(
+                                        KeyTextTransform("rating", "value"),
+                                        FloatField(),
+                                    ),
                                 )
                             ),
                             2,
@@ -1596,7 +1634,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                                     Score.objects.filter(
                                         **score_base_filter,
                                     )
-                                    .exclude(value__value__isnull=True)
+                                    # Numeric stores ``{value: float}``; STAR
+                                    # stores ``{rating: float}``. Existence
+                                    # check accepts either path so star
+                                    # ratings aren't filtered out.
+                                    .filter(
+                                        Q(value__value__isnull=False)
+                                        | Q(value__rating__isnull=False)
+                                    )
                                     .filter(
                                         label__type__in=[
                                             AnnotationTypeChoices.NUMERIC.value,

@@ -26,6 +26,23 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 logger = structlog.get_logger(__name__)
 
 
+def _safe_auto_create_queue_items_for_default_queues(*args, **kwargs):
+    """Wrap ``_auto_create_queue_items_for_default_queues`` so a failure
+    inside an ``on_commit`` hook can't bubble (hooks have no error path)."""
+    try:
+        _auto_create_queue_items_for_default_queues(*args, **kwargs)
+    except Exception:
+        logger.exception("auto_create_queue_items_failed", args=str(args))
+
+
+def _safe_auto_complete_queue_items(*args, **kwargs):
+    """Wrap ``_auto_complete_queue_items`` for use inside ``on_commit`` hooks."""
+    try:
+        _auto_complete_queue_items(*args, **kwargs)
+    except Exception:
+        logger.exception("auto_complete_queue_items_failed", args=str(args))
+
+
 def _auto_complete_queue_items(source_type, source_obj, annotator):
     """
     Check if any QueueItem references this source and auto-complete if
@@ -263,20 +280,25 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 },
             )
 
-            try:
-                # Auto-create queue items for default queues (lazy creation)
-                _auto_create_queue_items_for_default_queues(
+            # Run queue side-effects AFTER the transaction commits — see
+            # https://docs.djangoproject.com/en/5.1/topics/db/transactions/#django.db.transaction.on_commit
+            # Bare ``except Exception`` inside ``atomic()`` would catch the
+            # error but leave the transaction in a "needs rollback" state;
+            # the Score would commit, the response would say success, but
+            # subsequent ORM calls in the same request would raise
+            # ``TransactionManagementError``. ``on_commit`` runs the work
+            # outside the transaction, so a failure there can't poison the
+            # write that already happened.
+            transaction.on_commit(
+                lambda: _safe_auto_create_queue_items_for_default_queues(
                     source_type, source_obj, [label_id]
                 )
-
-                # Auto-complete matching queue items
-                _auto_complete_queue_items(source_type, source_obj, request.user)
-            except Exception:
-                logger.exception(
-                    "queue_operations_failed",
-                    score_id=str(score.id),
-                    source_type=source_type,
+            )
+            transaction.on_commit(
+                lambda: _safe_auto_complete_queue_items(
+                    source_type, source_obj, request.user
                 )
+            )
 
         result = ScoreSerializer(score).data
         return self._gm.success_response(result)
@@ -357,20 +379,21 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         created_by_user=request.user,
                     ).delete()
 
-            try:
-                # Auto-create queue items for default queues (lazy creation)
-                scored_label_ids = [s["label_id"] for s in data["scores"]]
-                _auto_create_queue_items_for_default_queues(
+            # Same rationale as in ``create()``: run side-effects after commit
+            # so a failure can't poison the transaction that just wrote the
+            # Score rows. Single hooks per side-effect (not N) since both
+            # operate on the source object, not per-score.
+            scored_label_ids = [s["label_id"] for s in data["scores"]]
+            transaction.on_commit(
+                lambda: _safe_auto_create_queue_items_for_default_queues(
                     source_type, source_obj, scored_label_ids
                 )
-
-                # Auto-complete matching queue items
-                _auto_complete_queue_items(source_type, source_obj, request.user)
-            except Exception:
-                logger.exception(
-                    "queue_operations_failed",
-                    source_type=source_type,
+            )
+            transaction.on_commit(
+                lambda: _safe_auto_complete_queue_items(
+                    source_type, source_obj, request.user
                 )
+            )
 
         return self._gm.success_response(
             {

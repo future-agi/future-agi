@@ -1006,6 +1006,112 @@ def resolve_filtered_session_ids(
 # --------------------------------------------------------------------------
 
 
+# UI column id → CallExecution ORM lookup. Mirrors the SIMULATION_RULE_FILTER_FIELDS
+# the rule dialog sends. agent_definition is matched by name (icontains)
+# because the dialog field is free-text. Persona is a nested JSON field on
+# call_metadata, matched as a substring against the serialised JSON blob.
+_CALL_EXECUTION_FIELD_MAP = {
+    "status": "status",
+    "simulation_call_type": "simulation_call_type",
+    "call_type": "simulation_call_type",
+    "duration_seconds": "duration_seconds",
+    "overall_score": "overall_score",
+    "agent_definition": "test_execution__agent_definition__agent_name",
+    "persona": "call_metadata__row_data__persona",
+}
+
+
+def _apply_call_execution_filters(qs, filters):
+    """Translate UI-shaped filters into CallExecution ORM lookups.
+
+    Returns ``(qs, unsupported)`` where ``unsupported`` is the list of
+    column ids the resolver couldn't map. Caller is expected to fail
+    closed if any are returned.
+    """
+    unsupported: list[str] = []
+    for f in filters:
+        col = f.get("column_id") or f.get("columnId")
+        cfg = f.get("filter_config") or f.get("filterConfig") or {}
+        op = cfg.get("filter_op") or cfg.get("filterOp")
+        value = (
+            cfg.get("filter_value")
+            if "filter_value" in cfg
+            else cfg.get("filterValue")
+        )
+        orm_field = _CALL_EXECUTION_FIELD_MAP.get(col)
+        if not orm_field or not op:
+            unsupported.append(col or "<unknown>")
+            continue
+
+        if op in ("is_null", "is_not_null"):
+            qs = (
+                qs.filter(**{f"{orm_field}__isnull": True})
+                if op == "is_null"
+                else qs.filter(**{f"{orm_field}__isnull": False})
+            )
+            continue
+
+        # Persona is a nested JSON field; only support substring/equals
+        # ops. Numeric ranges or in/not_in don't make sense.
+        if col == "persona":
+            if op in ("contains", "icontains"):
+                qs = qs.filter(**{f"{orm_field}__icontains": value})
+                continue
+            if op in ("equals", "eq", "in"):
+                values = value if isinstance(value, list) else [value]
+                qs = qs.filter(**{f"{orm_field}__in": values})
+                continue
+            unsupported.append(col)
+            continue
+
+        try:
+            if op in ("equals", "eq"):
+                values = value if isinstance(value, list) else [value]
+                if len(values) == 1:
+                    qs = qs.filter(**{orm_field: values[0]})
+                else:
+                    qs = qs.filter(**{f"{orm_field}__in": values})
+            elif op in ("not_equals", "ne"):
+                values = value if isinstance(value, list) else [value]
+                if len(values) == 1:
+                    qs = qs.exclude(**{orm_field: values[0]})
+                else:
+                    qs = qs.exclude(**{f"{orm_field}__in": values})
+            elif op == "in":
+                values = value if isinstance(value, list) else [value]
+                qs = qs.filter(**{f"{orm_field}__in": values})
+            elif op == "not_in":
+                values = value if isinstance(value, list) else [value]
+                qs = qs.exclude(**{f"{orm_field}__in": values})
+            elif op in ("contains", "icontains"):
+                qs = qs.filter(**{f"{orm_field}__icontains": value})
+            elif op in ("not_contains",):
+                qs = qs.exclude(**{f"{orm_field}__icontains": value})
+            elif op in ("more_than", "gt"):
+                qs = qs.filter(**{f"{orm_field}__gt": value})
+            elif op in ("less_than", "lt"):
+                qs = qs.filter(**{f"{orm_field}__lt": value})
+            elif op in ("more_than_or_equal", "gte"):
+                qs = qs.filter(**{f"{orm_field}__gte": value})
+            elif op in ("less_than_or_equal", "lte"):
+                qs = qs.filter(**{f"{orm_field}__lte": value})
+            elif op == "between":
+                if isinstance(value, (list, tuple)) and len(value) >= 2:
+                    qs = qs.filter(**{f"{orm_field}__range": (value[0], value[1])})
+                else:
+                    unsupported.append(col)
+            elif op in ("not_between", "not_in_between"):
+                if isinstance(value, (list, tuple)) and len(value) >= 2:
+                    qs = qs.exclude(**{f"{orm_field}__range": (value[0], value[1])})
+                else:
+                    unsupported.append(col)
+            else:
+                unsupported.append(col)
+        except (TypeError, ValueError):
+            unsupported.append(col)
+    return qs, unsupported
+
+
 def resolve_filtered_call_execution_ids(
     *,
     project_id,
@@ -1040,7 +1146,17 @@ def resolve_filtered_call_execution_ids(
         qs = qs.filter(test_execution__agent_definition__workspace=workspace)
 
     if filters:
-        qs, _remaining = apply_created_at_filters(qs, filters)
+        qs, remaining = apply_created_at_filters(qs, filters)
+        if remaining:
+            qs, unsupported = _apply_call_execution_filters(qs, remaining)
+            if unsupported:
+                # Fail closed: a filter the resolver still can't apply
+                # must NOT silently broaden the result to the full
+                # agent_definition.
+                raise ValueError(
+                    "call_execution filter resolver cannot apply: "
+                    + ", ".join(unsupported)
+                )
 
     if exclude_ids:
         qs = qs.exclude(id__in=list(exclude_ids))

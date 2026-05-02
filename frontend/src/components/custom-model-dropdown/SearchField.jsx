@@ -23,6 +23,9 @@ const SearchField = forwardRef(
       logoUrl,
       multiple,
       onClick,
+      // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+      // eslint-disable-next-line no-unused-vars
+      shrink: _shrink,
       ...rest
     },
     ref,

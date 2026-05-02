@@ -9,6 +9,7 @@ from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
+    AutomationRuleTriggerFrequency,
     AnnotatorRole,
     AssignmentStrategy,
     QueueItemSourceType,
@@ -501,6 +502,11 @@ class AutomationRule(BaseModel):
     )
     conditions = models.JSONField(default=dict)
     enabled = models.BooleanField(default=True)
+    trigger_frequency = models.CharField(
+        max_length=20,
+        choices=AutomationRuleTriggerFrequency.get_choices(),
+        default=AutomationRuleTriggerFrequency.MANUAL.value,
+    )
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,

@@ -26,13 +26,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -216,17 +210,12 @@ const NO_VALUE_OPS = new Set([
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
 // ---------------------------------------------------------------------------
-// System metrics to exclude (not useful as trace filters)
-// System metrics to exclude — not useful as trace filters
+// System metrics to exclude — only the ones that are aggregate counts or
+// meta-fields with no per-trace value worth filtering on. Numeric metrics
+// like latency/tokens/cost ARE useful as rule and dashboard filters and
+// should stay in the picker.
 const EXCLUDED_METRICS = new Set([
   "project",
-  "latency",
-  "error_rate",
-  "tokens",
-  "input_tokens",
-  "output_tokens",
-  "time_to_first_token",
-  "cost",
   "session_count",
   "user_count",
   "trace_count",
@@ -234,10 +223,6 @@ const EXCLUDED_METRICS = new Set([
   "dataset",
   "eval_source",
   "row_count",
-  "prompt_tokens",
-  "completion_tokens",
-  "total_tokens",
-  "response_time",
   "cell_error_rate",
 ]);
 
@@ -575,6 +560,26 @@ const SESSION_VALUE_FIELDS = new Set([
   "last_message",
 ]);
 
+const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
+
+function getPickerOptionValue(option) {
+  if (typeof option === "string") return option;
+  return option?.value ?? option?.label ?? "";
+}
+
+function getPickerOptionLabel(option) {
+  if (typeof option === "string") return option;
+  return option?.label ?? option?.value ?? "";
+}
+
+function normalizePickerValues(values) {
+  const rawValues = Array.isArray(values) ? values : values ? [values] : [];
+  const cleanValues = rawValues
+    .map((item) => String(getPickerOptionValue(item)).trim())
+    .filter(Boolean);
+  return Array.from(new Set(cleanValues));
+}
+
 function ValuePicker({
   propertyId,
   propertyCategory,
@@ -656,21 +661,33 @@ function ValuePicker({
     if (!search || isSessionField) return options; // session endpoint already filters server-side
     const q = search.toLowerCase();
     return options.filter((o) => {
-      const label = typeof o === "string" ? o : o.label || o.value || "";
+      const label = getPickerOptionLabel(o);
       return label.toLowerCase().includes(q);
     });
   }, [options, search, isSessionField]);
 
+  const selectedValues = useMemo(() => normalizePickerValues(value), [value]);
+
   const toggleValue = useCallback(
     (val) => {
-      const strVal = typeof val === "string" ? val : val.value;
+      const strVal = getPickerOptionValue(val);
       onChange(
-        value.includes(strVal)
-          ? value.filter((v) => v !== strVal)
-          : [...value, strVal],
+        selectedValues.includes(strVal)
+          ? selectedValues.filter((v) => v !== strVal)
+          : [...selectedValues, strVal],
       );
     },
-    [value, onChange],
+    [selectedValues, onChange],
+  );
+
+  const customSearchValue = search.trim();
+  const searchMatchesExistingOption = options.some(
+    (option) =>
+      getPickerOptionValue(option).toLowerCase() ===
+      customSearchValue.toLowerCase(),
+  );
+  const showCustomValueRow = Boolean(
+    customSearchValue && !searchMatchesExistingOption,
   );
 
   return (
@@ -695,7 +712,7 @@ function ValuePicker({
           "&:hover": { borderColor: "text.disabled" },
         }}
       >
-        {value.length === 0 ? (
+        {selectedValues.length === 0 ? (
           <Typography sx={{ fontSize: 12, color: "text.disabled", flex: 1 }}>
             {isLoading
               ? "Loading..."
@@ -704,7 +721,7 @@ function ValuePicker({
                 : "Select values..."}
           </Typography>
         ) : (
-          value.slice(0, 3).map((v) => {
+          selectedValues.slice(0, 3).map((v) => {
             // Resolve the display label from static choices or rendered
             // options. Falls back to the raw value (e.g. plain strings
             // without a label).
@@ -721,7 +738,7 @@ function ValuePicker({
                 size="small"
                 onDelete={(e) => {
                   e.stopPropagation();
-                  onChange(value.filter((x) => x !== v));
+                  onChange(selectedValues.filter((x) => x !== v));
                 }}
                 deleteIcon={<Iconify icon="mdi:close" width={10} />}
                 sx={{
@@ -734,9 +751,9 @@ function ValuePicker({
             );
           })
         )}
-        {value.length > 3 && (
+        {selectedValues.length > 3 && (
           <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
-            +{value.length - 3}
+            +{selectedValues.length - 3}
           </Typography>
         )}
         <Iconify
@@ -804,61 +821,13 @@ function ValuePicker({
             >
               {isError
                 ? "Values not available for this property"
-                : "No values found"}
+                : FREE_TEXT_NO_OPTIONS_TEXT}
             </Typography>
           )}
-          {/* Specify custom value — fallback when the typed value isn't in
-              the fetched list (empty API response, errored endpoint, or a
-              value the user knows but isn't in the sample). */}
-          {search &&
-            !options.some((o) => {
-              const ov = typeof o === "string" ? o : o.value;
-              return ov === search;
-            }) && (
-              <Box
-                onClick={() => {
-                  if (!value.includes(search)) {
-                    onChange([...value, search]);
-                  }
-                  setSearch("");
-                }}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  px: 1.5,
-                  py: 0.75,
-                  cursor: "pointer",
-                  bgcolor: value.includes(search)
-                    ? "action.selected"
-                    : "transparent",
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-              >
-                <Iconify
-                  icon={
-                    value.includes(search)
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
-                  }
-                  width={18}
-                  sx={{
-                    color: value.includes(search)
-                      ? "primary.main"
-                      : "text.secondary",
-                    flexShrink: 0,
-                  }}
-                />
-                <Typography sx={{ fontSize: 12 }}>
-                  Specify: <strong>{search}</strong>
-                </Typography>
-              </Box>
-            )}
           {filtered.map((opt) => {
-            const strVal = typeof opt === "string" ? opt : opt.value;
-            const label =
-              typeof opt === "string" ? opt : opt.label || opt.value;
-            const isSelected = value.includes(strVal);
+            const strVal = getPickerOptionValue(opt);
+            const label = getPickerOptionLabel(opt);
+            const isSelected = selectedValues.includes(strVal);
             return (
               <Box
                 key={strVal}
@@ -901,8 +870,42 @@ function ValuePicker({
               </Box>
             );
           })}
+          {showCustomValueRow && (
+            <>
+              {filtered.length > 0 && <Divider />}
+              <Box
+                onClick={() => {
+                  if (!selectedValues.includes(customSearchValue)) {
+                    onChange([...selectedValues, customSearchValue]);
+                  }
+                  setSearch("");
+                }}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                  cursor: "pointer",
+                  "&:hover": { bgcolor: "action.hover" },
+                }}
+              >
+                <Iconify
+                  icon="mdi:plus-circle-outline"
+                  width={18}
+                  sx={{
+                    color: "primary.main",
+                    flexShrink: 0,
+                  }}
+                />
+                <Typography sx={{ fontSize: 12 }}>
+                  + Specify: <strong>{customSearchValue}</strong>
+                </Typography>
+              </Box>
+            </>
+          )}
         </Box>
-        {value.length > 0 && (
+        {selectedValues.length > 0 && (
           <>
             <Divider />
             <Box
@@ -914,7 +917,7 @@ function ValuePicker({
               }}
             >
               <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                {value.length} selected
+                {selectedValues.length} selected
               </Typography>
               <Button
                 size="small"
@@ -950,6 +953,7 @@ function FilterRow({
   source = "traces",
   ValuePickerOverride,
   categories,
+  freeSoloValues = false,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const selectedProp = properties.find((p) => p.id === filter.field);
@@ -959,6 +963,10 @@ function FilterRow({
   const isBoolean = normalizedType === "boolean";
   const ops = getOperators(filter.fieldType);
   const currentOpDef = ops.find((o) => o.value === filter.operator);
+  const rowFreeSoloValues =
+    typeof freeSoloValues === "function"
+      ? freeSoloValues(filter)
+      : freeSoloValues;
 
   const handlePropertySelect = useCallback(
     (prop) => {
@@ -1209,6 +1217,7 @@ function FilterRow({
         value={filter.value}
         source={source}
         property={properties.find((p) => p.id === filter.field)}
+        freeSoloValues={rowFreeSoloValues}
         onChange={(newVal) => onChange(index, { ...filter, value: newVal })}
       />
     );
@@ -1315,6 +1324,7 @@ const TraceFilterPanel = ({
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
+  freeSoloValues = false,
 }) => {
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
@@ -1350,6 +1360,10 @@ const TraceFilterPanel = ({
       }));
     return [...staticProps, ...dynamicExtras, ...fieldExtras];
   }, [dynamicProperties, filterFields, propertiesOverride]);
+  const propertyById = useMemo(
+    () => Object.fromEntries(properties.map((p) => [p.id, p])),
+    [properties],
+  );
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
   const effectiveCategories = categoriesOverride ?? CATEGORIES;
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
@@ -1384,7 +1398,9 @@ const TraceFilterPanel = ({
       properties.map((p) => ({
         value: p.id,
         label: p.name,
-        type: "string",
+        type: p.choices?.length ? "enum" : "string",
+        choices: p.choices,
+        panelType: p.type || "string",
         category: p.category, // system, eval, annotation, attribute
       })),
     [properties],
@@ -1418,10 +1434,11 @@ const TraceFilterPanel = ({
       if (currentFilters?.length) {
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
-          const prop = properties.find((p) => p.id === f.field);
+          const prop = propertyById[f.field];
           return {
             ...f,
             fieldCategory: f.fieldCategory || prop?.category || "system",
+            fieldName: f.fieldName || prop?.name,
             fieldType: f.fieldType || prop?.type || "string",
           };
         });
@@ -1431,6 +1448,28 @@ const TraceFilterPanel = ({
       }
     }
   }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleQueryTokensChange = useCallback(
+    (tokens) => {
+      const converted = tokens.map((t) => {
+        const queryFieldDef = queryFieldMap[t.field];
+        const prop = propertyById[t.field];
+        return {
+          field: t.field,
+          fieldName: prop?.name || queryFieldDef?.label,
+          fieldCategory: prop?.category || queryFieldDef?.category || "system",
+          fieldType:
+            prop?.type ||
+            queryFieldDef?.panelType ||
+            (queryFieldDef?.type === "enum" ? "categorical" : "string"),
+          operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
+          value: Array.isArray(t.value) ? t.value : [t.value],
+        };
+      });
+      setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
+    },
+    [effectiveDefaultRow, propertyById, queryFieldMap],
+  );
 
   const handleChange = useCallback((idx, updated) => {
     setRows((prev) => prev.map((r, i) => (i === idx ? updated : r)));
@@ -1621,6 +1660,7 @@ const TraceFilterPanel = ({
                     source={source}
                     ValuePickerOverride={ValuePickerOverride}
                     categories={effectiveCategories}
+                    freeSoloValues={freeSoloValues}
                   />
                 ))}
               </Stack>
@@ -1676,18 +1716,7 @@ const TraceFilterPanel = ({
             <QueryInput
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
-              onApply={(tokens) => {
-                const converted = tokens.map((t) => ({
-                  field: t.field,
-                  fieldCategory:
-                    properties.find((p) => p.id === t.field)?.category ||
-                    "system",
-                  operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-                  value: Array.isArray(t.value) ? t.value : [t.value],
-                }));
-                setRows(converted);
-                onApply(converted.length > 0 ? converted : null);
-              }}
+              onApply={handleQueryTokensChange}
               initialTokens={rows
                 .filter(
                   (r) =>
@@ -1709,6 +1738,28 @@ const TraceFilterPanel = ({
               valueLoading={queryValuesLoading}
               onFieldChange={setQueryField}
             />
+            <Stack
+              direction="row"
+              justifyContent="flex-end"
+              spacing={1}
+              sx={{ mt: 1 }}
+            >
+              <Button
+                size="small"
+                onClick={handleClear}
+                sx={{ textTransform: "none", fontSize: 12 }}
+              >
+                Clear all
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleApply}
+                sx={{ textTransform: "none", fontSize: 12, px: 2 }}
+              >
+                Apply
+              </Button>
+            </Stack>
             <Typography
               sx={{ fontSize: 11, color: "text.disabled", mt: 1, px: 0.5 }}
             >
@@ -1739,6 +1790,7 @@ TraceFilterPanel.propTypes = {
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
+  freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),
 };
 
 export default React.memo(TraceFilterPanel);

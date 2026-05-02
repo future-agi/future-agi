@@ -55,7 +55,6 @@ class CreateScoreTool(BaseTool):
         from model_hub.models.develop_annotations import AnnotationsLabels
         from model_hub.models.score import Score
         from tracer.models.trace import Trace
-        from tracer.models.trace_annotation import TraceAnnotation
 
         from ._annotation_validation import validate_annotation_value
         from .create_trace_annotation import _to_score_value
@@ -112,48 +111,13 @@ class CreateScoreTool(BaseTool):
         if validation_error:
             return ToolResult.error(validation_error, error_code="VALIDATION_ERROR")
 
-        # Derive raw value for Score conversion
+        # Score-only path. Production readers are unified on the ``Score``
+        # model post-deprecation; the ``TraceAnnotation`` write that used to
+        # accompany this call was dropped to avoid the API identity split
+        # (returning a TraceAnnotation ID while readers expect Score IDs).
         raw_value = _get_raw_value(params)
         score_value = _to_score_value(label.type, raw_value)
-        updated_by = str(context.user.id)
 
-        # Duplicate detection — update existing instead of creating duplicate
-        lookup_kwargs = {
-            "annotation_label": label,
-            "user": context.user,
-        }
-        if span:
-            lookup_kwargs["observation_span"] = span
-        else:
-            lookup_kwargs["trace"] = trace
-            lookup_kwargs["observation_span__isnull"] = True
-
-        existing = TraceAnnotation.objects.filter(**lookup_kwargs).first()
-        is_update = existing is not None
-
-        if existing:
-            existing.annotation_value = params.value
-            existing.annotation_value_float = params.value_float
-            existing.annotation_value_bool = params.value_bool
-            existing.annotation_value_str_list = params.value_str_list
-            existing.trace = trace
-            existing.updated_by = updated_by
-            existing.save()
-            annotation = existing
-        else:
-            annotation = TraceAnnotation.objects.create(
-                trace=trace,
-                annotation_label=label,
-                annotation_value=params.value,
-                annotation_value_float=params.value_float,
-                annotation_value_bool=params.value_bool,
-                annotation_value_str_list=params.value_str_list,
-                observation_span=span,
-                user=context.user,
-                updated_by=updated_by,
-            )
-
-        # Write to unified Score model (matches BulkAnnotationView behavior)
         score_lookup = {
             "label_id": label.pk,
             "annotator_id": context.user.pk,
@@ -169,17 +133,14 @@ class CreateScoreTool(BaseTool):
         if span:
             score_lookup["observation_span_id"] = span.pk
             score_defaults["source_type"] = "observation_span"
-            if hasattr(span, "project") and span.project:
-                score_defaults["project"] = span.project
         else:
             score_lookup["trace_id"] = trace.pk
             score_defaults["source_type"] = "trace"
-            if hasattr(trace, "project") and trace.project:
-                score_defaults["project"] = trace.project
 
-        Score.no_workspace_objects.update_or_create(
+        annotation, created = Score.no_workspace_objects.update_or_create(
             **score_lookup, defaults=score_defaults
         )
+        is_update = not created
 
         # Determine display value
         display_value = _format_display_value(params)

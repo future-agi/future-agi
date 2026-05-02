@@ -1,13 +1,46 @@
-import { describe, it, expect } from "vitest";
+import React from "react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
+import axios from "src/utils/axios";
 import {
   annotationQueueEndpoints,
   annotationQueueKeys,
   queueItemKeys,
   annotateKeys,
   automationRuleKeys,
+  useCreateAutomationRule,
 } from "../annotation-queues";
 
+vi.mock("src/utils/axios", () => ({
+  default: {
+    post: vi.fn(),
+  },
+}));
+
+vi.mock("notistack", () => ({
+  enqueueSnackbar: vi.fn(),
+}));
+
+function createQueryWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return function QueryWrapper({ children }) {
+    return React.createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
+
 describe("Annotation Queues API", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe("queue endpoints", () => {
     it("has correct list endpoint", () => {
       expect(annotationQueueEndpoints.list).toBe(
@@ -112,6 +145,39 @@ describe("Annotation Queues API", () => {
         "q-1",
         "list",
       ]);
+    });
+  });
+
+  describe("useCreateAutomationRule", () => {
+    it("surfaces backend automation_rules entitlement reasons in the snackbar", async () => {
+      axios.post.mockRejectedValueOnce({
+        response: {
+          status: 403,
+          data: {
+            status: false,
+            result: "automation_rules limit reached for this workspace",
+          },
+        },
+      });
+
+      const { result } = renderHook(() => useCreateAutomationRule(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        name: "Quota blocked rule",
+        source_type: "trace",
+        conditions: {},
+        enabled: true,
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "automation_rules limit reached for this workspace",
+          { variant: "error" },
+        );
+      });
     });
   });
 });

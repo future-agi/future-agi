@@ -77,6 +77,45 @@ FILTER_MODE_RESOLVERS = {
 }
 
 
+def _is_queue_manager(queue, user):
+    return AnnotationQueueAnnotator.objects.filter(
+        queue=queue,
+        user=user,
+        role=AnnotatorRole.MANAGER.value,
+        deleted=False,
+    ).exists()
+
+
+def _restore_archived_default_queue(queue):
+    """Un-soft-delete a previously archived default queue and reset its
+    automation rules so they don't all fire at once on first scheduler tick.
+
+    A queue can be archived (soft-deleted) by a user clicking "Delete" in
+    the UI. Default queue identity is per-scope, so when the user lands
+    back on the project/dataset/agent's annotation page we restore the
+    archived queue rather than create a new sibling. Rules + items + label
+    bindings come back too — that's the whole point.
+
+    Edge case the cadence-reset addresses: if the queue was archived for
+    a long time, every attached rule's ``last_triggered_at`` is now stale
+    enough that the scheduler thinks they're all immediately due — leading
+    to a flood of evaluations on the first tick after restore. Bumping
+    ``last_triggered_at`` to "now" defers them by their normal cadence
+    (hourly/daily/etc) so the user sees a smooth ramp-back-up.
+    """
+    from django.utils import timezone as tz
+
+    from model_hub.models.annotation_queues import AutomationRule
+
+    queue.deleted = False
+    queue.deleted_at = None
+    queue.save(update_fields=["deleted", "deleted_at", "updated_at"])
+
+    AutomationRule.objects.filter(queue=queue, deleted=False).update(
+        last_triggered_at=tz.now()
+    )
+
+
 def _finalize_bulk_add(queue, items_to_create):
     """Bulk-create QueueItems, run auto-assign, flip queue status if needed.
 
@@ -319,9 +358,21 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 QueueItem.objects.bulk_update(unassigned, ["assigned_to"])
 
     def destroy(self, request, *args, **kwargs):
+        """Archive a queue (soft delete).
+
+        ``BaseModel.delete()`` flips ``deleted=True`` instead of removing
+        the row. Attached automation rules go dormant (the scheduler
+        filters ``queue__deleted=False``), items stay invisible but
+        recoverable, label bindings preserved.
+
+        For truly destructive removal, use the ``hard-delete`` action
+        below.
+        """
         instance = self.get_object()
         self.perform_destroy(instance)
-        return self._gm.success_response({"deleted": True})
+        return self._gm.success_response(
+            {"deleted": True, "archived": True, "queue_id": str(instance.pk)}
+        )
 
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
@@ -334,11 +385,43 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         except AnnotationQueue.DoesNotExist:
             return self._gm.not_found("Queue not found or not archived.")
 
-        queue.deleted = False
-        queue.deleted_at = None
-        queue.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        # Resets rule cadence so users don't get a flood of fires on the
+        # first scheduler tick after restoring a long-archived queue.
+        _restore_archived_default_queue(queue)
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="hard-delete")
+    def hard_delete(self, request, pk=None):
+        """Permanently remove a queue + everything attached.
+
+        Hard delete cascades through the FK graph (rules, items,
+        assignments, scores) via ``on_delete=CASCADE``. There is no
+        recovery — callers must pass ``force=true`` AND the queue's
+        exact name as ``confirm_name`` so the action can't fire from
+        a typo'd request.
+        """
+        queue = self.get_object()
+        if request.data.get("force") is not True:
+            return self._gm.bad_request(
+                "Hard delete requires force=true. Use the archive endpoint "
+                "(DELETE /annotation-queues/<id>/) for soft-delete with "
+                "restore."
+            )
+        confirm_name = request.data.get("confirm_name") or ""
+        if confirm_name != queue.name:
+            return self._gm.bad_request(
+                "confirm_name must match the queue's exact name to "
+                "hard-delete it."
+            )
+        queue_id = str(queue.pk)
+        # Real DB delete — not BaseModel.delete() which only flips deleted=True.
+        # The Manager delete() uses queryset semantics, which Django routes to
+        # SQL DELETE rather than per-row .delete() — that's what we want here.
+        AnnotationQueue.all_objects.filter(pk=queue.pk).delete()
+        return self._gm.success_response(
+            {"deleted": True, "hard_deleted": True, "queue_id": queue_id}
+        )
 
     @action(detail=True, methods=["get"], url_path="progress")
     def progress(self, request, pk=None):
@@ -1009,22 +1092,46 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "project_id, dataset_id, or agent_definition_id is required."
             )
 
-        queue, created = AnnotationQueue.objects.get_or_create(
-            **lookup,
-            is_default=True,
-            deleted=False,
-            defaults={
-                "name": f"Default - {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
-                "description": f"Default annotation queue for {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
-                "status": AnnotationQueueStatusChoices.ACTIVE.value,
-                "organization": org,
-                "created_by": request.user,
-                **defaults_extra,
-            },
-        )
+        # Default-queue identity is per-scope (project/dataset/agent), not
+        # per-row. The flow is:
+        #   1. If an active default already exists, return it.
+        #   2. Else if an archived default exists for this scope, restore
+        #      it (preserves its rules + items + history) — surfacing
+        #      restore=True in the response so the UI can tell the user.
+        #   3. Else create a new one.
+        # The user-facing "Delete" button only archives, never hard-deletes,
+        # so this path is the natural recovery for an accidental archive.
+        queue = AnnotationQueue.objects.filter(
+            **lookup, is_default=True, deleted=False, organization=org
+        ).first()
+        action = "fetched"
+        if not queue:
+            archived = (
+                AnnotationQueue.all_objects.filter(
+                    **lookup, is_default=True, deleted=True, organization=org
+                )
+                .order_by("-deleted_at")
+                .first()
+            )
+            if archived:
+                _restore_archived_default_queue(archived)
+                queue = archived
+                action = "restored"
+            else:
+                queue = AnnotationQueue.objects.create(
+                    is_default=True,
+                    name=f"Default - {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
+                    description=f"Default annotation queue for {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
+                    status=AnnotationQueueStatusChoices.ACTIVE.value,
+                    organization=org,
+                    created_by=request.user,
+                    **lookup,
+                    **defaults_extra,
+                )
+                action = "created"
 
         # Auto-add creator as manager so they can see Settings/Agreement tabs
-        if created:
+        if action == "created":
             AnnotationQueueAnnotator.objects.create(
                 queue=queue,
                 user=request.user,
@@ -1061,7 +1168,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "is_default": queue.is_default,
                 },
                 "labels": labels,
-                "created": created,
+                # `created` retained for backwards compat; new clients should
+                # check `action` (one of "created" | "restored" | "fetched")
+                # so they can surface restore-from-archive in the UI.
+                "created": action == "created",
+                "action": action,
             }
         )
 
@@ -1886,7 +1997,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
             # cannot be applied to the nullable side of an outer join".
             if source_obj and source_fk_field:
-                Score.no_workspace_objects.update_or_create(
+                score, _ = Score.no_workspace_objects.update_or_create(
                     **{f"{source_fk_field}_id": source_obj.pk},
                     label_id=label.pk,
                     annotator_id=request.user.pk,
@@ -2569,7 +2680,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 continue
 
             if source_obj and source_fk_field:
-                Score.no_workspace_objects.update_or_create(
+                score, _ = Score.no_workspace_objects.update_or_create(
                     **{f"{source_fk_field}_id": source_obj.pk},
                     label_id=label.pk,
                     annotator_id=annotator.pk,
@@ -2595,6 +2706,24 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
     queryset = AutomationRule.objects.all()
     _gm = GeneralMethods()
 
+    def _queue_manager_error(self, request, queue_id=None):
+        org = getattr(request, "organization", None) or request.user.organization
+        try:
+            queue = AnnotationQueue.objects.get(
+                pk=queue_id or self.kwargs.get("queue_id"),
+                organization=org,
+                deleted=False,
+            )
+        except AnnotationQueue.DoesNotExist:
+            return self._gm.not_found("Queue not found.")
+
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage automation rules."
+            )
+
+        return None
+
     def get_queryset(self):
         queryset = super().get_queryset().select_related("created_by")
         queue_id = self.kwargs.get("queue_id")
@@ -2603,6 +2732,10 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         return queryset.order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
+        manager_error = self._queue_manager_error(request)
+        if manager_error:
+            return manager_error
+
         # Entitlement check: can this org create more automation rules?
         try:
             try:
@@ -2624,6 +2757,24 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
 
         return super().create(request, *args, **kwargs)
 
+    def update(self, request, *args, **kwargs):
+        manager_error = self._queue_manager_error(request)
+        if manager_error:
+            return manager_error
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        manager_error = self._queue_manager_error(request)
+        if manager_error:
+            return manager_error
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        manager_error = self._queue_manager_error(request)
+        if manager_error:
+            return manager_error
+        return super().destroy(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         queue_id = self.kwargs.get("queue_id")
         org = (
@@ -2644,6 +2795,10 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
     @action(detail=True, methods=["post"], url_path="evaluate")
     def evaluate(self, request, queue_id=None, pk=None):
         """Manually trigger rule evaluation."""
+        manager_error = self._queue_manager_error(request, queue_id=queue_id)
+        if manager_error:
+            return manager_error
+
         try:
             rule = AutomationRule.objects.get(
                 pk=pk,
@@ -2654,7 +2809,22 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         except AutomationRule.DoesNotExist:
             return self._gm.not_found("Rule not found.")
 
-        result = evaluate_rule(rule)
+        # The scheduled evaluator already filters out archived queues,
+        # but the manual endpoint hadn't — would silently add orphan
+        # items to a queue marked deleted. Block here with a 409 so
+        # the user sees a clear error and either restores the queue
+        # or moves the rule.
+        if getattr(rule.queue, "deleted", False):
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                result=(
+                    "Queue is archived. Restore the queue (POST "
+                    "/annotation-queues/<id>/restore/) before evaluating "
+                    "rules attached to it."
+                ),
+            )
+
+        result = evaluate_rule(rule, user=request.user)
         return self._gm.success_response(result)
 
     @action(detail=True, methods=["get"], url_path="preview")
@@ -2670,5 +2840,5 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         except AutomationRule.DoesNotExist:
             return self._gm.not_found("Rule not found.")
 
-        result = evaluate_rule(rule, dry_run=True)
+        result = evaluate_rule(rule, dry_run=True, user=request.user)
         return self._gm.success_response(result)

@@ -3,7 +3,6 @@ from datetime import datetime
 
 import structlog
 from django.db import transaction
-from django.db.models import Q
 from requests.exceptions import HTTPError
 
 from accounts.models.organization import Organization
@@ -16,6 +15,9 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.serializers.observability_provider import ObservabilityProviderSerializer
+from tracer.services.clickhouse.span_attribute_lookups import (
+    span_id_by_provider_log_id,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
@@ -295,17 +297,37 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
 
         try:
             with transaction.atomic():
-                existing_span = (
-                    ObservationSpan.objects.filter(
-                        Q(metadata__provider_log_id=provider_log_id)
-                        | Q(span_attributes__raw_log__id=provider_log_id)
-                        | Q(eval_attributes__raw_log__id=provider_log_id),
+                # The PG path used to OR three JSONB containment checks
+                # (``metadata__provider_log_id``, ``span_attributes__raw_log__id``,
+                # ``eval_attributes__raw_log__id``). The two GIN indexes that
+                # made the latter two cheap were dropped (migration 0074).
+                # Resolve the candidate span_id via ClickHouse and then fetch
+                # the row from PG by primary key.
+                existing_span_id = span_id_by_provider_log_id(
+                    project_id=str(project.id),
+                    provider=provider.provider,
+                    provider_log_id=provider_log_id,
+                )
+                existing_span = None
+                if existing_span_id:
+                    existing_span = ObservationSpan.objects.filter(
+                        id=existing_span_id,
                         project=project,
                         provider=provider.provider,
+                    ).first()
+
+                # Fallback to the small/cheap PG-side metadata GIN lookup if
+                # CH is unavailable or hasn't indexed this span yet.
+                if existing_span is None:
+                    existing_span = (
+                        ObservationSpan.objects.filter(
+                            metadata__provider_log_id=provider_log_id,
+                            project=project,
+                            provider=provider.provider,
+                        )
+                        .order_by("-updated_at")
+                        .first()
                     )
-                    .order_by("-updated_at")
-                    .first()
-                )
 
                 if existing_span:
                     _update_observation_span(existing_span, normalized_data)

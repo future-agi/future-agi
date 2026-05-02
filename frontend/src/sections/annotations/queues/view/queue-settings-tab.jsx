@@ -1,11 +1,17 @@
 import PropTypes from "prop-types";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import {
+  Alert,
   Box,
   Button,
   Card,
   CardContent,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControl,
   FormControlLabel,
@@ -19,6 +25,7 @@ import {
 } from "@mui/material";
 import { Controller, useForm, FormProvider } from "react-hook-form";
 import {
+  useHardDeleteAnnotationQueue,
   useUpdateAnnotationQueue,
   useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
@@ -469,11 +476,112 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
               {isPending ? "Saving..." : "Save Changes"}
             </Button>
           </Box>
+
+          <DangerZone queue={queue} />
         </Stack>
       </Box>
     </FormProvider>
   );
 }
+
+function DangerZone({ queue }) {
+  // Hard delete is intentionally separated from the everyday "Archive"
+  // button on the queue list. It bypasses the soft-delete that the rest
+  // of the app relies on for restore-on-recreate, so we gate it behind
+  // an explicit type-the-name confirmation.
+  const navigate = useNavigate();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const { mutate: hardDelete, isPending: isDeleting } =
+    useHardDeleteAnnotationQueue();
+  if (!queue) return null;
+  const matches = typed === queue.name;
+  return (
+    <>
+      <Card sx={{ borderColor: "error.main", borderWidth: 1, borderStyle: "solid" }}>
+        <CardContent>
+          <Stack spacing={2}>
+            <Typography variant="h6" color="error.main">
+              Danger zone
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Permanently delete this queue. All automation rules, items,
+              assignments, and annotation scores attached to it are removed.
+              This cannot be undone — for a recoverable removal, use{" "}
+              <strong>Archive</strong> from the queue list instead.
+            </Typography>
+            <Box>
+              <Button
+                variant="outlined"
+                color="error"
+                onClick={() => {
+                  setTyped("");
+                  setDialogOpen(true);
+                }}
+              >
+                Delete queue permanently
+              </Button>
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      <Dialog
+        open={dialogOpen}
+        onClose={() => !isDeleting && setDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Delete queue permanently</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="error">
+              This will hard-delete <strong>{queue.name}</strong> along with
+              all rules, items, assignments, and scores. There is no way to
+              recover the data after this.
+            </Alert>
+            <Typography variant="body2">
+              Type the queue name to confirm:{" "}
+              <strong>{queue.name}</strong>
+            </Typography>
+            <TextField
+              autoFocus
+              size="small"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={queue.name}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDialogOpen(false)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={!matches || isDeleting}
+            onClick={() =>
+              hardDelete(
+                { id: queue.id, name: queue.name },
+                {
+                  onSuccess: () => {
+                    setDialogOpen(false);
+                    navigate("/dashboard/annotations/queues");
+                  },
+                },
+              )
+            }
+          >
+            {isDeleting ? "Deleting…" : "Delete forever"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+DangerZone.propTypes = { queue: PropTypes.object };
 
 QueueSettingsTab.propTypes = {
   queue: PropTypes.object,

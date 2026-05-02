@@ -53,4 +53,11 @@ MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
         queue="default",
         description="Recover run prompts stuck in RUNNING status",
     ),
+    ScheduleConfig(
+        schedule_id="annotation-automation-rules",
+        activity_name="evaluate_due_automation_rules",
+        interval_seconds=3600,  # Due checker for hourly/daily/weekly/monthly rules
+        queue="default",
+        description="Evaluate due annotation automation rules",
+    ),
 ]

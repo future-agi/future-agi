@@ -169,7 +169,21 @@ const LabelPanel = forwardRef(function LabelPanel(
   const valuesRef = useRef(values);
   valuesRef.current = values;
 
-  // Initialize values from existing annotations
+  // Reset form state immediately when the loaded item changes — without
+  // this, navigating to a new un-annotated item can leave the previous
+  // item's values pre-filled while the new item's annotations are still
+  // fetching, and the user can accidentally re-submit those values onto
+  // the wrong trace.
+  useEffect(() => {
+    setValues({});
+    setNotes("");
+    setErrorLabels(new Set());
+    onDirtyChange?.(false);
+  }, [itemId, onDirtyChange]);
+
+  // Initialize values from existing annotations once they arrive (or
+  // re-arrive after a refetch). Runs after the itemId-change reset above,
+  // so values land on the correct item's prior annotations.
   useEffect(() => {
     const initial = {};
     for (const ann of annotations) {
@@ -181,7 +195,7 @@ const LabelPanel = forwardRef(function LabelPanel(
     setValues(initial);
     const withNotes = annotations.find((a) => a.notes);
     setNotes(withNotes?.notes || "");
-    setErrorLabels(new Set()); // Clear errors when annotations change
+    setErrorLabels(new Set());
     onDirtyChange?.(false);
   }, [annotations, onDirtyChange]);
 

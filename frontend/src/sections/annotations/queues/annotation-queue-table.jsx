@@ -604,10 +604,10 @@ export default function AnnotationQueueTable({
 
           <MenuItem
             onClick={() => handleAction("archive")}
-            sx={{ color: "error.main" }}
+            sx={{ color: "warning.main" }}
           >
-            <Iconify icon="solar:trash-bin-2-bold" width={18} sx={{ mr: 1 }} />
-            Delete
+            <Iconify icon="solar:archive-down-bold" width={18} sx={{ mr: 1 }} />
+            Archive
           </MenuItem>
         </Box>
       </Popover>

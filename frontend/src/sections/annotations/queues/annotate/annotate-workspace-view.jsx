@@ -16,6 +16,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { useSnackbar } from "notistack";
 import axios from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { useQueryClient } from "@tanstack/react-query";
@@ -83,6 +84,7 @@ export default function AnnotateWorkspaceView() {
   const [searchParams] = useSearchParams();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
+  const { enqueueSnackbar } = useSnackbar();
   const initialItemId = searchParams.get("itemId");
 
   const [navState, dispatch] = useReducer(historyReducer, {
@@ -297,12 +299,21 @@ export default function AnnotateWorkspaceView() {
       if (prevItem?.id) {
         dispatch({ type: "init", id: prevItem.id });
       }
-    } catch {
-      // silently ignore
+    } catch (err) {
+      // Aborts (from rapid Prev/Next clicks) are expected — only surface
+      // real failures so the user knows the action didn't go through.
+      if (err?.name !== "CanceledError" && err?.code !== "ERR_CANCELED") {
+        enqueueSnackbar(
+          err?.response?.data?.detail ||
+            err?.message ||
+            "Couldn't load previous item.",
+          { variant: "error" },
+        );
+      }
     } finally {
       setIsFetchingPrev(false);
     }
-  }, [historyIndex, currentItemId, queueId, isFetchingPrev]);
+  }, [historyIndex, currentItemId, queueId, isFetchingPrev, enqueueSnackbar]);
 
   const [isFetchingNext, setIsFetchingNext] = useState(false);
   const nextAbortRef = useRef(null);
@@ -336,12 +347,26 @@ export default function AnnotateWorkspaceView() {
       if (nextItem?.id) {
         dispatch({ type: "push", id: nextItem.id });
       }
-    } catch {
-      // silently ignore — button will stay disabled if no more items
+    } catch (err) {
+      // Aborts (from rapid Prev/Next clicks) are expected and silent.
+      // 404 means "no more items" — also expected, button just stays
+      // disabled. Any other error gets surfaced so the user isn't left
+      // wondering why nothing happened.
+      const status = err?.response?.status;
+      const isAbort =
+        err?.name === "CanceledError" || err?.code === "ERR_CANCELED";
+      if (!isAbort && status !== 404) {
+        enqueueSnackbar(
+          err?.response?.data?.detail ||
+            err?.message ||
+            "Couldn't load next item.",
+          { variant: "error" },
+        );
+      }
     } finally {
       setIsFetchingNext(false);
     }
-  }, [historyIndex, itemHistory, queueId, isFetchingNext]);
+  }, [historyIndex, itemHistory, queueId, isFetchingNext, enqueueSnackbar]);
 
   const handleKeyboardSubmit = useCallback(() => {
     labelPanelRef.current?.submit();

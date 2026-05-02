@@ -20,6 +20,10 @@ const FormTextFieldV2 = React.forwardRef(
       onBlur,
       onChange: propOnChange,
       fieldType = "text",
+      // Filter ``shrink`` out of ``rest`` — it belongs only on InputLabel.
+      // See note in rhf-text-field.jsx for why.
+      // eslint-disable-next-line no-unused-vars
+      shrink: _shrink,
       ...rest
     },
     ref,

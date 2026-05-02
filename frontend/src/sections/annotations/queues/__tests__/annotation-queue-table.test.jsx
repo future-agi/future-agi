@@ -226,7 +226,7 @@ describe("AnnotationQueueTable", () => {
 
       expect(screen.getByText("Edit")).toBeInTheDocument();
       expect(screen.getByText("Duplicate")).toBeInTheDocument();
-      expect(screen.getByText("Delete")).toBeInTheDocument();
+      expect(screen.getByText("Archive")).toBeInTheDocument();
     });
 
     it("shows status transition for draft queue (Activate)", async () => {

@@ -49,6 +49,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
       onNext={onNext}
       hasPrev={hasPrev}
       hasNext={hasNext}
+      refreshParentGrid={refreshGrid}
     />
   );
 };

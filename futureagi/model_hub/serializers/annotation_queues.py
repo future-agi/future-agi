@@ -553,6 +553,7 @@ class AutomationRuleSerializer(serializers.ModelSerializer):
             "source_type",
             "conditions",
             "enabled",
+            "trigger_frequency",
             "organization",
             "created_by",
             "created_by_name",

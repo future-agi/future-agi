@@ -27,6 +27,9 @@ from simulate.utils.test_execution import (
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.span_attribute_lookups import (
+    spans_by_eval_attribute_call_execution_ids,
+)
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.api_key import ApiKey
@@ -6633,46 +6636,36 @@ def add_trace_details_to_call_executions(call_executions):
     # ObservationSpan.eval_attributes is a *flat* JSON dict. The call execution id is stored under a dotted key:
     # "fi.simulator.call_execution_id" (snake_case; FE sees camelCase due to middleware).
     #
-    # We bulk-fetch spans for all call_execution_ids on the page to avoid N+1 queries.
-
-    # Build Q objects for filtering by multiple call execution IDs
-    q_objects = Q()
-    for call_exec_id in call_execution_ids:
-        q_objects |= Q(
-            eval_attributes__contains={"fi.simulator.call_execution_id": call_exec_id}
-        )
-
-    matching_spans = (
-        ObservationSpan.objects.filter(
-            deleted=False,
-        )
-        .filter(q_objects)
-        .select_related("trace")
-        .only("id", "trace_id", "eval_attributes")
+    # The PG GIN that previously backed this lookup
+    # (``tracer_obse_eval_attr_gin``) was dropped in migration 0074. The
+    # equivalent containment check now goes to ClickHouse, which has the
+    # same data and is much cheaper for this access pattern.
+    spans_by_call_exec = spans_by_eval_attribute_call_execution_ids(
+        call_execution_ids
     )
 
     # Collect trace IDs and build trace_details
     trace_ids = set()
     trace_details_map = {}
 
-    for span in matching_spans:
-        # Extract call_execution_id from eval_attributes
-        call_exec_id = (
-            span.eval_attributes.get("fi.simulator.call_execution_id")
-            if span.eval_attributes
-            else None
-        )
-        if call_exec_id and str(call_exec_id) in call_executions_dict:
-            trace_id = span.trace.id
-            trace_ids.add(trace_id)
-            # Use the first span found for each call_execution_id
-            if str(call_exec_id) not in trace_details_map:
-                trace_details_map[str(call_exec_id)] = {
-                    "trace_id": str(trace_id),
-                    "parent_span_id": str(span.id),
-                    "attributes": span.eval_attributes,
-                    "_trace_id_uuid": trace_id,  # Keep UUID for mapping
-                }
+    for call_exec_id, spans in spans_by_call_exec.items():
+        if not spans or call_exec_id not in call_executions_dict:
+            continue
+        # Use the first span returned for each call_execution_id (the
+        # original PG version also took whichever row came first).
+        span = spans[0]
+        try:
+            eval_attrs = json.loads(span["eval_attributes"]) if span.get("eval_attributes") else {}
+        except (TypeError, ValueError):
+            eval_attrs = {}
+        trace_id_str = span["trace_id"]
+        trace_ids.add(trace_id_str)
+        trace_details_map[call_exec_id] = {
+            "trace_id": trace_id_str,
+            "parent_span_id": span["id"],
+            "attributes": eval_attrs,
+            "_trace_id_uuid": trace_id_str,  # Keep for mapping below
+        }
 
     # Bulk fetch session IDs for all traces
     if trace_ids:
@@ -6683,7 +6676,9 @@ def add_trace_details_to_call_executions(call_executions):
         ).values_list("id", "session_id")
 
         for trace_id, session_id in traces_with_sessions:
-            trace_to_session[trace_id] = str(session_id)
+            # ``trace_id`` is a UUID from PG; the CH lookup gave us strings.
+            # Key on str to match what's stored in ``_trace_id_uuid`` below.
+            trace_to_session[str(trace_id)] = str(session_id)
 
         # Add sessions to trace_details (as list for consistency with serializer format)
         for call_exec_id, trace_details in trace_details_map.items():

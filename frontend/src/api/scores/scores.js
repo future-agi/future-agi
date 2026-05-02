@@ -112,7 +112,27 @@ export const useBulkCreateScores = () => {
       return axios.post("/model-hub/scores/bulk/", payload);
     },
     onSuccess: (data, variables) => {
-      enqueueSnackbar("Annotations saved", { variant: "success" });
+      // Backend returns { scores: [...saved], errors: [...failed] } per
+      // model_hub/views/scores.py:bulk_create. A 2xx response can hide
+      // partial failures (e.g., label not found, validation error on one
+      // label) — without inspecting `errors[]` the UI used to claim success
+      // even when some labels were silently dropped. Surface partial
+      // failures explicitly so the user can retry the failed ones.
+      const result = data?.data?.result || {};
+      const errors = result.errors || [];
+      const savedCount = (result.scores || []).length;
+
+      if (errors.length > 0) {
+        enqueueSnackbar(
+          `Saved ${savedCount} annotation${savedCount === 1 ? "" : "s"}; ` +
+            `${errors.length} failed: ${errors.slice(0, 3).join("; ")}` +
+            (errors.length > 3 ? "…" : ""),
+          { variant: "warning", autoHideDuration: 8000 },
+        );
+      } else {
+        enqueueSnackbar("Annotations saved", { variant: "success" });
+      }
+
       queryClient.invalidateQueries({
         queryKey: scoreKeys.forSource(variables.sourceType, variables.sourceId),
       });
@@ -125,8 +145,16 @@ export const useBulkCreateScores = () => {
       });
     },
     onError: (error) => {
+      // Axios attaches backend error JSON at error.response.data; the older
+      // pattern `error?.result || error?.detail` was always falling through
+      // to the generic message because those keys live one level deeper.
+      const body = error?.response?.data || {};
       const msg =
-        error?.result || error?.detail || "Failed to save annotations";
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to save annotations";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });

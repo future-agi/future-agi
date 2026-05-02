@@ -164,6 +164,7 @@
     "jsdom": "^26.1.0",
     "msw": "^2.7.5",
     "prettier": "3.3.0",
+    "puppeteer-core": "^24.42.0",
     "storybook": "^9.1.20",
     "typescript": "^5.2.2",
     "vite": "^5.4.21",
