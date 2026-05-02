@@ -38,12 +38,11 @@ from tracer.utils.semantic_conventions import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+    from futureagi._ee_stubs import log_and_deduct_cost_for_resource_request
 
 
 class OtelSpan:

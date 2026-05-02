@@ -49,13 +49,11 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     try:
         from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
     except ImportError:
-        APICallStatusChoices = None
-        APICallTypeChoices = None
+        from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
     except ImportError:
-        log_and_deduct_cost_for_api_request = None
-        refund_cost_for_api_call = None
+        from futureagi._ee_stubs import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 
     api_call_log_row = None
     organization = None

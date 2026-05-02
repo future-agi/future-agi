@@ -48,12 +48,11 @@ from model_hub.views.prompt_template import replace_ids_with_column_name
 try:
     from ee.usage.models.usage import APICallTypeChoices
 except ImportError:
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from futureagi._ee_stubs import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
 
 
 class DevelopOptimizer:

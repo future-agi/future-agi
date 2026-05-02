@@ -111,8 +111,7 @@ except ImportError:
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
-    deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    from futureagi._ee_stubs import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 
 
 class TestExecutor:
