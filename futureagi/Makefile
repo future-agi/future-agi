@@ -1,21 +1,25 @@
 # Makefile for core-backend
 
-.PHONY: help test test-unit test-integration test-watch test-shell clean lint format mypy
+.PHONY: help test test-unit test-integration test-watch test-shell clean lint format mypy check-all pre-commit-install
 
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "Tests (uses bin/test):"
-	@echo "  test            Run all tests"
-	@echo "  test-unit       Run unit tests"
-	@echo "  test-integration Run integration tests"
-	@echo "  test-watch      Watch mode"
-	@echo "  test-shell      Open test shell"
+	@echo "  test              Run all tests"
+	@echo "  test-unit         Run unit tests"
+	@echo "  test-integration  Run integration tests"
+	@echo "  test-watch        Watch mode"
+	@echo "  test-shell        Open test shell"
 	@echo ""
 	@echo "Code Quality:"
-	@echo "  lint            Run linters"
-	@echo "  format          Format code"
-	@echo "  mypy            Type checking"
+	@echo "  lint              Lint + auto-fix with ruff"
+	@echo "  format            Format with ruff"
+	@echo "  mypy              Type checking"
+	@echo "  check-all         lint + format check + mypy (CI gate)"
+	@echo ""
+	@echo "Setup:"
+	@echo "  pre-commit-install  Install Python pre-commit hooks"
 	@echo ""
 	@echo "Or use bin/test directly for more options:"
 	@echo "  bin/test help"
@@ -43,10 +47,16 @@ lint:
 
 format:
 	@black .
-	@isort .
+	@ruff check . --fix
 
 mypy:
 	@./bin/check_mypy.sh
+
+check-all: lint mypy
+
+# Setup
+pre-commit-install:
+	@pre-commit install
 
 # Cleanup
 clean:

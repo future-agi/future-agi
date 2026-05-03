@@ -52,7 +52,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports: !override
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_PORT:-3031}:3000"
     environment:
       # Required on macOS/Windows: Docker bind mounts don't propagate FS
       # events into the container, so Vite's chokidar watcher needs polling
@@ -183,7 +183,7 @@ services:
       - "${TEMPORAL_UI_PORT:-8085}:8080"
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_CORS_ORIGINS: http://localhost:3000,http://localhost:8000
+      TEMPORAL_CORS_ORIGINS: http://localhost:3031,http://localhost:8000
     depends_on:
       temporal:
         condition: service_healthy

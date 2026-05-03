@@ -13,7 +13,7 @@
 #   VITE_HOST_API=https://api.example.com \
 #     docker compose -f docker-compose.frontend.yml up --build
 #
-# Open http://localhost:3000
+# Open http://localhost:3031
 # ============================================================================
 
 services:
@@ -27,5 +27,5 @@ services:
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-production}
     image: futureagi/frontend:local
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3031}:80"
     restart: unless-stopped

@@ -130,7 +130,7 @@ pip install ai-evaluation
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-cp futureagi/.env.example futureagi/.env
+cp .env.example .env
 docker compose up -d
 ```
 
@@ -297,11 +297,11 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 -->
 <!-- <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture.svg">
-  <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
+  <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, Temporal" src=".github/assets/architecture.svg" width="100%">
 </picture> -->
 
 **Runtime:** Python 3.11+ (Django 4.2 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
-**Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
+**Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · Temporal (jobs).
 
 <details><summary>Component breakdown (per-package)</summary>
 
@@ -314,7 +314,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 |  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
 |  Platform | **model_hub** — LLM routing, embeddings, datasets | [`futureagi/model_hub/`](./futureagi/model_hub) |
 |  Platform | **accounts · usage · integrations** — auth, orgs, metering, connectors | [`futureagi/accounts/`](./futureagi/accounts) |
-|  Data | **PostgreSQL** · **ClickHouse** · **Redis** · **RabbitMQ + Temporal** | — |
+|  Data | **PostgreSQL** · **ClickHouse** · **Redis** · **Temporal** | — |
 
 </details>
 

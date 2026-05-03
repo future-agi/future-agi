@@ -1,0 +1,43 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('futureagi/.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Get changed files
+        id: changed
+        run: |
+          merge_base=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          files=$(git diff --name-only "$merge_base" HEAD -- 'futureagi/' | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "Changed files: $files"
+
+      - name: Run pre-commit on changed files
+        if: steps.changed.outputs.files != ''
+        run: pre-commit run --config futureagi/.pre-commit-config.yaml --files ${{ steps.changed.outputs.files }}

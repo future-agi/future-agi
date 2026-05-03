@@ -1,5 +1,5 @@
 repos:
-  # General file checks
+  # General file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -16,73 +16,24 @@ repos:
       - id: check-docstring-first
       - id: debug-statements
 
-  # Python code formatting
+  # Python linting and import sorting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  # Python formatting
   - repo: https://github.com/psf/black
-    rev: 25.11.0
+    rev: 26.3.1
     hooks:
       - id: black
         language_version: python3
         args: [--line-length=88]
 
-  # Import sorting
-  - repo: https://github.com/pycqa/isort
-    rev: 7.0.0
-    hooks:
-      - id: isort
-        args: [--profile=black, --line-length=88]
-
-  # TODO: fix and uncomment
-  # # Modern Python linting with ruff (fast, comprehensive)
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   rev: v0.14.2
-  #   hooks:
-  #     - id: ruff
-  #       args: [--fix, --exit-non-zero-on-fix]
-  # TODO: fix and uncomment
-  # # Security scanning
-  # - repo: https://github.com/PyCQA/bandit
-  #   rev: 1.8.6
-  #   hooks:
-  #     - id: bandit
-  #       args: ['-c', 'pyproject.toml']
-  #       additional_dependencies: ['bandit[toml]']
-  #       exclude: '^tests/|^agentic_eval/tests/'
-  # TODO: fix and uncomment
-  # # Detect secrets in code
-  # - repo: https://github.com/Yelp/detect-secrets
-  #   rev: v1.5.0
-  #   hooks:
-  #     - id: detect-secrets
-  #       args: ['--baseline', '.secrets.baseline']
-  #       exclude: '.*\.(lock|sum|md|txt|json)$'
-  # TODO: fix and uncomment
-  # # Django template linting
-  # - repo: https://github.com/Riverside-Healthcare/djlint
-  #   rev: v1.36.4
-  #   hooks:
-  #     - id: djlint-reformat-django
-  #       files: '\.(html)$'
-  #       types_or: [html]
-  #     - id: djlint-django
-  #       files: '\.(html)$'
-  #       types_or: [html]
-
-  # Type checking with Future AGI's baseline strategy
-  - repo: local
-    hooks:
-      - id: mypy
-        name: mypy type checking (Future AGI baseline)
-        entry: bash -c 'make mypy || true'  # Don't fail pre-commit, just warn
-        language: system
-        types: [python]
-        pass_filenames: false
-        verbose: true
-
-# Configuration for specific tools
 default_language_version:
   python: python3
 
-# Files to exclude globally
 exclude: |
   (?x)^(
       .*migrations/.*|
@@ -92,9 +43,8 @@ exclude: |
       static/.*|
       media/.*|
       htmlcov/.*|
-      .pytest_cache/.*|
+      \.pytest_cache/.*|
       __pycache__/.*
   )$
 
-# Fail fast - stop on first failure
 fail_fast: false
