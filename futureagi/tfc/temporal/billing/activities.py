@@ -15,6 +15,8 @@ from temporalio import activity
 from tfc.temporal.billing.types import (
     DunningCheckInput,
     DunningCheckOutput,
+    MonthlyClosingInput,
+    MonthlyClosingOutput,
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
     StripeUsageReportInput,
@@ -185,5 +187,62 @@ def _generate_monthly_invoices_sync(
             stdout=lambda msg: activity.logger.info(msg),
         )
         return result.created, result.skipped, result.errors
+    finally:
+        close_old_connections()
+
+
+# ── Monthly Closing (reset + invoice gen, chained) ─────────────────────────
+
+
+def _run_monthly_reset_sync(period: str) -> None:
+    close_old_connections()
+    try:
+        from ee.usage.tasks.monthly_reset import run_monthly_reset
+
+        run_monthly_reset(period=period)
+    finally:
+        close_old_connections()
+
+
+@activity.defn(name="monthly_closing_activity")
+async def monthly_closing_activity(
+    input: MonthlyClosingInput,
+) -> MonthlyClosingOutput:
+    """Flush Redis usage to DB, then generate invoices for the same period.
+
+    Reset must precede invoice generation: the invoice-gen idempotency gate
+    skips orgs that already have an Invoice row for the period, so a retry
+    can't recover events still buffered in Redis at fire time.
+
+    ``input.period`` MUST be a non-empty ``YYYY-MM`` string, derived from
+    ``workflow.now()`` in ``MonthlyClosingWorkflow``. No wall-clock
+    fallback — see the workflow docstring for why.
+    """
+    close_old_connections()
+    try:
+        period = input.period
+        if not period or len(period) != 7 or period[4] != "-":
+            raise ValueError(
+                f"monthly_closing_activity requires YYYY-MM period, got {period!r}"
+            )
+        activity.logger.info(f"monthly_closing_start period={period}")
+
+        await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(period)
+
+        created, skipped, errors = await sync_to_async(
+            _generate_monthly_invoices_sync, thread_sensitive=False
+        )(period, "")
+        activity.logger.info(
+            f"monthly_closing_done period={period} "
+            f"created={created} skipped={skipped} errors={errors}"
+        )
+
+        return MonthlyClosingOutput(
+            period=period,
+            invoices_created=created,
+            invoices_skipped=skipped,
+            errors=errors,
+            status="COMPLETED",
+        )
     finally:
         close_old_connections()
