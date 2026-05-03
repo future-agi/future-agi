@@ -45,7 +45,6 @@ class MonthlyClosingWorkflow:
             "monthly_closing_activity",
             MonthlyClosingInput(period=period),
             start_to_close_timeout=timedelta(hours=2),
-            heartbeat_timeout=timedelta(minutes=5),
             retry_policy=CLOSING_RETRY_POLICY,
         )
 
