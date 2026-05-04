@@ -20,7 +20,7 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { PATH_AFTER_LOGIN, GOOGLE_SITE_KEY } from "src/config-global";
+import { PATH_AFTER_LOGIN } from "src/config-global";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -183,14 +183,14 @@ export default function JwtLoginView() {
   } = methods;
 
   const onSubmit = handleSubmit(async (data) => {
-    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
+    if (!executeRecaptcha) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",
       });
       return;
     }
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
+    const token = await executeRecaptcha("login");
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
