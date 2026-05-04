@@ -150,8 +150,8 @@ const EvaluateCell = ({
           size="small"
           variant="outlined"
           sx={{
-            borderColor: "#7c3aed",
-            color: "#7c3aed",
+            borderColor: "purple.500",
+            color: "purple.500",
             fontWeight: 500,
             maxWidth: 240,
             "& .MuiChip-label": {
