@@ -41,6 +41,7 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 // ----------------------------------------------------------------------
 
@@ -97,7 +98,7 @@ export default function JwtLoginView() {
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -108,7 +109,7 @@ export default function JwtLoginView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 

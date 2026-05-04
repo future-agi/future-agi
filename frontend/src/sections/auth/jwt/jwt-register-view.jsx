@@ -29,6 +29,7 @@ import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
@@ -65,7 +66,7 @@ export default function JwtRegisterView() {
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -76,7 +77,7 @@ export default function JwtRegisterView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 
