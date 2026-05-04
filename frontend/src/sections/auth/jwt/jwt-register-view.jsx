@@ -62,10 +62,15 @@ export default function JwtRegisterView() {
     const params = new URLSearchParams(search);
     const utmParams = new URLSearchParams();
     const utmKeys = ["utm_source", "utm_medium", "utm_campaign"];
+    const isValidUtm = (val) =>
+      !!val &&
+      val !== "undefined" &&
+      val !== "null" &&
+      !/^\{\{.*\}\}$/.test(val);
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -76,7 +81,7 @@ export default function JwtRegisterView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 
