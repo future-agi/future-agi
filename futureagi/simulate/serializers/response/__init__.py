@@ -22,6 +22,12 @@ from .call_execution import (
     CallExecutionLogsResponseSerializer,
     CallLogEntryResponseSerializer,
 )
+from .test_execution import (
+    CancelTestExecutionResponseSerializer,
+    ErrorResponseSerializer,
+    FailedRerunItemSerializer,
+    RerunCallsResponseSerializer,
+)
 
 # from .persona import (
 #     PersonaDeleteResponseSerializer,
@@ -49,6 +55,10 @@ __all__ = [
     "CallExecutionErrorResponseSerializer",
     "CallExecutionLogsResponseSerializer",
     "CallLogEntryResponseSerializer",
+    "ErrorResponseSerializer",
+    "CancelTestExecutionResponseSerializer",
+    "FailedRerunItemSerializer",
+    "RerunCallsResponseSerializer",
     # "PersonaResponseSerializer",
     # "PersonaListSerializer",
     # "PersonaDeleteResponseSerializer",

@@ -12,6 +12,10 @@ from .call_execution import (
     CallExecutionFilterSerializer,
     CallExecutionStatusUpdateSerializer,
 )
+from .test_execution import (
+    CallExecutionRerunSerializer,
+    TestExecutionCancelSerializer,
+)
 
 # from .persona import (
 #     PersonaCreateRequestSerializer,
@@ -29,6 +33,8 @@ __all__ = [
     "AgentVersionCreateRequestSerializer",
     "CallExecutionFilterSerializer",
     "CallExecutionStatusUpdateSerializer",
+    "TestExecutionCancelSerializer",
+    "CallExecutionRerunSerializer",
     # "PersonaCreateRequestSerializer",
     # "PersonaUpdateRequestSerializer",
     # "PersonaDuplicateRequestSerializer",
