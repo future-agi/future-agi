@@ -29,6 +29,8 @@ from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
 
 logger = structlog.get_logger(__name__)
+from drf_yasg.utils import swagger_auto_schema
+
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.error_localizer_model import (
@@ -58,6 +60,15 @@ from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
+)
+from simulate.serializers.requests.call_execution import (
+    CallExecutionFilterSerializer,
+    CallExecutionStatusUpdateSerializer,
+)
+from simulate.serializers.response.call_execution import (
+    CallExecutionDeleteResponseSerializer,
+    CallExecutionErrorResponseSerializer,
+    CallExecutionLogsResponseSerializer,
 )
 from simulate.serializers.run_test import (
     CreateRunTestSerializer,
@@ -141,9 +152,7 @@ def _voice_sim_gate_response(user_organization, gm):
             status=402,
         )
 
-    feat_check = Entitlements.check_feature(
-        str(user_organization.id), "has_voice_sim"
-    )
+    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
     if not feat_check.allowed:
         return gm.forbidden_response(feat_check.reason)
     return None
@@ -299,13 +308,8 @@ class CreateRunTestView(APIView):
                 organization=user_organization,
             )
 
-            if (
-                agent_definition.agent_type
-                == AgentDefinition.AgentTypeChoices.VOICE
-            ):
-                forbidden = _voice_sim_gate_response(
-                    user_organization, self.gm
-                )
+            if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+                forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
@@ -597,9 +601,7 @@ class RunTestExecutionView(APIView):
                 and run_test.agent_definition.agent_type
                 == AgentDefinition.AgentTypeChoices.VOICE
             ):
-                forbidden = _voice_sim_gate_response(
-                    user_organization, self.gm
-                )
+                forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
@@ -1097,6 +1099,14 @@ class CallExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        query_serializer=CallExecutionFilterSerializer,
+        responses={
+            200: CallExecutionSerializer(many=True),
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of call executions for the user's organization
@@ -1119,12 +1129,23 @@ class CallExecutionAPIView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            status_filter = request.query_params.get("status", "").strip()
-            test_execution_id = request.query_params.get(
-                "test_execution_id", ""
-            ).strip()
+            # Validate and parse query parameters
+            filter_serializer = CallExecutionFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return Response(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
+            status_filter = filter_serializer.validated_data.get("status", "").strip()
+            test_execution_id = (
+                str(filter_serializer.validated_data["test_execution_id"])
+                if filter_serializer.validated_data.get("test_execution_id")
+                else ""
+            )
 
             # Filter call executions by organization
             call_executions = CallExecution.objects.filter(
@@ -2945,6 +2966,13 @@ class CallExecutionDetailView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionDetailSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         """Get a specific call execution with all its details"""
         try:
@@ -3058,6 +3086,15 @@ class CallExecutionDetailView(APIView):
             )
 
     # used only for marking call failed.
+    @swagger_auto_schema(
+        request_body=CallExecutionStatusUpdateSerializer,
+        responses={
+            200: CallExecutionSerializer,
+            400: CallExecutionErrorResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def patch(self, request, call_execution_id, *args, **kwargs):
         """Update the status of a specific call execution"""
         try:
@@ -3078,24 +3115,14 @@ class CallExecutionDetailView(APIView):
             )
 
             # Validate request data
-            new_status = request.data.get("status")
-
-            if isinstance(new_status, str):
-                new_status = new_status.lower()
+            request_serializer = CallExecutionStatusUpdateSerializer(data=request.data)
+            if not request_serializer.is_valid():
+                return self.gm.bad_request(request_serializer.errors)
+            new_status = request_serializer.validated_data["status"]
             # Do NOT persist raw error details from the client into DB.
             # Use a safe generic reason instead (prevents leaking internal errors/stacktraces).
             generic_failure_reason = "Error processing simulation"
-            ended_reason = request.data.get("ended_reason")
-
-            if not new_status:
-                return self.gm.bad_request("Status is required")
-
-            # Validate status is a valid choice
-            valid_statuses = [choice[0] for choice in CallExecution.CallStatus.choices]
-            if new_status not in valid_statuses:
-                return self.gm.bad_request(
-                    f"Invalid status. Valid choices are: {', '.join(valid_statuses)}"
-                )
+            ended_reason = request_serializer.validated_data.get("ended_reason")
 
             # Update status atomically
             with transaction.atomic():
@@ -3192,6 +3219,13 @@ class CallExecutionLogsView(APIView):
         self.gm = GeneralMethods()
         self.pagination_class = ExtendedPageNumberPagination()
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionLogsResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         try:
             user_organization = (
@@ -3287,12 +3321,10 @@ class CallExecutionLogsView(APIView):
                 for entry in paginated_entries
             ]
 
-            return paginator.get_paginated_response(
-                {
-                    "results": results,
-                    "source": source,
-                }
+            logs_serializer = CallExecutionLogsResponseSerializer(
+                {"results": results, "source": source}
             )
+            return paginator.get_paginated_response(logs_serializer.data)
 
         except Exception as e:  # noqa: BLE001
             logger.exception("Failed to fetch call execution logs")
@@ -3524,6 +3556,13 @@ class CallExecutionDeleteView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            204: CallExecutionDeleteResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def delete(self, request, call_execution_id, *args, **kwargs):
         """
         Delete a specific call execution
@@ -3553,10 +3592,10 @@ class CallExecutionDeleteView(APIView):
             call_execution.deleted_at = timezone.now()
             call_execution.save()
 
-            return Response(
-                {"message": "Call execution deleted successfully"},
-                status=status.HTTP_204_NO_CONTENT,
+            response_serializer = CallExecutionDeleteResponseSerializer(
+                {"message": "Call execution deleted successfully"}
             )
+            return Response(response_serializer.data, status=status.HTTP_204_NO_CONTENT)
 
         except Exception as e:
             return Response(
@@ -5721,9 +5760,7 @@ class CallExecutionRerunView(APIView):
                         "Text/Chat agents only support 'eval_only' rerun type."
                     )
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
-                    forbidden = _voice_sim_gate_response(
-                        user_organization, self._gm
-                    )
+                    forbidden = _voice_sim_gate_response(user_organization, self._gm)
                     if forbidden is not None:
                         return forbidden
 
@@ -6193,9 +6230,7 @@ class TestExecutionRerunView(APIView):
                         "Text/Chat agents only support 'eval_only' rerun type."
                     )
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
-                    forbidden = _voice_sim_gate_response(
-                        user_organization, self._gm
-                    )
+                    forbidden = _voice_sim_gate_response(user_organization, self._gm)
                     if forbidden is not None:
                         return forbidden
 

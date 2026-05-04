@@ -16,6 +16,12 @@ from .agent_version import (
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
 )
+from .call_execution import (
+    CallExecutionDeleteResponseSerializer,
+    CallExecutionErrorResponseSerializer,
+    CallExecutionLogsResponseSerializer,
+    CallLogEntryResponseSerializer,
+)
 
 # from .persona import (
 #     PersonaDeleteResponseSerializer,
@@ -39,6 +45,10 @@ __all__ = [
     "AgentVersionActivateResponseSerializer",
     "AgentVersionDeleteResponseSerializer",
     "AgentVersionRestoreResponseSerializer",
+    "CallExecutionDeleteResponseSerializer",
+    "CallExecutionErrorResponseSerializer",
+    "CallExecutionLogsResponseSerializer",
+    "CallLogEntryResponseSerializer",
     # "PersonaResponseSerializer",
     # "PersonaListSerializer",
     # "PersonaDeleteResponseSerializer",

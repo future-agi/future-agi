@@ -8,6 +8,10 @@ from .agent_definition import (
 from .agent_version import (
     AgentVersionCreateRequestSerializer,
 )
+from .call_execution import (
+    CallExecutionFilterSerializer,
+    CallExecutionStatusUpdateSerializer,
+)
 
 # from .persona import (
 #     PersonaCreateRequestSerializer,
@@ -23,6 +27,8 @@ __all__ = [
     "AgentDefinitionFilterSerializer",
     "FetchAssistantRequestSerializer",
     "AgentVersionCreateRequestSerializer",
+    "CallExecutionFilterSerializer",
+    "CallExecutionStatusUpdateSerializer",
     # "PersonaCreateRequestSerializer",
     # "PersonaUpdateRequestSerializer",
     # "PersonaDuplicateRequestSerializer",
