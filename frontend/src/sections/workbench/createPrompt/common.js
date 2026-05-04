@@ -7,14 +7,14 @@ export const dataTypeMapping = {
   choices: "array",
 };
 
-export const getVariables = (currentPrompts, variableData) => {
+export const getVariables = (currentPrompts, variableData, templateFormat) => {
   const extractedVariables = Array.from(
     new Set(
       currentPrompts.reduce((acc, { content, role }) => {
         if (role === PromptRoles.ASSISTANT) {
           return acc;
         }
-        return [...acc, ...extractVariables(content)];
+        return [...acc, ...extractVariables(content, templateFormat)];
       }, []),
     ),
   );

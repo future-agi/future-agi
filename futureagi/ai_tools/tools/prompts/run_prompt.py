@@ -175,7 +175,8 @@ class RunPromptTool(BaseTool):
         # as the WebSocket path (run_template_async)
         prompt_messages = config.get("messages", []).copy()
         messages_with_replacement = replace_variables(
-            prompt_messages, variable_combination, model
+            prompt_messages, variable_combination, model,
+            template_format=config.get("configuration", {}).get("template_format"),
         )
         messages_with_replacement = remove_empty_text_from_messages(
             messages_with_replacement

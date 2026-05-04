@@ -1406,6 +1406,7 @@ class ConditionalColumnView(APIView):
                     row_id=row.id,
                     col_id=None,
                     model_name=config.get("model"),
+                    template_format=config.get("configuration", {}).get("template_format"),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(

@@ -422,7 +422,8 @@ def _resolve_or_create_pt_ptv(
 
     # Build variable_names dict from messages (model_hub convention)
     messages = prompt_data.get("messages", [])
-    var_names = _extract_variables(messages)
+    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
     pv_metadata = prompt_data.get("metadata") or {}
 
@@ -515,7 +516,8 @@ def _handle_ptv_lifecycle_on_update(
 
     # Build variable_names and metadata from prompt_data
     messages = prompt_data.get("messages", [])
-    var_names = _extract_variables(messages)
+    _tf = snapshot.get("configuration", {}).get("template_format")
+    var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
     pv_metadata = prompt_data.get("metadata") or {}
     commit_message = prompt_data.get("commit_message") or ""
@@ -616,7 +618,8 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
     """
     now = timezone.now()
     messages = prompt_data.get("messages", [])
-    new_vars = _extract_variables(messages)
+    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    new_vars = _extract_variables(messages, template_format=_tf)
 
     existing_input_ports = list(
         Port.no_workspace_objects.filter(node=node, direction=PortDirection.INPUT)
@@ -672,7 +675,8 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create ports for an LLM prompt node from its messages."""
     messages = prompt_data.get("messages", [])
-    variables = _extract_variables(messages)
+    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    variables = _extract_variables(messages, template_format=_tf)
 
     # Input ports for each variable
     for var in variables:
@@ -697,9 +701,10 @@ def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
 
 
 def _create_input_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
-    """Create input ports for an LLM prompt node from {{variables}} in messages."""
+    """Create input ports for an LLM prompt node from variables in messages."""
     messages = prompt_data.get("messages", [])
-    variables = _extract_variables(messages)
+    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    variables = _extract_variables(messages, template_format=_tf)
 
     for var in variables:
         Port(
@@ -1074,8 +1079,12 @@ def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
     _create_ports_from_fe_array(node, ports_data)
 
 
-def _extract_variables(messages: list[dict]) -> list[str]:
-    """Extract unique {{variable}} names from message contents, preserving order.
+def _extract_variables(messages: list[dict], template_format: str | None = None) -> list[str]:
+    """Extract unique variable names from message contents, preserving order.
+
+    When template_format is "jinja" or "jinja2", uses Jinja2 AST analysis to
+    correctly identify input variables (excluding loop/set scoped vars).
+    Otherwise falls back to {{variable}} regex matching.
 
     Handles new message format where content is an array of content items:
     [{
@@ -1086,6 +1095,24 @@ def _extract_variables(messages: list[dict]) -> list[str]:
         ]
     }]
     """
+    use_jinja = template_format in ("jinja", "jinja2")
+
+    if use_jinja:
+        from model_hub.utils.jinja_variables import extract_jinja_variables
+
+        # Collect all text from messages, then do a single AST parse
+        all_text = []
+        for msg in messages:
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        all_text.append(item.get("text", ""))
+            elif isinstance(content, str):
+                all_text.append(content)
+        return extract_jinja_variables("\n".join(all_text))
+
+    # Default: mustache {{ }} regex
     seen: set[str] = set()
     result: list[str] = []
     for msg in messages:
@@ -1165,6 +1192,7 @@ def _build_prompt_config_snapshot(prompt_data: dict[str, Any]) -> dict[str, Any]
         "tools",
         "tool_choice",
         "model_detail",
+        "template_format",
     )
     for key in _CONFIG_KEYS:
         value = prompt_data.get(key)
@@ -1176,7 +1204,8 @@ def _build_prompt_config_snapshot(prompt_data: dict[str, Any]) -> dict[str, Any]
 
     # Build variable_names dict for the snapshot (model_hub convention)
     messages = prompt_data.get("messages", [])
-    var_names = _extract_variables(messages)
+    _tf = configuration.get("template_format")
+    var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
 
     return {
