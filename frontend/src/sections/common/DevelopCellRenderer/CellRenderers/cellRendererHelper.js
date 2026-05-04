@@ -68,6 +68,7 @@ export const DataTypes = {
 
 export const OutputTypes = {
   NUMERIC: "numeric",
+  SCORE: "score",
 };
 
 export const StatusTypes = {

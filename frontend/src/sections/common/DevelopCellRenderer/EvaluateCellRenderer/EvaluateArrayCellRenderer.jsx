@@ -27,13 +27,25 @@ const EvaluateArrayCellRenderer = ({
       if (typeof value !== "string") return [];
       const trimmed = value.trim();
       if (!trimmed) return [];
-      
-      if (!(trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-        return [trimmed];
+
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        const parsed = JSON.parse(trimmed.replaceAll("'", '"'));
+        return Array.isArray(parsed) ? parsed : [];
       }
 
-      const parsed = JSON.parse(trimmed.replaceAll("'", '"'));
-      return Array.isArray(parsed) ? parsed : [];
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        const parsed = JSON.parse(trimmed.replaceAll("'", '"'));
+        if (parsed && typeof parsed === "object") {
+          if (Array.isArray(parsed.choices)) {
+            return parsed.choices.map((c) => String(c));
+          }
+          if (parsed.choices != null) return [String(parsed.choices)];
+          if (parsed.choice != null) return [String(parsed.choice)];
+        }
+        return [];
+      }
+
+      return [trimmed];
     } catch (e) {
       return typeof value === "string" && value.trim() ? [value.trim()] : [];
     }
