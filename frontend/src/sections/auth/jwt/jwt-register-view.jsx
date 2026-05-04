@@ -29,6 +29,7 @@ import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
@@ -62,11 +63,6 @@ export default function JwtRegisterView() {
     const params = new URLSearchParams(search);
     const utmParams = new URLSearchParams();
     const utmKeys = ["utm_source", "utm_medium", "utm_campaign"];
-    const isValidUtm = (val) =>
-      !!val &&
-      val !== "undefined" &&
-      val !== "null" &&
-      !/^\{\{.*\}\}$/.test(val);
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
