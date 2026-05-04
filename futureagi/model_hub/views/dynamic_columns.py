@@ -1695,9 +1695,26 @@ class RerunOperationView(APIView):
                         }
                     )
                 elif operation_type == "api_call":
+                    api_config = metadata.get("config", {})
                     existing_metadata.update(
                         {
-                            "config": metadata.get("config"),
+                            "url": api_config.get("url", existing_metadata.get("url")),
+                            "method": api_config.get(
+                                "method", existing_metadata.get("method")
+                            ),
+                            "output_type": api_config.get(
+                                "output_type",
+                                existing_metadata.get("output_type"),
+                            ),
+                            "params": api_config.get(
+                                "params", existing_metadata.get("params", {})
+                            ),
+                            "headers": api_config.get(
+                                "headers", existing_metadata.get("headers", {})
+                            ),
+                            "body": api_config.get(
+                                "body", existing_metadata.get("body", {})
+                            ),
                             "concurrency": metadata.get("concurrency", 5),
                         }
                     )
@@ -2812,8 +2829,8 @@ def add_api_column_async(
     config, dataset_id, concurrency, new_column_id, is_rerun=False
 ):
     view = AddApiColumnView()
-    # Process all rows with select_related (optimization)
-    rows = list(Row.objects.filter(dataset_id=dataset_id, deleted=False))
+    # Process all rows ordered by row order
+    rows = list(Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order"))
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -2826,14 +2843,11 @@ def add_api_column_async(
             )
         )
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
-        cells_to_update = []
-        cells_to_create = []
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_make_api_call = wrap_for_thread(view._make_api_call)
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            # Submit API calls for each row with rate limiting
             future_to_row = {}
             for row in rows:
                 existing_cell = existing_cells_map.get(str(row.id))
@@ -2843,11 +2857,25 @@ def add_api_column_async(
                     row=row,
                     value=None,
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    row
-                )
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
 
-            # Process results as they complete
+            # Flush buffers to DB in batches as results complete
+            cells_to_update = []
+            cells_to_create = []
+
+            def _flush_rerun_buffers():
+                nonlocal cells_to_update, cells_to_create
+                if cells_to_update:
+                    Cell.objects.bulk_update(
+                        cells_to_update,
+                        ["value", "value_infos", "status"],
+                        batch_size=concurrency,
+                    )
+                    cells_to_update = []
+                if cells_to_create:
+                    Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
+                    cells_to_create = []
+
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
                 try:
@@ -2863,19 +2891,19 @@ def add_api_column_async(
                         cells_to_update.append(existing_cell)
                         total_processed += 1
                     else:
-                        # Create new cell if it doesn't exist during rerun
                         cells_to_create.append(
                             Cell(
                                 dataset_id=dataset_id,
                                 column_id=new_column_id,
                                 row=row,
-                                value=None,
+                                value=value,
                                 value_infos=json.dumps(
                                     value_infos if value_infos else {}
                                 ),
                                 status=CellStatus.PASS.value,
                             )
                         )
+                        total_processed += 1
                         logger.warning(
                             f"Created new cell for row {row.id} in column {new_column_id} during rerun"
                         )
@@ -2889,48 +2917,76 @@ def add_api_column_async(
                         existing_cell.value_infos = json.dumps({"reason": str(e)})
                         existing_cell.status = CellStatus.ERROR.value
                         cells_to_update.append(existing_cell)
+                    else:
+                        cells_to_create.append(
+                            Cell(
+                                dataset_id=dataset_id,
+                                column_id=new_column_id,
+                                row=row,
+                                value=None,
+                                value_infos=json.dumps({"reason": str(e)}),
+                                status=CellStatus.ERROR.value,
+                            )
+                        )
 
-        # Bulk update and create (optimization)
-        if cells_to_update:
-            Cell.objects.bulk_update(
-                cells_to_update,
-                ["value", "value_infos", "status"],
-                batch_size=BATCH_SIZE,
-            )
-        if cells_to_create:
-            Cell.objects.bulk_create(cells_to_create, batch_size=BATCH_SIZE)
+                # Flush every `concurrency` completed results
+                if len(cells_to_update) + len(cells_to_create) >= concurrency:
+                    _flush_rerun_buffers()
+
+            # Flush any remaining results
+            _flush_rerun_buffers()
     else:
-        # Create new cells (original behavior) with rate limiting
-        new_cells = []
+        # Create new cells — flush to DB in batches as results complete
+        # Wrap function with OTel context propagation for thread safety
+        wrapped_make_api_call = wrap_for_thread(view._make_api_call)
+
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            # Wrap function with OTel context propagation for thread safety
-            wrapped_make_api_call = wrap_for_thread(view._make_api_call)
-            # Create a cell for each row and submit API calls
-            future_to_cell = {}
+            future_to_row = {}
             for row in rows:
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_cell[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    cell
-                )
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
 
-            # Process results as they complete
-            for future in as_completed(future_to_cell):
-                cell = future_to_cell[future]
+            # Flush buffer to DB in batches as results complete
+            cells_to_create = []
+
+            for future in as_completed(future_to_row):
+                row = future_to_row[future]
                 try:
                     value, value_infos = future.result()
-                    cell.value = value
-                    cell.value_infos = json.dumps(value_infos) if value_infos else None
-                    new_cells.append(cell)
+                    cells_to_create.append(
+                        Cell(
+                            dataset_id=dataset_id,
+                            column_id=new_column_id,
+                            row=row,
+                            value=value,
+                            value_infos=json.dumps(value_infos) if value_infos else None,
+                        )
+                    )
                     total_processed += 1
                 except Exception as e:
                     failed_cells += 1
                     logger.error(f"Error processing cell: {str(e)}")
+                    cells_to_create.append(
+                        Cell(
+                            dataset_id=dataset_id,
+                            column_id=new_column_id,
+                            row=row,
+                            value=None,
+                            value_infos=json.dumps({"reason": str(e)}),
+                            status=CellStatus.ERROR.value,
+                        )
+                    )
 
-        # Bulk create all cells with batch_size (optimization)
-        if new_cells:
-            Cell.objects.bulk_create(new_cells, batch_size=BATCH_SIZE)
+                # Flush every `concurrency` completed results
+                if len(cells_to_create) >= concurrency:
+                    Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
+                    cells_to_create = []
+
+            # Flush any remaining results
+            if cells_to_create:
+                Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
 
     Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
 
