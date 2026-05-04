@@ -244,7 +244,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
-      return [];
+      return [...new Set(requiredKeys)];
     }
 
     // System evals + Jinja mode: use static required_keys.
