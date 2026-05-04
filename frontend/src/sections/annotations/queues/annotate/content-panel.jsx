@@ -646,6 +646,14 @@ function VoiceCallContent({ traceId }) {
     evalMetrics: callData.eval_outputs || {},
     evalOutputs: callData.eval_outputs || {},
     overallStatus: callData.overall_status || callData.status,
+     turn_count: callData.turn_count,
+    talk_ratio: callData.talk_ratio,
+    agent_talk_percentage: callData.agent_talk_percentage,
+    avg_agent_latency_ms: callData.avg_agent_latency_ms,
+    user_wpm: callData.user_wpm,
+    bot_wpm: callData.bot_wpm,
+    user_interruption_count: callData.user_interruption_count,
+    ai_interruption_count: callData.ai_interruption_count,
     // Key must be snake_case: VoiceRightPanel reads `data.observation_span`
     // to pull the root conversation span (and its `span_attributes.raw_log` +
     // `call_logs`) that drive the Attributes and Logs tabs.
