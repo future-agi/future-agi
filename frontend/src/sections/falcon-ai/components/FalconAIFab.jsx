@@ -4,6 +4,7 @@ import Fab from "@mui/material/Fab";
 import Tooltip from "@mui/material/Tooltip";
 import SvgIcon from "@mui/material/SvgIcon";
 import useFalconStore from "../store/useFalconStore";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 function FalconIcon(props) {
   return (
@@ -60,12 +61,14 @@ function FalconIcon(props) {
 
 export default function FalconAIFab() {
   const { pathname } = useLocation();
+  const { isOSS } = useDeploymentMode();
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (isOSS) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         e.stopPropagation();
@@ -75,7 +78,7 @@ export default function FalconAIFab() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [toggleSidebar]);
+  }, [isOSS, toggleSidebar]);
 
   // Hide FAB on Falcon AI full-page view
   if (pathname.startsWith("/dashboard/falcon-ai")) return null;
@@ -84,9 +87,17 @@ export default function FalconAIFab() {
   if (isSidebarOpen) return null;
 
   return (
-    <Tooltip title="Falcon AI (⌘K)" placement="left" arrow>
+    <Tooltip
+      title={isOSS ? "Falcon AI is not available in OSS" : "Falcon AI (⌘K)"}
+      placement="left"
+      arrow
+    >
       <Fab
-        onClick={toggleSidebar}
+        onClick={() => {
+          if (!isOSS) {
+            toggleSidebar();
+          }
+        }}
         size="medium"
         sx={{
           position: "fixed",

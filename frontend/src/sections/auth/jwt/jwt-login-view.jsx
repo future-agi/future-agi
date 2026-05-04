@@ -42,11 +42,13 @@ import {
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
 export default function JwtLoginView() {
   const { login } = useAuthContext();
+  const { isOSS } = useDeploymentMode();
   const { executeRecaptcha } = useGoogleReCaptcha();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
@@ -59,6 +61,7 @@ export default function JwtLoginView() {
   const { uuid, token } = useParams();
 
   const [inviteFailed, setInviteFailed] = useState(false);
+  const postLoginPath = isOSS ? paths.dashboard.develop : PATH_AFTER_LOGIN;
 
   const { mutate: acceptInvitation } = useMutation({
     mutationFn: () =>
@@ -230,7 +233,7 @@ export default function JwtLoginView() {
           localStorage.setItem("signupProvider", "email");
           navigate(paths.auth.jwt.setup_org);
         } else {
-          router.push(returnTo || PATH_AFTER_LOGIN);
+          router.push(returnTo || postLoginPath);
         }
       }
     } catch (error) {
@@ -298,7 +301,7 @@ export default function JwtLoginView() {
 
       if (verifyRes.status === 200) {
         await login(verifyRes);
-        router.push(returnTo || PATH_AFTER_LOGIN);
+        router.push(returnTo || postLoginPath);
       }
     } catch (error) {
       if (error?.name === "NotAllowedError") {

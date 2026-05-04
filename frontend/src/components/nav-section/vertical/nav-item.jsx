@@ -150,7 +150,7 @@ const NavItem = forwardRef(
       return null;
     }
 
-    if (hasChild) {
+    if (hasChild || disabled) {
       return renderContent;
     }
 

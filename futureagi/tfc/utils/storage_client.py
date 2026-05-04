@@ -44,6 +44,27 @@ _S3_SECURE = (
     == "true"
 )
 
+# Public URL host used when generating URLs returned to the browser.
+# `S3_ENDPOINT_URL` may point at an internal Docker hostname
+# (e.g. "http://minio:9000") which is unreachable from the user's
+# browser. The existing `MINIO_URL` env var (read by tfc.settings) is
+# the canonical browser-facing MinIO host — reuse it here so the two
+# storage paths agree on what URLs they hand back to the frontend.
+# Fall back to the internal endpoint when MINIO_URL isn't set (cloud
+# prod with real S3 — same behaviour as before).
+_raw_public_url = os.getenv("MINIO_URL") or _raw_s3_endpoint
+_public_secure_hint = None
+if "://" in _raw_public_url:
+    _public_parsed = urlparse(_raw_public_url)
+    _PUBLIC_HOST = _public_parsed.netloc or _public_parsed.path
+    _public_secure_hint = _public_parsed.scheme == "https"
+else:
+    _PUBLIC_HOST = _raw_public_url
+_PUBLIC_SECURE = (
+    _PUBLIC_HOST == "s3.amazonaws.com"
+    or (_public_secure_hint if _public_secure_hint is not None else _S3_SECURE)
+)
+
 _client = None
 
 
@@ -85,13 +106,16 @@ def reset_storage_client():
 
 
 def get_object_url(bucket_name: str, object_key: str) -> str:
-    """Build a public URL for the given bucket/key."""
+    """Build a browser-reachable URL for the given bucket/key.
+
+    Uses MINIO_URL when set so URLs returned to the frontend resolve
+    from the user's machine, not the internal Docker network."""
     if STORAGE_BACKEND == "gcs":
         return f"https://storage.googleapis.com/{bucket_name}/{object_key}"
-    elif _S3_ENDPOINT != "s3.amazonaws.com":
+    elif _PUBLIC_HOST != "s3.amazonaws.com":
         # Local MinIO or custom endpoint
-        scheme = "https" if _S3_SECURE else "http"
-        return f"{scheme}://{_S3_ENDPOINT}/{bucket_name}/{object_key}"
+        scheme = "https" if _PUBLIC_SECURE else "http"
+        return f"{scheme}://{_PUBLIC_HOST}/{bucket_name}/{object_key}"
     else:
         region = os.getenv("AWS_DEFAULT_REGION", "us-east-2")
         return f"https://{bucket_name}.s3.{region}.amazonaws.com/{object_key}"

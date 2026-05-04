@@ -3,6 +3,7 @@ import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Navigate, useRoutes } from "react-router-dom";
 
 import { PATH_AFTER_LOGIN } from "src/config-global";
+import { paths } from "src/routes/paths";
 
 import { mainRoutes } from "./main";
 import { authRoutes } from "./auth";
@@ -32,7 +33,12 @@ export default function Router() {
   const element = useRoutes([
     {
       path: "/",
-      element: <Navigate to={PATH_AFTER_LOGIN} replace />,
+      element: (
+        <Navigate
+          to={isOSS ? paths.dashboard.develop : PATH_AFTER_LOGIN}
+          replace
+        />
+      ),
     },
     {
       path: "/sos",

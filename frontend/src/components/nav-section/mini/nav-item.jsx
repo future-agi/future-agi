@@ -129,6 +129,16 @@ const NavItem = forwardRef(
       return null;
     }
 
+    if (disabled) {
+      return (
+        <CustomTooltip title={title} show={true} placement="right" arrow>
+          <Box sx={{ width: 1, minHeight: "30px", height: "30px" }}>
+            {renderContent}
+          </Box>
+        </CustomTooltip>
+      );
+    }
+
     if (externalLink)
       return (
         <CustomTooltip title={title} show placement="right" arrow>

@@ -90,6 +90,10 @@ const NavItem = forwardRef(
       return null;
     }
 
+    if (disabled) {
+      return renderContent;
+    }
+
     if (externalLink)
       return (
         <Link
