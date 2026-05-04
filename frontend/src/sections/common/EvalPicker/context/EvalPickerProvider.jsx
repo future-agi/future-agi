@@ -32,6 +32,10 @@ const EvalPickerProvider = ({
   // When set, at least one mapping field must reference this column ID.
   // Used in the optimization context to ensure the optimized column is scored.
   requiredColumnId = "",
+  // When true, a successful save returns to the list step but does NOT
+  // close the drawer — used by dataset adds where the picker is also a
+  // multi-eval entry surface.
+  keepOpenAfterSave = false,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -85,6 +89,7 @@ const EvalPickerProvider = ({
         lockedFilters,
         isEditMode,
         requiredColumnId,
+        keepOpenAfterSave,
       }}
     >
       {children}
@@ -107,6 +112,7 @@ EvalPickerProvider.propTypes = {
   lockedFilters: PropTypes.object,
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
+  keepOpenAfterSave: PropTypes.bool,
 };
 
 export default EvalPickerProvider;

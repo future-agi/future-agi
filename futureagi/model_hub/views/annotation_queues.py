@@ -498,6 +498,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             "label_name": ann.label.name if ann.label else None,
                             "value": ann.value,
                             "score_source": ann.score_source,
+                            "notes": ann.notes,
                             "annotator_name": (
                                 ann.annotator.name if ann.annotator else None
                             ),
@@ -531,6 +532,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "label_name",
                     "value",
                     "score_source",
+                    "notes",
                     "annotator_name",
                     "created_at",
                 ]
@@ -543,6 +545,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             item_data["source_type"],
                             item_data["status"],
                             item_data["order"],
+                            "",
                             "",
                             "",
                             "",
@@ -566,6 +569,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                                 else str(ann["value"])
                             ),
                             ann["score_source"],
+                            ann["notes"] or "",
                             ann["annotator_name"],
                             ann["created_at"],
                         ]

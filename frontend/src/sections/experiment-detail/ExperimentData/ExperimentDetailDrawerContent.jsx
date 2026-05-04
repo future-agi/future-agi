@@ -31,6 +31,8 @@ import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRen
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import AgentFlowRenderer from "./AgentFlowRenderer";
+import { useAddEvaluationFeebackStore } from "src/sections/develop-detail/states";
+import AddEvaluationFeeback from "src/sections/develop-detail/DataTab/AddEvaluationFeeback/AddEvaluationFeeback";
 
 // Skeleton loader for loading states
 const SkeletonLoader = () => (
@@ -159,6 +161,7 @@ export default function ExperimentDetailDrawerContent({
   const theme = useTheme();
   const agTheme = useAgThemeWith(EXPERIMENT_DRAWER_THEME_PARAMS);
   const resizableRowRef = useRef(null);
+  const { setAddEvaluationFeeback } = useAddEvaluationFeebackStore();
 
   // Column grouping logic - separates individual columns from dataset columns
   const { individualCols: _individualCols, datasetCols } = useMemo(() => {
@@ -1040,8 +1043,20 @@ export default function ExperimentDetailDrawerContent({
           refreshGrid={refreshGrid}
           handleRefetchRowData={handleRefetchRowData}
           isRefetching={isPending}
+          onAddFeedbackClick={(evalData) => {
+            if (!evalData?.group?.id || !evalData?.id) return;
+            setAddEvaluationFeeback({
+              ...evalData,
+              userEvalMetricId: evalData?.group?.id,
+              sourceId: evalData?.id,
+              rowData: { rowId: row?.rowId },
+            });
+            setOpenDetailRow(null);
+          }}
         />
       )}
+
+      <AddEvaluationFeeback module="experiment" onRefreshGrid={refreshGrid} />
     </>
   );
 }

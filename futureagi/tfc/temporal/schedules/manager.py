@@ -232,8 +232,23 @@ async def list_schedules(client: Client) -> List[str]:
 
 def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
     """Build a Temporal Schedule from a ScheduleConfig."""
-    return Schedule(
-        action=ScheduleActionStartWorkflow(
+    if config.cron_expression:
+        spec = ScheduleSpec(cron_expressions=[config.cron_expression])
+    else:
+        spec = ScheduleSpec(intervals=[ScheduleIntervalSpec(every=config.interval)])
+
+    policy_kwargs: dict = {"overlap": config.overlap_policy}
+    if config.catchup_window is not None:
+        policy_kwargs["catchup_window"] = config.catchup_window
+
+    if config.workflow_class is not None:
+        action = ScheduleActionStartWorkflow(
+            config.workflow_class.run,
+            id=f"scheduled-{config.schedule_id}",
+            task_queue=config.queue,
+        )
+    else:
+        action = ScheduleActionStartWorkflow(
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=config.activity_name,
@@ -243,11 +258,12 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
             ),
             id=f"scheduled-{config.schedule_id}",
             task_queue=config.queue,
-        ),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=config.interval)]),
-        policy=SchedulePolicy(
-            overlap=config.overlap_policy,  # Default: SKIP (prevents overlapping runs)
-        ),
+        )
+
+    return Schedule(
+        action=action,
+        spec=spec,
+        policy=SchedulePolicy(**policy_kwargs),
         state=ScheduleState(
             note=config.description or f"Schedule for {config.activity_name}"
         ),

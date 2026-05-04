@@ -60,6 +60,9 @@ const ObserveToolbar = ({
   onApplyExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
+  // prepends the matching id filter(s) to its property picker.
+  tab,
   // Columns
   columns,
   onColumnVisibilityChange,
@@ -84,6 +87,7 @@ const ObserveToolbar = ({
   onToggleNonAnnotated,
   // Group
   groupBy,
+  hiddenGroupByOptions,
   onGroupByChange,
   // Grid
   rowCount,
@@ -111,6 +115,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Spans view — swaps "Trace Name" filter label to "Span Name"
+  isSpansView = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -383,7 +389,9 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
+            tab={tab}
             isSimulator={isSimulator}
+            isSpansView={isSpansView}
             source={
               mode === "sessions"
                 ? "sessions"
@@ -541,6 +549,7 @@ const ObserveToolbar = ({
             onToggleNonAnnotated={onToggleNonAnnotated}
             groupBy={groupBy}
             onGroupByChange={onGroupByChange}
+            hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
@@ -608,6 +617,7 @@ ObserveToolbar.propTypes = {
   showNonAnnotated: PropTypes.bool,
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onGroupByChange: PropTypes.func,
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
@@ -623,12 +633,14 @@ ObserveToolbar.propTypes = {
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(ObserveToolbar);

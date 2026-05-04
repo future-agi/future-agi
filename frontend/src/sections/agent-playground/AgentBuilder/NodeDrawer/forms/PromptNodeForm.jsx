@@ -27,7 +27,8 @@ import { PORT_DIRECTION } from "../../../utils/constants";
 
 export default function PromptNodeForm({ nodeId }) {
   const queryClient = useQueryClient();
-  const { handleSubmit } = useFormContext();
+  const { handleSubmit, watch, setValue } = useFormContext();
+  const templateFormat = watch("templateFormat") || "mustache";
   const {
     control,
     modelConfig,
@@ -108,7 +109,7 @@ export default function PromptNodeForm({ nodeId }) {
         disabled={isUnsupportedOutputFormat}
       />
 
-      {/* Output Type and Tools Row */}
+      {/* Output Type, Tools, and Template Format Row */}
       <OutputToolsRow
         control={control}
         isModelSelected={isModelSelected}
@@ -117,6 +118,8 @@ export default function PromptNodeForm({ nodeId }) {
         modelConfig={modelConfig}
         onToolsApply={handleToolsApply}
         disabled={isUnsupportedOutputFormat}
+        templateFormat={templateFormat}
+        onTemplateFormatChange={(v) => setValue("templateFormat", v, { shouldDirty: true })}
       />
 
       {/* Model Parameters Popover */}
@@ -148,6 +151,7 @@ export default function PromptNodeForm({ nodeId }) {
           dropdownOptions={dropdownOptions}
           mentionEnabled
           variableValidator={validateVariable}
+          jinjaMode={templateFormat === "jinja"}
         />
       </Box>
 
@@ -198,6 +202,7 @@ export default function PromptNodeForm({ nodeId }) {
                 version: data.version,
                 prompt_version_id: data.prompt_version_id,
                 prompt_template_id: data.prompt_template_id,
+                templateFormat: data.templateFormat || "mustache",
                 modelConfig: data.modelConfig,
                 messages: data.messages,
                 payload,

@@ -1559,8 +1559,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 organization=getattr(self.request, "organization", None)
                 or self.request.user.organization,
             )
-            if project.trace_type not in ("observe", "experiment"):
-                raise Exception("Project should be of type observe or experiment")
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -2094,7 +2092,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if has_more:
             result.data = result.data[:page_size]
 
-        # Phase 1b: Fetch input/output for the page
+        # Phase 1b: Fetch input/output/span_attributes_raw for the page
         span_ids = [str(row.get("id", "")) for row in result.data]
         if span_ids:
             content_query, content_params = builder.build_content_query(span_ids)
@@ -2107,6 +2105,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     c = content_map.get(str(row.get("id", "")), {})
                     row["input"] = c.get("input", "")
                     row["output"] = c.get("output", "")
+                    row["span_attributes_raw"] = c.get("span_attributes_raw", "{}")
 
         # Count
         count_query, count_params = builder.build_count_query()

@@ -92,6 +92,7 @@ export const getPromptNodeFormSchema = () =>
     prompt_version_id: z.string().nullable().optional().default(null),
     prompt_template_id: z.string().nullable().optional().default(null),
     outputFormat: z.string().optional().default("string"),
+    templateFormat: z.enum(["mustache", "jinja"]).optional().default("mustache"),
     modelConfig: modelConfigSchema,
     messages: z
       .array(getMessageValidationSchema())

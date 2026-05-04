@@ -86,6 +86,7 @@ const PromptActions = () => {
     closeSocketByIndex,
     results,
     reset,
+    templateFormat,
     // placeholders,
     // placeholderData,
   } = usePromptWorkbenchContext();
@@ -139,7 +140,7 @@ const PromptActions = () => {
   //   filledPlaceholderLabels.includes(label),
   // );
 
-  const isVariablesDefined = useIsVariablesDefined(prompts, variableData);
+  const isVariablesDefined = useIsVariablesDefined(prompts, variableData, templateFormat);
 
   const isSingleVersion = selectedVersions.length === 1;
 

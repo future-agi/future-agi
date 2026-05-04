@@ -325,7 +325,12 @@ export default function AnnotateWorkspaceView() {
       return;
     }
 
-    // Otherwise, fetch the next pending item from the API
+    // detail.next_item_id is status-agnostic — works for view-only managers.
+    if (detail?.next_item_id) {
+      dispatch({ type: "push", id: detail.next_item_id });
+      return;
+    }
+
     if (isFetchingNext) return;
     setIsFetchingNext(true);
     nextAbortRef.current?.abort();
@@ -349,7 +354,7 @@ export default function AnnotateWorkspaceView() {
     } finally {
       setIsFetchingNext(false);
     }
-  }, [historyIndex, itemHistory, queueId, isFetchingNext]);
+  }, [historyIndex, itemHistory, queueId, isFetchingNext, detail]);
 
   const handleKeyboardSubmit = useCallback(() => {
     if (isViewOnlyForReviewer || isBlockedAssignedToOther) return;

@@ -364,17 +364,26 @@ const EvaluationDrawerChild = ({
                     disableDeleteReason="An experiment must have at least one evaluation"
                     onDeleteEvalClick={async (evalItem) => {
                       try {
-                        await axios.delete(
-                          endpoints.develop.eval.deleteEval(id, evalItem.id),
-                          {
-                            data: {
-                              delete_column: true,
-                              ...(module === "experiment" && experimentId
-                                ? { experiment_id: experimentId }
-                                : {}),
+                        if (module === "workbench") {
+                          await axios.delete(
+                            endpoints.develop.runPrompt.deleteEvalConfig(
+                              id,
+                              evalItem.id,
+                            ),
+                          );
+                        } else {
+                          await axios.delete(
+                            endpoints.develop.eval.deleteEval(id, evalItem.id),
+                            {
+                              data: {
+                                delete_column: true,
+                                ...(module === "experiment" && experimentId
+                                  ? { experiment_id: experimentId }
+                                  : {}),
+                              },
                             },
-                          },
-                        );
+                          );
+                        }
                         enqueueSnackbar(`${evalItem.name} deleted`, {
                           variant: "success",
                         });
@@ -543,6 +552,9 @@ const EvaluationDrawerChild = ({
           setEvalPickerOpen(false);
           setEditingEval(null);
         }}
+        // Dataset adds save-only — keep the picker open so the user can
+        // queue more evals back-to-back without re-opening the drawer.
+        keepOpenAfterSave={(module || "dataset") === "dataset"}
         initialEval={editingEval}
         source={module || "dataset"}
         sourceId={id || ""}
@@ -648,7 +660,10 @@ const EvaluationDrawerChild = ({
               model: isComposite ? undefined : evalConfig.model,
               // In the optimization context the optimizer runs evals itself —
               // skip the full-dataset run so adding an eval is near-instant.
-              run: module !== "run-optimization",
+              // Dataset adds are also save-only now: the user runs evals
+              // manually from the dataset grid rather than auto-running on
+              // add, which would otherwise queue work the user didn't ask for.
+              run: module !== "run-optimization" && module !== "dataset",
               // Mirror the workbench path: surface error_localizer at the top
               // level so EditAndRunUserEvalView can update eval_metric.error_localizer.
               error_localizer: runConfig.error_localizer_enabled ?? false,

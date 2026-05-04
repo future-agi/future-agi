@@ -47,6 +47,40 @@ from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 # here each provider would require a hand-written mapping per span.
 # When the exact attribute isn't present we probe these fallbacks in
 # order — first match wins.
+def _walk_dotted_path(root, path):
+    """Walk a dotted path through nested dicts/lists; return None on miss."""
+    if not isinstance(path, str) or not path:
+        return None
+    current = root
+    for part in path.split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+# Sentinel: ``None`` is a legitimate stored value, so we can't use it for "miss".
+_MISSING = object()
+
+
+def _resolve_attr(span_attrs: dict, candidate: str):
+    """Literal lookup, then dotted-path walk. Returns ``_MISSING`` on miss."""
+    if candidate in span_attrs:
+        return span_attrs[candidate]
+    walked = _walk_dotted_path(span_attrs, candidate)
+    if walked is not None:
+        return walked
+    return _MISSING
+
+
 _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
     "recording_url": [
         # Vapi ingestion (``tracer.utils.vapi._extract_recording_urls``)
@@ -78,6 +112,7 @@ _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
         "gen_ai.voice.transcript",
         "voice_transcript",
         "call.transcript",
+        "provider_transcript",
     ],
     "call_summary": [
         "conversation.summary",
@@ -131,22 +166,23 @@ def _process_mapping(
         # shorthands (``recording_url``, ``transcript``, …) resolve to
         # one of several provider-specific attribute names via the
         # ``_ATTRIBUTE_ALIASES`` table above — first hit wins.
-        resolved_attr = None
         candidates = [attribute, f"{attribute}.value"]
         for alias in _ATTRIBUTE_ALIASES.get(attribute, []):
             candidates.append(alias)
             candidates.append(f"{alias}.value")
+
+        resolved_value = _MISSING
         for candidate in candidates:
-            if candidate in span_attrs:
-                resolved_attr = candidate
+            value = _resolve_attr(span_attrs, candidate)
+            if value is not _MISSING:
+                resolved_value = value
                 break
 
-        if resolved_attr is not None:
-            value = span_attrs.get(resolved_attr, "")
-            if isinstance(value, str):
-                parsed_mapping[key] = value
+        if resolved_value is not _MISSING:
+            if isinstance(resolved_value, str):
+                parsed_mapping[key] = resolved_value
             else:
-                parsed_mapping[key] = json.dumps(value)
+                parsed_mapping[key] = json.dumps(resolved_value)
         else:
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"

@@ -675,6 +675,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // grids/queries omit project_id so the backend scopes by org.
   const observeId = isUserMode ? null : routeObserveId;
 
+  // User mode: sessions routes back out to /dashboard/users/:id — users
+  // self-nav is suppressed (we're already on the user). Project mode:
+  // cross-nav into observe routes; group-by changes off a saved view
+  // also clear the saved-view context so the new destination doesn't
+  // inherit its filters.
+
   // Pulled up out of the larger useObserveHeader() destructure below so
   // handleGroupByChange (which clears activeViewConfig when navigating off
   // a saved view) can reference it without a TDZ. Same context call ID,
@@ -735,7 +741,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           }
           break;
         case "sessions":
-          if (!isUserMode) {
+          if (isUserMode) {
+            navigate({
+              pathname: `/dashboard/users/${encodeURIComponent(
+                userIdForUserMode,
+              )}`,
+              search: `?${new URLSearchParams({ userTab: "sessions" })}`,
+            });
+          } else {
             setActiveViewConfigFromCtx(null);
             navigate(`/dashboard/observe/${observeId}/sessions`);
           }
@@ -750,7 +763,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setSelectedTab,
       setActiveViewConfigFromCtx,
       isUserMode,
+      userIdForUserMode,
     ],
+  );
+
+  const hiddenGroupByOptions = useMemo(
+    () => (isUserMode ? ["users"] : []),
+    [isUserMode],
   );
 
   const [_loading, setLoading] = useState(false);
@@ -3151,6 +3170,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               }
               filterDefinition={primaryFilterDefinition}
               filterFields={toolbarFilterFields}
+              tab={selectedTab}
               defaultFilter={defaultFilterBase}
               columns={columns[columnKey]}
               onColumnVisibilityChange={(e) => {
@@ -3186,6 +3206,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               }
               groupBy={groupBy}
               onGroupByChange={handleGroupByChange}
+              hiddenGroupByOptions={hiddenGroupByOptions}
               rowCount={currentGridRef.current?.api?.totalRowCount}
               onCompareToggle={() => setShowCompare(!showCompare)}
               isCompareActive={showCompare}
@@ -3444,6 +3465,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }
               }}
               isSimulator={projectSource === PROJECT_SOURCE.SIMULATOR}
+              isSpansView={selectedTab === "spans"}
               excludeSimulationCalls={!!excludeSimulationCalls}
               onToggleSimulationCalls={() =>
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)

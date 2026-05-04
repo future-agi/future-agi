@@ -186,7 +186,7 @@ async function previewUsage() {
     const res = await fetch("/usage/admin/invoice/preview/", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ organizationId: orgId, period: period })
+      body: JSON.stringify({ organization_id: orgId, period: period })
     });
     const data = await res.json();
 
@@ -200,9 +200,9 @@ async function previewUsage() {
     document.getElementById("preview-section").style.display = "block";
     document.getElementById("generate-btn").disabled = false;
 
-    if (previewData.invoiceExists) {
+    if (previewData.invoice_exists) {
       showMsg("Warning: An invoice already exists for this period. Generation will fail unless it is deleted first.", "warning");
-    } else if (previewData.backfillRan) {
+    } else if (previewData.backfill_ran) {
       showMsg("Backfill completed. Usage records were populated from historical data.", "info");
     }
   } catch (e) {
@@ -217,9 +217,9 @@ function renderPreview(data) {
   const tbody = document.getElementById("preview-tbody");
   tbody.innerHTML = "";
 
-  const items = data.lineItems || [];
-  const usageItems = items.filter(i => i.lineType === "usage");
-  const creditItems = items.filter(i => i.lineType === "credit");
+  const items = data.line_items || [];
+  const usageItems = items.filter(i => i.line_type === "usage");
+  const creditItems = items.filter(i => i.line_type === "credit");
 
   if (usageItems.length === 0) {
     const tr = document.createElement("tr");
@@ -229,8 +229,8 @@ function renderPreview(data) {
 
   usageItems.forEach(item => {
     const tr = document.createElement("tr");
-    const tierText = item.tierBreakdown
-      ? item.tierBreakdown.map(t => `${t.range}: ${t.usage} @ ${t.rate} = $${t.cost}`).join("<br>")
+    const tierText = item.tier_breakdown
+      ? item.tier_breakdown.map(t => `${t.range}: ${t.usage} @ ${t.rate} = $${t.cost}`).join("<br>")
       : "-";
     tr.innerHTML = `
       <td>${item.dimension || "-"}</td>
@@ -255,9 +255,9 @@ function renderPreview(data) {
   // Summary
   const summary = document.getElementById("preview-summary");
   summary.innerHTML = `
-    <div><strong>Usage Total:</strong> $${parseFloat(data.usageTotal).toFixed(2)}</div>
-    <div><strong>Platform Fee:</strong> $${parseFloat(data.platformFee).toFixed(2)}</div>
-    <div><strong>Credits Applied:</strong> -$${parseFloat(data.creditsApplied).toFixed(2)}</div>
+    <div><strong>Usage Total:</strong> $${parseFloat(data.usage_total).toFixed(2)}</div>
+    <div><strong>Platform Fee:</strong> $${parseFloat(data.platform_fee).toFixed(2)}</div>
+    <div><strong>Credits Applied:</strong> -$${parseFloat(data.credits_applied).toFixed(2)}</div>
     <div><strong>Subtotal:</strong> $${parseFloat(data.subtotal).toFixed(2)}</div>
     <div><strong>Tax:</strong> $${parseFloat(data.tax).toFixed(2)}</div>
     <div style="font-size:1.1em"><strong>Total: $${parseFloat(data.total).toFixed(2)}</strong></div>
@@ -266,10 +266,10 @@ function renderPreview(data) {
   // Notices
   const notices = document.getElementById("preview-notices");
   notices.innerHTML = "";
-  if (data.backfillRan) {
+  if (data.backfill_ran) {
     notices.innerHTML += '<div class="gi-msg gi-msg-info">Usage data was backfilled from historical records.</div>';
   }
-  notices.innerHTML += `<div class="gi-msg gi-msg-info">Usage summary records found: ${data.usageSummaryCount}</div>`;
+  notices.innerHTML += `<div class="gi-msg gi-msg-info">Usage summary records found: ${data.usage_summary_count}</div>`;
 }
 
 async function generateInvoice() {
@@ -289,7 +289,7 @@ async function generateInvoice() {
     const res = await fetch("/usage/admin/invoice/generate/", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ organizationId: orgId, period: period })
+      body: JSON.stringify({ organization_id: orgId, period: period })
     });
     const data = await res.json();
 
@@ -307,11 +307,11 @@ async function generateInvoice() {
     content.innerHTML = `
       <div class="gi-msg gi-msg-success">Invoice generated successfully!</div>
       <div class="gi-summary">
-        <div><strong>Invoice ID:</strong> ${r.invoiceId || "-"}</div>
+        <div><strong>Invoice ID:</strong> ${r.invoice_id || "-"}</div>
         <div><strong>Total:</strong> $${parseFloat(r.total || 0).toFixed(2)}</div>
         <div><strong>Status:</strong> ${r.status || "-"}</div>
-        <div><strong>Period:</strong> ${r.periodStart} to ${r.periodEnd}</div>
-        <div><strong>Line Items:</strong> ${r.lineItemsCount || 0}</div>
+        <div><strong>Period:</strong> ${r.period_start} to ${r.period_end}</div>
+        <div><strong>Line Items:</strong> ${r.line_items_count || 0}</div>
         <div><strong>Created:</strong> ${r.created}, Skipped: ${r.skipped}, Errors: ${r.errors}</div>
       </div>
     `;

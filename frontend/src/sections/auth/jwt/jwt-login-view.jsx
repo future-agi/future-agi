@@ -20,7 +20,7 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { PATH_AFTER_LOGIN } from "src/config-global";
+import { PATH_AFTER_LOGIN, GOOGLE_SITE_KEY } from "src/config-global";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -41,6 +41,7 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 // ----------------------------------------------------------------------
 
@@ -97,7 +98,7 @@ export default function JwtLoginView() {
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -108,7 +109,7 @@ export default function JwtLoginView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 
@@ -182,14 +183,14 @@ export default function JwtLoginView() {
   } = methods;
 
   const onSubmit = handleSubmit(async (data) => {
-    if (!executeRecaptcha) {
+    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",
       });
       return;
     }
-    const token = await executeRecaptcha("login");
+    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,

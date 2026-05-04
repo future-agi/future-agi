@@ -49,6 +49,7 @@ from model_hub.utils.composite_execution import (
     CompositeRunOutcome,
     execute_composite_children_sync,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ class CompositeEvaluationRunner:
             source_id = f"{optimize.id}-sourceid-{user_eval_metric.id}"
             name = f"{user_eval_metric.name}-{column.name}"
 
-        data_type = "float" if template.aggregation_enabled else "text"
+        data_type = infer_eval_result_column_data_type(template)
 
         return {
             "name": name,

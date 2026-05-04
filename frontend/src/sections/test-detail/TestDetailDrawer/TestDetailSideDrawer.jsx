@@ -722,8 +722,6 @@ const TestDetailSideDrawer = ({
     }));
   const handleClose = () => {
     removeRowIndex();
-    setTestDetailDrawerOpen(null);
-    setCompareReplay(false);
   };
 
   const isDrawerOpen =
@@ -737,6 +735,12 @@ const TestDetailSideDrawer = ({
       open={isDrawerOpen}
       onClose={handleClose}
       anchor="right"
+      SlideProps={{
+        onExited: () => {
+          setTestDetailDrawerOpen(null);
+          setCompareReplay(false);
+        },
+      }}
       PaperProps={{
         sx: {
           height: "100vh",

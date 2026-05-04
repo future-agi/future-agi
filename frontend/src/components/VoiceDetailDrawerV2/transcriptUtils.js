@@ -166,12 +166,16 @@ export const enrichTurns = (transcript) => {
     });
   }
 
-  // Step 5: back-fill `end` from start + duration. Observe rows don't
-  // ship an explicit end — without this, silence/overlap pass skips
-  // every pair.
+  // Step 5: back-fill `end` from start + duration, and `duration` from
+  // end - start. Observe rows don't ship an explicit end (without this,
+  // silence/overlap pass skips every pair). Simulate rows ship start +
+  // end but no duration (without this, computeTotals skips every turn
+  // → talk-time split renders as "—").
   raw.forEach((t) => {
     if (t.end == null && t.start != null && t.duration != null) {
       t.end = t.start + t.duration;
+    } else if (t.duration == null && t.start != null && t.end != null) {
+      t.duration = t.end - t.start;
     }
   });
 
@@ -287,6 +291,7 @@ export const computeCallMetrics = (turns) => {
       }
     }
   }
+
 
   return {
     duration: lastEnd > 0 ? lastEnd : null,

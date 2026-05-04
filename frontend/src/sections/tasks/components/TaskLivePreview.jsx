@@ -21,7 +21,7 @@ import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { canonicalEntries } from "src/utils/utils";
+import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -379,13 +379,11 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }
     };
     walk(spanDetail, "");
-    // Strip `span_attributes.` prefix and dedupe against existing top-level keys.
+    // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
     const seen = new Set();
     const flattened = [];
     keys.forEach((k) => {
-      const short = k.startsWith("span_attributes.")
-        ? k.slice("span_attributes.".length)
-        : k;
+      const short = stripAttributePathPrefix(k);
       if (seen.has(short)) return;
       seen.add(short);
       flattened.push(short);
