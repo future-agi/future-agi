@@ -311,9 +311,11 @@ const TestDetailSideDrawerChild = ({
                 transformedData = { ...metricDetails, evalMetrics };
               }
 
+              setIsFetching(null);
               setTestDetailDrawerOpen({
                 ...transformedData,
               });
+              return;
             }
           }
         } catch (error) {
@@ -424,6 +426,11 @@ const TestDetailSideDrawerChild = ({
       null
     );
   }, [mergedData?.observation_span]);
+
+
+  if (!data || isFetching === "initial") {
+    return null;
+  }
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -724,8 +731,10 @@ const TestDetailSideDrawer = ({
     removeRowIndex();
   };
 
-  const isDrawerOpen =
+
+  const hasUrlRowIndex =
     updatedRowIndex !== undefined && updatedRowIndex !== null;
+  const isDrawerOpen = hasUrlRowIndex && !!testDetailDrawerOpen;
 
   const effectiveOrigin = urlOrigin || origin;
   const effectiveModule = module || "simulate";
@@ -733,6 +742,7 @@ const TestDetailSideDrawer = ({
   return (
     <Drawer
       open={isDrawerOpen}
+      keepMounted={hasUrlRowIndex}
       onClose={handleClose}
       anchor="right"
       SlideProps={{
