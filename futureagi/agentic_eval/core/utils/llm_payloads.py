@@ -565,6 +565,22 @@ def detect_and_build_media_blocks(
         for key, media_type in detected.items():
             if isinstance(media_type, str) and media_type in _SUPPORTED_MEDIA:
                 key_media_types[key] = media_type
+            elif str(media_type).lower() == "file":
+                # 'file' means the URL returned non-200 or unrecognized
+                # content. If it has an audio extension, the recording is
+                # inaccessible — raise a clear error instead of silently
+                # passing the URL as text.
+                val = remaining.get(key, "") if isinstance(remaining, dict) else ""
+                if isinstance(val, str) and val.startswith(("http://", "https://")):
+                    from urllib.parse import urlparse
+                    _path = urlparse(val).path.lower()
+                    _audio_exts = (".wav", ".mp3", ".ogg", ".m4a", ".aac", ".flac", ".wma", ".webm")
+                    if _path.endswith(_audio_exts):
+                        raise ValueError(
+                            f"Audio recording is not accessible for '{key}'. "
+                            f"The file could not be downloaded — please ensure "
+                            f"the recording URL is valid and accessible."
+                        )
 
     # Build content blocks from detected types
     media_blocks: List[ContentBlock] = []
