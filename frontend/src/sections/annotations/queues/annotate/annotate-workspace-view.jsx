@@ -104,15 +104,10 @@ export default function AnnotateWorkspaceView() {
     }
   }, [nextItemData, currentItemId]);
 
-  // Fetch annotate detail for current item
-  const {
-    data: detail,
-    isLoading: detailLoading,
-    error: detailError,
-  } = useAnnotateDetail(queueId, currentItemId);
-
   const { data: progress } = useQueueProgress(queueId);
   const { data: queueDetail } = useAnnotationQueueDetail(queueId);
+
+  const currentUserId = String(user?.id || user?.pk || "");
 
   const myQueueRole = useMemo(() => {
     if (!queueDetail?.annotators || !user) return null;
@@ -125,32 +120,96 @@ export default function AnnotateWorkspaceView() {
   const canReview =
     myQueueRole === QUEUE_ROLES.REVIEWER || myQueueRole === QUEUE_ROLES.MANAGER;
 
+  // Reviewers/managers can switch which annotator's annotations they are
+  // viewing. Default to self; null means "use the caller's identity" (the
+  // backend default).
+  const [viewingAnnotatorId, setViewingAnnotatorId] = useState(null);
+  useEffect(() => {
+    if (canReview && currentUserId && viewingAnnotatorId === null) {
+      setViewingAnnotatorId(currentUserId);
+    }
+  }, [canReview, currentUserId, viewingAnnotatorId]);
+
+  const isViewingOtherAnnotator =
+    canReview &&
+    !!viewingAnnotatorId &&
+    String(viewingAnnotatorId) !== currentUserId;
+
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    isFetching: detailFetching,
+    error: detailError,
+  } = useAnnotateDetail(queueId, currentItemId, {
+    annotatorId: isViewingOtherAnnotator ? viewingAnnotatorId : undefined,
+  });
+
+  // Track which annotator the displayed detail belongs to so we can flag
+  // a real cross-annotator swap (placeholderData keeps the prior payload
+  // visible during the refetch).
+  const lastLoadedAnnotatorIdRef = useRef(null);
+  useEffect(() => {
+    if (detail && !detailFetching) {
+      lastLoadedAnnotatorIdRef.current = isViewingOtherAnnotator
+        ? viewingAnnotatorId
+        : currentUserId;
+    }
+  }, [
+    detail,
+    detailFetching,
+    isViewingOtherAnnotator,
+    viewingAnnotatorId,
+    currentUserId,
+  ]);
+  const requestedAnnotatorId = isViewingOtherAnnotator
+    ? viewingAnnotatorId
+    : currentUserId;
+  const isAnnotatorSwitchPending =
+    detailFetching &&
+    !!detail &&
+    lastLoadedAnnotatorIdRef.current !== null &&
+    String(lastLoadedAnnotatorIdRef.current) !== String(requestedAnnotatorId);
+
   // Prefetch adjacent items for instant navigation
   useEffect(() => {
     if (!detail || !queueId) return;
     const nextId = detail.next_item_id;
     const prevId = detail.prev_item_id;
+    const params = isViewingOtherAnnotator
+      ? { annotator_id: viewingAnnotatorId }
+      : undefined;
+    const cacheAnnotatorId = isViewingOtherAnnotator
+      ? viewingAnnotatorId
+      : undefined;
     if (nextId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, nextId),
+        queryKey: annotateKeys.detail(queueId, nextId, cacheAnnotatorId),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${nextId}/annotate-detail/`,
+            params ? { params } : undefined,
           ),
         staleTime: 1000 * 60 * 2,
       });
     }
     if (prevId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, prevId),
+        queryKey: annotateKeys.detail(queueId, prevId, cacheAnnotatorId),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${prevId}/annotate-detail/`,
+            params ? { params } : undefined,
           ),
         staleTime: 1000 * 60 * 2,
       });
     }
-  }, [detail, queueId, queryClient]);
+  }, [
+    detail,
+    queueId,
+    queryClient,
+    isViewingOtherAnnotator,
+    viewingAnnotatorId,
+  ]);
 
   const labelPanelRef = useRef(null);
   const isDirtyRef = useRef(false);
@@ -170,7 +229,6 @@ export default function AnnotateWorkspaceView() {
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
-  const currentUserId = String(user?.id || user?.pk || "");
   const hasAssignments = assignedUsers.length > 0;
   const isAssignedToMe = assignedUsers.some(
     (a) => String(a.id) === currentUserId,
@@ -579,12 +637,33 @@ export default function AnnotateWorkspaceView() {
               queueId={queueId}
               itemId={currentItemId}
               onDirtyChange={handleDirtyChange}
-              readOnly={isViewOnlyForReviewer}
+              readOnly={isViewOnlyForReviewer || isViewingOtherAnnotator}
               readOnlyReason={
-                isViewOnlyForReviewer
-                  ? `Assigned to ${assignedToName || "another annotator"} — view only`
-                  : null
+                isViewingOtherAnnotator
+                  ? "Viewing another annotator's submissions (read only)"
+                  : isViewOnlyForReviewer
+                    ? `Assigned to ${assignedToName || "another annotator"} — view only`
+                    : null
               }
+              annotators={canReview ? queueDetail?.annotators || [] : null}
+              viewingAnnotatorId={viewingAnnotatorId}
+              currentUserId={currentUserId}
+              isAnnotatorSwitchPending={isAnnotatorSwitchPending}
+              onViewingAnnotatorChange={(id) => {
+                // Confirm before discarding unsaved annotations on the
+                // user's own (editable) view. A view of another annotator
+                // is always read-only, so it can't be dirty.
+                if (!isViewingOtherAnnotator && isDirtyRef.current) {
+                  if (
+                    !window.confirm(
+                      "You have unsaved annotations. Switch annotator anyway?",
+                    )
+                  ) {
+                    return;
+                  }
+                }
+                setViewingAnnotatorId(id || currentUserId);
+              }}
             />
           )}
         </Box>

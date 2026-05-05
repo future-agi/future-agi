@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import timedelta
 
 import structlog
@@ -2157,7 +2158,19 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_item=item,
             deleted=False,
         ).select_related("label")
-        if not is_reviewer:
+        # Reviewers/managers can scope to a specific annotator via
+        # ?annotator_id=<uuid> so the workspace shows whose annotations are
+        # being viewed. Ignored for non-reviewers (they only see their own).
+        raw_annotator_id = request.query_params.get("annotator_id") or None
+        viewing_annotator_id = None
+        if raw_annotator_id and is_reviewer:
+            try:
+                viewing_annotator_id = uuid.UUID(raw_annotator_id)
+            except (ValueError, TypeError):
+                return self._gm.bad_request("annotator_id must be a valid UUID.")
+        if viewing_annotator_id:
+            annotations_qs = annotations_qs.filter(annotator_id=viewing_annotator_id)
+        elif not is_reviewer:
             annotations_qs = annotations_qs.filter(annotator=request.user)
         annotations = annotations_qs
 

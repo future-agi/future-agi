@@ -14,6 +14,8 @@ import {
   Collapse,
   Divider,
   IconButton,
+  MenuItem,
+  Select,
   Stack,
   TextField,
   Tooltip,
@@ -155,6 +157,11 @@ const LabelPanel = forwardRef(function LabelPanel(
     onDirtyChange,
     readOnly = false,
     readOnlyReason = null,
+    annotators = null,
+    viewingAnnotatorId = null,
+    currentUserId = null,
+    onViewingAnnotatorChange,
+    isAnnotatorSwitchPending = false,
   },
   ref,
 ) {
@@ -470,6 +477,75 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Box>
       )}
 
+      {/* Annotator picker for reviewers/managers when the queue has more
+          than one annotator. Switches whose annotations are displayed. */}
+      {Array.isArray(annotators) && annotators.length > 1 && (
+        <Box sx={{ mb: 2 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ mb: 0.75 }}
+          >
+            <Iconify
+              icon="solar:user-id-bold"
+              width={16}
+              sx={{ color: "text.secondary" }}
+            />
+            <Typography variant="subtitle2" color="text.secondary">
+              Viewing annotator
+            </Typography>
+            {isAnnotatorSwitchPending && (
+              <CircularProgress size={12} thickness={5} sx={{ ml: 0.5 }} />
+            )}
+          </Stack>
+          <Select
+            fullWidth
+            size="small"
+            value={viewingAnnotatorId || ""}
+            onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
+            displayEmpty
+            sx={{
+              borderRadius: 0.5,
+              "& .MuiSelect-select": { py: 1 },
+            }}
+          >
+            {annotators.map((a) => {
+              const isSelf =
+                currentUserId && String(a.user_id) === String(currentUserId);
+              return (
+                <MenuItem key={a.user_id} value={a.user_id}>
+                  {a.name || a.email || "Unknown"}
+                  {isSelf ? " (you)" : ""}
+                </MenuItem>
+              );
+            })}
+          </Select>
+          {viewingAnnotatorId &&
+            (() => {
+              const selected = annotators.find(
+                (a) => String(a.user_id) === String(viewingAnnotatorId),
+              );
+              const isSelf =
+                currentUserId &&
+                String(viewingAnnotatorId) === String(currentUserId);
+              const name = selected?.name || selected?.email || "this annotator";
+              return (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.75, fontStyle: "italic" }}
+                >
+                  {isSelf
+                    ? "You are viewing your own annotations"
+                    : `You are viewing annotations of ${name}`}
+                </Typography>
+              );
+            })()}
+          <Divider sx={{ mt: 2 }} />
+        </Box>
+      )}
+
       {/* Label inputs */}
       <Stack
         spacing={2}
@@ -478,6 +554,11 @@ const LabelPanel = forwardRef(function LabelPanel(
           ...(readOnly && {
             pointerEvents: "none",
             opacity: 0.7,
+          }),
+          ...(isAnnotatorSwitchPending && {
+            pointerEvents: "none",
+            opacity: 0.4,
+            transition: "opacity 120ms ease-out",
           }),
         }}
       >
@@ -575,6 +656,11 @@ LabelPanel.propTypes = {
   onDirtyChange: PropTypes.func,
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,
+  annotators: PropTypes.array,
+  viewingAnnotatorId: PropTypes.string,
+  currentUserId: PropTypes.string,
+  onViewingAnnotatorChange: PropTypes.func,
+  isAnnotatorSwitchPending: PropTypes.bool,
 };
 
 export default LabelPanel;

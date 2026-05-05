@@ -341,17 +341,25 @@ export const useUpdateQueueItemStatus = () => {
 // ---------------------------------------------------------------------------
 
 export const annotateKeys = {
-  detail: (queueId, itemId) => ["annotate-detail", queueId, itemId],
+  detail: (queueId, itemId, annotatorId) =>
+    annotatorId
+      ? ["annotate-detail", queueId, itemId, annotatorId]
+      : ["annotate-detail", queueId, itemId],
   nextItem: (queueId) => ["annotate-next-item", queueId],
   annotations: (queueId, itemId) => ["item-annotations", queueId, itemId],
 };
 
-export const useAnnotateDetail = (queueId, itemId, options = {}) => {
+export const useAnnotateDetail = (
+  queueId,
+  itemId,
+  { annotatorId, ...options } = {},
+) => {
   return useQuery({
-    queryKey: annotateKeys.detail(queueId, itemId),
+    queryKey: annotateKeys.detail(queueId, itemId, annotatorId),
     queryFn: () =>
       axios.get(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotate-detail/`,
+        annotatorId ? { params: { annotator_id: annotatorId } } : undefined,
       ),
     select: (d) => extractData(d),
     enabled: !!queueId && !!itemId,
