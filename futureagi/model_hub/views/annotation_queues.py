@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import timedelta
 
 import structlog
@@ -515,75 +516,446 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             "export_format", request.query_params.get("format", "json")
         )
         if fmt == "csv":
-            import csv
-            import io
-
-            from django.http import HttpResponse
-
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(
-                [
-                    "item_id",
-                    "source_type",
-                    "status",
-                    "order",
-                    "label_id",
-                    "label_name",
-                    "value",
-                    "score_source",
-                    "notes",
-                    "annotator_name",
-                    "created_at",
-                ]
-            )
-            for item_data in result:
-                if not item_data["annotations"]:
-                    writer.writerow(
-                        [
-                            item_data["item_id"],
-                            item_data["source_type"],
-                            item_data["status"],
-                            item_data["order"],
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                        ]
-                    )
-                for ann in item_data["annotations"]:
-                    writer.writerow(
-                        [
-                            item_data["item_id"],
-                            item_data["source_type"],
-                            item_data["status"],
-                            item_data["order"],
-                            ann["label_id"],
-                            ann["label_name"],
-                            (
-                                ann["value"]
-                                if not isinstance(ann["value"], dict)
-                                else str(ann["value"])
-                            ),
-                            ann["score_source"],
-                            ann["notes"] or "",
-                            ann["annotator_name"],
-                            ann["created_at"],
-                        ]
-                    )
-            from urllib.parse import quote
-
-            response = HttpResponse(output.getvalue(), content_type="text/csv")
-            safe_pk = quote(str(pk), safe="")
-            response["Content-Disposition"] = (
-                f'attachment; filename="queue_{safe_pk}_annotations.csv"'
-            )
-            return response
+            return self._build_csv_export(queue, items_qs, scores_by_item, pk)
 
         return self._gm.success_response(result)
+
+    # ------------------------------------------------------------------
+    # Export helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _slugify_for_header(text: str) -> str:
+        """Produce a snake_case-safe header fragment from a free-text name."""
+        import re
+
+        s = re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
+        return s or "unknown"
+
+    @staticmethod
+    def _flatten_score_value(value):
+        """Extract the display scalar from a Score.value JSON blob.
+
+        Score.value is a JSONField stored with a conventional wrapper:
+        ``{"rating": 3}`` for star/numeric, ``{"value": "yes"}`` for
+        bool/short-string, ``{"text": "..."}`` for free text,
+        ``{"selected": ["a", "b"]}`` for multi-select. Spreadsheet cells
+        should show the inner scalar (``3`` / ``"yes"`` / ``"a, b"``)
+        rather than the dict literal.
+        """
+        if value is None:
+            return ""
+        if not isinstance(value, dict):
+            if isinstance(value, list):
+                return ", ".join(str(v) for v in value)
+            return value
+        for key in ("rating", "value", "text"):
+            if key in value:
+                inner = value[key]
+                if isinstance(inner, list):
+                    return ", ".join(str(v) for v in inner)
+                return "" if inner is None else inner
+        selected = value.get("selected")
+        if isinstance(selected, list):
+            return ", ".join(str(v) for v in selected)
+        # Unknown shape — fall back to a stable string so the cell isn't a
+        # raw dict (openpyxl can't store dicts), but flag it for the
+        # reader to investigate.
+        import json
+
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+
+    # Layout: one row per QueueItem.
+    #   Call details (7 cols) | <label1> values | <label1> notes | … |
+    #   <labelN> values | <labelN> notes
+    # For each label, two adjacent groups: the values group (one column
+    # per annotator with their score) and the notes group (one column
+    # per annotator with that annotator's note for THIS label, since
+    # Score.notes is per-(annotator, label, item)). Values and notes for
+    # the same label sit next to each other so filters/comparisons stay
+    # local to the label.
+    # XLSX exposes this with merged group headers across row 1; CSV
+    # collapses each group into "<label>_<annotator>" /
+    # "<label>_notes_<annotator>" composite header names so both shapes
+    # describe the same data.
+    # Eval / system-metric columns (the "metrics" middle section of the
+    # UI mock) are deferred — they need cross-model traversal and
+    # column-set stability that's a separate pass.
+
+    _CALL_DETAIL_COLUMNS = [
+        ("Source ID", "source_id"),
+        ("Source Type", "source_type"),
+        ("Recording Link", "recording_link"),
+        ("Status", "status"),
+        ("Created At", "created_at"),
+    ]
+
+    # System-metric columns per source type — only metrics the annotator
+    # UI actually surfaces. For call_execution that's the
+    # VoiceRightPanel ``apiMetrics`` set plus the duration / score /
+    # message_count from the call details bar. For other source types
+    # the annotator UI doesn't show a flat metrics panel, so they
+    # contribute no system-metric columns to the export.
+    _SYSTEM_METRICS_BY_SOURCE = {
+        "call_execution": [
+            "duration_seconds",
+            "message_count",
+            "overall_score",
+            "talk_ratio",
+            "avg_agent_latency_ms",
+            "user_wpm",
+            "bot_wpm",
+            "user_interruption_count",
+            "ai_interruption_count",
+        ],
+    }
+
+    # ── Source-aware helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _resolve_recording_link(item) -> str:
+        """Best-effort recording URL — only meaningful for call_execution
+        items. Tries known provider paths inside provider_call_data and
+        falls back to customer_log_url.
+        """
+        ce = getattr(item, "call_execution", None)
+        if ce is None:
+            return ""
+        log_url = getattr(ce, "customer_log_url", None)
+        if isinstance(log_url, str) and log_url:
+            return log_url
+        pcd = getattr(ce, "provider_call_data", None) or {}
+        if not isinstance(pcd, dict):
+            return ""
+        candidate_paths = (
+            ("vapi", "artifact", "recordingUrl"),
+            ("vapi", "artifact", "recording_url"),
+            ("vapi", "recording_url"),
+            ("livekit", "recording_url"),
+            ("retell", "recording_url"),
+        )
+        for path in candidate_paths:
+            node = pcd
+            for key in path:
+                if not isinstance(node, dict):
+                    node = None
+                    break
+                node = node.get(key)
+            if isinstance(node, str) and node:
+                return node
+        return ""
+
+    @staticmethod
+    def _eval_logger_value(el):
+        """Pick the populated output field from an EvalLogger row."""
+        if el.output_float is not None:
+            return el.output_float
+        if el.output_bool is not None:
+            return el.output_bool
+        if el.output_str:
+            return el.output_str
+        if el.output_str_list:
+            return ", ".join(str(x) for x in el.output_str_list)
+        return ""
+
+    @classmethod
+    def _eval_logger_name(cls, el) -> str:
+        """Display name for an EvalLogger row — prefers custom config name."""
+        cfg = getattr(el, "custom_eval_config", None)
+        if cfg is not None and getattr(cfg, "name", None):
+            return cfg.name
+        return el.eval_type_id or "<unnamed eval>"
+
+    @classmethod
+    def _collect_evals_for_item(cls, item) -> dict:
+        """Return ``{eval_name: scalar_value}`` for a queue item.
+
+        Per source type:
+          - ``call_execution``: flatten ``CallExecution.eval_outputs`` JSON.
+          - ``trace``: ``Trace.eval_logs`` (EvalLogger via FK).
+          - ``observation_span``: ``ObservationSpan.eval_logs``.
+          - ``dataset_row``: per-row Cells where ``column.source`` is
+            ``"evaluation"`` or ``"experiment_evaluation"`` — those columns
+            hold eval results and the cell value is the per-row output.
+          - ``trace_session`` / ``prototype_run``: empty for now — would
+            need cross-trace aggregation or a separate eval mechanism.
+        """
+        src = item.source_type
+        if src == "call_execution":
+            ce = getattr(item, "call_execution", None)
+            outputs = getattr(ce, "eval_outputs", None) if ce is not None else None
+            if not isinstance(outputs, dict):
+                return {}
+            out = {}
+            for eval_id, payload in outputs.items():
+                if not isinstance(payload, dict):
+                    continue
+                name = payload.get("name") or str(eval_id)
+                value = payload.get("output")
+                # Last-write-wins if multiple outputs share a name.
+                out[name] = "" if value is None else value
+            return out
+
+        if src == "dataset_row":
+            row = getattr(item, "dataset_row", None)
+            if row is None:
+                return {}
+            from model_hub.models.develop_dataset import Cell
+
+            eval_cells = (
+                Cell.objects.filter(
+                    row=row,
+                    column__source__in=("evaluation", "experiment_evaluation"),
+                    deleted=False,
+                )
+                .select_related("column")
+                .order_by("column__name", "created_at")
+            )
+            out = {}
+            for cell in eval_cells:
+                col = cell.column
+                if col is None:
+                    continue
+                name = col.name or str(col.id)
+                # Last-write-wins if multiple cells share a column name.
+                out[name] = "" if cell.value is None else cell.value
+            return out
+
+        eval_logs = None
+        if src == "trace":
+            trace = getattr(item, "trace", None)
+            if trace is not None:
+                eval_logs = trace.eval_logs.filter(deleted=False).select_related(
+                    "custom_eval_config"
+                )
+        elif src == "observation_span":
+            span = getattr(item, "observation_span", None)
+            if span is not None:
+                eval_logs = span.eval_logs.filter(deleted=False).select_related(
+                    "custom_eval_config"
+                )
+        if eval_logs is None:
+            return {}
+
+        out = {}
+        for el in eval_logs:
+            out[cls._eval_logger_name(el)] = cls._eval_logger_value(el)
+        return out
+
+    @classmethod
+    def _collect_system_metrics_for_item(cls, item) -> dict:
+        """Return ``{field_name: value}`` for system metrics that live on
+        the item's linked source object. Empty dict when the item's
+        source_type has no metric mapping or its FK target is missing.
+        """
+        fields = cls._SYSTEM_METRICS_BY_SOURCE.get(item.source_type, [])
+        if not fields:
+            return {}
+        # source_type matches the attribute name on QueueItem.
+        source_obj = getattr(item, item.source_type, None)
+        if source_obj is None:
+            return {}
+        out = {}
+        for field in fields:
+            value = getattr(source_obj, field, None)
+            out[field] = "" if value is None else value
+        return out
+
+    def _build_export_data(self, queue, items_qs, scores_by_item):
+        """Shared shape for CSV + XLSX exports.
+
+        Returns ``{users, labels, eval_names, rows}``:
+          - users: stable annotator list (sorted by name, then email)
+          - labels: queue labels in queue-defined order
+          - eval_names: union of eval names that appear on any item
+            (sorted alphabetically) — drives the Evals column block
+          - rows: per-item dict with call-detail fields,
+            ``label_values`` / ``label_notes`` (label_id → user_id → cell)
+            and ``eval_values`` (eval_name → cell).
+        """
+        annotator_qs = (
+            queue.queue_annotators.filter(deleted=False)
+            .select_related("user")
+            .order_by("user__name", "user__email", "user_id")
+        )
+        seen_user_ids = set()
+        users = []
+        for qa in annotator_qs:
+            user = qa.user
+            if user is None or user.id in seen_user_ids:
+                continue
+            seen_user_ids.add(user.id)
+            users.append(user)
+
+        queue_labels = list(
+            queue.queue_labels.filter(deleted=False)
+            .select_related("label")
+            .order_by("order", "id")
+        )
+        labels = [ql.label for ql in queue_labels if ql.label is not None]
+
+        # Pre-fetch FK-linked source objects and their eval children so the
+        # per-item loop below doesn't fan out into N+1 queries.
+        items_qs = items_qs.select_related(
+            "trace",
+            "trace__project",
+            "observation_span",
+            "trace_session",
+            "call_execution",
+            "dataset_row",
+            "prototype_run",
+        ).prefetch_related(
+            "trace__eval_logs__custom_eval_config",
+            "observation_span__eval_logs__custom_eval_config",
+        )
+
+        rows = []
+        eval_names_seen = set()
+        eval_names_ordered = []
+
+        for item in items_qs:
+            source_id = (
+                getattr(item, "trace_id", None)
+                or getattr(item, "call_execution_id", None)
+                or getattr(item, "dataset_row_id", None)
+                or getattr(item, "trace_session_id", None)
+                or getattr(item, "observation_span_id", None)
+                or getattr(item, "prototype_run_id", None)
+            )
+
+            score_map = {}
+            for s in scores_by_item.get(item.id, []):
+                score_map[(s.annotator_id, s.label_id)] = s
+
+            label_values = {label.id: {} for label in labels}
+            label_notes = {label.id: {} for label in labels}
+
+            for label in labels:
+                for u in users:
+                    s = score_map.get((u.id, label.id))
+                    if s is None:
+                        label_values[label.id][u.id] = ""
+                        label_notes[label.id][u.id] = ""
+                        continue
+                    label_values[label.id][u.id] = self._flatten_score_value(
+                        s.value
+                    )
+                    label_notes[label.id][u.id] = s.notes or ""
+
+            eval_values = self._collect_evals_for_item(item)
+            for name in eval_values:
+                if name not in eval_names_seen:
+                    eval_names_seen.add(name)
+                    eval_names_ordered.append(name)
+
+            metric_values = self._collect_system_metrics_for_item(item)
+
+            rows.append(
+                {
+                    "source_id": str(source_id) if source_id else "",
+                    "source_type": item.source_type,
+                    "recording_link": self._resolve_recording_link(item),
+                    "status": item.status,
+                    "created_at": (
+                        item.created_at.isoformat() if item.created_at else ""
+                    ),
+                    "label_values": label_values,
+                    "label_notes": label_notes,
+                    "eval_values": eval_values,
+                    "system_metrics": metric_values,
+                }
+            )
+
+        eval_names_ordered.sort(key=lambda n: n.lower())
+
+        # Stable ordered list of system-metric columns: every metric across
+        # every known source type, in the order they're declared in
+        # _SYSTEM_METRICS_BY_SOURCE. Cells are populated only for items
+        # whose source_type matches; otherwise empty.
+        metric_columns = []
+        for fields in self._SYSTEM_METRICS_BY_SOURCE.values():
+            metric_columns.extend(fields)
+
+        return {
+            "users": users,
+            "labels": labels,
+            "eval_names": eval_names_ordered,
+            "metric_columns": metric_columns,
+            "rows": rows,
+        }
+
+    def _build_csv_export(self, queue, items_qs, scores_by_item, pk):
+        """Flat CSV mirroring the XLSX layout: label-first nesting, separate
+        Notes group at the end. CSV cannot express merged-cell header groups,
+        so column names use ``<label>_<annotator>`` / ``notes_<annotator>``.
+        """
+        import csv
+        import io
+        from urllib.parse import quote
+
+        from django.http import HttpResponse
+
+        data = self._build_export_data(queue, items_qs, scores_by_item)
+        users = data["users"]
+        labels = data["labels"]
+        eval_names = data["eval_names"]
+        metric_columns = data["metric_columns"]
+        rows = data["rows"]
+
+        user_slugs = []
+        for u in users:
+            display = (
+                getattr(u, "name", None)
+                or getattr(u, "email", None)
+                or str(u.id)
+            )
+            user_slugs.append((u.id, self._slugify_for_header(display)))
+        label_slugs = [
+            (label.id, self._slugify_for_header(label.name)) for label in labels
+        ]
+        eval_slugs = [
+            (name, self._slugify_for_header(name)) for name in eval_names
+        ]
+
+        headers = [field for _, field in self._CALL_DETAIL_COLUMNS]
+        # System metrics block (one column per metric across all source
+        # types — empty when an item's source_type doesn't carry it).
+        for metric in metric_columns:
+            headers.append(metric)
+        for _, e_slug in eval_slugs:
+            headers.append(f"eval_{e_slug}")
+        for _, l_slug in label_slugs:
+            for _, u_slug in user_slugs:
+                headers.append(f"{l_slug}_{u_slug}")
+            for _, u_slug in user_slugs:
+                headers.append(f"{l_slug}_notes_{u_slug}")
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(headers)
+
+        for row in rows:
+            line = [row[field] for _, field in self._CALL_DETAIL_COLUMNS]
+            for metric in metric_columns:
+                line.append(row["system_metrics"].get(metric, ""))
+            for name, _ in eval_slugs:
+                line.append(row["eval_values"].get(name, ""))
+            for label_id, _ in label_slugs:
+                for user_id, _ in user_slugs:
+                    line.append(row["label_values"][label_id][user_id])
+                for user_id, _ in user_slugs:
+                    line.append(row["label_notes"][label_id][user_id])
+            writer.writerow(line)
+
+        response = HttpResponse(output.getvalue(), content_type="text/csv")
+        safe_pk = quote(str(pk), safe="")
+        response["Content-Disposition"] = (
+            f'attachment; filename="queue_{safe_pk}_annotations.csv"'
+        )
+        return response
 
     @action(detail=True, methods=["get"], url_path="analytics")
     def analytics(self, request, pk=None):
@@ -2157,7 +2529,19 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_item=item,
             deleted=False,
         ).select_related("label")
-        if not is_reviewer:
+        # Reviewers/managers can scope the response to a specific annotator
+        # via ?annotator_id=<uuid> so the workspace shows whose annotations
+        # they are currently viewing. Ignored for non-reviewers.
+        raw_annotator_id = request.query_params.get("annotator_id") or None
+        viewing_annotator_id = None
+        if raw_annotator_id and is_reviewer:
+            try:
+                viewing_annotator_id = uuid.UUID(raw_annotator_id)
+            except (ValueError, TypeError):
+                return self._gm.bad_request("Invalid annotator selection.")
+        if viewing_annotator_id:
+            annotations_qs = annotations_qs.filter(annotator_id=viewing_annotator_id)
+        elif not is_reviewer:
             annotations_qs = annotations_qs.filter(annotator=request.user)
         annotations = annotations_qs
 
