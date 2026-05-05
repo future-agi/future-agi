@@ -41,6 +41,7 @@ x-backend-env: &backend-env
 
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: http://gateway:8090
+  AGENTCC_GATEWAY_INTERNAL_URL: http://gateway:8090
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
