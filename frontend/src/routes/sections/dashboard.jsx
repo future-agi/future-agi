@@ -1105,14 +1105,18 @@ export const dashboardRoutes = (
           index: true,
           element: <Develop />,
         },
-        {
-          path: "create-synthetic-dataset",
-          element: <CreateSyntheticData />,
-        },
-        {
-          path: "edit-synthetic-dataset/:dataset",
-          element: <EditSyntheticDataDrawer />,
-        },
+        ...(!isOSS
+          ? [
+              {
+                path: "create-synthetic-dataset",
+                element: <CreateSyntheticData />,
+              },
+              {
+                path: "edit-synthetic-dataset/:dataset",
+                element: <EditSyntheticDataDrawer />,
+              },
+            ]
+          : []),
 
         {
           path: ":dataset",
