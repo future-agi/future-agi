@@ -11,6 +11,8 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     admin_names = serializers.SerializerMethodField()
     start_data = serializers.SerializerMethodField()
     last_update_date = serializers.SerializerMethodField()
+    workspace_created_at = serializers.SerializerMethodField()
+    workspace_updated_at = serializers.SerializerMethodField()
     invite_link = serializers.SerializerMethodField()
 
     class Meta:
@@ -22,6 +24,8 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
             "admin_names",
             "start_data",
             "last_update_date",
+            "workspace_created_at",
+            "workspace_updated_at",
             "invite_link",
         ]
 
@@ -49,6 +53,12 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     def get_last_update_date(self, obj):
         """Get last update date in required format"""
         return obj.updated_at.strftime("%Y-%m-%d") if obj.updated_at else ""
+
+    def get_workspace_created_at(self, obj):
+        return obj.created_at.isoformat() if obj.created_at else None
+
+    def get_workspace_updated_at(self, obj):
+        return obj.updated_at.isoformat() if obj.updated_at else None
 
     def get_invite_link(self, obj):
         """Get invite link (placeholder for v1)"""
