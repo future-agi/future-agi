@@ -18,6 +18,69 @@
 # `dockerfile: Dockerfile` on `backend` + `worker` (or set up an alias).
 # ============================================================================
 
+# Mirror of *backend-env from docker-compose.yml. YAML anchors don't cross
+# compose files, so per-queue workers below can't reference *backend-env
+# directly — without this, REDIS_URL is empty in the worker container and
+# `payload_storage._connect_redis()` raises on `redis.from_url(None, ...)`,
+# permanently disabling trace ingestion. Keep in sync with the base file.
+x-dev-backend-env: &dev-backend-env
+  SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-change-me}
+  ENV_TYPE: ${ENV_TYPE:-development}
+  DJANGO_SETTINGS_MODULE: tfc.settings.settings
+  FAST_STARTUP: ${FAST_STARTUP:-false}
+
+  AGENTCC_INTERNAL_URL: http://gateway:8090
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
+  RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
+  RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
+  MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+  MAILGUN_SENDER_DOMAIN: ${MAILGUN_SENDER_DOMAIN:-}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+  SERVER_EMAIL: ${SERVER_EMAIL:-}
+  CODE_EXECUTOR_URL: http://code-executor:8060
+  SERVING_URL: http://serving:8080
+
+  PG_HOST: postgres
+  PG_PORT: 5432
+  PG_USER: ${PG_USER:-futureagi}
+  PG_PASSWORD: ${PG_PASSWORD:-futureagi}
+  PG_DB: ${PG_DB:-futureagi}
+  PGBOUNCER_HOST: postgres
+  PGBOUNCER_PORT: 5432
+
+  CH_HOST: clickhouse
+  CH_PORT: 9000
+  CH_HTTP_PORT: 8123
+  CH_USER: default
+  CH_PASSWORD: ""
+  CH_DATABASE: default
+  CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
+
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_URL: redis://redis:6379/0
+  REDIS_CACHE_URL: redis://redis:6379/1
+  REDIS_LOCK_URL: redis://redis:6379/2
+  REDIS_STATE_URL: redis://redis:6379/2
+
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
+  S3_BUCKET: futureagi
+
+  TEMPORAL_HOST: temporal:7233
+  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+
+  FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
+  FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
+
 x-dev-worker-base: &dev-worker-base
   build:
     context: ./futureagi
@@ -26,6 +89,8 @@ x-dev-worker-base: &dev-worker-base
   working_dir: /app/backend
   volumes:
     - ./futureagi:/app/backend
+  env_file:
+    - .env
   depends_on:
     temporal:
       condition: service_healthy
@@ -84,9 +149,8 @@ services:
   worker-default:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: default
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_DEFAULT_MAX_ACTIVITIES:-100}
@@ -95,9 +159,8 @@ services:
   worker-tasks-s:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: tasks_s
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_S_MAX_ACTIVITIES:-200}
@@ -106,9 +169,8 @@ services:
   worker-tasks-l:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: tasks_l
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_L_MAX_ACTIVITIES:-50}
@@ -117,9 +179,8 @@ services:
   worker-tasks-xl:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: tasks_xl
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
@@ -128,9 +189,8 @@ services:
   worker-trace-ingestion:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: trace_ingestion
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TRACE_MAX_ACTIVITIES:-100}
@@ -139,9 +199,8 @@ services:
   worker-agent-compass:
     <<: *dev-worker-base
     environment:
+      <<: *dev-backend-env
       SERVICE_TYPE: temporal-worker
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: agent_compass
       FAST_STARTUP: "true"
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_COMPASS_MAX_ACTIVITIES:-50}
