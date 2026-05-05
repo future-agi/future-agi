@@ -20,7 +20,7 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { PATH_AFTER_LOGIN, GOOGLE_SITE_KEY } from "src/config-global";
+import { GOOGLE_SITE_KEY } from "src/config-global";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -42,11 +42,13 @@ import {
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
 export default function JwtLoginView() {
   const { login } = useAuthContext();
+  const postLoginPath = usePostLoginPath();
   const { executeRecaptcha } = useGoogleReCaptcha();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
@@ -230,7 +232,7 @@ export default function JwtLoginView() {
           localStorage.setItem("signupProvider", "email");
           navigate(paths.auth.jwt.setup_org);
         } else {
-          router.push(returnTo || PATH_AFTER_LOGIN);
+          router.push(returnTo || postLoginPath);
         }
       }
     } catch (error) {
@@ -298,7 +300,7 @@ export default function JwtLoginView() {
 
       if (verifyRes.status === 200) {
         await login(verifyRes);
-        router.push(returnTo || PATH_AFTER_LOGIN);
+        router.push(returnTo || postLoginPath);
       }
     } catch (error) {
       if (error?.name === "NotAllowedError") {

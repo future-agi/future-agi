@@ -173,6 +173,7 @@ from sdk.utils.helpers import _get_api_call_type
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 
 # Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
@@ -6770,7 +6771,9 @@ class GetEvalConfigView(APIView):
                 "model": template.model,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
@@ -6841,7 +6844,9 @@ class GetEvalConfigView(APIView):
                 "function_params_schema": function_params_schema,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
                 "check_internet": template.config.get("check_internet", False),
@@ -6933,7 +6938,9 @@ class GetEvalStructureView(APIView):
             "models": template.config.get("models", ""),
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
             "kb_id": None,
             "error_localizer": template.error_localizer_enabled,
             "choices": template.choices,
@@ -7014,7 +7021,9 @@ class GetEvalStructureView(APIView):
             "kb_id": eval.kb_id,
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7342,9 +7351,13 @@ class EditAndRunUserEvalView(APIView):
         return bool(value)
 
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7592,9 +7605,13 @@ class AddUserEvalView(CreateAPIView):
         return bool(value)
 
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 

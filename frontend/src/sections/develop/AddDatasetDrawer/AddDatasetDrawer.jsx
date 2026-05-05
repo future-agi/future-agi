@@ -12,6 +12,7 @@ import AddSDKModal from "./AddSDKModal";
 import SyntheticDataDrawer from "../AddRowDrawer/CreateSyntheticData";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import ExistingDatasetModal from "../AddRowDrawer/ExistingDatasetModal";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 const options = [
   {
@@ -88,6 +89,10 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
   const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
 
   const navigate = useNavigate();
+  const { isOSS } = useDeploymentMode();
+  const filteredOptions = isOSS
+    ? options.filter((o) => o.id !== "synthetic-data")
+    : options;
 
   return (
     <>
@@ -199,7 +204,7 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
               <Box
                 sx={{ display: "flex", flexDirection: "column", gap: "16px" }}
               >
-                {options.map((option) => (
+                {filteredOptions.map((option) => (
                   <DatasetOptions
                     key={option.title}
                     {...option}
