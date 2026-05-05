@@ -707,29 +707,27 @@ class DashboardQueryBuilder:
                 f_out_type = (f.get("output_type") or "SCORE").upper()
 
                 # Same eval as the metric → filter on main table directly
+                is_string_op = op in ("str_contains", "str_not_contains")
                 if ev_tid == eval_template_id:
-                    if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
+                    if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES") or is_string_op:
                         where_parts.append(
                             f"e.eval_output_str {op_symbol} %({val_key})s"
                         )
-                        params[val_key] = val
                     else:
                         where_parts.append(f"e.eval_score {op_symbol} %({val_key})s")
-                        params[val_key] = _coerce_filter_value(val, op)
+                    params[val_key] = _coerce_filter_value(val, op)
                 else:
                     # Different eval → cross-eval JOIN
                     ev_alias = f"ev_f{i}"
                     fkey = f"_evf_{i}_tid"
                     params[fkey] = ev_tid
                     need_eval_join[ev_alias] = fkey
-                    if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
+                    if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES") or is_string_op:
                         ev_col = f"{ev_alias}.eval_output_str"
-                        where_parts.append(f"{ev_col} {op_symbol} %({val_key})s")
-                        params[val_key] = val
                     else:
                         ev_col = f"{ev_alias}.eval_score"
-                        where_parts.append(f"{ev_col} {op_symbol} %({val_key})s")
-                        params[val_key] = _coerce_filter_value(val, op)
+                    where_parts.append(f"{ev_col} {op_symbol} %({val_key})s")
+                    params[val_key] = _coerce_filter_value(val, op)
 
             elif f_type == "custom_attribute":
                 need_spans_join = True
@@ -1433,9 +1431,9 @@ class DashboardQueryBuilder:
                 )
 
                 output_type = (f.get("output_type") or "SCORE").upper()
-                # config is double-encoded
-                if output_type == "PASS_FAIL":
-                    eval_col = "if(eval_output_str = 'Passed', 1.0, 0.0)"
+                is_string_op = op in ("str_contains", "str_not_contains")
+                if output_type in ("PASS_FAIL", "CHOICE", "CHOICES") or is_string_op:
+                    eval_col = "eval_output_str"
                 else:
                     eval_col = "eval_score"
 
@@ -1470,17 +1468,24 @@ class DashboardQueryBuilder:
 
                 # Use the nullable extractor so JSON payloads missing
                 # the numeric key compare as NULL (and are excluded by
-                # the filter) instead of evaluating as 0.
-                num_expr = annotation_numeric_value_expr(
-                    alias="model_hub_score", nullable=True
-                )
+                # the filter) instead of evaluating as 0. For string-op
+                # filters (contains/not contains) extract as a string.
+                is_string_op = op in ("str_contains", "str_not_contains")
+                if is_string_op:
+                    val_expr = "JSONExtractString(value, 'value')"
+                    null_check = ""
+                else:
+                    val_expr = annotation_numeric_value_expr(
+                        alias="model_hub_score", nullable=True
+                    )
+                    null_check = f"AND {val_expr} IS NOT NULL "
                 subquery = (
                     f"trace_id IN ("
                     f"SELECT toString(trace_id) FROM model_hub_score FINAL "
                     f"WHERE label_id = toUUID(%({label_id_key})s) "
                     f"AND organization_id = toUUID(%({ann_org_key})s) "
-                    f"AND {num_expr} IS NOT NULL "
-                    f"AND {num_expr} {op_symbol} %({val_key})s "
+                    f"{null_check}"
+                    f"AND {val_expr} {op_symbol} %({val_key})s "
                     f"AND _peerdb_is_deleted = 0 "
                     f"AND deleted = 0"
                     f")"
