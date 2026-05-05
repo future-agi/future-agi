@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import CellMarkdown from "src/sections/common/CellMarkdown";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
@@ -565,7 +566,6 @@ const DetailPanelContent = ({ row, isDark }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
-console.log("detail", row);
   return (
     <Box
       sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
@@ -765,17 +765,15 @@ console.log("detail", row);
                     >
                       Explanation
                     </Typography>
-                    <Typography
-                      variant="body2"
+                    <Box
                       sx={{
                         fontSize: "12px",
                         color: "text.secondary",
                         lineHeight: 1.6,
-            
                       }}
                     >
-                      {row.reason}
-                    </Typography>
+                      <CellMarkdown spacing={0} text={row.reason} />
+                    </Box>
                   </>
                 )
               )}
