@@ -22,6 +22,10 @@ for (const [k, v] of Object.entries({
 const [OWNER, REPO] = GITHUB_REPOSITORY.split('/');
 const GH_API = 'https://api.github.com';
 const DESC_MAX = 140;
+// Slack hard-caps a single message at 50 blocks. We render fixed scaffolding
+// (header + context + 2 dividers + 2 sub-headers + up to 2 "+N more" notes) =
+// up to 8 blocks, so per-bucket cap of 20 keeps us safely under the limit.
+const MAX_PRS_PER_BUCKET = 20;
 
 const ghHeaders = {
   Accept: 'application/vnd.github+json',
@@ -198,8 +202,26 @@ async function postSlack(blocks, fallbackText) {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Slack webhook failed: ${res.status} ${await res.text()}`);
+    const body = await res.text();
+    throw new Error(
+      `Slack webhook failed: ${res.status} ${body} (block count: ${blocks.length})`,
+    );
   }
+}
+
+function renderBucket(bucketHeader, prs) {
+  const out = [bucketHeader];
+  if (prs.length === 0) {
+    out.push(emptyStub());
+    return out;
+  }
+  const shown = prs.slice(0, MAX_PRS_PER_BUCKET);
+  const hidden = prs.length - shown.length;
+  out.push(...shown.map(prSection));
+  if (hidden > 0) {
+    out.push(context(`_+${hidden} older PR${hidden === 1 ? '' : 's'} not shown_`));
+  }
+  return out;
 }
 
 async function main() {
@@ -216,11 +238,9 @@ async function main() {
       `${enriched.length} open  •  ${external.length} External  •  ${internal.length} Internal`,
     ),
     { type: 'divider' },
-    header(`📤 External PRs (${external.length})`),
-    ...(external.length ? external.map(prSection) : [emptyStub()]),
+    ...renderBucket(header(`📤 External PRs (${external.length})`), external),
     { type: 'divider' },
-    header(`🏢 Internal PRs (${internal.length})`),
-    ...(internal.length ? internal.map(prSection) : [emptyStub()]),
+    ...renderBucket(header(`🏢 Internal PRs (${internal.length})`), internal),
   ];
 
   const fallback = `PR Digest — ${enriched.length} open (${external.length} external, ${internal.length} internal)`;
