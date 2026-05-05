@@ -307,7 +307,7 @@ async function fetchAllDatasetRowIds(
       validFilters,
       [],
       search || "",
-      { enabled: true, staleTime: 30000 },
+      { enabled: true, staleTime: 30000, pageSize: DATASET_ROWS_LIMIT },
     );
     const data = await queryClient.fetchQuery(queryOptions);
     const rows = data?.data?.result?.table ?? [];
@@ -987,7 +987,7 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
           validFilters,
           sort,
           search,
-          { enabled: true, staleTime: 0 },
+          { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
         );
         const data = await queryClient.fetchQuery({ ...queryOptions });
         const rows = data?.data?.result?.table ?? [];

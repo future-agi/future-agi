@@ -11,8 +11,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - 🐛 [Report a bug](https://github.com/future-agi/future-agi/issues/new?template=bug_report.yml)
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-- 💬 [Join Discord](https://discord.gg/futureagi)
-- 📖 [Architecture overview](https://docs.futureagi.com/architecture)
+- 💬 [Join Discord](https://discord.com/invite/QDVvTgA8Xp)
 
 ---
 
@@ -26,7 +25,7 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 Before we can merge your first pull request, you'll need to sign our Contributor License Agreement. This is a one-click process that runs automatically on your first PR — you'll see a link to sign, we merge after.
 
-The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). The full text is at [CLA.md](CLA.md).
+The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). 
 
 ---
 
@@ -75,7 +74,7 @@ cd futureagi && make test
 cd frontend && yarn test
 ```
 
-Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/CLAUDE.md](frontend/CLAUDE.md).
+Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/README.md](frontend/README.md).
 
 ---
 
@@ -122,7 +121,7 @@ Most evaluators live under `futureagi/agentic_eval/core_evals/fi_evals/`. Each e
 4. Tests in the nearest `tests/` directory
 5. Docs in `docs/evaluators/` *(separate docs repo)*
 
-See [adding an evaluator](https://docs.futureagi.com/evaluators/custom) for the full walkthrough.
+See [adding an evaluator](https://docs.futureagi.com/docs/evaluation/features/custom) for the full walkthrough.
 
 ### 🧩 Adding a framework integration
 
@@ -153,7 +152,7 @@ Before requesting review:
 - [ ] Tests added or updated
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
-- [ ] [CHANGELOG.md](CHANGELOG.md) updated if user-facing
+- [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing
 - [ ] No hardcoded secrets, URLs, or PII
 - [ ] CLA signed (bot will prompt on first PR)
 
@@ -173,9 +172,7 @@ future-agi/
 │   ├── model_hub/    # LLM / embedding hub
 │   ├── tfc/          # Django project settings + routing
 │   └── ...
-├── frontend/         # React + Vite (JavaScript)
-├── agentcc-gateway/  # Prism LLM gateway (Go)
-└── docs/             # Internal design docs (→ future-agi/internal-docs)
+└── frontend/         # React + Vite (JavaScript)
 ```
 
 ---
@@ -184,7 +181,7 @@ future-agi/
 
 We release a new version of the Docker images roughly every two weeks, and SDK minor versions as features land. We follow [SemVer](https://semver.org/).
 
-Release notes live in [CHANGELOG.md](CHANGELOG.md).
+Release notes live at [futureagi.com/changelog](https://futureagi.com/changelog).
 
 ---
 

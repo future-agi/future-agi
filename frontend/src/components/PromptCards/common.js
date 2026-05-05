@@ -1,6 +1,7 @@
 import logger from "src/utils/logger";
 import { getRandomId } from "src/utils/utils";
 import { normalizeForComparison } from "src/sections/workbench/createPrompt/Playground/common";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import { PromptRoles } from "src/utils/constants";
 import { alpha } from "@mui/material";
 
@@ -42,7 +43,7 @@ export const placeEditBolt = (
   let index = 0;
   const matches = [];
 
-  // First remove all existing EditVariable embeds and add back }
+  // First remove all existing EditVariable embeds and restore } for {{ }} embeds
   if (showEditEmbed) {
     delta.ops.forEach((op) => {
       if (
@@ -51,8 +52,11 @@ export const placeEditBolt = (
         op.insert.EditVariable
       ) {
         quill.deleteText(index, 1, "placeBlot");
-        quill.insertText(index, "}", "placeBlot");
-        index += 1;
+        // Only restore } for {{ }} embeds; block embeds were inserted without removing a char
+        if (!op.insert.EditVariable.fromBlock) {
+          quill.insertText(index, "}", "placeBlot");
+          index += 1;
+        }
       } else if (typeof op.insert === "string") {
         index += op.insert.length;
       } else {
@@ -83,26 +87,39 @@ export const placeEditBolt = (
     }
   });
 
-  // In Jinja mode, also find input variables inside {% %} blocks
-  // e.g. {% for example in examples %} → highlight "examples"
-  if (jinjaMode && typeof variableValidator === "function") {
-    const jinjaBlockRegex = /\{%-?\s*for\s+[\w\s,]+\s+in\s+(\w+)/g;
+  // In Jinja mode, compute input variables from the full text so we can:
+  // 1. Skip loop-scoped / set-scoped variables (e.g. "item" in {% for item in items %})
+  // 2. Highlight input variables referenced inside {% %} blocks (for, if, elif, etc.)
+  let jinjaInputVars = null;
+  if (jinjaMode) {
+    const fullText = newDelta.ops
+      .filter((op) => typeof op.insert === "string")
+      .map((op) => op.insert)
+      .join("");
+    jinjaInputVars = new Set(extractJinjaVariables(fullText));
+
+    // Scan {% %} blocks for input variable references
+    const jinjaBlockRegex = /\{%-?([\s\S]*?)-?%\}/g;
     index = 0;
     newDelta.ops.forEach((op) => {
       if (typeof op.insert === "string") {
-        let match;
-        while ((match = jinjaBlockRegex.exec(op.insert)) !== null) {
-          const varName = match[1];
-          const isValid = variableValidator(varName);
-          if (isValid === null) continue; // not an input variable
-          // Calculate position of just the variable name within the match
-          const varStart = index + match.index + match[0].indexOf(varName);
-          matches.push({
-            start: varStart,
-            length: varName.length,
-            text: varName,
-            word: varName,
-          });
+        let blockMatch;
+        while ((blockMatch = jinjaBlockRegex.exec(op.insert)) !== null) {
+          const blockStart = index + blockMatch.index;
+          for (const varName of jinjaInputVars) {
+            if (!/^\w+$/.test(varName)) continue;
+            const varRegex = new RegExp(`\\b${varName}\\b`, "g");
+            let varMatch;
+            while ((varMatch = varRegex.exec(blockMatch[0])) !== null) {
+              matches.push({
+                start: blockStart + varMatch.index,
+                length: varName.length,
+                text: varName,
+                word: varName,
+                fromBlock: true,
+              });
+            }
+          }
         }
         index += op.insert.length;
       } else {
@@ -111,8 +128,33 @@ export const placeEditBolt = (
     });
   }
 
-  // Process matches
-  matches.forEach(({ start, length, word }) => {
+  // For block matches, only highlight + embed the first occurrence of each
+  // variable name (by document position). Duplicate block references are skipped.
+  const firstBlockVars = new Set();
+  matches
+    .filter((m) => m.fromBlock)
+    .sort((a, b) => a.start - b.start)
+    .forEach((m) => {
+      if (!firstBlockVars.has(m.word)) {
+        firstBlockVars.add(m.word);
+        m.firstBlock = true;
+      }
+    });
+
+  // Process matches in reverse document order so embed insertions don't shift
+  // positions of matches that haven't been processed yet.
+  const sortedMatches = [...matches].sort((a, b) => b.start - a.start);
+  sortedMatches.forEach(({ start, length, word, fromBlock, firstBlock }) => {
+    // For block matches, skip duplicates — only process the first occurrence
+    if (fromBlock && !firstBlock) return;
+    // In Jinja mode, skip variables that are not real inputs (e.g. loop vars)
+    // Use root name for dotted access (e.g. "data.name" → check "data")
+    if (jinjaInputVars) {
+      const rootVar = word.trim().split(".")[0];
+      if (!jinjaInputVars.has(rootVar)) {
+        return;
+      }
+    }
     // When allVariablesValid is true, treat every variable as valid (green)
     if (allVariablesValid) {
       quill.formatText(
@@ -170,11 +212,10 @@ export const placeEditBolt = (
         return false;
       });
 
-    if (!variable) {
-      if (showEditEmbed) {
-        // Delete the last character (})
+    if (!variable && showEditEmbed) {
+      if (!fromBlock) {
+        // {{ }} match: replace the closing } with the embed
         quill.deleteText(start + length - 1, 1, "placeBlot");
-        // Insert the EditVariable embed
         quill.insertEmbed(
           start + length - 1,
           "EditVariable",
@@ -184,19 +225,29 @@ export const placeEditBolt = (
 
         const cursorPosition = getCursorPosition(quill);
         const isCursorAtPosition = cursorPosition === start + length - 1;
-        // If cursor was at the position, move it after the embed
         if (isCursorAtPosition) {
-          // Use setTimeout to ensure the embed is fully inserted before moving cursor
           setTimeout(() => {
             quill.setSelection(start + length + 100, 0, "placeBlot");
           }, 0);
         }
+      } else {
+        // {% %} block match: insert the embed after the first occurrence only
+        quill.insertEmbed(
+          start + length,
+          "EditVariable",
+          { openVariableEditor, fromBlock: true },
+          "placeBlot",
+        );
       }
     }
 
+    // Format the variable name text — for {{ }} embeds the } was replaced so use length - 1
+    const fmtLength =
+      !variable && showEditEmbed && !fromBlock ? length - 1 : length;
+
     quill.formatText(
       start,
-      variable ? length : showEditEmbed ? length - 1 : length,
+      fmtLength,
       {
         color: variable
           ? "var(--mention-valid-color)"
@@ -206,7 +257,7 @@ export const placeEditBolt = (
           : "var(--mention-invalid-bg)",
         bold: true,
       },
-      "placeBlot", // Use 'api' to prevent recursive triggers
+      "placeBlot",
     );
   });
 };
@@ -222,12 +273,14 @@ export const handleRemoveEditVariable = (quill) => {
 
   let index = 0;
 
-  // First remove all existing EditVariable embeds and add back }
+  // First remove all existing EditVariable embeds and restore } for {{ }} embeds
   delta.ops.forEach((op) => {
     if (op.insert && typeof op.insert === "object" && op.insert.EditVariable) {
       quill.deleteText(index, 1, "placeBlot");
-      quill.insertText(index, "}", "placeBlot");
-      index += 1;
+      if (!op.insert.EditVariable.fromBlock) {
+        quill.insertText(index, "}", "placeBlot");
+        index += 1;
+      }
     } else if (typeof op.insert === "string") {
       index += op.insert.length;
     } else {
@@ -464,7 +517,9 @@ export const getBlocks = (quill) => {
       op.insert.EditVariable
     ) {
       stringAbrupt = false;
-      lastString += "}";
+      if (!op.insert.EditVariable.fromBlock) {
+        lastString += "}";
+      }
     } else if (
       op.insert &&
       typeof op.insert === "object" &&

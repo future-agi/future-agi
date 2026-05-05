@@ -201,7 +201,7 @@ const CompositeResultView = ({ compositeResult }) => {
       </Stack>
 
       {/* Raw summary (debug/reference) */}
-      {summary && (
+      {/* {summary && (
         <Box sx={{ mt: 2 }}>
           <Typography
             variant="caption"
@@ -222,7 +222,7 @@ const CompositeResultView = ({ compositeResult }) => {
             <CellMarkdown fontSize={11} text={summary} />
           </Box>
         </Box>
-      )}
+      )} */}
     </Box>
   );
 };

@@ -813,11 +813,40 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onCompareToggle={() => setShowCompare(!showCompare)}
         // Group
         groupBy="sessions"
+        hiddenGroupByOptions={isUserMode ? ["users"] : []}
+        // User mode: trace/span take the user back into LLMTracingView via
+        // the user-detail URL. Project mode: cross-nav into observe routes.
         onGroupByChange={(key) => {
-          if (key === "trace" || key === "none") {
-            window.location.href = `/dashboard/observe/${observeId}/llm-tracing`;
-          } else if (key === "users") {
-            window.location.href = `/dashboard/observe/${observeId}/users`;
+          if (isUserMode) {
+            if (key !== "none" && key !== "trace" && key !== "span") return;
+            const params = new URLSearchParams({ userTab: "traces" });
+            if (key === "span") params.set("selectedTab", "spans");
+            navigate({
+              pathname: `/dashboard/users/${encodeURIComponent(
+                userIdForUserMode,
+              )}`,
+              search: `?${params}`,
+            });
+            return;
+          }
+          switch (key) {
+            case "none":
+            case "trace":
+              navigate(`/dashboard/observe/${observeId}/llm-tracing`);
+              break;
+            case "span": {
+              const params = new URLSearchParams({ selectedTab: "spans" });
+              navigate({
+                pathname: `/dashboard/observe/${observeId}/llm-tracing`,
+                search: `?${params}`,
+              });
+              break;
+            }
+            case "users":
+              navigate(`/dashboard/observe/${observeId}/users`);
+              break;
+            default:
+              break;
           }
         }}
         // Bulk actions

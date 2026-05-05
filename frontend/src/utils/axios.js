@@ -46,7 +46,7 @@ function snakeToCamelKey(key) {
 // phantom aliases like `numOfWords` for a template variable the user named
 // `num_of_words`. The outer field itself still gets a camelCase alias — only
 // the inner keys of that object are left alone (TH-4375).
-const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders"]);
+const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders", "params", "headers"]);
 
 // Build a camelCase→snake_case lookup table for each object we alias.
 function buildAliasTable(obj) {
@@ -1020,6 +1020,16 @@ export const endpoints = {
         `/model-hub/experiments/v2/${expId}/json-schema/`,
       getExperimentDerivedVariables: (expId) =>
         `/model-hub/experiments/v2/${expId}/derived-variables/`,
+      feedback: {
+        getTemplate: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-template/`,
+        create: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/`,
+        getDetails: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-feedback-details/`,
+        submit: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/submit-feedback/`,
+      },
     },
     apiKey: {
       create: "/model-hub/api-keys/",

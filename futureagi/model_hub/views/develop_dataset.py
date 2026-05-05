@@ -141,6 +141,7 @@ from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import (
     FUNCTION_CONFIG_EVALS,
     NOT_UI_EVALS,
@@ -7092,11 +7093,7 @@ class StartEvalsProcess(APIView):
             column_order_changed = False
 
             for user_eval_metric in eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(user_eval_metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(user_eval_metric.template)
 
                 source_id = str(user_eval_metric.id)
                 column = existing_columns.get(str(source_id))
@@ -7775,17 +7772,7 @@ class AddUserEvalView(CreateAPIView):
                     dataset = Dataset.no_workspace_objects.select_for_update().get(
                         id=id1
                     )
-                    # Composite evals: aggregation-on → float, off → text.
-                    # Single evals: derive from config.output.
-                    if template.template_type == "composite":
-                        data_type = "float" if template.aggregation_enabled else "text"
-                    else:
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                    data_type = infer_eval_result_column_data_type(template)
 
                     column = Column.objects.create(
                         name=validated_data.get("name"),
@@ -13249,12 +13236,9 @@ class AddCompareExperimentEvalView(APIView):
                         dataset = Dataset.no_workspace_objects.select_for_update().get(
                             id=dataset_id
                         )
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                        data_type = infer_eval_result_column_data_type(
+                            user_eval_metric.template
+                        )
 
                         column = Column.objects.create(
                             name=validated_data.get("name"),
@@ -13341,11 +13325,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
 
             # Process each metric for column creation
             for metric in user_eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(metric.template)
 
                 # Get or create evaluation column
                 column, created = Column.objects.get_or_create(

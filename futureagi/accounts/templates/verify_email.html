@@ -1,2 +1,34 @@
-Welcome to Future AGI. We are delighted to have you onboard. As part of onboarding, please confirm your email.
-{{ app_url }}/auth/verify/{{ uid }}/{{ token }}
+{% extends "billing/base_billing.html" %}
+{% block title %}Verify your Future AGI email{% endblock %}
+{% block preheader %}Confirm your email to finish setting up your Future AGI account.{% endblock %}
+{% block txid %}◦ SECURITY / VERIFY{% endblock %}
+{% block content %}
+  <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
+    <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#fafafa; margin-right:8px; vertical-align:middle; box-shadow:0 0 8px rgba(255,255,255,0.7);"></span>Email Verification
+  </span>
+
+  <h1 class="hx" style="font-family:'Inter',sans-serif; font-size:28px; line-height:1.22; font-weight:600; color:#fafafa; letter-spacing:-0.015em; margin:16px 0 14px 0;">
+    Verify your email
+  </h1>
+
+  <p class="px" style="font-family:'Inter',sans-serif; font-size:16px; line-height:1.65; color:#d4d4d8; margin:0 0 24px 0;">
+    Welcome to Future AGI. Click the button below to confirm your email address and finish setting up your account.
+  </p>
+
+  <div style="margin: 24px 0 12px 0;">
+    {% include "billing/_button.html" with url=app_url|add:"/auth/verify/"|add:uid|add:"/"|add:token text="Verify email →" variant="primary" %}
+  </div>
+
+  <div class="log" style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:10px; padding:20px 22px; margin:28px 0 20px 0; font-family:'Inter',sans-serif; color:#c7c7cc;">
+    <p class="log-hdr" style="margin:0 0 12px 0; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:10px; vertical-align:middle; background:#a1a1aa;"></span>Info<span style="color:#71717a; font-weight:500; margin-left:6px;">· Didn't sign up?</span>
+    </p>
+    <p style="margin:0; font-family:'Inter',sans-serif; font-size:13px; line-height:1.6; color:#c7c7cc;">
+      You can safely ignore this email — no account will be created until the link above is clicked. If you receive repeated verification requests you didn't trigger, contact support.
+    </p>
+  </div>
+
+  <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:20px 0 0 0;">
+    For your security, Future AGI never asks for your password via email.
+  </p>
+{% endblock %}

@@ -28,7 +28,9 @@ import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
+import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
@@ -65,7 +67,7 @@ export default function JwtRegisterView() {
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -76,7 +78,7 @@ export default function JwtRegisterView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 
@@ -110,7 +112,7 @@ export default function JwtRegisterView() {
   const email = watch("email");
 
   const handleSignup = async (data) => {
-    const token = await executeRecaptcha("signup");
+    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
     try {
       setLoading(true);
@@ -179,7 +181,7 @@ export default function JwtRegisterView() {
   };
 
   const handleLogin = async (data) => {
-    const token = await executeRecaptcha("login");
+    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -224,7 +226,7 @@ export default function JwtRegisterView() {
   };
 
   const onSubmit = handleSubmit(async (data) => {
-    if (!executeRecaptcha) {
+    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",

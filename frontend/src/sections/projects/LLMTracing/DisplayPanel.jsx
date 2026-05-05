@@ -199,6 +199,7 @@ const DisplayPanel = ({
   // Group
   groupBy,
   onGroupByChange,
+  hiddenGroupByOptions = [],
   // Graph
   onCompareToggle,
   isCompareActive,
@@ -407,7 +408,9 @@ const DisplayPanel = ({
             transformOrigin={{ vertical: "top", horizontal: "left" }}
             slotProps={{ paper: { sx: { minWidth: 140, ml: 0.5 } } }}
           >
-            {GROUP_OPTIONS.map((opt) => {
+            {GROUP_OPTIONS.filter(
+              (opt) => !hiddenGroupByOptions.includes(opt.key),
+            ).map((opt) => {
               const isSelected = opt.key === groupBy;
               return (
                 <MenuItem
@@ -519,6 +522,7 @@ DisplayPanel.propTypes = {
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
   onGroupByChange: PropTypes.func,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
   onResetView: PropTypes.func,

@@ -81,6 +81,13 @@ export default defineConfig({
     hmr: {
       overlay: false,
     },
+    // Polling watcher — Docker bind mounts on macOS/Windows don't deliver
+    // inotify events to the container, so chokidar's default (FS events)
+    // misses host edits. Enabled only when VITE_USE_POLLING is set so
+    // host-native dev keeps the cheap event-based watcher.
+    watch: process.env.VITE_USE_POLLING
+      ? { usePolling: true, interval: 100 }
+      : undefined,
     headers: {
       // Prevent Clickjacking
       "X-Frame-Options": "DENY",

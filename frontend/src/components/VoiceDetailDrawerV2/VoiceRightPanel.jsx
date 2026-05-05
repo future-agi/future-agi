@@ -37,7 +37,7 @@ const TABS = {
   SCENARIO: "scenario",
 };
 
-const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
+const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
@@ -119,11 +119,14 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
       value: TABS.ATTRIBUTES,
       icon: "mdi:code-json",
     });
-    t.push({
-      label: "Annotations",
-      value: TABS.ANNOTATIONS,
-      icon: "mdi:pencil-outline",
-    });
+    if (!hideAnnotationTab) {
+      t.push({
+        label: "Annotations",
+        value: TABS.ANNOTATIONS,
+        icon: "mdi:pencil-outline",
+      });
+    }
+
     if (hasScenarioData) {
       t.push({
         label: "Scenario",
@@ -489,6 +492,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hideAnnotationTab: PropTypes.bool
 };
 
 export default VoiceRightPanel;
