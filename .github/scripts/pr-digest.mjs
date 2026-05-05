@@ -6,6 +6,10 @@ const {
   GITHUB_TOKEN,
   SLACK_WEBHOOK_URL,
   GITHUB_REPOSITORY,
+  // Optional PAT with `read:org` scope. The default GITHUB_TOKEN cannot see
+  // private org membership, and most members keep their membership private,
+  // so without this token nearly everyone is misclassified as External.
+  ORG_READ_TOKEN,
 } = process.env;
 
 for (const [k, v] of Object.entries({
@@ -17,6 +21,14 @@ for (const [k, v] of Object.entries({
     console.error(`Missing required env var: ${k}`);
     process.exit(1);
   }
+}
+
+if (!ORG_READ_TOKEN) {
+  console.warn(
+    'ORG_READ_TOKEN is not set; falling back to author_association for Internal/External classification. ' +
+      'Members with private org membership will be miscounted as External. ' +
+      'Add a PAT with read:org scope as the ORG_READ_TOKEN secret to fix.',
+  );
 }
 
 const [OWNER, REPO] = GITHUB_REPOSITORY.split('/');
@@ -96,10 +108,33 @@ function reviewerInfo(pr, reviews) {
   return { attached: all.length > 0, names: all };
 }
 
-function bucket(pr) {
-  return pr.author_association === 'MEMBER' || pr.author_association === 'OWNER'
-    ? 'internal'
-    : 'external';
+const memberCache = new Map();
+
+async function isOrgMember(login) {
+  if (!login || !ORG_READ_TOKEN) return null;
+  if (memberCache.has(login)) return memberCache.get(login);
+  const res = await fetch(`${GH_API}/orgs/${OWNER}/members/${encodeURIComponent(login)}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${ORG_READ_TOKEN}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': `${OWNER}-${REPO}-pr-digest`,
+    },
+  });
+  // 204 = member; 302 = token can't see; 404 = not a member.
+  const isMember = res.status === 204;
+  memberCache.set(login, isMember);
+  return isMember;
+}
+
+async function bucket(pr) {
+  // Public org members surface as MEMBER on author_association — no API call needed.
+  if (pr.author_association === 'OWNER' || pr.author_association === 'MEMBER') {
+    return 'internal';
+  }
+  // Private members default to CONTRIBUTOR/NONE on author_association; query the org API.
+  const memberOf = await isOrgMember(pr.user?.login);
+  return memberOf === true ? 'internal' : 'external';
 }
 
 function truncate(s) {
@@ -160,16 +195,17 @@ function emptyStub() {
 }
 
 async function enrichPR(pr) {
-  const [files, reviews] = await Promise.all([
+  const [files, reviews, prBucket] = await Promise.all([
     ghAll(`/repos/${OWNER}/${REPO}/pulls/${pr.number}/files`),
     ghAll(`/repos/${OWNER}/${REPO}/pulls/${pr.number}/reviews`),
+    bucket(pr),
   ]);
   return {
     number: pr.number,
     title: pr.title,
     html_url: pr.html_url,
     user: { login: pr.user?.login || 'unknown' },
-    bucket: bucket(pr),
+    bucket: prBucket,
     area: classifyArea(files),
     review: classifyReviewState(pr, reviews),
     reviewers: reviewerInfo(pr, reviews),
