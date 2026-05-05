@@ -856,8 +856,15 @@ class TestExecutionCancelView(APIView):
                 )
 
             if result["success"]:
+                response_data = {
+                    "success": True,
+                    "message": result.get(
+                        "message", "Test execution cancellation initiated"
+                    ),
+                    "test_execution_id": result.get("test_execution_id"),
+                }
                 return Response(
-                    CancelTestExecutionResponseSerializer(result).data,
+                    CancelTestExecutionResponseSerializer(response_data).data,
                     status=status.HTTP_200_OK,
                 )
             else:
