@@ -85,10 +85,13 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-user}:${RABBITMQ_PASSWORD:-password}@rabbitmq:5672//
 
   # Object storage (MinIO)
+  # STORAGE_BACKEND drives URL routing: "minio" for the OSS local stack,
+  # "s3" for AWS S3, "gcs" for GCS S3-interop.
   # S3_ENDPOINT_URL is the internal hostname the backend uses to reach
   # MinIO. MINIO_URL is what gets baked into URLs returned to the
   # browser — must be reachable from the user's machine. Override
   # MINIO_URL when accessing the host from outside localhost.
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
   S3_ENDPOINT_URL: http://minio:9000
   MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
   S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
