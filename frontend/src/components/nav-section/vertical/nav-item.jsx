@@ -213,6 +213,7 @@ NavItem.propTypes = {
   info: PropTypes.element,
   title: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   disabled: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
   hasChild: PropTypes.bool,
   caption: PropTypes.string,
   externalLink: PropTypes.bool,
