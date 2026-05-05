@@ -311,9 +311,15 @@ const TestDetailSideDrawerChild = ({
                 transformedData = { ...metricDetails, evalMetrics };
               }
 
+              // Reset isFetching before populating the store so the parent's
+              // open-gate flips with `isFetching === null` already in effect —
+              // otherwise the drawer slides in while the wide-skeleton branch
+              // is still active for one frame.
+              setIsFetching(null);
               setTestDetailDrawerOpen({
                 ...transformedData,
               });
+              return;
             }
           }
         } catch (error) {
@@ -424,6 +430,11 @@ const TestDetailSideDrawerChild = ({
       null
     );
   }, [mergedData?.observation_span]);
+
+
+  if (!data || isFetching === "initial") {
+    return null;
+  }
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -724,8 +735,10 @@ const TestDetailSideDrawer = ({
     removeRowIndex();
   };
 
-  const isDrawerOpen =
+
+  const hasUrlRowIndex =
     updatedRowIndex !== undefined && updatedRowIndex !== null;
+  const isDrawerOpen = hasUrlRowIndex && !!testDetailDrawerOpen;
 
   const effectiveOrigin = urlOrigin || origin;
   const effectiveModule = module || "simulate";
@@ -733,6 +746,7 @@ const TestDetailSideDrawer = ({
   return (
     <Drawer
       open={isDrawerOpen}
+      keepMounted={hasUrlRowIndex}
       onClose={handleClose}
       anchor="right"
       SlideProps={{
