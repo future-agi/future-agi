@@ -10,6 +10,8 @@ on:
 
 jobs:
   digest:
+    # Skip on forks — secrets aren't available there and the run would just spam Actions logs.
+    if: github.repository == 'future-agi/future-agi'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
