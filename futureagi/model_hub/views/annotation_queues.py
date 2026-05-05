@@ -2167,7 +2167,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             try:
                 viewing_annotator_id = uuid.UUID(raw_annotator_id)
             except (ValueError, TypeError):
-                return self._gm.bad_request("annotator_id must be a valid UUID.")
+                return self._gm.bad_request("Invalid annotator selection.")
         if viewing_annotator_id:
             annotations_qs = annotations_qs.filter(annotator_id=viewing_annotator_id)
         elif not is_reviewer:
