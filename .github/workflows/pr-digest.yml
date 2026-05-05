@@ -27,5 +27,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # PAT with read:org scope; needed to detect org members whose membership is private.
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .github/scripts/pr-digest.mjs
