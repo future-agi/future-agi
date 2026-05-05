@@ -7500,19 +7500,27 @@ class EditAndRunUserEvalView(APIView):
                             "Failed to rebuild column_order after edit-eval"
                         )
                 else:
-                    column = Column.objects.get(source_id=eval_metric.id)
-                    reason_column, created = Column.objects.get_or_create(
-                        name=f"{eval_metric.name}-reason",
-                        data_type=DataTypeChoices.TEXT.value,
-                        source=SourceChoices.EVALUATION_REASON.value,
-                        dataset=eval_metric.dataset,
-                        source_id=f"{column.id}-sourceid-{eval_metric.id}",
-                    )
-                    if created:
-                        column_order = eval_metric.dataset.column_order
-                        column_order.append(str(reason_column.id))
-                        eval_metric.dataset.column_order = column_order
-                        eval_metric.dataset.save()
+                    column = Column.objects.filter(
+                        source_id=eval_metric.id, deleted=False
+                    ).first()
+                    if not column:
+                        # Column doesn't exist yet (eval was added with run=false
+                        # and never run). Skip reason-column creation — it will
+                        # be created when the eval actually runs for the first time.
+                        pass
+                    else:
+                        reason_column, created = Column.objects.get_or_create(
+                            name=f"{eval_metric.name}-reason",
+                            data_type=DataTypeChoices.TEXT.value,
+                            source=SourceChoices.EVALUATION_REASON.value,
+                            dataset=eval_metric.dataset,
+                            source_id=f"{column.id}-sourceid-{eval_metric.id}",
+                        )
+                        if created:
+                            column_order = eval_metric.dataset.column_order
+                            column_order.append(str(reason_column.id))
+                            eval_metric.dataset.column_order = column_order
+                            eval_metric.dataset.save()
 
             # Eval columns live under different source types depending on scope:
             # dataset evals → SourceChoices.EVALUATION

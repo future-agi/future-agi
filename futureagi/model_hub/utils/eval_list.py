@@ -279,6 +279,9 @@ def build_user_eval_list_items(
                 "summary": summary,
                 "pass_threshold": run_config.get("pass_threshold", 0.5),
                 "error_localizer_enabled": user_eval.error_localizer,
+                "data_injection": run_config.get("data_injection", {}),
+                "knowledge_bases": run_config.get("knowledge_bases", []),
+                "tools": run_config.get("tools", {}),
             },
             "output_type": template.output_type_normalized or "pass_fail",
         }
