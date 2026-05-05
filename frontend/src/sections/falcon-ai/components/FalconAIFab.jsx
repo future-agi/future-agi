@@ -88,7 +88,7 @@ export default function FalconAIFab() {
 
   return (
     <CustomTooltip
-      title={isOSS ? "Available on Cloud" : "Falcon AI (⌘K)"}
+      title={isOSS ? "Not available on self-hosted" : "Falcon AI (⌘K)"}
       show={true}
       placement="left"
       arrow
