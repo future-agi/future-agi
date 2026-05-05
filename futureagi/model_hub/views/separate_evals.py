@@ -4175,7 +4175,7 @@ class EvalUsageStatsView(APIView):
     GET /model-hub/eval-templates/<id>/usage/
 
     Returns usage stats, chart data, and paginated eval logs.
-    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d)
+    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
     """
 
     _gm = GeneralMethods()
@@ -4188,6 +4188,8 @@ class EvalUsageStatsView(APIView):
         "7d": timedelta(days=7),
         "30d": timedelta(days=30),
         "90d": timedelta(days=90),
+        "180d": timedelta(days=180),
+        "365d": timedelta(days=365),
     }
 
     def get(self, request, template_id, *args, **kwargs):

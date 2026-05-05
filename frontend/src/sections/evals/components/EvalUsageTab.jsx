@@ -54,6 +54,8 @@ const DATE_OPTION_TO_PERIOD = {
   "7D": "7d",
   "30D": "30d",
   "3M": "90d",
+  "6M": "180d",
+  "12M": "365d",
   Custom: "30d",
 };
 
