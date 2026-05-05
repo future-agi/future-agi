@@ -36,8 +36,6 @@ export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
   const { executeRecaptcha } = useGoogleReCaptcha();
   const [errorMsg, setErrorMsg] = useState("");
-  const [editEmail, setEditEmail] = useState(false);
-  const [oldEmail, setOldEmail] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   const password = useBoolean();
   const navigate = useNavigate();
@@ -52,9 +50,8 @@ export default function JwtRegisterView() {
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
       .email("Email must be a valid email address"),
-    password: Yup.string().when(["$registerSuccess", "$editEmail"], {
-      is: (registerSuccess, editEmail) =>
-        registerSuccess === true && editEmail === false,
+    password: Yup.string().when("$registerSuccess", {
+      is: true,
       then: (schema) => schema.required("Password is required"),
       otherwise: (schema) => schema.notRequired(),
     }),
@@ -105,7 +102,7 @@ export default function JwtRegisterView() {
   const methods = useForm({
     resolver: yupResolver(RegisterSchema),
     defaultValues,
-    context: { registerSuccess, editEmail },
+    context: { registerSuccess },
   });
 
   const { handleSubmit, watch } = methods;
@@ -121,7 +118,6 @@ export default function JwtRegisterView() {
         full_name: data?.fullName,
         company_name: "",
         "recaptcha-response": token,
-        ...(!!oldEmail && { old_email: oldEmail, update_true: true }),
         allow_email: true,
       };
       let response;
@@ -141,8 +137,6 @@ export default function JwtRegisterView() {
             "Thanks for registering! Please check your email.",
           autoHideDuration: 3000,
         });
-        setOldEmail(data?.email);
-        setEditEmail(false);
         setRegisterSuccess(true);
         trackEvent(Events.newUserSignUp, {
           [PropertyName.method]: "email",
@@ -233,9 +227,7 @@ export default function JwtRegisterView() {
       });
       return;
     }
-    (await (registerSuccess && !editEmail))
-      ? handleLogin(data)
-      : handleSignup(data);
+    (await registerSuccess) ? handleLogin(data) : handleSignup(data);
   });
 
   const handleServiceProvider = async (provider) => {
@@ -396,7 +388,7 @@ export default function JwtRegisterView() {
             Continue with Google
           </Typography>
         </Button>
-        {/* 
+        {/*
       <Button
         sx={{
           border: "1px solid",
@@ -522,7 +514,6 @@ export default function JwtRegisterView() {
             {registerSuccess ? (
               <PasswordSentView
                 email={email}
-                editEmail={editEmail}
                 isSubmitting={loading}
                 errorMsg={errorMsg}
                 password={password}

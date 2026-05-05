@@ -49,8 +49,11 @@ from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
+
 try:
-    from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+    from ee.usage.utils.usage_entries import (
+        create_organization_subscription_if_not_exists,
+    )
 except ImportError:
     create_organization_subscription_if_not_exists = None
 
@@ -117,7 +120,17 @@ def user_signup(request):
             return _gm.bad_request("Email is required.")
         email = email.lower()
 
-        update_true = request.data.get("update_true", False)
+        # Log and reject deprecated account-update parameters (security hardening)
+        if request.data.get("update_true") or request.data.get("old_email"):
+            logger.warning(
+                "signup_blocked_update_attempt",
+                ip=request.META.get(
+                    "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR")
+                ),
+                email=email,
+                old_email=request.data.get("old_email"),
+            )
+
         is_local = os.getenv("ENV_TYPE") == "local"
 
         if not is_local:
@@ -133,10 +146,19 @@ def user_signup(request):
             logger.info("recaptcha verification skipped (local environment)")
 
         # Check if a user with the provided email already exists
-        if User.objects.filter(email=email).exists() and not update_true:
+        if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
-        first_signup(request.data)
+        # Allowlist fields to prevent hidden-parameter attacks
+        allowed_fields = {
+            "email",
+            "full_name",
+            "company_name",
+            "recaptcha-response",
+            "allow_email",
+        }
+        sanitized_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+        first_signup(sanitized_data)
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
