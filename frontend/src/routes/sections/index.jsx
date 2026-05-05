@@ -2,9 +2,6 @@ import React, { Suspense, useMemo } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Navigate, useRoutes } from "react-router-dom";
 
-import { PATH_AFTER_LOGIN } from "src/config-global";
-import { paths } from "src/routes/paths";
-
 import { mainRoutes } from "./main";
 import { authRoutes } from "./auth";
 import { dashboardRoutes } from "./dashboard";
@@ -12,7 +9,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { AuthGuard } from "src/auth/guard";
 import { SplashScreen } from "src/components/loading-screen";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useDeploymentMode, usePostLoginPath } from "src/hooks/useDeploymentMode";
 import SOSLoginPage from "src/pages/SOSLoginPage";
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
@@ -24,6 +21,7 @@ export default function Router() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
   const { isOSS, isLoading: isDeploymentModeLoading } = useDeploymentMode();
+  const postLoginPath = usePostLoginPath();
 
   const dashboardRoutesArray = useMemo(
     () => dashboardRoutes(user, currentWorkspaceRole, { isOSS }),
@@ -35,7 +33,7 @@ export default function Router() {
       path: "/",
       element: (
         <Navigate
-          to={isOSS ? paths.dashboard.develop : PATH_AFTER_LOGIN}
+          to={postLoginPath}
           replace
         />
       ),

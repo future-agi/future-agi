@@ -272,6 +272,7 @@ export function useNavData() {
           path: paths.dashboard.falconAI,
           icon: ICONS.falconAI,
           disabled: isOSS,
+          disabledTooltip: "Available on Cloud",
         },
       ],
     });

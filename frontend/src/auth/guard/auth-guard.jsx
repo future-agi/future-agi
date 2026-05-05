@@ -12,7 +12,7 @@ import { useOrganization } from "src/contexts/OrganizationContext";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ function Container({ children }) {
   const router = useRouter();
 
   const { authenticated, method, user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const postLoginPath = usePostLoginPath();
 
   const [checked, setChecked] = useState(false);
 
@@ -143,13 +143,13 @@ function Container({ children }) {
       // If user has an organization_role, they're already part of an org (invited or owner)
       // Skip onboarding and go straight to dashboard
       if (user?.organization_role) {
-        router.replace(isOSS ? paths.dashboard.develop : paths.dashboard.falconAI);
+        router.replace(postLoginPath);
       } else {
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");
     }
-  }, [isOSS, user, router]);
+  }, [postLoginPath, user, router]);
 
   // Gate "no org → setup-org" redirect on isOrgReady to avoid false
   // redirects while org context is still hydrating.

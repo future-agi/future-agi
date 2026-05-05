@@ -13,8 +13,7 @@ import { useRouter } from "src/routes/hooks";
 
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { PATH_AFTER_LOGIN } from "src/config-global";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useSnackbar } from "src/components/snackbar";
@@ -27,14 +26,13 @@ import RightSectionAuth from "./RightSectionAuth";
 
 export default function TwoFactorVerifyView() {
   const { login } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const postLoginPath = usePostLoginPath();
   const router = useRouter();
   const navigate = useNavigate();
   const location = useLocation();
   const { enqueueSnackbar } = useSnackbar();
 
   const TWO_FA_SESSION_KEY = "2fa_challenge";
-  const postLoginPath = isOSS ? paths.dashboard.develop : PATH_AFTER_LOGIN;
 
   // Retrieve challenge data from navigation state or sessionStorage
   const getInitialChallengeData = () => {

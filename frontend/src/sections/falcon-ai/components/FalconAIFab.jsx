@@ -1,8 +1,8 @@
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import Fab from "@mui/material/Fab";
-import Tooltip from "@mui/material/Tooltip";
 import SvgIcon from "@mui/material/SvgIcon";
+import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -87,8 +87,9 @@ export default function FalconAIFab() {
   if (isSidebarOpen) return null;
 
   return (
-    <Tooltip
-      title={isOSS ? "Falcon AI is not available in OSS" : "Falcon AI (⌘K)"}
+    <CustomTooltip
+      title={isOSS ? "Available on Cloud" : "Falcon AI (⌘K)"}
+      show={true}
       placement="left"
       arrow
     >
@@ -121,6 +122,6 @@ export default function FalconAIFab() {
       >
         <FalconIcon sx={{ fontSize: 20 }} />
       </Fab>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
