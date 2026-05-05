@@ -2049,10 +2049,21 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
 
-  // Filtered series for chart — respects checkbox visibility, preserving original colors
+  // Filtered series for chart — respects checkbox visibility, preserving original colors.
+  // Null y-values are replaced with 0 so the chart renders continuous lines;
+  // previewSeries retains nulls for correct average calculation and table display.
   const chartSeries = useMemo(() => {
-    if (visibleSeries === null) return previewSeries;
-    return previewSeries.filter((_, i) => visibleSeries.has(i));
+    const filtered =
+      visibleSeries === null
+        ? previewSeries
+        : previewSeries.filter((_, i) => visibleSeries.has(i));
+    return filtered.map((series) => ({
+      ...series,
+      data: series.data.map((point) => ({
+        ...point,
+        y: point.y ?? 0,
+      })),
+    }));
   }, [previewSeries, visibleSeries]);
 
   const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
@@ -4381,7 +4392,7 @@ export default function WidgetEditorView() {
                                           : pt.y % 1 === 0
                                             ? pt.y
                                             : pt.y.toFixed(2)
-                                        : "-"}
+                                        : "---"}
                                     </td>
                                   );
                                 })}
