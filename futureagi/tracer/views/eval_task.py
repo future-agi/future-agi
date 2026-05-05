@@ -632,9 +632,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "input": input_str,
                         "result": result_label,
                         "score": score,
-                        "reason": (
-                            (reason[:200] + "...") if len(reason) > 200 else reason
-                        ),
+                        "reason": reason,
                         "status": status,
                         "source": "eval_task",
                         "created_at": (
