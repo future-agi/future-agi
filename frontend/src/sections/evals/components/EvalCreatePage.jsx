@@ -115,12 +115,13 @@ const resolveContextOptions = (dataInjection) => {
   if (!dataInjection || typeof dataInjection !== "object") {
     return ["variables_only"];
   }
-  if (
-    dataInjection.full_row ||
-    dataInjection.fullRow ||
-    dataInjection.variables_only === false ||
-    dataInjection.variablesOnly === false
-  ) {
+  const opts = [];
+  if (dataInjection.full_row || dataInjection.fullRow) opts.push("dataset_row");
+  if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
+  if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
+  if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
+  if (opts.length > 0) return opts;
+  if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -311,11 +312,23 @@ const EvalCreatePage = () => {
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
-    const dataInjection =
-      contextOptions.length === 0 ||
-      (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-        ? { variables_only: true }
-        : { full_row: true };
+    const dataInjection = (() => {
+      if (
+        contextOptions.length === 0 ||
+        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
+      ) {
+        return { variables_only: true };
+      }
+      // Send individual flags so the backend can enable the right tools
+      const flags = {};
+      if (contextOptions.includes("dataset_row")) flags.full_row = true;
+      if (contextOptions.includes("span_variables")) flags.span_context = true;
+      if (contextOptions.includes("span_context")) flags.span_context = true;
+      if (contextOptions.includes("trace_context")) flags.trace_context = true;
+      if (contextOptions.includes("session_context")) flags.session_context = true;
+      // If nothing specific matched, default to full_row for backward compat
+      return Object.keys(flags).length > 0 ? flags : { full_row: true };
+    })();
 
     const summary =
       summaryType === "custom"

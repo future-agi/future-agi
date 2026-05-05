@@ -6995,6 +6995,7 @@ class GetEvalStructureView(APIView):
             "template_id": str(template.id),
             "name": eval.name,
             "eval_type_id": eval_type_id,
+            "eval_type": template.eval_type,
             "reason_column": eval.config.get("reason_column", False),
             "eval_tags": template.eval_tags,
             "description": template.description,
@@ -7014,6 +7015,7 @@ class GetEvalStructureView(APIView):
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
             "config_params_option": template.config.get("config_params_option", {}),
+            "run_config": eval.config.get("run_config", {}),
         }
 
         return self._gm.success_response({"eval": eval_data})

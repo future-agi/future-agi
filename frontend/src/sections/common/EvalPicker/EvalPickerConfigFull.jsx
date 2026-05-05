@@ -317,7 +317,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Merge template config with any saved runtime overrides from the
       // user eval (run_config). Edit mode: evalData.run_config holds the
       // previously saved model, agentMode, passThreshold, etc.
-      const rawRunConfig = evalData?.run_config || evalData?.runConfig || {};
+      const rawRunConfig =
+        evalData?.run_config ||
+        evalData?.runConfig ||
+        evalData?.config?.run_config ||
+        evalData?.config?.runConfig ||
+        {};
       const normalizedRunConfig = {
         ...rawRunConfig,
         agent_mode: rawRunConfig.agent_mode ?? rawRunConfig.agentMode,
@@ -418,8 +423,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       if (Array.isArray(config.knowledge_bases)) {
         setKnowledgeBaseIds(config.knowledge_bases);
       }
-      const di = config.data_injection;
-      if (di?.full_row || di?.fullRow) setContextOptions(["full_row"]);
+      const di = config.data_injection || config.run_config?.data_injection;
+      if (di && typeof di === "object") {
+        const opts = [];
+        if (di.full_row || di.fullRow) opts.push("dataset_row");
+        if (di.span_context || di.spanContext) opts.push("span_context");
+        if (di.trace_context || di.traceContext) opts.push("trace_context");
+        if (di.session_context || di.sessionContext) opts.push("session_context");
+        if (opts.length > 0) {
+          setContextOptions(opts);
+        } else if (di.variables_only || di.variablesOnly) {
+          setContextOptions(["variables_only"]);
+        }
+      }
       setErrorLocalizerEnabled(
         config.error_localizer_enabled ??
           fullEval.error_localizer_enabled ??
@@ -723,13 +739,23 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }
 
-    // Build a data_injection config from context options. "variables_only"
-    // means only use template variables; any other option enables full_row.
-    const dataInjection =
-      contextOptions.length === 0 ||
-      (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-        ? { variables_only: true }
-        : { full_row: true };
+    // Build a data_injection config from context options.
+    const dataInjection = (() => {
+      if (
+        contextOptions.length === 0 ||
+        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
+      ) {
+        return { variables_only: true };
+      }
+      const flags = {};
+      if (contextOptions.includes("dataset_row")) flags.full_row = true;
+      if (contextOptions.includes("span_variables")) flags.span_context = true;
+      if (contextOptions.includes("span_context")) flags.span_context = true;
+      if (contextOptions.includes("trace_context")) flags.trace_context = true;
+      if (contextOptions.includes("session_context")) flags.session_context = true;
+      if (contextOptions.includes("full_row")) flags.full_row = true;
+      return Object.keys(flags).length > 0 ? flags : { full_row: true };
+    })();
     const tools = build_tools_payload(connectorIds);
 
     const templateType =

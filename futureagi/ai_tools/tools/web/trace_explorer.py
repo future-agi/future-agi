@@ -74,13 +74,17 @@ class TraceExploreInput(PydanticBaseModel):
     )
     action: str = Field(
         description=(
-            "Action to perform. Generic (work on any data): "
-            "'keys' (list top-level keys with type+size), "
-            "'get' (drill into a dot-path — pass path in `query`), "
-            "'search' (substring search across the blob), "
-            "'summary' (shape-aware overview). "
-            "Trace-specific (only work when the data has spans): "
-            "'span_detail', 'errors', 'slow_spans', 'span_tree'."
+            "Action to perform:\n"
+            "- 'summary' — overview with span counts, errors, latency\n"
+            "- 'filter_spans' — filter by field=value (e.g. query='observation_type=llm')\n"
+            "- 'span_detail' — full span input/output (query=span_id)\n"
+            "- 'span_tree' — hierarchical view of all spans\n"
+            "- 'errors' — list error spans\n"
+            "- 'slow_spans' — list slowest spans\n"
+            "- 'list_trace_spans' — fetch spans for a trace (query=trace_id)\n"
+            "- 'keys' — list top-level data keys\n"
+            "- 'get' — read a specific path (query=field.path)\n"
+            "- 'search' — substring search (query=text)"
         )
     )
     query: Optional[str] = Field(
@@ -98,12 +102,13 @@ class TraceExploreInput(PydanticBaseModel):
 class TraceExplorerTool(BaseTool):
     name = "explore_trace"
     description = (
-        "Navigate and search through eval context data (row / span / trace / "
-        "session / call) that is too large to inline. Start with action='keys' "
-        "to see what's available, then action='get' query='path.to.field' to "
-        "read specific values, or action='search' query='...' to find patterns. "
-        "For trace-shaped data, action='summary' / 'span_tree' / 'errors' / "
-        "'slow_spans' are also available."
+        "Navigate eval context data (trace / session / span / row / call). "
+        "Workflow: 1) action='summary' to understand what's there, "
+        "2) action='filter_spans' query='observation_type=llm' to find specific spans, "
+        "3) action='span_detail' query='<span_id>' to see full input/output. "
+        "Other actions: 'keys', 'get' query='path', 'search' query='text', "
+        "'span_tree', 'errors', 'slow_spans', "
+        "'list_trace_spans' query='<trace_id>' (for session drill-down)."
     )
     category = "web"  # Same category as web_search so it loads together
     input_model = TraceExploreInput
@@ -148,6 +153,18 @@ class TraceExplorerTool(BaseTool):
             if spans:
                 return self._summary(data, spans)
             return self._generic_summary(data, params.root)
+
+        # Live DB actions — work without pre-loaded spans
+        if params.action == "list_trace_spans":
+            return self._list_trace_spans(params.query, params.limit)
+
+        # Filter action — works on loaded spans
+        if params.action == "filter_spans":
+            if not spans:
+                return ToolResult.error(
+                    "No spans available to filter. Use action='keys' to see data."
+                )
+            return self._filter_spans(spans, params.query, params.limit)
 
         # Trace-specific actions — require span-shaped data
         if not spans:
@@ -352,10 +369,10 @@ class TraceExplorerTool(BaseTool):
         total_spans = len(spans)
         error_count = sum(1 for s in spans if s.get("status") == "ERROR")
         total_latency = data.get(
-            "total_latency_ms", sum(s.get("latency_ms", 0) for s in spans)
+            "total_latency_ms", sum(s.get("latency_ms") or 0 for s in spans)
         )
-        total_tokens = sum(s.get("total_tokens", 0) for s in spans)
-        total_cost = sum(s.get("cost", 0) for s in spans)
+        total_tokens = sum(s.get("total_tokens") or 0 for s in spans)
+        total_cost = sum(s.get("cost") or 0 for s in spans)
         types = {}
         models = set()
         for s in spans:
@@ -381,9 +398,12 @@ class TraceExplorerTool(BaseTool):
         ]
         for i, s in enumerate(spans):
             status_icon = "❌" if s.get("status") == "ERROR" else "✓"
+            model_str = f" model={s['model']}" if s.get("model") else ""
+            tokens_str = f" {s['total_tokens']}tok" if s.get("total_tokens") else ""
             lines.append(
                 f"  {i+1}. {status_icon} [{s.get('observation_type','?')}] {s.get('name','?')} "
-                f"({s.get('latency_ms',0)}ms)"
+                f"({s.get('latency_ms') or 0}ms{model_str}{tokens_str}) "
+                f"id=`{s.get('id', '?')}`"
             )
 
         return ToolResult(
@@ -407,7 +427,10 @@ class TraceExplorerTool(BaseTool):
 
         if not matches:
             return ToolResult(
-                content=f"No spans matching '{query}'", data={"matches": 0}
+                content=f"No spans matching '{query}' in span names/types/models. "
+                f"Note: search only checks span summary fields (name, type, model, status), "
+                f"not full input/output. Use `span_detail` to see the full content of a specific span.",
+                data={"matches": 0},
             )
 
         lines = [f"## Search Results for '{query}' ({len(matches)} matches)\n"]
@@ -417,7 +440,12 @@ class TraceExplorerTool(BaseTool):
         return ToolResult(content="\n".join(lines), data={"matches": len(matches)})
 
     def _span_detail(self, spans, span_id):
-        """Get full details of a specific span."""
+        """Get full details of a specific span.
+
+        If the span data in the store is a lightweight summary (from enriched
+        trace/session context), fetches the full span from the database to
+        provide input, output, span_attributes, etc.
+        """
         if not span_id:
             return ToolResult.error("Provide a span ID or span name")
 
@@ -437,6 +465,16 @@ class TraceExplorerTool(BaseTool):
 
         if not target:
             return ToolResult.error(f"Span '{span_id}' not found")
+
+        # If the span is a lightweight summary (no input/output), fetch
+        # the full span from DB for detailed inspection.
+        if target.get("id") and "input" not in target and "output" not in target:
+            try:
+                full_span = _fetch_full_span(target["id"])
+                if full_span:
+                    target = full_span
+            except Exception as e:
+                logger.warning(f"Failed to fetch full span {target.get('id')}: {e}")
 
         lines = [f"## Span Detail: {target.get('name', '?')}\n"]
         for key, val in target.items():
@@ -473,7 +511,7 @@ class TraceExplorerTool(BaseTool):
 
     def _slow_spans(self, spans, limit):
         """Find the slowest spans."""
-        sorted_spans = sorted(spans, key=lambda s: s.get("latency_ms", 0), reverse=True)
+        sorted_spans = sorted(spans, key=lambda s: s.get("latency_ms") or 0, reverse=True)
 
         lines = [f"## Slowest Spans (top {limit})\n"]
         for s in sorted_spans[:limit]:
@@ -503,7 +541,7 @@ class TraceExplorerTool(BaseTool):
             status = "❌" if span.get("status") == "ERROR" else "✓"
             lines.append(
                 f"{indent}{status} [{span.get('observation_type','?')}] {span.get('name','?')} "
-                f"({span.get('latency_ms',0)}ms)"
+                f"({span.get('latency_ms') or 0}ms) id=`{span.get('id', '?')}`"
             )
             for child in children.get(span.get("id"), []):
                 _render(child, depth + 1)
@@ -513,16 +551,161 @@ class TraceExplorerTool(BaseTool):
 
         return ToolResult(content="\n".join(lines))
 
+    def _filter_spans(self, spans, query, limit):
+        """Filter spans by field=value criteria.
+
+        Examples:
+          observation_type=llm
+          status=ERROR
+          model=gpt-4o
+          observation_type=guardrail
+        """
+        if not query or "=" not in query:
+            return ToolResult.error(
+                "Provide filter as field=value. Examples:\n"
+                "- observation_type=llm (LLM calls)\n"
+                "- observation_type=guardrail (guardrail checks)\n"
+                "- observation_type=agent (agent spans)\n"
+                "- observation_type=retriever (RAG retrieval)\n"
+                "- status=ERROR (failed spans)\n"
+                "- model=gpt-4o (specific model)"
+            )
+
+        field, value = query.split("=", 1)
+        field = field.strip()
+        value = value.strip().lower()
+
+        matches = [
+            s for s in spans
+            if str(s.get(field, "")).lower() == value
+        ]
+
+        if not matches:
+            # Show available values for that field to help the agent
+            available = sorted(set(
+                str(s.get(field, "")) for s in spans if s.get(field)
+            ))
+            return ToolResult(
+                content=f"No spans match `{field}={value}`. "
+                f"Available values for `{field}`: {', '.join(available[:15])}",
+                data={"matches": 0, "available_values": available[:15]},
+            )
+
+        lines = [f"## Filtered: {field}={value} ({len(matches)} spans)\n"]
+        for s in matches[:limit]:
+            lines.append(self._format_span_summary(s))
+            if s.get("status_message"):
+                lines.append(f"  → {s['status_message'][:100]}")
+
+        if len(matches) > limit:
+            lines.append(f"\n... and {len(matches) - limit} more. Increase `limit` to see more.")
+
+        lines.append(
+            f"\nUse action='span_detail' query='<span_id>' to see "
+            f"full input/output of a specific span."
+        )
+
+        return ToolResult(
+            content="\n".join(lines),
+            data={"matches": len(matches), "field": field, "value": value},
+        )
+
+    def _list_trace_spans(self, trace_id, limit):
+        """Fetch spans for a specific trace from DB on demand.
+
+        Useful when exploring session context — the agent sees trace
+        summaries and drills into a specific trace to see its spans.
+
+        Data isolation: scoped by project → organization via request context.
+        """
+        if not trace_id:
+            return ToolResult.error(
+                "Provide a trace_id in `query` to list its spans."
+            )
+        try:
+            from tracer.models.observation_span import ObservationSpan
+            from tfc.middleware.workspace_context import get_current_organization
+
+            qs = ObservationSpan.objects.filter(
+                trace_id=trace_id, deleted=False
+            )
+            org = get_current_organization()
+            if org:
+                qs = qs.filter(project__organization=org)
+
+            spans = list(
+                qs
+                .order_by("start_time")
+                .values(
+                    "id", "name", "observation_type", "status",
+                    "status_message", "latency_ms", "model",
+                    "total_tokens", "cost", "parent_span_id",
+                )[:limit * 10]  # Allow more for tree view
+            )
+            if not spans:
+                return ToolResult(
+                    content=f"No spans found for trace `{trace_id}`.",
+                    data={"span_count": 0},
+                )
+
+            # Build a tree view
+            children = {}
+            roots = []
+            for s in spans:
+                parent = s.get("parent_span_id")
+                if parent:
+                    children.setdefault(parent, []).append(s)
+                else:
+                    roots.append(s)
+            if not roots:
+                roots = spans
+
+            error_count = sum(1 for s in spans if s.get("status") == "ERROR")
+            lines = [
+                f"## Spans for trace `{trace_id}` "
+                f"({len(spans)} spans, {error_count} errors)\n",
+            ]
+
+            def _render(span, depth=0):
+                indent = "  " * depth
+                status = "ERR" if span.get("status") == "ERROR" else "OK"
+                lines.append(
+                    f"{indent}- [{status}] [{span.get('observation_type', '?')}] "
+                    f"**{span.get('name', '?')}** "
+                    f"({span.get('latency_ms', 0)}ms"
+                    f"{', ' + span['model'] if span.get('model') else ''}) "
+                    f"id=`{span.get('id', '?')}`"
+                )
+                for child in children.get(span.get("id"), []):
+                    _render(child, depth + 1)
+
+            for root in roots:
+                _render(root)
+
+            lines.append(
+                f"\nUse action='span_detail' query='<span_id>' to see "
+                f"full input/output of a specific span."
+            )
+
+            return ToolResult(
+                content="\n".join(lines),
+                data={"span_count": len(spans), "trace_id": trace_id},
+            )
+        except Exception as e:
+            logger.warning(f"_list_trace_spans failed for {trace_id}: {e}")
+            return ToolResult.error(f"Failed to fetch spans for trace: {e}")
+
     def _format_span_summary(self, s):
-        """Format a single span as a summary line."""
+        """Format a single span as a summary line with ID for drill-down."""
         parts = [f"- **{s.get('name','?')}** [{s.get('observation_type','?')}]"]
         if s.get("model"):
             parts.append(f"model={s['model']}")
-        parts.append(f"{s.get('latency_ms',0)}ms")
+        parts.append(f"{s.get('latency_ms') or 0}ms")
         if s.get("total_tokens"):
             parts.append(f"{s['total_tokens']} tokens")
         if s.get("status") and s["status"] != "OK":
             parts.append(f"status={s['status']}")
+        parts.append(f"id=`{s.get('id', '?')}`")
         return " | ".join(parts)
 
 
@@ -609,3 +792,56 @@ def _snippet_around(blob: str, needle: str, width: int = 120) -> str:
     start = max(0, idx - width // 2)
     end = min(len(blob), idx + len(needle) + width // 2)
     return blob[start:end]
+
+
+def _fetch_full_span(span_id: str) -> dict | None:
+    """Fetch full span details from DB for on-demand drill-down.
+
+    Called when the agent requests span_detail on a lightweight summary
+    (from enriched trace/session context that only has id/name/status/latency).
+    Returns a rich dict matching the format of _build_span_context().
+
+    Data isolation: scoped by project → organization via the request context.
+    The span_id itself comes from the pre-loaded trace/session context which
+    was already scoped during the playground view.
+    """
+    try:
+        from tracer.models.observation_span import ObservationSpan
+        from tfc.middleware.workspace_context import get_current_organization
+
+        qs = ObservationSpan.objects.filter(id=str(span_id), deleted=False)
+        # Scope by organization if available in request context
+        org = get_current_organization()
+        if org:
+            qs = qs.filter(project__organization=org)
+        span = qs.first()
+        if not span:
+            return None
+
+        result = {
+            "id": span.id,
+            "trace_id": str(span.trace_id) if span.trace_id else None,
+            "name": span.name,
+            "observation_type": span.observation_type,
+            "input": span.input,
+            "output": span.output,
+            "status": span.status,
+            "status_message": span.status_message,
+            "model": span.model,
+            "provider": span.provider,
+            "start_time": str(span.start_time) if span.start_time else None,
+            "end_time": str(span.end_time) if span.end_time else None,
+            "latency_ms": span.latency_ms,
+            "cost": float(span.cost) if span.cost is not None else None,
+            "prompt_tokens": span.prompt_tokens,
+            "completion_tokens": span.completion_tokens,
+            "total_tokens": span.total_tokens,
+            "metadata": span.metadata or {},
+            "tags": span.tags or [],
+            "parent_span_id": span.parent_span_id,
+            "span_attributes": span.span_attributes or {},
+        }
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_full_span failed for {span_id}: {e}")
+        return None
