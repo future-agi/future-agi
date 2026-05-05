@@ -235,6 +235,37 @@ class TestWorkspaceAccessEnforcement:
             resp.status_code == status.HTTP_200_OK
         ), f"Admin should access any workspace in their org, got {resp.status_code}"
 
+    def test_level_admin_with_legacy_member_role_can_list_all_org_workspaces(
+        self, org_a, ws_alpha, ws_beta
+    ):
+        user = _create_user(org_a, "drift-admin@futureagi.com", "Member", Level.ADMIN)
+        _add_workspace_membership(user, ws_alpha, Level.WORKSPACE_ADMIN)
+
+        token = _get_access_token(user)
+        client = APIClient()
+        response = client.get(
+            "/accounts/workspace/list/",
+            **_auth_header(token),
+            HTTP_X_ORGANIZATION_ID=str(org_a.id),
+            HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        workspace_names = {workspace["name"] for workspace in response.data["results"]}
+        assert workspace_names == {"Alpha", "Beta"}
+        assert all(
+            workspace["user_ws_level"] == Level.WORKSPACE_ADMIN
+            for workspace in response.data["results"]
+        )
+        beta_row = next(
+            workspace
+            for workspace in response.data["results"]
+            if workspace["name"] == "Beta"
+        )
+        assert beta_row["org_joined_at"]
+        assert beta_row["workspace_member_since"] is None
+        assert beta_row["workspace_created_at"]
+
     def test_viewer_can_access_authorized_workspace(self, viewer_user, ws_alpha):
         """Viewer CAN access ws_alpha (they have membership)."""
         token = _get_access_token(viewer_user)
