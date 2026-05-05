@@ -1,0 +1,31 @@
+name: PR Digest to Slack
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 10:00 IST (UTC+5:30) → 04:30 UTC
+    - cron: '30 4 * * *'
+    # 18:00 IST (UTC+5:30) → 12:30 UTC
+    - cron: '30 12 * * *'
+
+jobs:
+  digest:
+    # Skip on forks — secrets aren't available there and the run would just spam Actions logs.
+    if: github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build and post PR digest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/pr-digest.mjs
