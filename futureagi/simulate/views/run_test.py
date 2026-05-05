@@ -2968,6 +2968,37 @@ class CallExecutionDetailView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
+            # Mirror the list endpoint's lookup so the drawer's
+            # "Compare with baseline" button stays visible after the
+            # detail fetch (session_id → trace_id → intent_id for replay).
+            row_session_id_map = {}
+            row_id = getattr(call_execution, "row_id", None)
+            if not row_id and isinstance(call_execution.call_metadata, dict):
+                row_id = call_execution.call_metadata.get("row_id")
+            if row_id:
+                row = (
+                    Row.all_objects.filter(id=row_id)
+                    .only("id", "metadata")
+                    .first()
+                )
+                if row and isinstance(row.metadata, dict):
+                    baseline_id = row.metadata.get(
+                        "session_id"
+                    ) or row.metadata.get("trace_id")
+                    if not baseline_id:
+                        test_execution = call_execution.test_execution
+                        scenario_ids = getattr(
+                            test_execution, "scenario_ids", None
+                        )
+                        if scenario_ids and Scenarios.objects.filter(
+                            id__in=scenario_ids,
+                            deleted=False,
+                            metadata__created_from="replay_session",
+                        ).exists():
+                            baseline_id = row.metadata.get("intent_id")
+                    if baseline_id:
+                        row_session_id_map[str(row_id)] = baseline_id
+
             # Serialize with the same serializer as the list view, but with full detail
             serializer = CallExecutionDetailSerializer(
                 call_execution,
@@ -2975,7 +3006,7 @@ class CallExecutionDetailView(APIView):
                     "request": request,
                     "eval_configs": {},
                     "scenarios": {},
-                    "row_session_id_map": {},
+                    "row_session_id_map": row_session_id_map,
                     "rows_map": {},
                     "columns_by_dataset": {},
                     "cells_by_row": {},

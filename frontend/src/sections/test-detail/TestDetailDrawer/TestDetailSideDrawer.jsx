@@ -120,10 +120,17 @@ const TestDetailSideDrawerChild = ({
       }
       return out;
     };
+    // Keep the list row's session_id if the detail value is nullish —
+    // it gates the "Compare with baseline" button.
+    const preserveSessionId = (detail) => ({
+      session_id: detail?.session_id ?? base.session_id,
+      sessionId: detail?.sessionId ?? base.sessionId,
+    });
     if (voiceDetail) {
       return {
         ...base,
         ...voiceDetail,
+        ...preserveSessionId(voiceDetail),
         transcript: mergeTranscripts(base.transcript, voiceDetail.transcript),
       };
     }
@@ -131,6 +138,7 @@ const TestDetailSideDrawerChild = ({
       return {
         ...base,
         ...callExecDetail,
+        ...preserveSessionId(callExecDetail),
         transcript: mergeTranscripts(base.transcript, callExecDetail.transcript),
       };
     }
