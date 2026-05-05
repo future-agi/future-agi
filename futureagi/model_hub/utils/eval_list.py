@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import TYPE_CHECKING, Iterable
 
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 from django.utils import timezone
 
 from agentic_eval.core_evals.fi_evals.eval_type import (
@@ -413,6 +413,40 @@ def build_eval_list_queryset(
         # a denormalized eval_type field to EvalTemplate in a future phase.
 
     return qs
+
+
+def fetch_version_metadata(
+    template_ids: Iterable[str],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """
+    Bulk-fetch version count and default version_number for a set of templates.
+
+    Returns:
+        (counts_by_template_id, default_version_number_by_template_id)
+        Templates with no versions are absent from both maps; callers should
+        fall back to count=1 / "V1" for display.
+    """
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    tids = [str(t) for t in template_ids]
+    if not tids:
+        return {}, {}
+
+    counts: dict[str, int] = {}
+    for row in (
+        EvalTemplateVersion.objects.filter(eval_template_id__in=tids)
+        .values("eval_template_id")
+        .annotate(c=Count("id"))
+    ):
+        counts[str(row["eval_template_id"])] = row["c"]
+
+    defaults: dict[str, int] = {}
+    for v in EvalTemplateVersion.objects.filter(
+        eval_template_id__in=tids, is_default=True
+    ).only("eval_template_id", "version_number"):
+        defaults[str(v.eval_template_id)] = v.version_number
+
+    return counts, defaults
 
 
 def compute_thirty_day_data(

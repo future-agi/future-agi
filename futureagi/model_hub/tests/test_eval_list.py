@@ -339,13 +339,59 @@ class TestEvalTemplateListAPI:
         if "agent_quality_eval" in items_by_name:
             assert items_by_name["agent_quality_eval"]["eval_type"] == "agent"
 
-    def test_list_version_defaults(self, auth_client, user_eval_template):
-        """All templates should show V1 and version_count=1 until Phase 5."""
+    def test_list_version_defaults_no_versions(self, auth_client, user_eval_template):
+        """Templates without any version rows fall back to V1 / count=1."""
         response = auth_client.post(self.url, {}, format="json")
         assert response.status_code == 200
         for item in response.data["result"]["items"]:
             assert item["current_version"] == "V1"
             assert item["version_count"] == 1
+
+    def test_list_reflects_default_version(
+        self, auth_client, organization, workspace, user
+    ):
+        """List should reflect the version flagged is_default, not always V1."""
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+        template = EvalTemplate.no_workspace_objects.create(
+            name="multi_version_eval",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "score"},
+            eval_tags=["llm"],
+            visible_ui=True,
+        )
+        EvalTemplateVersion.objects.create(
+            eval_template=template,
+            version_number=1,
+            is_default=False,
+            organization=organization,
+            workspace=workspace,
+        )
+        EvalTemplateVersion.objects.create(
+            eval_template=template,
+            version_number=2,
+            is_default=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        EvalTemplateVersion.objects.create(
+            eval_template=template,
+            version_number=3,
+            is_default=False,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.post(
+            self.url, {"search": "multi_version_eval"}, format="json"
+        )
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        assert len(items) == 1
+        assert items[0]["current_version"] == "V2"
+        assert items[0]["version_count"] == 3
 
     def test_list_template_type_single(self, auth_client, user_eval_template):
         """All templates should show 'single' until Phase 7."""
