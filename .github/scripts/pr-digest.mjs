@@ -22,6 +22,9 @@ for (const [k, v] of Object.entries({
 const [OWNER, REPO] = GITHUB_REPOSITORY.split('/');
 const GH_API = 'https://api.github.com';
 const DESC_MAX = 140;
+// Slack caps a single message at 50 blocks. We use 1 header + N PR sections
+// per message; 35 keeps us well clear of the limit even with edge-case sections.
+const PRS_PER_MESSAGE = 35;
 
 const ghHeaders = {
   Accept: 'application/vnd.github+json',
@@ -198,8 +201,32 @@ async function postSlack(blocks, fallbackText) {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Slack webhook failed: ${res.status} ${await res.text()}`);
+    const body = await res.text();
+    throw new Error(
+      `Slack webhook failed: ${res.status} ${body} (block count: ${blocks.length})`,
+    );
   }
+}
+
+async function postBucket(bucketEmoji, bucketLabel, prs) {
+  if (prs.length === 0) {
+    await postSlack(
+      [header(`${bucketEmoji} ${bucketLabel} (0)`), emptyStub()],
+      `${bucketLabel}: none`,
+    );
+    return 1;
+  }
+  const totalParts = Math.ceil(prs.length / PRS_PER_MESSAGE);
+  for (let i = 0; i < totalParts; i++) {
+    const chunk = prs.slice(i * PRS_PER_MESSAGE, (i + 1) * PRS_PER_MESSAGE);
+    const partSuffix = totalParts > 1 ? ` — part ${i + 1}/${totalParts}` : '';
+    const blocks = [
+      header(`${bucketEmoji} ${bucketLabel} (${prs.length})${partSuffix}`),
+      ...chunk.map(prSection),
+    ];
+    await postSlack(blocks, `${bucketLabel}${partSuffix}`);
+  }
+  return totalParts;
 }
 
 async function main() {
@@ -210,22 +237,21 @@ async function main() {
   const external = enriched.filter((p) => p.bucket === 'external');
   const internal = enriched.filter((p) => p.bucket === 'internal');
 
-  const blocks = [
+  // Message 1: digest summary. Subsequent messages: each bucket, chunked if needed.
+  const summaryBlocks = [
     header(`🚀 PR Digest — ${istDateString()}`),
     context(
       `${enriched.length} open  •  ${external.length} External  •  ${internal.length} Internal`,
     ),
-    { type: 'divider' },
-    header(`📤 External PRs (${external.length})`),
-    ...(external.length ? external.map(prSection) : [emptyStub()]),
-    { type: 'divider' },
-    header(`🏢 Internal PRs (${internal.length})`),
-    ...(internal.length ? internal.map(prSection) : [emptyStub()]),
   ];
-
   const fallback = `PR Digest — ${enriched.length} open (${external.length} external, ${internal.length} internal)`;
-  await postSlack(blocks, fallback);
-  console.log(`Posted digest: ${fallback}`);
+  await postSlack(summaryBlocks, fallback);
+
+  const externalParts = await postBucket('📤', 'External PRs', external);
+  const internalParts = await postBucket('🏢', 'Internal PRs', internal);
+
+  const totalMessages = 1 + externalParts + internalParts;
+  console.log(`Posted digest in ${totalMessages} message(s): ${fallback}`);
 }
 
 main().catch((err) => {
