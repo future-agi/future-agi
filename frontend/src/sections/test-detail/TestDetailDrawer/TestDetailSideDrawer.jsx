@@ -311,10 +311,6 @@ const TestDetailSideDrawerChild = ({
                 transformedData = { ...metricDetails, evalMetrics };
               }
 
-              // Reset isFetching before populating the store so the parent's
-              // open-gate flips with `isFetching === null` already in effect —
-              // otherwise the drawer slides in while the wide-skeleton branch
-              // is still active for one frame.
               setIsFetching(null);
               setTestDetailDrawerOpen({
                 ...transformedData,
