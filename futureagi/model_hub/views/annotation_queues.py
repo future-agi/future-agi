@@ -534,14 +534,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @staticmethod
     def _flatten_score_value(value):
-        """Extract the display scalar from a Score.value JSON blob.
-
-        Score.value is a JSONField stored with a conventional wrapper:
-        ``{"rating": 3}`` for star/numeric, ``{"value": "yes"}`` for
-        bool/short-string, ``{"text": "..."}`` for free text,
-        ``{"selected": ["a", "b"]}`` for multi-select. Spreadsheet cells
-        should show the inner scalar (``3`` / ``"yes"`` / ``"a, b"``)
-        rather than the dict literal.
+        """Unwrap Score.value's conventional JSON wrapper to the inner
+        scalar (`rating` / `value` / `text` / joined `selected`).
         """
         if value is None:
             return ""
@@ -558,9 +552,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         selected = value.get("selected")
         if isinstance(selected, list):
             return ", ".join(str(v) for v in selected)
-        # Unknown shape — fall back to a stable string so the cell isn't a
-        # raw dict (openpyxl can't store dicts), but flag it for the
-        # reader to investigate.
+        # Unknown shape — emit JSON so data isn't lost.
         import json
 
         try:
@@ -568,23 +560,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         except (TypeError, ValueError):
             return str(value)
 
-    # Layout: one row per QueueItem.
-    #   Call details (7 cols) | <label1> values | <label1> notes | … |
-    #   <labelN> values | <labelN> notes
-    # For each label, two adjacent groups: the values group (one column
-    # per annotator with their score) and the notes group (one column
-    # per annotator with that annotator's note for THIS label, since
-    # Score.notes is per-(annotator, label, item)). Values and notes for
-    # the same label sit next to each other so filters/comparisons stay
-    # local to the label.
-    # XLSX exposes this with merged group headers across row 1; CSV
-    # collapses each group into "<label>_<annotator>" /
-    # "<label>_notes_<annotator>" composite header names so both shapes
-    # describe the same data.
-    # Eval / system-metric columns (the "metrics" middle section of the
-    # UI mock) are deferred — they need cross-model traversal and
-    # column-set stability that's a separate pass.
-
+    # One row per QueueItem. Per label, the values group sits next to its
+    # notes group so filters stay local to the label. Score.notes is
+    # per-(annotator, label, item), so notes are keyed the same as values.
     _CALL_DETAIL_COLUMNS = [
         ("Source ID", "source_id"),
         ("Source Type", "source_type"),
@@ -593,12 +571,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         ("Created At", "created_at"),
     ]
 
-    # System-metric columns per source type — only metrics the annotator
-    # UI actually surfaces. For call_execution that's the
-    # VoiceRightPanel ``apiMetrics`` set plus the duration / score /
-    # message_count from the call details bar. For other source types
-    # the annotator UI doesn't show a flat metrics panel, so they
-    # contribute no system-metric columns to the export.
+    # Mirrors what the annotator UI actually shows — VoiceRightPanel
+    # apiMetrics plus the call detail bar. Other source types render a
+    # different UI (no flat metrics panel) so they contribute nothing.
     _SYSTEM_METRICS_BY_SOURCE = {
         "call_execution": [
             "duration_seconds",
@@ -765,17 +740,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         return out
 
     def _build_export_data(self, queue, items_qs, scores_by_item):
-        """Shared shape for CSV + XLSX exports.
-
-        Returns ``{users, labels, eval_names, rows}``:
-          - users: stable annotator list (sorted by name, then email)
-          - labels: queue labels in queue-defined order
-          - eval_names: union of eval names that appear on any item
-            (sorted alphabetically) — drives the Evals column block
-          - rows: per-item dict with call-detail fields,
-            ``label_values`` / ``label_notes`` (label_id → user_id → cell)
-            and ``eval_values`` (eval_name → cell).
-        """
+        """Materialise the rows + column metadata the CSV writer iterates."""
         annotator_qs = (
             queue.queue_annotators.filter(deleted=False)
             .select_related("user")
@@ -871,10 +836,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         eval_names_ordered.sort(key=lambda n: n.lower())
 
-        # Stable ordered list of system-metric columns: every metric across
-        # every known source type, in the order they're declared in
-        # _SYSTEM_METRICS_BY_SOURCE. Cells are populated only for items
-        # whose source_type matches; otherwise empty.
+        # Union of all source-type metrics in declaration order — populated
+        # only on rows whose source_type matches.
         metric_columns = []
         for fields in self._SYSTEM_METRICS_BY_SOURCE.values():
             metric_columns.extend(fields)
@@ -888,10 +851,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         }
 
     def _build_csv_export(self, queue, items_qs, scores_by_item, pk):
-        """Flat CSV mirroring the XLSX layout: label-first nesting, separate
-        Notes group at the end. CSV cannot express merged-cell header groups,
-        so column names use ``<label>_<annotator>`` / ``notes_<annotator>``.
-        """
+        """Flat CSV: composite header names per (label, annotator)."""
         import csv
         import io
         from urllib.parse import quote
@@ -921,8 +881,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         ]
 
         headers = [field for _, field in self._CALL_DETAIL_COLUMNS]
-        # System metrics block (one column per metric across all source
-        # types — empty when an item's source_type doesn't carry it).
         for metric in metric_columns:
             headers.append(metric)
         for _, e_slug in eval_slugs:
