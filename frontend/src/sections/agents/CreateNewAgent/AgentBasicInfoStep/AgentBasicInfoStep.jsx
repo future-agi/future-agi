@@ -22,34 +22,6 @@ const AgentBasicInfo = ({ control }) => {
     {
       label: "Chat",
       value: "text",
-      component: (
-        <Box px={1} display="flex" alignItems="center" gap={1}>
-          <HeadingAndSubHeading
-            heading={
-              <Box
-                display="flex"
-                width={"100%"}
-                alignItems="center"
-                gap={1}
-              >
-                <Typography typography="s1">Chat</Typography>
-                <Chip
-                  label="Beta"
-                  size="small"
-                  sx={{
-                    color: "green.500",
-                    backgroundColor: "green.o10",
-                    marginTop: 0.5,
-                    ":hover": {
-                      backgroundColor: "green.o10",
-                    },
-                  }}
-                />
-              </Box>
-            }
-          />
-        </Box>
-      ),
     },
   ];
   return (
