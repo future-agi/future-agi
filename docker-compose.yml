@@ -158,7 +158,7 @@ services:
     build:
       context: ./futureagi
       dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: ${COMPOSE_PROJECT_NAME:-futureagi}-backend:local
     ports:
       - "${BACKEND_PORT:-8000}:80"
     env_file:
@@ -189,7 +189,7 @@ services:
     build:
       context: ./futureagi
       dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: ${COMPOSE_PROJECT_NAME:-futureagi}-backend:local
     env_file:
       - .env
     environment:

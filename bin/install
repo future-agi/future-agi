@@ -546,7 +546,11 @@ fi
 step "Starting the stack"
 
 attempt=0
-until $DC up -d --remove-orphans; do
+# --build forces a rebuild of any service with `build:` set, so a stale
+# image tag from a previous worktree (or an outdated layer) doesn't carry
+# old source into a new install. Docker's layer cache makes this fast
+# when nothing has actually changed.
+until $DC up -d --build --remove-orphans; do
   attempt=$((attempt + 1))
   if [[ "$attempt" -ge 3 ]]; then
     die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
@@ -579,11 +583,16 @@ done
 # ---------------- create captured user ----------------
 if [[ -n "$USER_EMAIL" ]]; then
   step "Creating your account"
-  if $DC exec -T backend python manage.py create_user \
-       --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" >/dev/null 2>&1; then
+  # Capture stderr so we can show the real error if the command fails.
+  cu_out=$($DC exec -T backend python manage.py create_user \
+             --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1) \
+    && cu_rc=0 || cu_rc=$?
+  if (( cu_rc == 0 )); then
     ok "Account created for $USER_EMAIL"
   else
-    warn "create_user failed. Run it manually:"
+    warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
+    printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
+    warn "Run it manually after the stack settles:"
     warn "  $DC exec -it backend python manage.py create_user"
   fi
 fi

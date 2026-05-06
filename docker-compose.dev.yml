@@ -85,7 +85,7 @@ x-dev-worker-base: &dev-worker-base
   build:
     context: ./futureagi
     dockerfile: Dockerfile.oss
-  image: futureagi/backend:local
+  image: ${COMPOSE_PROJECT_NAME:-futureagi}-backend:local
   working_dir: /app/backend
   volumes:
     - ./futureagi:/app/backend
