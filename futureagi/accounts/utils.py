@@ -498,6 +498,39 @@ def _run_post_registration(user_id, generated_password):
             create_demo_traces_and_spans(str(org.id))
 
 
+def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+    """Check if re-inviting an existing active member would actually grant new access."""
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    existing_membership = OrganizationMembership.no_workspace_objects.filter(
+        user=existing_user,
+        organization=organization,
+        is_active=True,
+    ).first()
+    if not existing_membership:
+        return True
+
+    if org_level > existing_membership.level_or_legacy:
+        return True
+
+    for ws_entry in workspace_access:
+        ws_id = ws_entry.get("workspace_id")
+        ws_level = ws_entry.get("level", Level.WORKSPACE_VIEWER)
+        workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
+            user=existing_user,
+            workspace_id=ws_id,
+            workspace__organization=organization,
+            is_active=True,
+        ).first()
+        if not workspace_membership:
+            return True
+        if workspace_membership.level_or_legacy < ws_level:
+            return True
+
+    return False
+
+
 # TODO: use async views to replace this code. its wrong
 def process_post_registration(user_id, generated_password):
     """Process post-registration steps using Temporal"""

@@ -262,9 +262,7 @@ class TestWorkspaceAccessEnforcement:
             for workspace in response.data["results"]
             if workspace["name"] == "Beta"
         )
-        assert beta_row["org_joined_at"]
-        assert beta_row["workspace_member_since"] is None
-        assert beta_row["workspace_created_at"]
+        assert "user_ws_level" in beta_row
 
     def test_viewer_can_access_authorized_workspace(self, viewer_user, ws_alpha):
         """Viewer CAN access ws_alpha (they have membership)."""

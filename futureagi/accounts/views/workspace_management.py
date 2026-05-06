@@ -207,11 +207,6 @@ class WorkspaceListAPIView(APIView):
                 user=user, organization=organization, is_active=True
             ).first()
             org_level = org_membership.level_or_legacy if org_membership else 0
-            org_joined_at = (
-                org_membership.joined_at.isoformat()
-                if org_membership and org_membership.joined_at
-                else None
-            )
             ws_memberships = {
                 str(wm.workspace_id): wm
                 for wm in WorkspaceMembership.no_workspace_objects.filter(
@@ -220,13 +215,6 @@ class WorkspaceListAPIView(APIView):
                     is_active=True,
                 )
             }
-
-            for ws_data in data:
-                wm = ws_memberships.get(str(ws_data["id"]))
-                ws_data["org_joined_at"] = org_joined_at
-                ws_data["workspace_member_since"] = (
-                    wm.created_at.isoformat() if wm and wm.created_at else None
-                )
 
             if org_level and org_level >= Level.ADMIN:
                 # Org Admin+ auto-have WS Admin in all workspaces

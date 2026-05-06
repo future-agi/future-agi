@@ -28,7 +28,12 @@ from accounts.serializers.rbac import (
     WorkspaceMemberRemoveSerializer,
     WorkspaceMemberRoleUpdateSerializer,
 )
-from accounts.utils import generate_password, resolve_org, send_invite_email
+from accounts.utils import (
+    existing_member_access_will_change,
+    generate_password,
+    resolve_org,
+    send_invite_email,
+)
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.rbac import (
@@ -153,7 +158,7 @@ class InviteCreateAPIView(APIView):
                         is_active=True,
                         deleted=False,
                     ).exists():
-                        access_will_change = self._existing_member_access_will_change(
+                        access_will_change = existing_member_access_will_change(
                             existing_user,
                             organization,
                             target_org_level,
@@ -344,36 +349,6 @@ class InviteCreateAPIView(APIView):
                 )
             except Workspace.DoesNotExist:
                 continue
-
-    def _existing_member_access_will_change(
-        self, existing_user, organization, org_level, workspace_access
-    ):
-        existing_membership = OrganizationMembership.no_workspace_objects.filter(
-            user=existing_user,
-            organization=organization,
-            is_active=True,
-        ).first()
-        if not existing_membership:
-            return True
-
-        if org_level > existing_membership.level_or_legacy:
-            return True
-
-        for ws_entry in workspace_access:
-            ws_id = ws_entry.get("workspace_id")
-            ws_level = ws_entry.get("level", Level.WORKSPACE_VIEWER)
-            workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
-                user=existing_user,
-                workspace_id=ws_id,
-                workspace__organization=organization,
-                is_active=True,
-            ).first()
-            if not workspace_membership:
-                return True
-            if workspace_membership.level_or_legacy < ws_level:
-                return True
-
-        return False
 
 
 class InviteResendAPIView(APIView):
@@ -723,9 +698,6 @@ class MemberListAPIView(APIView):
                         or ws_mem.workspace.name,
                         "ws_level": ws_mem.level_or_legacy,
                         "ws_role": Level.to_ws_string(ws_mem.level_or_legacy),
-                        "workspace_member_since": (
-                            ws_mem.created_at.isoformat() if ws_mem.created_at else None
-                        ),
                     }
                     for ws_mem in ws_memberships
                 ]
@@ -746,12 +718,6 @@ class MemberListAPIView(APIView):
                                     "workspace_name": ws.display_name or ws.name,
                                     "ws_level": Level.WORKSPACE_ADMIN,
                                     "ws_role": "Workspace Admin",
-                                    "workspace_member_since": None,
-                                    "org_joined_at": (
-                                        mem.joined_at.isoformat()
-                                        if mem.joined_at
-                                        else None
-                                    ),
                                     "auto_access": True,
                                 }
                             )
@@ -1362,14 +1328,6 @@ class WorkspaceMemberListAPIView(APIView):
                         if hasattr(ws_mem, "created_at") and ws_mem.created_at
                         else ""
                     ),
-                    "workspace_member_since": (
-                        ws_mem.created_at.isoformat() if ws_mem.created_at else None
-                    ),
-                    "org_joined_at": (
-                        org_mem.joined_at.isoformat()
-                        if org_mem and org_mem.joined_at
-                        else None
-                    ),
                     "type": "member",
                 }
             )
@@ -1403,10 +1361,6 @@ class WorkspaceMemberListAPIView(APIView):
                         "status": "Active",
                         "created_at": (
                             org_mem.joined_at.isoformat() if org_mem.joined_at else ""
-                        ),
-                        "workspace_member_since": None,
-                        "org_joined_at": (
-                            org_mem.joined_at.isoformat() if org_mem.joined_at else None
                         ),
                         "type": "member",
                         "auto_access": True,
@@ -1520,11 +1474,6 @@ class WorkspaceMemberListAPIView(APIView):
                     "status": inv.effective_status,  # "Pending" or "Expired"
                     "created_at": (
                         inv.created_at.isoformat() if inv.created_at else ""
-                    ),
-                    "workspace_member_since": None,
-                    "org_joined_at": None,
-                    "invite_created_at": (
-                        inv.created_at.isoformat() if inv.created_at else None
                     ),
                     "type": "invite",
                 }
