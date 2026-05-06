@@ -54,15 +54,6 @@ export function initTwitter() {
 
   initialized = true;
 }
-
-/**
- * Fire a Twitter signup conversion with email matching.
- * Called after a real account is created (email or OAuth/SSO).
- *
- * `conversion_id` is the userId when available (falls back to email) so
- * Twitter can dedupe repeat signups on their end.
- * `email_address` is the normalized (trim + lowercase) email, used by Twitter
- * as a match signal against their user graph.
  */
 export function trackTwitterSignup({ email, method = "email", userId } = {}) {
   if (!twqReady()) return;
@@ -72,6 +63,7 @@ export function trackTwitterSignup({ email, method = "email", userId } = {}) {
   if (!normalizedEmail) return;
 
   try {
+
     window.twq("event", "Signup", {
       value: AD_CONVERSION_VALUE,
       currency: AD_CONVERSION_CURRENCY,
