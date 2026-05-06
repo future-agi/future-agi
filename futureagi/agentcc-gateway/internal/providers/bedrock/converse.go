@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -132,24 +131,6 @@ func buildConverseRequest(req *models.ChatCompletionRequest) (*converseRequest, 
 	modelID := resolveModelName(req.Model)
 	cr := &converseRequest{}
 
-	// Debug: log incoming message structure for tool_use debugging
-	slog.Debug("bedrock_converse_build_request",
-		"model", req.Model,
-		"resolved_model", modelID,
-		"message_count", len(req.Messages),
-		"tools_count", len(req.Tools),
-	)
-	for i, msg := range req.Messages {
-		contentLen := len(msg.Content)
-		slog.Debug("bedrock_converse_message",
-			"index", i,
-			"role", msg.Role,
-			"content_bytes", contentLen,
-			"tool_calls_count", len(msg.ToolCalls),
-			"tool_call_id", msg.ToolCallID,
-		)
-	}
-
 	cfg := converseInference{Temperature: req.Temperature, TopP: req.TopP}
 	switch {
 	case req.MaxTokens != nil:
@@ -257,10 +238,6 @@ func buildConverseMessage(msg models.Message) converseMessage {
 			Content:   buildConverseContentParts(msg.Content),
 		}
 		if len(toolResult.Content) == 0 {
-			slog.Debug("bedrock_converse_tool_result_empty_content",
-				"tool_call_id", msg.ToolCallID,
-				"raw_content_bytes", len(msg.Content),
-			)
 			empty := ""
 			toolResult.Content = []converseContentPart{{Text: &empty}}
 		}
@@ -274,11 +251,6 @@ func buildConverseMessage(msg models.Message) converseMessage {
 
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 		for _, tc := range msg.ToolCalls {
-			slog.Debug("bedrock_converse_tool_use_block",
-				"tool_call_id", tc.ID,
-				"name", tc.Function.Name,
-				"arguments_len", len(tc.Function.Arguments),
-			)
 			cm.Content = append(cm.Content, converseContentPart{ToolUse: &converseToolUse{
 				ToolUseID: tc.ID,
 				Name:      tc.Function.Name,
@@ -288,10 +260,6 @@ func buildConverseMessage(msg models.Message) converseMessage {
 	}
 
 	if len(cm.Content) == 0 {
-		slog.Debug("bedrock_converse_empty_message_content",
-			"role", msg.Role,
-			"raw_content_bytes", len(msg.Content),
-		)
 		empty := ""
 		cm.Content = []converseContentPart{{Text: &empty}}
 	}
@@ -438,14 +406,6 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 		return nil, models.ErrInternal(fmt.Sprintf("bedrock converse: marshaling request: %v", err))
 	}
 
-	slog.Info("bedrock_converse_request",
-		"model", modelID,
-		"body_bytes", len(body),
-		"message_count", len(cr.Messages),
-		"has_tools", cr.ToolConfig != nil,
-		"has_system", len(cr.System) > 0,
-	)
-
 	reqURL := fmt.Sprintf("%s/model/%s/converse", p.baseURL, url.PathEscape(modelID))
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
@@ -473,16 +433,7 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: reading response: %v", err))
 	}
 
-	slog.Info("bedrock_converse_response",
-		"status", resp.StatusCode,
-		"body_bytes", len(respBody),
-	)
-
 	if resp.StatusCode != http.StatusOK {
-		slog.Error("bedrock_converse_error",
-			"status", resp.StatusCode,
-			"body", string(respBody[:min(len(respBody), 500)]),
-		)
 		return nil, parseBedrockError(resp.StatusCode, respBody)
 	}
 
@@ -490,13 +441,6 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 	if err := json.Unmarshal(respBody, &cr2); err != nil {
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: parsing response: %v", err))
 	}
-
-	slog.Info("bedrock_converse_parsed",
-		"stop_reason", cr2.StopReason,
-		"content_blocks", len(cr2.Output.Message.Content),
-		"input_tokens", cr2.Usage.InputTokens,
-		"output_tokens", cr2.Usage.OutputTokens,
-	)
 
 	return translateConverseResponse(&cr2, modelID), nil
 }
@@ -516,37 +460,6 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 			errs <- models.ErrInternal(fmt.Sprintf("bedrock converse stream: %v", err))
 			return
 		}
-
-		// Debug: log converse message structure
-		for i, msg := range cr.Messages {
-			var parts []string
-			for _, p := range msg.Content {
-				if p.Text != nil {
-					parts = append(parts, fmt.Sprintf("text(%d)", len(*p.Text)))
-				}
-				if p.ToolUse != nil {
-					parts = append(parts, fmt.Sprintf("tool_use(%s)", p.ToolUse.Name))
-				}
-				if p.ToolResult != nil {
-					parts = append(parts, fmt.Sprintf("tool_result(%s)", p.ToolResult.ToolUseID))
-				}
-				if p.Image != nil {
-					parts = append(parts, "image")
-				}
-			}
-			slog.Info("bedrock_converse_stream_message",
-				"index", i,
-				"role", msg.Role,
-				"parts", parts,
-			)
-		}
-
-		slog.Info("bedrock_converse_stream_request",
-			"model", modelID,
-			"body_bytes", len(body),
-			"message_count", len(cr.Messages),
-			"has_tools", cr.ToolConfig != nil,
-		)
 
 		reqURL := fmt.Sprintf("%s/model/%s/converse-stream", p.baseURL, url.PathEscape(modelID))
 
@@ -574,22 +487,13 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 		}
 		defer resp.Body.Close()
 
-		slog.Info("bedrock_converse_stream_http_status",
-			"status", resp.StatusCode,
-		)
-
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-			slog.Error("bedrock_converse_stream_error",
-				"status", resp.StatusCode,
-				"body", string(respBody[:min(len(respBody), 500)]),
-			)
 			errs <- parseBedrockError(resp.StatusCode, respBody)
 			return
 		}
 
 		state := newConverseStreamState(modelID)
-		eventCount := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -599,39 +503,17 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 
 			msg, err := readEventStreamMessage(resp.Body)
 			if err != nil {
-				slog.Error("bedrock_converse_stream_read_error",
-					"error", err.Error(),
-					"events_so_far", eventCount,
-				)
 				if ctx.Err() == nil {
 					errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse stream: %v", err))
 				}
 				return
 			}
 			if msg == nil {
-				slog.Info("bedrock_converse_stream_eof",
-					"total_events", eventCount,
-				)
 				return
 			}
 
-			eventCount++
-			eventType := msg.Headers[":event-type"]
-			msgType := msg.Headers[":message-type"]
-			slog.Debug("bedrock_converse_stream_event",
-				"event_num", eventCount,
-				"event_type", eventType,
-				"message_type", msgType,
-				"payload_bytes", len(msg.Payload),
-			)
-
 			chunk, done, err := state.parseConverseEvent(msg)
 			if err != nil {
-				slog.Error("bedrock_converse_stream_parse_error",
-					"event_type", eventType,
-					"error", err.Error(),
-					"payload", string(msg.Payload[:min(len(msg.Payload), 200)]),
-				)
 				if msg.Headers[":message-type"] == "exception" {
 					errs <- models.ErrUpstreamProvider(0, err.Error())
 					return
@@ -647,10 +529,6 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 				}
 			}
 			if done {
-				slog.Info("bedrock_converse_stream_done",
-					"total_events", eventCount,
-					"input_tokens", state.inputTokens,
-				)
 				return
 			}
 		}
