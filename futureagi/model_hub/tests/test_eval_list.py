@@ -194,9 +194,9 @@ class TestGetCreatedByName:
         """System-owned template should return 'System'."""
         assert get_created_by_name(system_eval_template) == "System"
 
-    def test_user_owner_without_evaluator(self, user_eval_template):
-        """User-owned template without evaluator should return 'User'."""
-        assert get_created_by_name(user_eval_template) == "User"
+    def test_user_owner_without_evaluator(self, user_eval_template, organization):
+        """User-owned template without creator metadata falls back to org name."""
+        assert get_created_by_name(user_eval_template) == organization.display_name
 
 
 # =============================================================================
@@ -338,6 +338,33 @@ class TestEvalTemplateListAPI:
             assert items_by_name["user_custom_eval"]["eval_type"] == "code"
         if "agent_quality_eval" in items_by_name:
             assert items_by_name["agent_quality_eval"]["eval_type"] == "agent"
+
+    def test_list_creator_fallback_uses_org_name(
+        self, auth_client, user_eval_template, organization
+    ):
+        response = auth_client.post(
+            self.url, {"search": user_eval_template.name}, format="json"
+        )
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        assert len(items) == 1
+        assert items[0]["created_by_name"] == organization.display_name
+
+    def test_list_created_by_filter_matches_org_name(
+        self, auth_client, user_eval_template, organization
+    ):
+        response = auth_client.post(
+            self.url,
+            {
+                "owner_filter": "user",
+                "filters": {"created_by": [organization.display_name]},
+                "page_size": 100,
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+        item_names = {item["name"] for item in response.data["result"]["items"]}
+        assert user_eval_template.name in item_names
 
     def test_list_version_defaults_no_versions(self, auth_client, user_eval_template):
         """Templates without any version rows fall back to V1 / count=1."""

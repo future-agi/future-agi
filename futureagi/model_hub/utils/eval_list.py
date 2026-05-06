@@ -162,12 +162,26 @@ def derive_output_type(template: "EvalTemplate") -> str:
     return _OUTPUT_TYPE_MAP.get(output, "percentage")
 
 
+def get_organization_display_name(template: "EvalTemplate") -> str:
+    organization = getattr(template, "organization", None)
+    if not organization:
+        return "User"
+
+    display_name = (
+        getattr(organization, "display_name", "")
+        or getattr(organization, "name", "")
+        or ""
+    ).strip()
+    return display_name or "User"
+
+
 def get_created_by_name(template: "EvalTemplate") -> str:
     """
     Get display name for the template creator.
 
     Returns "System" for system-owned templates, or the user's name/email
-    for user-owned templates. Falls back to checking EvalTemplateVersion.created_by.
+    for user-owned templates. Falls back to EvalTemplateVersion.created_by,
+    then to the organization display name for legacy rows without creator metadata.
     """
     if template.owner == OwnerChoices.SYSTEM.value:
         return "System"
@@ -212,7 +226,7 @@ def get_created_by_name(template: "EvalTemplate") -> str:
     except Exception:
         pass
 
-    return "User"
+    return get_organization_display_name(template)
 
 
 def build_user_eval_list_items(
@@ -395,16 +409,21 @@ def build_eval_list_queryset(
                 deleted=False,
                 created_by__email__in=created_by_list,
             ).values_list("eval_template_id", flat=True)
+            org_q = Q(organization__display_name__in=created_by_list) | Q(
+                organization__name__in=created_by_list
+            )
             if "System" in created_by_list:
                 qs = qs.filter(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
+                    | org_q
                     | Q(owner="system")
                 )
             else:
                 qs = qs.filter(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
+                    | org_q
                 )
 
         # Note: eval_type filter is applied in-memory after fetching because
