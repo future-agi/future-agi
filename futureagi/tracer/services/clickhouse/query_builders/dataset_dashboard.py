@@ -46,6 +46,7 @@ def _sanitize_key(key: str) -> str:
 
 DATASET_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     "row_count": ("model_hub_cell", "1"),
+    "dataset_count": ("model_hub_cell", "c.dataset_id"),
     "prompt_tokens": ("model_hub_cell", "prompt_tokens"),
     "completion_tokens": ("model_hub_cell", "completion_tokens"),
     "total_tokens": (
@@ -64,6 +65,7 @@ _RATE_INDICATOR_METRICS = frozenset({"cell_error_rate"})
 
 DATASET_METRIC_UNITS: Dict[str, str] = {
     "row_count": "",
+    "dataset_count": "",
     "prompt_tokens": "tokens",
     "completion_tokens": "tokens",
     "total_tokens": "tokens",
@@ -104,9 +106,12 @@ DATASET_AGGREGATIONS: Dict[str, str] = {
     ),
 }
 
-# Breakdown dimensions for dataset workflow
+# Breakdown dimensions for dataset workflow.
+# Note: ``dataset`` is intentionally excluded — each chart already filters to
+# one (or a chosen subset of) datasets, so breaking down by dataset is either
+# trivial or meaningless. The dataset attribute remains available as a filter
+# (see ``DATASET_FILTER_COLUMNS``).
 DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
-    "dataset": "toString(c.dataset_id)",
     "eval_template": "dictGet('column_dict', 'name', c.column_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
     "cell_status": "c.status",
@@ -222,6 +227,10 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         # row_count should default to count
         if metric_name == "row_count" and aggregation not in ("count", "sum"):
             aggregation = "count"
+
+        # dataset_count is always count(distinct dataset_id) — ignore caller agg
+        if metric_name == "dataset_count":
+            aggregation = "count_distinct"
 
         agg_expr = DATASET_AGGREGATIONS.get(aggregation, "avg({col})").format(
             col=col_expr

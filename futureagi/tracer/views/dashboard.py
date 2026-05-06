@@ -739,6 +739,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "unit": "",
                     },
                     {
+                        "name": "dataset_count",
+                        "display_name": "Dataset Count",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "number",
+                        "unit": "",
+                    },
+                    {
                         "name": "prompt_tokens",
                         "display_name": "Prompt Tokens",
                         "category": "system_metric",
@@ -1657,6 +1665,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 {
                     "name": "row_count",
                     "display_name": "Row Count",
+                    "type": "number",
+                    "unit": "",
+                },
+                {
+                    "name": "dataset_count",
+                    "display_name": "Dataset Count",
                     "type": "number",
                     "unit": "",
                 },

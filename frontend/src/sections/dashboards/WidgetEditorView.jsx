@@ -1223,7 +1223,7 @@ export default function WidgetEditorView() {
       custom_attribute: "custom_attribute",
       custom_column: "custom_column",
     };
-    return paginatedMetrics.map((m) => ({
+    const mapped = paginatedMetrics.map((m) => ({
       id: m.name,
       name: m.displayName || m.display_name || m.name,
       type: categoryMap[m.category] || m.category,
@@ -1237,7 +1237,20 @@ export default function WidgetEditorView() {
       unit: m.unit,
       choices: m.choices,
     }));
-  }, [paginatedMetrics]);
+
+    // Hide `dataset` from the breakdown/split picker when every metric in
+    // the widget is dataset-scoped. Each dataset chart already filters to
+    // a single dataset, so a per-dataset breakdown would be a single bar.
+    // The attribute is still available for filtering.
+    if (
+      pickerMode === "breakdown" &&
+      metrics.length > 0 &&
+      metrics.every((m) => m.source === "datasets")
+    ) {
+      return mapped.filter((opt) => opt.id !== "dataset");
+    }
+    return mapped;
+  }, [paginatedMetrics, pickerMode, metrics]);
 
   // Infinite scroll handler for the picker's right panel
   const pickerListRef = useRef(null);

@@ -135,6 +135,7 @@ class TestDatasetSystemMetricsConstants:
     def test_all_system_metrics_defined(self):
         expected = {
             "row_count",
+            "dataset_count",
             "prompt_tokens",
             "completion_tokens",
             "total_tokens",
@@ -199,8 +200,16 @@ class TestDatasetDimensions:
     """Test breakdown and filter dimension maps."""
 
     def test_breakdown_dimensions(self):
-        expected = {"dataset", "eval_template", "column_name", "cell_status"}
+        # `dataset` intentionally absent — each chart already filters to
+        # one dataset, so breaking down by dataset would be meaningless.
+        expected = {"eval_template", "column_name", "cell_status"}
         assert set(DATASET_BREAKDOWN_COLUMNS.keys()) == expected
+
+    def test_dataset_not_in_breakdown_columns(self):
+        assert "dataset" not in DATASET_BREAKDOWN_COLUMNS
+
+    def test_dataset_still_in_filter_columns(self):
+        assert "dataset" in DATASET_FILTER_COLUMNS
 
     def test_filter_dimensions(self):
         expected = {"dataset", "column_name", "column_source", "cell_status"}
@@ -266,6 +275,70 @@ class TestDatasetSystemMetricQueries:
         builder = DatasetQueryBuilder(base_query_config)
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
         assert "COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)" in sql
+
+    def test_dataset_count_emits_count_distinct(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "name": "dataset_count",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+        assert "uniq(c.dataset_id)" in sql
+
+    def test_dataset_count_forces_count_distinct_over_caller_agg(
+        self, base_query_config
+    ):
+        base_query_config["metrics"] = [
+            {
+                "name": "dataset_count",
+                "type": "system_metric",
+                "aggregation": "avg",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+        assert "uniq(c.dataset_id)" in sql
+        assert "avg(c.dataset_id)" not in sql
+
+    def test_dataset_count_respects_filters(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "name": "dataset_count",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+            }
+        ]
+        base_query_config["filters"] = [
+            {
+                "metric_type": "system_metric",
+                "metric_name": "cell_status",
+                "operator": "equal_to",
+                "value": "error",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+        assert "uniq(c.dataset_id)" in sql
+        assert "c.status" in sql
+
+    def test_breakdown_by_dataset_is_silently_dropped(self, system_metric_config):
+        # Saved widgets that still reference a `dataset` breakdown should
+        # query without breakdown rather than error. _breakdown_select() returns
+        # None for unknown breakdown names, so the SQL should omit the
+        # breakdown_value clause entirely.
+        system_metric_config["breakdowns"] = [{"name": "dataset"}]
+        builder = DatasetQueryBuilder(system_metric_config)
+        sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
+        assert "breakdown_value" not in sql
+
+    def test_breakdown_by_eval_template_still_works(self, system_metric_config):
+        system_metric_config["breakdowns"] = [{"name": "eval_template"}]
+        builder = DatasetQueryBuilder(system_metric_config)
+        sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
+        assert "breakdown_value" in sql
 
     def test_workspace_scoping(self, system_metric_config):
         builder = DatasetQueryBuilder(system_metric_config)
@@ -483,15 +556,17 @@ class TestDatasetCustomColumnQueries:
 class TestDatasetBreakdowns:
     """Test breakdown handling in DatasetQueryBuilder."""
 
-    def test_dataset_breakdown(self, system_metric_config):
+    def test_dataset_breakdown_silently_dropped(self, system_metric_config):
+        # `dataset` was removed from DATASET_BREAKDOWN_COLUMNS — each chart
+        # already filters to one dataset, so this breakdown is meaningless.
+        # Saved widgets that still reference it should run without breakdown.
         system_metric_config["breakdowns"] = [
             {"name": "dataset", "type": "system_metric"}
         ]
         builder = DatasetQueryBuilder(system_metric_config)
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
-        assert "breakdown_value" in sql
-        assert "toString(c.dataset_id)" in sql
-        assert "GROUP BY" in sql
+        assert "breakdown_value" not in sql
+        assert "toString(c.dataset_id)" not in sql
 
     def test_eval_template_breakdown(self, system_metric_config):
         system_metric_config["breakdowns"] = [
