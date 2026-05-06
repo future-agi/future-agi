@@ -2,12 +2,17 @@
 # ============================================================================
 # Future AGI — self-hosted installer
 #
-#   ./bin/install              # light mode, interactive
-#   ./bin/install --full       # full mode (adds PeerDB CDC)
-#   ./bin/install --skip-user-creation
-#   ./bin/install --no-up      # bootstrap .env only; do not start the stack
+#   ./bin/install                      # light mode, interactive
+#   ./bin/install --full               # full mode (adds PeerDB CDC)
+#   ./bin/install --skip-user-creation # don't prompt for first user
+#   ./bin/install --no-up              # bootstrap .env only; don't start
+#   ./bin/install -y                   # non-interactive (CI / unattended).
+#                                      # Reads FAGI_ADMIN_EMAIL,
+#                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
+#                                      # from env if you want a user created.
 #
-# Idempotent: re-running with an existing .env preserves your secrets.
+# Idempotent: re-running preserves your existing secrets and merges any new
+# vars from .env.example. A timestamped log is written to install-*.log.
 # ============================================================================
 
 set -eEuo pipefail
@@ -37,21 +42,46 @@ trap 'on_err $LINENO' ERR
 FULL=0
 SKIP_USER=${SKIP_USER_CREATION:-0}
 NO_UP=0
+NON_INTERACTIVE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
     --skip-user-creation) SKIP_USER=1 ;;
     --no-up) NO_UP=1 ;;
+    -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
   shift
 done
 
+# CI / non-TTY runs always behave as non-interactive.
+[[ -n "${CI:-}" || ! -t 0 ]] && NON_INTERACTIVE=1
+
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+
+# ---------------- log file (Coolify pattern) ----------------
+# Tee everything to a timestamped log so users can attach one file to a
+# GitHub issue and we have full state. Logs are gitignored (/install-*.log).
+LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# ---------------- welcome banner ----------------
+if [[ -t 1 ]]; then
+  printf "\n"
+  printf "${BOLD}${BLUE}  ╭───────────────────────────────────────────╮${RESET}\n"
+  printf "${BOLD}${BLUE}  │${RESET}   ${BOLD}Future AGI${RESET} ${DIM}·${RESET} ${DIM}self-hosted installer${RESET}      ${BOLD}${BLUE}│${RESET}\n"
+  printf "${BOLD}${BLUE}  ╰───────────────────────────────────────────╯${RESET}\n"
+  if [[ "$FULL" -eq 1 ]]; then
+    printf "  ${DIM}mode: full · adds PeerDB CDC stack${RESET}\n"
+  else
+    printf "  ${DIM}mode: light · pass --full to add PeerDB CDC${RESET}\n"
+  fi
+  printf "\n"
+fi
 
 # ---------------- preflight ----------------
 step "Preflight"
@@ -93,14 +123,25 @@ ram_warn
 # ---------------- .env ----------------
 step "Configuring .env"
 
+if [[ ! -f .env.example ]]; then
+  die ".env.example missing — are you running this from the repo root?"
+fi
+
 if [[ ! -f .env ]]; then
-  if [[ ! -f .env.example ]]; then
-    die ".env.example missing — are you running this from the repo root?"
-  fi
   cp .env.example .env
   ok "Created .env from .env.example"
 else
-  ok ".env already exists (existing values preserved)"
+  # Merge any new keys added to .env.example since the user's last install,
+  # without overwriting existing values. awk pattern from Coolify install.sh.
+  before=$(wc -l <.env | tr -d ' ')
+  awk -F= 'NR==FNR{seen[$1]=1; print; next} !($1 in seen) && /^[A-Z]/ {print}' \
+    .env .env.example > .env.tmp && mv .env.tmp .env
+  after=$(wc -l <.env | tr -d ' ')
+  if [[ "$after" -gt "$before" ]]; then
+    ok ".env exists — added $((after - before)) new key(s) from .env.example"
+  else
+    ok ".env already exists (existing values preserved)"
+  fi
 fi
 
 # Portable in-place sed (BSD on mac, GNU on linux).
@@ -169,6 +210,72 @@ if [[ "$NO_UP" -eq 1 ]]; then
   exit 0
 fi
 
+# ---------------- collect first-user creds ----------------
+# Done up-front so the rest of the install can run unattended. Captured
+# values are used after the backend reports healthy. Press Enter on the
+# email prompt to skip; --skip-user-creation / CI=1 skip without asking.
+USER_EMAIL=""
+USER_NAME=""
+USER_PASS=""
+
+prompt_user() {
+  step "Create your first account"
+  say "  ${DIM}You can press Enter on email to skip and create the user later via${RESET}"
+  say "  ${DIM}'$DC exec -it backend python manage.py create_user'.${RESET}"
+  say ""
+
+  while true; do
+    printf "  ${BOLD}Email${RESET}    : "; read -r USER_EMAIL || USER_EMAIL=""
+    if [[ -z "$USER_EMAIL" ]]; then
+      say "  ${DIM}skipped — no user will be created${RESET}"
+      return
+    fi
+    if [[ "$USER_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+      break
+    fi
+    warn "  '$USER_EMAIL' doesn't look like an email address — try again"
+  done
+
+  while [[ -z "$USER_NAME" ]]; do
+    printf "  ${BOLD}Name${RESET}     : "; read -r USER_NAME
+    [[ -z "$USER_NAME" ]] && warn "  name can't be empty"
+  done
+
+  while true; do
+    printf "  ${BOLD}Password${RESET} : "; read -rs USER_PASS; echo
+    if [[ ${#USER_PASS} -lt 8 ]]; then
+      warn "  password must be at least 8 characters"
+      USER_PASS=""
+      continue
+    fi
+    printf "  ${BOLD}Confirm${RESET}  : "; read -rs confirm; echo
+    if [[ "$USER_PASS" != "$confirm" ]]; then
+      warn "  passwords don't match — try again"
+      USER_PASS=""
+      continue
+    fi
+    break
+  done
+  ok "Captured. Account will be created once the backend is healthy."
+}
+
+if [[ "$SKIP_USER" -eq 1 ]]; then
+  : # no prompt
+elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+  # Use FAGI_ADMIN_* if all three are set; otherwise skip silently.
+  if [[ -n "${FAGI_ADMIN_EMAIL:-}" && -n "${FAGI_ADMIN_NAME:-}" && -n "${FAGI_ADMIN_PASSWORD:-}" ]]; then
+    USER_EMAIL="$FAGI_ADMIN_EMAIL"
+    USER_NAME="$FAGI_ADMIN_NAME"
+    USER_PASS="$FAGI_ADMIN_PASSWORD"
+    step "Using FAGI_ADMIN_* from environment for first-user creation"
+  else
+    step "Non-interactive: skipping first-user creation"
+    say "  ${DIM}Set FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD to auto-create.${RESET}"
+  fi
+else
+  prompt_user
+fi
+
 # ---------------- bring up ----------------
 step "Starting the stack"
 
@@ -203,26 +310,15 @@ while true; do
   sleep 5
 done
 
-# ---------------- first user ----------------
-if [[ "$SKIP_USER" -eq 1 || -n "${CI:-}" ]]; then
-  step "Skipping first-user creation"
-else
-  step "Create your first account"
-  say "  Press ${BOLD}Enter${RESET} on the email prompt to skip — you can run"
-  say "  '$DC exec backend python manage.py create_user' later."
-  printf "  Email:    "; read -r u_email || u_email=""
-  if [[ -n "$u_email" ]]; then
-    printf "  Name:     "; read -r u_name
-    printf "  Password: "; read -rs u_pass; echo
-    if $DC exec -T backend python manage.py create_user \
-         --email "$u_email" --name "$u_name" --password "$u_pass" >/dev/null; then
-      ok "Account created for $u_email"
-    else
-      warn "create_user failed. Re-run interactively:"
-      warn "  $DC exec -it backend python manage.py create_user"
-    fi
+# ---------------- create captured user ----------------
+if [[ -n "$USER_EMAIL" ]]; then
+  step "Creating your account"
+  if $DC exec -T backend python manage.py create_user \
+       --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" >/dev/null 2>&1; then
+    ok "Account created for $USER_EMAIL"
   else
-    say "  Skipped."
+    warn "create_user failed. Run it manually:"
+    warn "  $DC exec -it backend python manage.py create_user"
   fi
 fi
 
@@ -230,13 +326,57 @@ fi
 frontend_port=$(grep -E '^FRONTEND_PORT=' .env | head -1 | cut -d= -f2- || true)
 frontend_port="${frontend_port:-3000}"
 
-step "Future AGI is up"
-say "  ${BOLD}Frontend:${RESET}  http://localhost:${frontend_port}"
-say "  ${BOLD}Backend:${RESET}   http://localhost:${backend_port}"
-if [[ "$FULL" -eq 1 ]]; then
-  say "  ${BOLD}PeerDB UI:${RESET} http://localhost:3001  (peerdb / peerdb)"
+# Detect alt URLs so VPS / WSL / Docker-in-VM users can pick what works for
+# their network. Each detection is best-effort with a hard timeout — never
+# blocks the success banner on a slow network.
+detect_lan_ip() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # First non-loopback IPv4 from `ifconfig`. en0 is wifi, en1 is ethernet,
+    # but order varies — just pick the first non-127.x.
+    ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}'
+  elif command -v ip >/dev/null 2>&1; then
+    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}'
+  else
+    hostname -I 2>/dev/null | awk '{print $1}'
+  fi
+}
+detect_public_ip() {
+  curl -fsS --max-time 3 https://ifconfig.io 2>/dev/null \
+    || curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null \
+    || true
+}
+LAN_IP=$(detect_lan_ip)
+PUB_IP=$(detect_public_ip)
+
+printf "\n"
+if [[ -t 1 ]]; then
+  printf "  ${BOLD}${GREEN}╭───────────────────────────────────────────╮${RESET}\n"
+  printf "  ${BOLD}${GREEN}│${RESET}   ${BOLD}🎉  Future AGI is up${RESET}                    ${BOLD}${GREEN}│${RESET}\n"
+  printf "  ${BOLD}${GREEN}╰───────────────────────────────────────────╯${RESET}\n"
 fi
 say ""
-say "  Stop:    $DC down"
-say "  Wipe:    $DC down -v   ${DIM}(deletes all data)${RESET}"
-say "  Logs:    $DC logs -f"
+say "  ${BOLD}Open in browser${RESET}"
+say "    Local       →  http://localhost:${frontend_port}"
+[[ -n "$LAN_IP" && "$LAN_IP" != "127.0.0.1" ]] && \
+  say "    LAN         →  http://${LAN_IP}:${frontend_port}"
+[[ -n "$PUB_IP" && "$PUB_IP" != "$LAN_IP" ]] && \
+  say "    Public      →  http://${PUB_IP}:${frontend_port}  ${DIM}(only if firewall allows)${RESET}"
+say ""
+say "  ${BOLD}APIs${RESET}"
+say "    Backend     →  http://localhost:${backend_port}"
+[[ "$FULL" -eq 1 ]] && \
+  say "    PeerDB UI   →  http://localhost:3001  ${DIM}(peerdb / peerdb)${RESET}"
+
+if [[ -n "$USER_EMAIL" ]]; then
+  say ""
+  say "  ${BOLD}Sign in as${RESET} ${USER_EMAIL}"
+  say "    →  http://localhost:${frontend_port}/auth/jwt/login"
+fi
+say ""
+say "  ${DIM}Stop:${RESET}        $DC down"
+say "  ${DIM}Wipe data:${RESET}   $DC down -v"
+say "  ${DIM}Tail logs:${RESET}   $DC logs -f"
+say "  ${DIM}Install log:${RESET} $LOG_FILE"
+say ""
+say "  ${DIM}★ Star us: https://github.com/future-agi/future-agi${RESET}"
+say ""

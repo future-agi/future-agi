@@ -215,3 +215,5 @@ plan/
 planning/
 scratch/
 ee/
+# bin/install timestamped logs
+install-*.log
