@@ -393,8 +393,11 @@ services:
       test: ["CMD-SHELL", "pgrep -x temporal-server"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      # First-boot schema setup against postgres can take 60-90s on slow
+      # disks. start_period=90s + 15 retries × 10s = up to ~240s before
+      # marked unhealthy.
+      retries: 15
+      start_period: 90s
     restart: unless-stopped
 
   # ==========================================================================
@@ -588,6 +591,6 @@ volumes:
   peerdb-minio-data:
 
 
-networks:
-  default:
-    name: futureagi
+# Compose auto-names the default network ${PROJECT_NAME}_default
+# (i.e. `futureagi_default`). Don't pin a custom name — it collides
+# with networks left over from older project-name configurations.

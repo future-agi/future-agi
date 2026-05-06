@@ -265,16 +265,11 @@ else
   ok "Mode: light (default — set --full to add the PeerDB stack)"
 fi
 
-if [[ "$NO_UP" -eq 1 ]]; then
-  step "Done (--no-up)"
-  say "  .env is ready. Bring up the stack with:"
-  say "    ${BOLD}$DC up -d${RESET}"
-  exit 0
-fi
-
 # ---------------- port preflight ----------------
 # Catch host-port collisions BEFORE the slow docker compose up. Without
 # this, compose retries 3× on what's actually a structural conflict.
+# Runs before the --no-up exit so port overrides land in .env even when
+# you're only bootstrapping.
 step "Checking host ports"
 
 env_port() {
@@ -301,12 +296,16 @@ port_holder() {
   return 0
 }
 
-# Find the first free TCP port starting from $1 (skipping any we've already
-# suggested in this same run, so two conflicting services can't both be
-# offered the same alternative).
+# Find the first free TCP port starting from $1, skipping any we've already
+# suggested in this same run (so two conflicting services can't both be
+# offered the same alternative). Result is written to FREE_PORT (a global
+# variable) so updates to SUGGESTED_PORTS persist — `$(find_free_port ...)`
+# would run in a subshell, hiding the array mutation from the next call.
 declare -a SUGGESTED_PORTS=()
+FREE_PORT=""
 find_free_port() {
   local p="$1"
+  FREE_PORT=""
   while (( p < 65535 )); do
     if [[ -z "$(port_holder "$p" 2>/dev/null)" ]]; then
       local seen=0 s
@@ -316,7 +315,7 @@ find_free_port() {
       done
       if (( seen == 0 )); then
         SUGGESTED_PORTS+=("$p")
-        echo "$p"
+        FREE_PORT="$p"
         return 0
       fi
     fi
@@ -335,15 +334,26 @@ set_env_var() {
   fi
 }
 
-# Light-mode ports. PeerDB UI (3001) only collides in full mode.
+# All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
+# they still collide with anything else on that interface (other docker
+# stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
 declare -a PORTS_TO_CHECK=(
   "FRONTEND_PORT:3000"
   "BACKEND_PORT:8000"
   "AGENTCC_GATEWAY_PORT:8090"
   "SERVING_PORT:8080"
   "CODE_EXECUTOR_PORT:8060"
+  "PG_PORT:5432"
+  "CH_HTTP_PORT:8123"
+  "CH_PORT:9000"
+  "REDIS_PORT:6379"
+  "MINIO_API_PORT:9005"
+  "MINIO_CONSOLE_PORT:9006"
+  "TEMPORAL_PORT:7233"
 )
-[[ "$FULL" -eq 1 ]] && PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001")
+if [[ "$FULL" -eq 1 ]]; then
+  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
+fi
 
 declare -a UNRESOLVED=()
 for entry in "${PORTS_TO_CHECK[@]}"; do
@@ -371,7 +381,8 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   fi
 
   # Find a suggested replacement.
-  suggestion=$(find_free_port $((port + 1)) || true)
+  suggestion=""
+  find_free_port $((port + 1)) && suggestion="$FREE_PORT" || true
   if [[ -z "$suggestion" ]]; then
     warn "  $var=$port  is taken by $holder  (no free port found above)"
     UNRESOLVED+=("$var=$port  ←  $holder")
@@ -411,6 +422,13 @@ if (( ${#UNRESOLVED[@]} > 0 )); then
   say "  Free the port (stop the process / container) or set the var in .env"
   say "  to a free port, then re-run ${BOLD}./bin/install${RESET}."
   exit 1
+fi
+
+if [[ "$NO_UP" -eq 1 ]]; then
+  step "Done (--no-up)"
+  say "  .env is ready. Bring up the stack with:"
+  say "    ${BOLD}$DC up -d${RESET}"
+  exit 0
 fi
 
 # ---------------- collect first-user creds ----------------
