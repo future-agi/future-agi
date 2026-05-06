@@ -8,6 +8,10 @@
 #   ./bin/install --no-up              # bootstrap .env only; don't start
 #   ./bin/install --wipe-volumes       # wipe stale project volumes and
 #                                      # re-init with fresh secrets
+#   ./bin/install --new-instance       # if existing volumes are detected,
+#                                      # spin up an isolated copy as
+#                                      # `futureagi-2`, `futureagi-3`, …
+#                                      # without touching the originals
 #   ./bin/install -y                   # non-interactive (CI / unattended).
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
@@ -46,15 +50,17 @@ SKIP_USER=${SKIP_USER_CREATION:-0}
 NO_UP=0
 NON_INTERACTIVE=0
 WIPE_VOLUMES_FLAG=0
+NEW_INSTANCE_FLAG=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
     --skip-user-creation) SKIP_USER=1 ;;
     --no-up) NO_UP=1 ;;
     --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
+    --new-instance) NEW_INSTANCE_FLAG=1 ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
@@ -168,6 +174,29 @@ gen_secret() {
   fi
 }
 
+# Find the next free project name in the futureagi-N family by checking
+# for existing volumes. Used when --new-instance is requested.
+next_free_project_name() {
+  local base="futureagi" n=2
+  while docker volume ls --format '{{.Name}}' 2>/dev/null \
+         | grep -q "^${base}-${n}_"; do
+    n=$((n + 1))
+  done
+  echo "${base}-${n}"
+}
+
+# Set / replace COMPOSE_PROJECT_NAME in .env. Compose reads this and it
+# overrides the `name:` in docker-compose.yml, so volumes / containers /
+# networks become ${name}_*, ${name}-N, ${name}_default.
+set_project_name_in_env() {
+  local name="$1"
+  if grep -Eq '^COMPOSE_PROJECT_NAME=' .env; then
+    sed_inplace -E "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${name}|" .env
+  else
+    printf "\nCOMPOSE_PROJECT_NAME=%s\n" "$name" >> .env
+  fi
+}
+
 # Stale-volume guard. If a previous stack-up (in this dir or another with
 # the same compose project name) created persistent volumes, those volumes
 # are already initialized with the OLD password. Rotating CHANGEME-* now
@@ -193,25 +222,41 @@ if (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=C
   say ""
   if (( WIPE_VOLUMES_FLAG == 1 )); then
     WIPE_VOLS=1
+  elif (( NEW_INSTANCE_FLAG == 1 )); then
+    project_name="$(next_free_project_name)"
+    set_project_name_in_env "$project_name"
+    STALE_VOLS=()
+    ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+    say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
   elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
     warn "  Non-interactive mode: leaving CHANGEME-* placeholders in .env."
-    warn "  Either re-run with --wipe-volumes, or set the passwords in .env"
-    warn "  to match what the existing volumes were initialized with."
+    warn "  Re-run with --wipe-volumes (deletes data) or --new-instance"
+    warn "  (creates an isolated copy) — or set passwords in .env to match"
+    warn "  what the existing volumes were initialized with."
     ROTATE_OK=0
   else
     say "  Choose:"
+    say "    [n] ${BOLD}new instance${RESET} — spin up an isolated copy alongside this one"
+    say "        ${DIM}(volumes will be ${project_name}-2_*, ${project_name}-3_*, …)${RESET}"
     say "    [w] ${BOLD}wipe${RESET} the volumes and start fresh ${RED}(deletes all data)${RESET}"
     say "    [k] ${BOLD}keep${RESET} the volumes — I'll leave .env passwords as CHANGEME-*"
-    say "        and you set them to match the existing data manually"
+    say "        ${DIM}and you set them to match the existing data manually${RESET}"
     say "    [a] ${BOLD}abort${RESET}"
     while true; do
       printf "  ${BOLD}> ${RESET}"
       read -r choice || choice="a"
       case "$choice" in
+        n|N)
+          project_name="$(next_free_project_name)"
+          set_project_name_in_env "$project_name"
+          STALE_VOLS=()
+          ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+          say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
+          break ;;
         w|W) WIPE_VOLS=1; break ;;
         k|K) ROTATE_OK=0; break ;;
         a|A|"") die "Aborted by user." ;;
-        *) warn "Choose w / k / a" ;;
+        *) warn "Choose n / w / k / a" ;;
       esac
     done
   fi
