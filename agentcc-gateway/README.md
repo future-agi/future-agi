@@ -280,7 +280,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
-cd future-agi/futureagi/agentcc-gateway
+cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
 go run ./cmd/server
 ```

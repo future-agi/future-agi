@@ -207,7 +207,7 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | `frontend` | React SPA served by nginx. UI for traces, evals, datasets, playground. |
 | `backend` | Django API. Serves REST + gRPC + WebSockets. Reads/writes Postgres + ClickHouse + Redis + MinIO. |
 | `worker` | Single Temporal worker polling all queues. Replaced by six per-queue workers in dev mode. |
-| `gateway` | Go-based LLM proxy (Prism). Routes calls to OpenAI, Anthropic, Gemini, Bedrock, Vertex. Handles retries, rate limits, logging. |
+| `agentcc-gateway` | Go-based LLM proxy. Routes calls to OpenAI, Anthropic, Gemini, Bedrock, Vertex. Handles retries, rate limits, logging. |
 | `serving` | Python service for embeddings and small model inference. |
 | `code-executor` | nsjail-sandboxed Python/JS code runner for evaluation code. **Requires `privileged: true`.** |
 
@@ -245,15 +245,15 @@ The gateway ships with `config.example.yaml`, enabling OpenAI by default. To ena
 
 1. Copy the example:
    ```bash
-   cp futureagi/agentcc-gateway/config.example.yaml \
-      futureagi/agentcc-gateway/config.yaml
+   cp agentcc-gateway/config.example.yaml \
+      agentcc-gateway/config.yaml
    ```
 2. Uncomment the providers you want (Anthropic, Gemini, Bedrock, Vertex).
 3. Update the gateway mount in `docker-compose.yml` to point at `config.yaml` instead of `config.example.yaml`:
    ```yaml
    gateway:
      volumes:
-       - ./futureagi/agentcc-gateway/config.yaml:/app/config.yaml:ro
+       - ./agentcc-gateway/config.yaml:/app/config.yaml:ro
    ```
 4. Set the matching `*_API_KEY` env vars in `.env`.
 5. Restart: `docker compose up -d --force-recreate gateway`.
@@ -274,7 +274,7 @@ vertex:
     x-gcp-location: "us-central1"
 ```
 
-Rotate `GOOGLE_ACCESS_TOKEN` via a sidecar that calls `gcloud auth print-access-token`. **Do not mount `Vertex_AI_Creds.json` into the container** — it's covered by `.gitignore` but mounting it is still a bad habit.
+Set `GOOGLE_ACCESS_TOKEN` in `.env` and rotate it via a sidecar that calls `gcloud auth print-access-token`. **Do not mount `Vertex_AI_Creds.json` into the container** — it's covered by `.gitignore` but mounting it is still a bad habit. If a code path elsewhere in the platform genuinely needs the JSON keyfile (`GOOGLE_APPLICATION_CREDENTIALS`), arrange the volume mount yourself in a local compose override — never commit the file or bake it into a shared image.
 
 ---
 
@@ -323,16 +323,37 @@ Share the printed URL with the user out-of-band (Slack, email, etc.).
 
 ---
 
-## PeerDB mirror setup
+## Stack modes: light vs full
+
+The compose stack ships in two modes, selected via `COMPOSE_PROFILES` in `.env`:
+
+| Mode | Containers | What you get | When to use |
+|---|---|---|---|
+| **light** (default — `COMPOSE_PROFILES` unset) | ~12 | Frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, temporal | "Try it locally" — evaluate the product on a laptop. Observe/Trace analytics views render but show empty data. |
+| **full** (`COMPOSE_PROFILES=full`) | ~22 | Everything in light, plus the PeerDB CDC stack (10 containers) that streams Postgres → ClickHouse so analytics views populate | Real self-hosting. |
+
+Switch modes by setting the env var and re-running `docker compose up` — no rebuild, no data loss.
+
+```bash
+# Light (default)
+docker compose up
+
+# Full
+COMPOSE_PROFILES=full docker compose up
+# or set COMPOSE_PROFILES=full in .env, then:
+docker compose up
+```
+
+## PeerDB mirror setup (full mode only)
 
 PeerDB replicates your app's Postgres tables into ClickHouse so the analytics UI stays fast. Mirrors are registered once, then run continuously.
 
-On first boot the `peerdb-init` service will attempt to create mirrors from `futureagi/scripts/peerdb-setup-mirrors.sh`. If the backend hasn't migrated yet, mirror creation will fail (the source tables don't exist). In that case:
+When you first bring up `full` mode, the `peerdb-init` service attempts to create mirrors from `futureagi/scripts/peerdb-setup-mirrors.sh`. If the backend hasn't migrated yet, mirror creation will fail (the source tables don't exist). In that case:
 
 1. Wait for `docker compose logs backend` to show migrations complete.
 2. Re-run the init:
    ```bash
-   docker compose run --rm peerdb-init bash /setup.sh
+   COMPOSE_PROFILES=full docker compose run --rm peerdb-init bash /setup.sh
    ```
 
 Or inspect and create mirrors manually at <http://localhost:3001>.

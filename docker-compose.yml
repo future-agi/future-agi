@@ -1,9 +1,24 @@
 # ============================================================================
 # Future AGI — self-hosted OSS stack
 #
+# Two modes, gated by COMPOSE_PROFILES (set in .env):
+#
+#   • light (default, COMPOSE_PROFILES unset)
+#       Everything you need to run the app: frontend, backend, worker,
+#       agentcc-gateway, serving, code-executor, postgres, clickhouse, redis,
+#       minio, temporal. ~12 containers. Analytics views (Observe / Trace
+#       drilldowns) will show empty data — they're fed by PeerDB, which is
+#       only on in `full` mode.
+#
+#   • full (COMPOSE_PROFILES=full)
+#       Adds the PeerDB CDC stack (10 containers) so transactional Postgres
+#       data streams into ClickHouse and analytics views populate. ~22
+#       containers. Use this for a real self-host.
+#
 # Quick start:
 #   cp .env.example .env
-#   docker compose up
+#   docker compose up                                    # light
+#   COMPOSE_PROFILES=full docker compose up              # full
 #
 # Open http://localhost:3000 once the frontend logs "ready".
 # First boot builds the backend image (~10 min). Subsequent boots are instant.
@@ -40,8 +55,8 @@ x-backend-env: &backend-env
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
 
   # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: http://gateway:8090
-  AGENTCC_GATEWAY_INTERNAL_URL: http://gateway:8090
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
@@ -160,7 +175,7 @@ services:
         condition: service_healthy
       temporal:
         condition: service_healthy
-      gateway:
+      agentcc-gateway:
         condition: service_started
     restart: unless-stopped
 
@@ -189,16 +204,16 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # LLM gateway (Prism / agentcc) — proxies provider APIs used by the backend.
+  # LLM gateway (agentcc) — proxies provider APIs used by the backend.
   # Ships with config.example.yaml as the default. Copy to
-  # futureagi/agentcc-gateway/config.yaml and edit to enable more providers.
+  # agentcc-gateway/config.yaml and edit to enable more providers.
   # --------------------------------------------------------------------------
 
-  gateway:
+  agentcc-gateway:
     build:
-      context: ./futureagi/agentcc-gateway
+      context: ./agentcc-gateway
     ports:
-      - "${GATEWAY_PORT:-8090}:8080"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     env_file:
       - .env
     environment:
@@ -209,10 +224,14 @@ services:
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Provider creds for the gateway live in agentcc-gateway/config.yaml,
+      # which interpolates ${ENV_VAR}s from this .env at gateway start. Add
+      # whatever env vars your config.yaml references (e.g. for Vertex, you
+      # might add GOOGLE_ACCESS_TOKEN here and reference it from config.yaml).
     volumes:
-      # Default to the shipped example config. Override by creating
-      # `futureagi/agentcc-gateway/config.yaml`.
-      - ./futureagi/agentcc-gateway/config.example.yaml:/app/config.yaml:ro
+      # Default to the shipped example config. Override by setting
+      # AGENTCC_CONFIG_PATH in .env (e.g. agentcc-gateway/config.yaml).
+      - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -383,6 +402,7 @@ services:
 
   peerdb-catalog:
     image: postgres:16-alpine
+    profiles: ["full"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -398,6 +418,7 @@ services:
 
   peerdb-temporal:
     image: temporalio/auto-setup:1.29
+    profiles: ["full"]
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -420,6 +441,7 @@ services:
 
   peerdb-minio:
     image: minio/minio:latest
+    profiles: ["full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
@@ -437,6 +459,7 @@ services:
 
   peerdb-flow-api:
     image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
       PEERDB_ALLOWED_TARGETS:
@@ -447,6 +470,7 @@ services:
 
   peerdb-flow-worker:
     image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -456,6 +480,7 @@ services:
 
   peerdb-flow-snapshot-worker:
     image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -465,6 +490,7 @@ services:
 
   peerdb-server:
     image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
+    profiles: ["full"]
     stop_signal: SIGINT
     environment:
       <<: *peerdb-catalog
@@ -480,6 +506,7 @@ services:
 
   peerdb-ui:
     image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: *peerdb-catalog
       PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
@@ -495,6 +522,7 @@ services:
 
   peerdb-temporal-init:
     image: temporalio/admin-tools
+    profiles: ["full"]
     restart: "no"
     environment:
       TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
@@ -513,6 +541,7 @@ services:
 
   peerdb-init:
     image: postgres:16-alpine
+    profiles: ["full"]
     restart: "no"
     environment:
       SRC_PG_HOST: postgres

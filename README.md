@@ -244,7 +244,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 ### 🎛️ Agent Command Center
 OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
 
-<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./futureagi/agentcc-gateway/README.md#-benchmarks)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -308,7 +308,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 | Layer | Component | Code |
 |---|---|---|
 |  Edge | **traceAI** — OpenTelemetry instrumentation | [`future-agi/traceAI`](https://github.com/future-agi/traceAI) |
-|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`futureagi/agentcc-gateway/`](./futureagi/agentcc-gateway) |
+|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`agentcc-gateway/`](./agentcc-gateway) |
 |  Platform | **tracer** — OTLP ingest, span graph | [`futureagi/tracer/`](./futureagi/tracer) |
 |  Platform | **agentic_eval** — 50+ metrics, LLM-as-judge | [`futureagi/agentic_eval/`](./futureagi/agentic_eval) |
 |  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
@@ -444,7 +444,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 - [x] Dashboards
 - [x] Access platform via MCP
 - [x] Annotation Queues
-- [x] Command Center (Prism)
+- [x] Command Center
 - [x] Open source Future AGI stack
 - [x] Eval Explanation Output Size Control 
 
