@@ -6,6 +6,7 @@ import {
   AD_CONVERSION_VALUE,
   AD_CONVERSION_CURRENCY,
 } from "src/config-global";
+import { getAttribution } from "src/utils/attribution";
 import logger from "src/utils/logger";
 
 const LINKER_DOMAINS = ["futureagi.com", "app.futureagi.com"];
@@ -87,8 +88,14 @@ export function trackSignupConversion({ email, method = "email", userId } = {}) 
       event_callback: () => {},
     });
 
+   
+    const attr = getAttribution() || {};
     window.gtag("event", "sign_up", {
       method,
+      ...(attr.gclid && { gclid: attr.gclid }),
+      ...(attr.utm_term && { keyword: attr.utm_term }),
+      ...(attr.utm_source && { utm_source: attr.utm_source }),
+      ...(attr.utm_campaign && { utm_campaign: attr.utm_campaign }),
     });
   } catch (err) {
     logger.error("Google Ads signup conversion failed", err);
