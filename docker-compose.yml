@@ -1,6 +1,10 @@
 # ============================================================================
 # Future AGI — self-hosted OSS stack
 #
+# Project name is pinned to `futureagi` so volumes / containers are stable
+# regardless of the directory you cloned into and don't collide with other
+# `future-agi` worktrees on the same host.
+#
 # Two modes, gated by COMPOSE_PROFILES (set in .env):
 #
 #   • light (default, COMPOSE_PROFILES unset)
@@ -27,6 +31,8 @@
 # ports, Temporal UI), layer the dev overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # ============================================================================
+
+name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
 x-peerdb-catalog: &peerdb-catalog

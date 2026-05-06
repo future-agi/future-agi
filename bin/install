@@ -173,7 +173,7 @@ gen_secret() {
 # are already initialized with the OLD password. Rotating CHANGEME-* now
 # would generate a new secret that postgres / minio won't accept, and the
 # stack will fail to come up with cryptic auth errors. Detect and ask.
-project_name=$(basename "$ROOT")
+project_name="futureagi"  # pinned in docker-compose.yml `name:`
 declare -a STALE_VOLS=()
 for vol in postgres-data clickhouse-data minio-data redis-data \
            rabbitmq-data peerdb-catalog-data peerdb-minio-data; do
@@ -360,7 +360,7 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   # Allow our own already-running container to "hold" the port — re-runs
   # of bin/install on the same project are fine. Anything else collides.
   if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
-    project_name=$(basename "$ROOT")
+    project_name="futureagi"  # pinned in docker-compose.yml `name:`
     if docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
          | awk -v p=":$port->" -v proj="^${project_name}-" \
               '$0 ~ p && $1 ~ proj' \

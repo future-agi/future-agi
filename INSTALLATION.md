@@ -65,7 +65,7 @@ When the backend logs `Application startup complete`, open:
 If you skipped the prompt at install time, create the admin account via the CLI:
 
 ```bash
-docker exec -it future-agi-backend-1 python manage.py create_user
+docker exec -it futureagi-backend-1 python manage.py create_user
 ```
 
 You will be prompted for your email, full name, and password. Then log in at <http://localhost:3000>.
@@ -73,7 +73,7 @@ You will be prompted for your email, full name, and password. Then log in at <ht
 To pass credentials non-interactively (useful for automated setups):
 
 ```bash
-docker exec future-agi-backend-1 python manage.py create_user \
+docker exec futureagi-backend-1 python manage.py create_user \
   --email you@example.com \
   --name "Your Name" \
   --password yourpassword
@@ -327,7 +327,7 @@ Restart the backend: `docker compose up -d --force-recreate backend worker`.
 If SMTP is not configured and a user needs a password reset, a shell admin can generate the reset link directly:
 
 ```bash
-docker exec -it future-agi-backend-1 python manage.py shell
+docker exec -it futureagi-backend-1 python manage.py shell
 ```
 
 ```python
