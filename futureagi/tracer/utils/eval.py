@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models.workspace import Workspace
+from common.utils.data_injection import normalize as _di_normalize
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
@@ -602,8 +603,10 @@ def _execute_evaluation(
 
     # --- Build context for data_injection support ---
     _eval_inputs = dict(run_params or {})
-    _di = (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
-    if _di.get("span_context") or _di.get("spanContext"):
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["span_context"]:
         _eval_inputs["span_context"] = {
             "id": str(observation_span.id),
             "name": observation_span.name,
@@ -615,7 +618,7 @@ def _execute_evaluation(
             "total_tokens": observation_span.total_tokens,
             "cost": float(observation_span.cost) if observation_span.cost else None,
         }
-    if _di.get("trace_context") or _di.get("traceContext"):
+    if _di["trace_context"]:
         _eval_inputs["trace_context"] = {
             "id": str(observation_span.trace_id),
             "span_id": str(observation_span.id),

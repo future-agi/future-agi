@@ -628,12 +628,21 @@ class TraceExplorerTool(BaseTool):
             from tracer.models.observation_span import ObservationSpan
             from tfc.middleware.workspace_context import get_current_organization
 
-            qs = ObservationSpan.objects.filter(
-                trace_id=trace_id, deleted=False
-            )
+            # Org scoping is the only authorization check between an
+            # agent-supplied trace_id and the DB. If we don't have an org
+            # context, refuse rather than running an unscoped query.
             org = get_current_organization()
-            if org:
-                qs = qs.filter(project__organization=org)
+            if not org:
+                logger.warning(
+                    "_list_trace_spans called without organization context; refusing"
+                )
+                return ToolResult.error(
+                    "Cannot list spans without an authenticated organization context."
+                )
+
+            qs = ObservationSpan.objects.filter(
+                trace_id=trace_id, deleted=False, project__organization=org
+            )
 
             spans = list(
                 qs
@@ -804,19 +813,24 @@ def _fetch_full_span(span_id: str) -> dict | None:
     Returns a rich dict matching the format of _build_span_context().
 
     Data isolation: scoped by project → organization via the request context.
-    The span_id itself comes from the pre-loaded trace/session context which
-    was already scoped during the playground view.
+    Org scoping is mandatory — if no org is in context (e.g. background worker
+    without the workspace middleware), the call refuses rather than running
+    an unscoped query against an LLM-supplied span_id.
     """
     try:
         from tracer.models.observation_span import ObservationSpan
         from tfc.middleware.workspace_context import get_current_organization
 
-        qs = ObservationSpan.objects.filter(id=str(span_id), deleted=False)
-        # Scope by organization if available in request context
         org = get_current_organization()
-        if org:
-            qs = qs.filter(project__organization=org)
-        span = qs.first()
+        if not org:
+            logger.warning(
+                "_fetch_full_span called without organization context; refusing"
+            )
+            return None
+
+        span = ObservationSpan.objects.filter(
+            id=str(span_id), deleted=False, project__organization=org
+        ).first()
         if not span:
             return None
 

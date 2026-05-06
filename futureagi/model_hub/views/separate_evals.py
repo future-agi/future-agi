@@ -5105,7 +5105,7 @@ class EvalPlayGroundAPIView(APIView):
                                 "error_count": _span_agg["error_count"] or 0,
                                 "total_tokens": _span_agg["total_tokens"] or 0,
                                 "total_cost": (
-                                    round(_span_agg["total_cost"], 6)
+                                    float(round(_span_agg["total_cost"], 6))
                                     if _span_agg["total_cost"]
                                     else 0
                                 ),
@@ -5151,17 +5151,32 @@ class EvalPlayGroundAPIView(APIView):
                             )
 
                             # Lightweight trace summaries for the agent to
-                            # browse and decide which to drill into.
-                            _trace_summaries = []
-                            for _tr in _trace_qs.order_by("created_at")[:100]:
-                                _tr_span_agg = ObservationSpan.objects.filter(
-                                    trace=_tr, deleted=False
-                                ).aggregate(
-                                    span_count=Count("id"),
-                                    error_count=Count("id", filter=Q(status="ERROR")),
-                                    total_tokens=Sum("total_tokens"),
-                                    total_latency=Sum("latency_ms"),
+                            # browse and decide which to drill into. Use one
+                            # grouped aggregate instead of N+1 per-trace queries.
+                            _traces_page = list(
+                                _trace_qs.order_by("created_at")[:100]
+                            )
+                            _trace_ids = [_tr.id for _tr in _traces_page]
+                            _per_trace = {
+                                _row["trace_id"]: _row
+                                for _row in (
+                                    ObservationSpan.objects
+                                    .filter(trace_id__in=_trace_ids, deleted=False)
+                                    .values("trace_id")
+                                    .annotate(
+                                        span_count=Count("id"),
+                                        error_count=Count(
+                                            "id", filter=Q(status="ERROR")
+                                        ),
+                                        total_tokens=Sum("total_tokens"),
+                                        total_latency=Sum("latency_ms"),
+                                    )
                                 )
+                            }
+                            _trace_summaries = []
+                            for _tr in _traces_page:
+                                _agg = _per_trace.get(_tr.id, {})
+                                _err_count = _agg.get("error_count") or 0
                                 _trace_summaries.append({
                                     "id": str(_tr.id),
                                     "name": _tr.name,
@@ -5170,14 +5185,11 @@ class EvalPlayGroundAPIView(APIView):
                                         if _tr.created_at
                                         else None
                                     ),
-                                    "span_count": _tr_span_agg["span_count"] or 0,
-                                    "error_count": _tr_span_agg["error_count"] or 0,
-                                    "total_tokens": _tr_span_agg["total_tokens"] or 0,
-                                    "total_latency_ms": _tr_span_agg["total_latency"] or 0,
-                                    "has_error": bool(
-                                        _tr.error
-                                        or (_tr_span_agg["error_count"] or 0) > 0
-                                    ),
+                                    "span_count": _agg.get("span_count") or 0,
+                                    "error_count": _err_count,
+                                    "total_tokens": _agg.get("total_tokens") or 0,
+                                    "total_latency_ms": _agg.get("total_latency") or 0,
+                                    "has_error": bool(_tr.error or _err_count > 0),
                                 })
 
                             _start = _sess_agg["start_time"]
@@ -5205,7 +5217,7 @@ class EvalPlayGroundAPIView(APIView):
                                 "error_count": _sess_agg["error_count"] or 0,
                                 "total_tokens": _sess_agg["total_tokens"] or 0,
                                 "total_cost": (
-                                    round(_sess_agg["total_cost"], 6)
+                                    float(round(_sess_agg["total_cost"], 6))
                                     if _sess_agg["total_cost"]
                                     else 0
                                 ),
