@@ -718,6 +718,25 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         config = eval_config.config.copy() if eval_config.config else {}
         organization = call_execution.test_execution.run_test.organization
 
+        # Build call_context for data_injection support — gives the eval
+        # agent access to the full call data via explore_trace tool.
+        _call_context = {
+            "id": str(call_execution.id),
+            "status": call_execution.status,
+            "call_type": call_execution.call_type,
+            "simulation_call_type": call_execution.simulation_call_type,
+            "phone_number": call_execution.phone_number,
+            "started_at": str(call_execution.started_at) if call_execution.started_at else None,
+            "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+            "duration_seconds": call_execution.duration_seconds,
+            "recording_url": call_execution.recording_url,
+            "call_summary": call_execution.call_summary,
+            "ended_reason": call_execution.ended_reason,
+            "error_message": call_execution.error_message,
+            "message_count": call_execution.message_count,
+            "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+        }
+
         eval_result = run_eval_func(
             config=config,
             mappings=updated_mapping,
@@ -728,6 +747,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
             source="simulate",
+            call_context=_call_context,
         )
 
         if isinstance(eval_result, str):
