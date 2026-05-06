@@ -25,7 +25,7 @@ services:
         # rebuild with `docker compose -f docker-compose.frontend.yml build`.
         VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-production}
-    image: futureagi/frontend:local
+    image: ${COMPOSE_PROJECT_NAME:-futureagi}-frontend:local
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     restart: unless-stopped
