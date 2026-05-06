@@ -323,19 +323,47 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalData?.config?.run_config ||
         evalData?.config?.runConfig ||
         {};
-      const normalizedRunConfig = {
+        
+     const normalizedRunConfig = {
         ...rawRunConfig,
-        agent_mode: rawRunConfig.agent_mode ?? rawRunConfig.agentMode,
+        agent_mode:
+          rawRunConfig.agent_mode ??
+          rawRunConfig.agentMode ??
+          evalData?.agent_mode ??
+          evalData?.agentMode,
         check_internet:
-          rawRunConfig.check_internet ?? rawRunConfig.checkInternet,
+          rawRunConfig.check_internet ??
+          rawRunConfig.checkInternet ??
+          evalData?.check_internet ??
+          evalData?.checkInternet,
         knowledge_bases:
-          rawRunConfig.knowledge_bases ?? rawRunConfig.knowledgeBases,
+          rawRunConfig.knowledge_bases ??
+          rawRunConfig.knowledgeBases ??
+          evalData?.knowledge_bases ??
+          evalData?.knowledgeBases,
         data_injection:
-          rawRunConfig.data_injection ?? rawRunConfig.dataInjection,
+          rawRunConfig.data_injection ??
+          rawRunConfig.dataInjection ??
+          evalData?.data_injection ??
+          evalData?.dataInjection,
         template_format:
           rawRunConfig.template_format ?? rawRunConfig.templateFormat,
         few_shot_examples:
           rawRunConfig.few_shot_examples ?? rawRunConfig.fewShotExamples,
+        summary: rawRunConfig.summary ?? evalData?.summary,
+        tools: rawRunConfig.tools ?? evalData?.tools,
+        pass_threshold:
+          rawRunConfig.pass_threshold ??
+          rawRunConfig.passThreshold ??
+          evalData?.pass_threshold ??
+          evalData?.passThreshold,
+        choice_scores:
+          rawRunConfig.choice_scores ??
+          rawRunConfig.choiceScores ??
+          evalData?.choice_scores ??
+          evalData?.choiceScores,
+        params: rawRunConfig.params ?? evalData?.params,
+        messages: rawRunConfig.messages ?? evalData?.messages,
       };
       const config = {
         ...(fullEval.config || {}),
