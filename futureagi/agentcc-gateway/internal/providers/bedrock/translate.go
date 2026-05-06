@@ -176,7 +176,21 @@ func translateRequest(req *models.ChatCompletionRequest) (*bedrockRequest, strin
 		}
 
 		bm := translateMessage(msg)
-		br.Messages = append(br.Messages, bm)
+		// Bedrock requires alternating user/assistant roles.
+		// Multiple OpenAI "tool" messages become "user" role with
+		// tool_result content — merge consecutive same-role messages.
+		if len(br.Messages) > 0 && bm.Role == br.Messages[len(br.Messages)-1].Role {
+			// Merge content arrays.
+			var existing []bedrockContentBlock
+			json.Unmarshal(br.Messages[len(br.Messages)-1].Content, &existing)
+			var additional []bedrockContentBlock
+			json.Unmarshal(bm.Content, &additional)
+			existing = append(existing, additional...)
+			merged, _ := json.Marshal(existing)
+			br.Messages[len(br.Messages)-1].Content = merged
+		} else {
+			br.Messages = append(br.Messages, bm)
+		}
 	}
 
 	if len(systemParts) > 0 {
