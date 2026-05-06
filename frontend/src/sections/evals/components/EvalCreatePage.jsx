@@ -120,6 +120,7 @@ const resolveContextOptions = (dataInjection) => {
   if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
   if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
   if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
+  if (dataInjection.call_context || dataInjection.callContext) opts.push("call_context");
   if (opts.length > 0) return opts;
   if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
     return ["full_row"];
@@ -322,10 +323,10 @@ const EvalCreatePage = () => {
       // Send individual flags so the backend can enable the right tools
       const flags = {};
       if (contextOptions.includes("dataset_row")) flags.full_row = true;
-      if (contextOptions.includes("span_variables")) flags.span_context = true;
       if (contextOptions.includes("span_context")) flags.span_context = true;
       if (contextOptions.includes("trace_context")) flags.trace_context = true;
       if (contextOptions.includes("session_context")) flags.session_context = true;
+      if (contextOptions.includes("call_context")) flags.call_context = true;
       // If nothing specific matched, default to full_row for backward compat
       return Object.keys(flags).length > 0 ? flags : { full_row: true };
     })();

@@ -430,6 +430,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         if (di.span_context || di.spanContext) opts.push("span_context");
         if (di.trace_context || di.traceContext) opts.push("trace_context");
         if (di.session_context || di.sessionContext) opts.push("session_context");
+        if (di.call_context || di.callContext) opts.push("call_context");
         if (opts.length > 0) {
           setContextOptions(opts);
         } else if (di.variables_only || di.variablesOnly) {
@@ -749,10 +750,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       }
       const flags = {};
       if (contextOptions.includes("dataset_row")) flags.full_row = true;
-      if (contextOptions.includes("span_variables")) flags.span_context = true;
       if (contextOptions.includes("span_context")) flags.span_context = true;
       if (contextOptions.includes("trace_context")) flags.trace_context = true;
       if (contextOptions.includes("session_context")) flags.session_context = true;
+      if (contextOptions.includes("call_context")) flags.call_context = true;
       if (contextOptions.includes("full_row")) flags.full_row = true;
       return Object.keys(flags).length > 0 ? flags : { full_row: true };
     })();

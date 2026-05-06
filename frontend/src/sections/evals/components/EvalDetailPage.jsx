@@ -89,6 +89,7 @@ const resolve_context_options = (data_injection) => {
   if (data_injection.span_context || data_injection.spanContext) opts.push("span_context");
   if (data_injection.trace_context || data_injection.traceContext) opts.push("trace_context");
   if (data_injection.session_context || data_injection.sessionContext) opts.push("session_context");
+  if (data_injection.call_context || data_injection.callContext) opts.push("call_context");
   if (opts.length > 0) return opts;
   if (data_injection.variables_only === false || data_injection.variablesOnly === false) {
     return ["full_row"];

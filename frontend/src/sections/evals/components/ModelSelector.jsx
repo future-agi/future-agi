@@ -70,10 +70,10 @@ const CONTEXT_OPTIONS = [
     icon: "mdi:table-row",
   },
   {
-    value: "span_variables",
-    label: "Span variables",
-    desc: "Variables from matched spans",
-    icon: "mdi:code-tags",
+    value: "call_context",
+    label: "Call context",
+    desc: "Call transcript, recording, scenario",
+    icon: "mdi:phone-outline",
   },
   {
     value: "span_context",
