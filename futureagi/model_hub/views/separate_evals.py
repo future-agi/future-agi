@@ -1273,11 +1273,10 @@ class EvalTemplateListView(APIView):
         from model_hub.types import EvalListItem, EvalListResponse
         from model_hub.utils.eval_list import (
             build_eval_list_queryset,
-            compute_thirty_day_data,
             derive_eval_type,
             derive_output_type,
             fetch_version_metadata,
-            get_created_by_name,
+            get_organization_display_name,
         )
 
         try:
@@ -1313,7 +1312,7 @@ class EvalTemplateListView(APIView):
                     )[:1],
                     to_attr="_prefetched_evaluators",
                 ),
-            )
+            ).select_related("organization")
 
             # 3. Sort
             order_field = req.get("sort_by", "updated_at")
@@ -1378,7 +1377,9 @@ class EvalTemplateListView(APIView):
                         u = prefetched[0].user
                         created_by = (getattr(u, "name", "") or "").strip() or u.email
                     else:
-                        created_by = version_creators.get(tid, "User")
+                        created_by = version_creators.get(tid) or (
+                            get_organization_display_name(template)
+                        )
 
                 vcount = version_counts.get(tid, 0)
                 default_vnum = default_version_numbers.get(tid)
