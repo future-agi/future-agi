@@ -1,6 +1,6 @@
 import operator
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from functools import reduce
 
@@ -14,14 +14,26 @@ from tracer.utils.helper import extract_date
 
 
 def _parse_datetime_value(val):
-    """Parse a datetime value from a string or return as-is if already a datetime."""
+    """Parse a datetime value into a UTC-naive datetime.
+
+    The frontend now sends offset-aware ISO strings reflecting the user's
+    local timezone (e.g. ``2026-05-06T00:00:00+05:30``). We must convert to
+    UTC before stripping tzinfo — otherwise a 5.5h silent skew creeps in for
+    IST users picking "today". Naive strings (``2026-05-06T00:00:00``) and
+    Z-suffixed strings (``2026-05-06T00:00:00.000Z``) are treated as already
+    UTC, matching CH's storage convention.
+    """
     if isinstance(val, datetime):
+        if val.tzinfo is not None:
+            val = val.astimezone(timezone.utc).replace(tzinfo=None)
         return val
     if isinstance(val, str):
         parsed = django_parse_datetime(val)
         if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
             return parsed
-        # Fallback: try extracting date via the existing helper
+        # Fallback: try extracting date via the existing helper.
         try:
             extracted = extract_date(val)
             if extracted is not None:
@@ -364,13 +376,21 @@ class FilterEngine:
         ]
 
     def _filter_datetime(self, objects, column_id, filter_op, filter_value, col_type):
+        # Use the timezone-aware helper so offset-aware ISO strings from the
+        # frontend (e.g. ``2026-05-06T00:00:00+05:30``) are normalised to UTC.
+        # The legacy strptime with a hardcoded 'Z' format crashed on those.
         if isinstance(filter_value, str):
-            filter_value = datetime.strptime((filter_value), "%Y-%m-%dT%H:%M:%S.%fZ")
+            parsed = _parse_datetime_value(filter_value)
+            if parsed is None:
+                raise ValueError(f"Invalid datetime filter value: {filter_value!r}")
+            filter_value = parsed
         elif isinstance(filter_value, list):
-            filter_value = [
-                datetime.strptime((date_str), "%Y-%m-%dT%H:%M:%S.%fZ")
-                for date_str in filter_value
-            ]
+            parsed_list = [_parse_datetime_value(v) for v in filter_value]
+            if any(p is None for p in parsed_list):
+                raise ValueError(
+                    f"Invalid datetime filter value in list: {filter_value!r}"
+                )
+            filter_value = parsed_list
 
         operator_map = {
             "equals": lambda x, y: x.date() == y.date(),
@@ -1578,7 +1598,10 @@ class FilterEngine:
                 else filter_item.get("col_type", "")
             )
 
-            # --- Handle "my_annotations" filter ---
+            # --- Backwards-compat shim for legacy "my_annotations" filter ---
+            # Canonical form is `annotator = [current_user_id]`. Stale saved
+            # views and old clients still send the toggle shape; rewrite it
+            # in-place into the annotator branch below.
             if column_id == "my_annotations":
                 filter_value = filter_config.get("filter_value")
                 if isinstance(filter_value, str):

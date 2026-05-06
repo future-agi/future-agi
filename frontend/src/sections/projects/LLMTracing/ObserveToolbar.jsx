@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import {
   format,
+  formatISO,
   startOfToday,
   startOfTomorrow,
   startOfYesterday,
@@ -23,7 +24,14 @@ import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+
+// Emit datetime bounds as offset-aware ISO so the backend doesn't have to
+// guess the user's timezone. Picking "Today" in IST sends
+// "2026-05-06T00:00:00+05:30" — backend converts to UTC for CH bounds. The
+// previous `formatDate` helper produced a naive "yyyy-MM-dd HH:mm:ss" which
+// the backend interpreted as UTC, silently shifting the bound by the user's
+// UTC offset.
+const formatFilterDate = (d) => formatISO(d);
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -133,39 +141,39 @@ const ObserveToolbar = ({
     let filter = null;
     switch (option) {
       case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
+        filter = [formatFilterDate(startOfToday()), formatFilterDate(startOfTomorrow())];
         break;
       case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
+        filter = [formatFilterDate(startOfYesterday()), formatFilterDate(startOfToday())];
         break;
       case "7D":
         filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
+          formatFilterDate(sub(new Date(), { days: 7 })),
+          formatFilterDate(startOfTomorrow()),
         ];
         break;
       case "30D":
         filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
+          formatFilterDate(sub(new Date(), { days: 30 })),
+          formatFilterDate(startOfTomorrow()),
         ];
         break;
       case "3M":
         filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
+          formatFilterDate(sub(new Date(), { months: 3 })),
+          formatFilterDate(startOfTomorrow()),
         ];
         break;
       case "6M":
         filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
+          formatFilterDate(sub(new Date(), { months: 6 })),
+          formatFilterDate(startOfTomorrow()),
         ];
         break;
       case "12M":
         filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
+          formatFilterDate(sub(new Date(), { months: 12 })),
+          formatFilterDate(startOfTomorrow()),
         ];
         break;
       default:

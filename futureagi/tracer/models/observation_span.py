@@ -259,6 +259,18 @@ class EvalLogger(BaseModel):
         null=False,
         blank=False,
     )
+    # Denormalised from `trace.project`. Populated automatically by ``save()``
+    # for individual creates; bulk_create call sites must set this explicitly
+    # (see `inline_evals.py`, `accounts/user_onboard.py`). The CH-side filter
+    # for `has_eval` reads this directly via PeerDB CDC, eliminating the
+    # JOIN-to-spans previously required to scope eval queries by project.
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="eval_logs",
+        null=True,  # nullable during rollout; backfilled by data migration
+        blank=True,
+    )
     eval_type_id = models.CharField(max_length=255, null=True, blank=True)
     output_metadata = models.JSONField(null=True, blank=True)
     results_tags = models.JSONField(default=list, blank=True)
@@ -284,6 +296,19 @@ class EvalLogger(BaseModel):
     def __str__(self):
         return f"Eval Log {self.id}"
 
+    def save(self, *args, **kwargs):
+        # Auto-populate denormalised project_id from trace if unset. Skip
+        # for explicit `update_fields` paths to avoid surprising the caller.
+        if self.project_id is None and self.trace_id is not None:
+            update_fields = kwargs.get("update_fields")
+            if not update_fields:
+                # Avoid triggering a full Trace fetch if the FK descriptor
+                # already cached one; fall back to ID lookup otherwise.
+                trace_obj = getattr(self, "_state_trace_cache", None) or self.trace
+                if trace_obj is not None:
+                    self.project_id = trace_obj.project_id
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = "tracer_eval_logger"
         ordering = ["-created_at"]
@@ -295,4 +320,7 @@ class EvalLogger(BaseModel):
             models.Index(fields=["output_bool"]),
             models.Index(fields=["output_float"]),
             models.Index(fields=["error"]),
+            # Project-scoped scans on the CDC-replicated CH copy. PG-side
+            # value too: bulk_selection.py and dashboard counts also benefit.
+            models.Index(fields=["project", "created_at"]),
         ]

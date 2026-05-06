@@ -150,6 +150,10 @@ def _get_logger_kwargs(inline_eval: InlineEval, span: ObservationSpan):
     logger_kwargs = {
         "trace": span.trace,
         "observation_span": span,
+        # Denormalised; used by the CH `has_eval` filter to scope by project
+        # without an INNER JOIN to spans. Required for bulk_create paths
+        # because the model's save() override doesn't fire there.
+        "project": span.project,
         "custom_eval_config": custom_eval_config,
         "output_metadata": output_metadata,
         "results_explanation": inline_eval.evaluation.value,

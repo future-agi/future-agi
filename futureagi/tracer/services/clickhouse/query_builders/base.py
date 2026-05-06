@@ -6,36 +6,57 @@ query builders inherit from.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Generator, List, Optional, Tuple
+
+
+def _to_utc_naive(dt: datetime) -> datetime:
+    """Convert a (possibly tz-aware) datetime to UTC-naive.
+
+    ClickHouse DateTime columns store UTC. The frontend now sends
+    offset-aware ISO strings reflecting the user's local timezone (e.g.
+    ``2026-05-06T00:00:00+05:30`` for "midnight today in IST"). We must
+    convert to UTC *before* stripping tzinfo — otherwise dropping the
+    offset silently shifts the bound by the user's UTC offset (a 5.5h
+    silent skew for IST users picking "today").
+    """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.replace(tzinfo=None)
 
 
 def _parse_dt(val: Any) -> Optional[datetime]:
     """Parse a datetime value from various formats.
 
-    Handles ISO 8601 strings (with or without timezone), Python datetime
-    objects, and the ``%Y-%m-%dT%H:%M:%S.%fZ`` format commonly sent by
-    the frontend.
+    Accepts ISO 8601 strings with or without timezone offset, Python
+    datetime objects, and the legacy ``%Y-%m-%dT%H:%M:%S.%fZ`` format.
+    Always returns a UTC-naive ``datetime`` so that ClickHouse — which
+    interprets bare DateTime values as UTC — bounds correctly regardless
+    of the caller's local timezone.
 
     Args:
         val: A datetime object or an ISO-format string.
 
     Returns:
-        A timezone-naive ``datetime`` instance, or ``None`` if parsing fails.
+        A UTC-naive ``datetime`` instance, or ``None`` if parsing fails.
     """
     if val is None:
         return None
     if isinstance(val, datetime):
-        return val.replace(tzinfo=None) if val.tzinfo else val
+        return _to_utc_naive(val)
     if isinstance(val, str):
-        # Try standard ISO format first (handles 'Z' and '+00:00')
+        # Try standard ISO format first (handles 'Z' and explicit offsets
+        # like '+05:30'). fromisoformat in Py3.11+ handles 'Z' natively;
+        # rewrite for older runtimes.
         cleaned = val.replace("Z", "+00:00")
         try:
-            dt = datetime.fromisoformat(cleaned)
-            return dt.replace(tzinfo=None)
+            return _to_utc_naive(datetime.fromisoformat(cleaned))
         except (ValueError, AttributeError):
             pass
-        # Fallback: try strptime with common formats
+        # Fallback: try strptime with common formats. The 'Z'-suffixed
+        # variants are inherently UTC; the bare ones are assumed UTC by
+        # convention because no offset means "the value is already in CH's
+        # native timezone (UTC)".
         for fmt in (
             "%Y-%m-%dT%H:%M:%S.%fZ",
             "%Y-%m-%dT%H:%M:%S.%f",

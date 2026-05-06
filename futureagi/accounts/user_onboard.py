@@ -4530,4 +4530,9 @@ def create_observation_spans(project, trace, organization, project_version):
     ObservationSpan.objects.bulk_create(
         ObservationSpan(**obs_span_kwarg) for obs_span_kwarg in spans_to_create
     )
+    # Denormalise project for the CH `has_eval` filter — bulk_create skips
+    # the model's save() override, so populate explicitly here.
+    for el in eval_loggers:
+        if el.project_id is None:
+            el.project_id = project.id
     EvalLogger.objects.bulk_create(eval_loggers)
