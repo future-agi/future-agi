@@ -239,6 +239,40 @@ port_holder() {
   return 0
 }
 
+# Find the first free TCP port starting from $1 (skipping any we've already
+# suggested in this same run, so two conflicting services can't both be
+# offered the same alternative).
+declare -a SUGGESTED_PORTS=()
+find_free_port() {
+  local p="$1"
+  while (( p < 65535 )); do
+    if [[ -z "$(port_holder "$p" 2>/dev/null)" ]]; then
+      local seen=0 s
+      # ${arr[@]+"${arr[@]}"} survives `set -u` on an empty array.
+      for s in ${SUGGESTED_PORTS[@]+"${SUGGESTED_PORTS[@]}"}; do
+        [[ "$s" == "$p" ]] && seen=1 && break
+      done
+      if (( seen == 0 )); then
+        SUGGESTED_PORTS+=("$p")
+        echo "$p"
+        return 0
+      fi
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+# Set var=value in .env (replace if present, append otherwise).
+set_env_var() {
+  local var="$1" val="$2"
+  if grep -Eq "^${var}=" .env; then
+    sed_inplace -E "s|^${var}=.*|${var}=${val}|" .env
+  else
+    printf "%s=%s\n" "$var" "$val" >> .env
+  fi
+}
+
 # Light-mode ports. PeerDB UI (3001) only collides in full mode.
 declare -a PORTS_TO_CHECK=(
   "FRONTEND_PORT:3000"
@@ -249,41 +283,71 @@ declare -a PORTS_TO_CHECK=(
 )
 [[ "$FULL" -eq 1 ]] && PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001")
 
-CONFLICTS=()
+declare -a UNRESOLVED=()
 for entry in "${PORTS_TO_CHECK[@]}"; do
   var="${entry%%:*}"
   default="${entry##*:}"
   port=$(env_port "$var" "$default")
   holder=$(port_holder "$port" 2>/dev/null) || holder=""
-  if [[ -n "$holder" ]]; then
-    # Allow our own already-running container to "hold" the port — re-runs
-    # of bin/install on the same project are fine. Anything else collides.
-    if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
-      project_name=$(basename "$ROOT")
-      if docker ps --format '{{.Names}}\t{{.Ports}}' \
-           | awk -v p=":$port->" -v proj="^${project_name}-" \
-                '$0 ~ p && $1 ~ proj' \
-           | grep -q .; then
-        ok "  $var=$port  (held by this project's container — fine)"
-        continue
-      fi
-    fi
-    CONFLICTS+=("$var=$port  ←  $holder")
-    warn "  $var=$port  is taken by $holder"
-  else
+
+  if [[ -z "$holder" ]]; then
     ok "  $var=$port  free"
+    continue
+  fi
+
+  # Allow our own already-running container to "hold" the port — re-runs
+  # of bin/install on the same project are fine. Anything else collides.
+  if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
+    project_name=$(basename "$ROOT")
+    if docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
+         | awk -v p=":$port->" -v proj="^${project_name}-" \
+              '$0 ~ p && $1 ~ proj' \
+         | grep -q .; then
+      ok "  $var=$port  (held by this project's container — fine)"
+      continue
+    fi
+  fi
+
+  # Find a suggested replacement.
+  suggestion=$(find_free_port $((port + 1)) || true)
+  if [[ -z "$suggestion" ]]; then
+    warn "  $var=$port  is taken by $holder  (no free port found above)"
+    UNRESOLVED+=("$var=$port  ←  $holder")
+    continue
+  fi
+
+  warn "  $var=$port  is taken by $holder"
+
+  # Offer to switch. Auto-accept in non-interactive mode (CI / -y) so the
+  # script can keep going unattended.
+  apply=0
+  if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    apply=1
+    say "      ${DIM}→ auto-switching to $var=$suggestion${RESET}"
+  else
+    printf "      ${DIM}→ use ${BOLD}$var=$suggestion${RESET}${DIM} instead? [Y/n] ${RESET}"
+    read -r answer || answer=""
+    case "$answer" in
+      ""|y|Y|yes|YES) apply=1 ;;
+      *) apply=0 ;;
+    esac
+  fi
+
+  if (( apply == 1 )); then
+    set_env_var "$var" "$suggestion"
+    ok "  $var=$suggestion  written to .env"
+  else
+    UNRESOLVED+=("$var=$port  ←  $holder")
   fi
 done
 
-if (( ${#CONFLICTS[@]} > 0 )); then
+if (( ${#UNRESOLVED[@]} > 0 )); then
   say ""
-  say "  ${BOLD}${YELLOW}Port conflicts detected.${RESET} Two ways to resolve:"
+  say "  ${BOLD}${YELLOW}Unresolved port conflicts:${RESET}"
+  for c in "${UNRESOLVED[@]}"; do say "    • $c"; done
   say ""
-  say "    1. ${BOLD}Free the port${RESET} — stop the process / container that's holding it."
-  say "    2. ${BOLD}Override in .env${RESET} — pick a free host port. Example:"
-  say "         ${DIM}CODE_EXECUTOR_PORT=8062${RESET}"
-  say ""
-  say "  Then re-run: ${BOLD}./bin/install${RESET}"
+  say "  Free the port (stop the process / container) or set the var in .env"
+  say "  to a free port, then re-run ${BOLD}./bin/install${RESET}."
   exit 1
 fi
 
