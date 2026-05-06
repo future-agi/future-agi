@@ -228,8 +228,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   //      these on `CompositeDetailResponse.children[].required_keys`).
   //   2. required_keys on the template (authoritative for system evals)
   //   3. `{{var}}` patterns in the user-edited instructions
-  // Note: code eval stdvars (input, output, expected) are always available
-  // as positional args — they don't need explicit column mapping.
   const variables = useMemo(() => {
     if (isComposite) {
       const union = new Set();
@@ -244,7 +242,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
-      return [...new Set(requiredKeys)];
+      const savedMapping = evalData?.mapping || {};
+      const savedStdvars = ["input", "output", "expected"].filter(
+        (v) => v in savedMapping,
+      );
+      return [...new Set([...savedStdvars, ...requiredKeys])];
     }
 
     // System evals + Jinja mode: use static required_keys.

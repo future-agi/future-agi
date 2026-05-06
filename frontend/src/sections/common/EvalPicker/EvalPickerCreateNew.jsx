@@ -726,10 +726,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   compositeChildAxis={compositeChildAxis}
                   childWeights={childWeights}
                   children={selectedChildren}
-                  // Forward the dataset context so the inner child
+                  // Forward the source context so the inner child
                   // picker shows the variable-mapping screen for each
-                  // child instead of directly appending it.
+                  // child against the same source the parent composite
+                  // was opened from (task, dataset, tracing, ...).
+                  pickerSource={source}
                   pickerSourceId={sourceId}
+                  pickerSourceRowType={sourceRowType}
                   pickerSourceColumns={sourceColumns}
                   onNameChange={setName}
                   onDescriptionChange={setDescription}
