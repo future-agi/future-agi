@@ -34,21 +34,35 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-cp .env.example .env
-docker compose up
+./bin/install
 ```
 
 First boot builds the backend image from source (~10–15 minutes on a modern laptop). Subsequent boots take under 30 seconds.
+
+`bin/install` does four things:
+
+1. Copies `.env.example` → `.env` if missing.
+2. Generates real secrets in place of every `CHANGEME-*` placeholder (idempotent — won't clobber values you've already set).
+3. Brings up the stack with `docker compose up -d`.
+4. Polls `http://localhost:8000/health/` until the backend is ready, then prompts you to create your first user.
+
+Useful flags:
+
+| Flag | What it does |
+|---|---|
+| `--full` | Adds the PeerDB CDC stack (~10 extra containers) for populated analytics views. Default is light mode. |
+| `--skip-user-creation` | Skip the first-user prompt. Run the `create_user` command later. |
+| `--no-up` | Bootstrap `.env` only; don't start the stack. |
 
 When the backend logs `Application startup complete`, open:
 
 - **Frontend**: <http://localhost:3000>
 - **Backend API**: <http://localhost:8000>
-- **PeerDB UI**: <http://localhost:3001> (user/pass: `peerdb` / `peerdb`)
+- **PeerDB UI** (full mode only): <http://localhost:3001> (user/pass: `peerdb` / `peerdb`)
 
 ### Create your first account
 
-Once the stack is up, create your admin account via the CLI:
+If you skipped the prompt at install time, create the admin account via the CLI:
 
 ```bash
 docker exec -it future-agi-backend-1 python manage.py create_user
@@ -69,6 +83,15 @@ docker exec future-agi-backend-1 python manage.py create_user \
 
 To stop everything: `docker compose down`. Data persists in named volumes across restarts.
 To wipe all data: `docker compose down -v`.
+
+### Without the installer
+
+If you'd rather run the steps by hand:
+
+```bash
+cp .env.example .env       # then edit, replacing every CHANGEME-* value
+docker compose up          # add COMPOSE_PROFILES=full for the PeerDB stack
+```
 
 ---
 

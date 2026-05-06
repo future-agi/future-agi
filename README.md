@@ -130,11 +130,11 @@ pip install ai-evaluation
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-cp futureagi/.env.example futureagi/.env
-docker compose up -d
+./bin/install
 ```
 
-Open [http://localhost:3031](http://localhost:3031).
+Open [http://localhost:3000](http://localhost:3000).
+<sub>`./bin/install --full` to add the PeerDB CDC stack.</sub>
 
 </td>
 <td width="30%">

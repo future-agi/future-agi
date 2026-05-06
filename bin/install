@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Future AGI — self-hosted installer
+#
+#   ./bin/install              # light mode, interactive
+#   ./bin/install --full       # full mode (adds PeerDB CDC)
+#   ./bin/install --skip-user-creation
+#   ./bin/install --no-up      # bootstrap .env only; do not start the stack
+#
+# Idempotent: re-running with an existing .env preserves your secrets.
+# ============================================================================
+
+set -eEuo pipefail
+
+# ---------------- output helpers ----------------
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
+else
+  BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; RESET=""
+fi
+say()   { printf "%s\n" "$*"; }
+step()  { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
+ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
+warn()  { printf "  ${YELLOW}!${RESET} %s\n" "$*" >&2; }
+die()   { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; exit 1; }
+
+on_err() {
+  local code=$? line=${1:-?}
+  printf "\n${RED}✗ install failed (exit %d, line %s)${RESET}\n" "$code" "$line" >&2
+  printf "${DIM}  Re-run with: ./bin/install. Logs: docker compose logs${RESET}\n" >&2
+  exit "$code"
+}
+trap 'on_err $LINENO' ERR
+
+# ---------------- args ----------------
+FULL=0
+SKIP_USER=${SKIP_USER_CREATION:-0}
+NO_UP=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --full) FULL=1 ;;
+    --skip-user-creation) SKIP_USER=1 ;;
+    --no-up) NO_UP=1 ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) die "unknown flag: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
+
+# ---------------- preflight ----------------
+step "Preflight"
+
+if command -v docker >/dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
+    die "Docker is installed but the daemon isn't running. Start Docker Desktop / dockerd and re-run."
+  fi
+  ok "Docker daemon reachable"
+else
+  die "docker not found in PATH. Install Docker first: https://docs.docker.com/get-docker/"
+fi
+
+# Pick docker compose flavor (plugin v2 preferred; fall back to standalone v1).
+if docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC="docker-compose"
+  warn "Using legacy docker-compose v1. Consider upgrading to Compose v2 (built into Docker Desktop)."
+else
+  die "Neither 'docker compose' nor 'docker-compose' is available."
+fi
+ok "Compose: $($DC version --short 2>/dev/null || echo unknown)"
+
+# Soft RAM check. The full stack (~22 containers) is happiest with 8 GB free.
+ram_warn() {
+  local total_mb=""
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    total_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 ))
+  elif [[ -r /proc/meminfo ]]; then
+    total_mb=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 ))
+  fi
+  if [[ -n "$total_mb" && "$total_mb" -gt 0 && "$total_mb" -lt 8000 ]]; then
+    warn "Detected ${total_mb} MB RAM. The full stack likes ≥ 8 GB; light mode is fine on less."
+  fi
+}
+ram_warn
+
+# ---------------- .env ----------------
+step "Configuring .env"
+
+if [[ ! -f .env ]]; then
+  if [[ ! -f .env.example ]]; then
+    die ".env.example missing — are you running this from the repo root?"
+  fi
+  cp .env.example .env
+  ok "Created .env from .env.example"
+else
+  ok ".env already exists (existing values preserved)"
+fi
+
+# Portable in-place sed (BSD on mac, GNU on linux).
+sed_inplace() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
+gen_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  else
+    LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64
+    echo
+  fi
+}
+
+# Replace CHANGEME-* placeholders idempotently. A var that has already been
+# rotated (no CHANGEME prefix) is left alone.
+rotate_placeholder() {
+  local var="$1"
+  if grep -Eq "^${var}=CHANGEME-" .env; then
+    local secret
+    secret=$(gen_secret)
+    sed_inplace -E "s|^${var}=CHANGEME-.*|${var}=${secret}|" .env
+    ok "Generated ${var}"
+  fi
+}
+rotate_placeholder SECRET_KEY
+rotate_placeholder PG_PASSWORD
+rotate_placeholder MINIO_ROOT_PASSWORD
+rotate_placeholder AGENTCC_INTERNAL_API_KEY
+rotate_placeholder AGENTCC_ADMIN_TOKEN
+
+# S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
+if grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
+  minio_pwd=$(grep -E '^MINIO_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2-)
+  sed_inplace -E "s|^S3_SECRET_KEY=CHANGEME-.*|S3_SECRET_KEY=${minio_pwd}|" .env
+  ok "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD"
+fi
+
+# Mode: --full flips COMPOSE_PROFILES on disk so subsequent `docker compose
+# up` (without our wrapper) keeps the same mode.
+if [[ "$FULL" -eq 1 ]]; then
+  if grep -Eq '^# *COMPOSE_PROFILES=' .env; then
+    sed_inplace -E 's|^# *COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
+  elif grep -Eq '^COMPOSE_PROFILES=' .env; then
+    sed_inplace -E 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
+  else
+    printf "\nCOMPOSE_PROFILES=full\n" >> .env
+  fi
+  ok "Mode: full (adds PeerDB CDC stack)"
+else
+  ok "Mode: light (default — set --full to add the PeerDB stack)"
+fi
+
+if [[ "$NO_UP" -eq 1 ]]; then
+  step "Done (--no-up)"
+  say "  .env is ready. Bring up the stack with:"
+  say "    ${BOLD}$DC up -d${RESET}"
+  exit 0
+fi
+
+# ---------------- bring up ----------------
+step "Starting the stack"
+
+attempt=0
+until $DC up -d --remove-orphans; do
+  attempt=$((attempt + 1))
+  if [[ "$attempt" -ge 3 ]]; then
+    die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
+  fi
+  warn "compose up failed (attempt $attempt) — retrying in 30s…"
+  sleep 30
+done
+ok "Containers started"
+
+# ---------------- health wait ----------------
+step "Waiting for backend to become healthy"
+
+# Source .env for BACKEND_PORT so we hit the right host port.
+backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
+backend_port="${backend_port:-8000}"
+deadline=$(( $(date +%s) + 600 ))
+while true; do
+  if curl -fsS "http://localhost:${backend_port}/health/" >/dev/null 2>&1; then
+    ok "Backend healthy at http://localhost:${backend_port}"
+    break
+  fi
+  if [[ "$(date +%s)" -ge "$deadline" ]]; then
+    warn "Backend did not pass /health/ within 10 minutes. The stack may still be migrating."
+    warn "Tail the logs: $DC logs -f backend"
+    break
+  fi
+  sleep 5
+done
+
+# ---------------- first user ----------------
+if [[ "$SKIP_USER" -eq 1 || -n "${CI:-}" ]]; then
+  step "Skipping first-user creation"
+else
+  step "Create your first account"
+  say "  Press ${BOLD}Enter${RESET} on the email prompt to skip — you can run"
+  say "  '$DC exec backend python manage.py create_user' later."
+  printf "  Email:    "; read -r u_email || u_email=""
+  if [[ -n "$u_email" ]]; then
+    printf "  Name:     "; read -r u_name
+    printf "  Password: "; read -rs u_pass; echo
+    if $DC exec -T backend python manage.py create_user \
+         --email "$u_email" --name "$u_name" --password "$u_pass" >/dev/null; then
+      ok "Account created for $u_email"
+    else
+      warn "create_user failed. Re-run interactively:"
+      warn "  $DC exec -it backend python manage.py create_user"
+    fi
+  else
+    say "  Skipped."
+  fi
+fi
+
+# ---------------- done ----------------
+frontend_port=$(grep -E '^FRONTEND_PORT=' .env | head -1 | cut -d= -f2- || true)
+frontend_port="${frontend_port:-3000}"
+
+step "Future AGI is up"
+say "  ${BOLD}Frontend:${RESET}  http://localhost:${frontend_port}"
+say "  ${BOLD}Backend:${RESET}   http://localhost:${backend_port}"
+if [[ "$FULL" -eq 1 ]]; then
+  say "  ${BOLD}PeerDB UI:${RESET} http://localhost:3001  (peerdb / peerdb)"
+fi
+say ""
+say "  Stop:    $DC down"
+say "  Wipe:    $DC down -v   ${DIM}(deletes all data)${RESET}"
+say "  Logs:    $DC logs -f"
