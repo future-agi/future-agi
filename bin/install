@@ -6,6 +6,8 @@
 #   ./bin/install --full               # full mode (adds PeerDB CDC)
 #   ./bin/install --skip-user-creation # don't prompt for first user
 #   ./bin/install --no-up              # bootstrap .env only; don't start
+#   ./bin/install --wipe-volumes       # wipe stale project volumes and
+#                                      # re-init with fresh secrets
 #   ./bin/install -y                   # non-interactive (CI / unattended).
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
@@ -43,14 +45,16 @@ FULL=0
 SKIP_USER=${SKIP_USER_CREATION:-0}
 NO_UP=0
 NON_INTERACTIVE=0
+WIPE_VOLUMES_FLAG=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
     --skip-user-creation) SKIP_USER=1 ;;
     --no-up) NO_UP=1 ;;
+    --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
@@ -164,10 +168,68 @@ gen_secret() {
   fi
 }
 
+# Stale-volume guard. If a previous stack-up (in this dir or another with
+# the same compose project name) created persistent volumes, those volumes
+# are already initialized with the OLD password. Rotating CHANGEME-* now
+# would generate a new secret that postgres / minio won't accept, and the
+# stack will fail to come up with cryptic auth errors. Detect and ask.
+project_name=$(basename "$ROOT")
+declare -a STALE_VOLS=()
+for vol in postgres-data clickhouse-data minio-data redis-data \
+           rabbitmq-data peerdb-catalog-data peerdb-minio-data; do
+  if docker volume inspect "${project_name}_${vol}" >/dev/null 2>&1; then
+    STALE_VOLS+=("${project_name}_${vol}")
+  fi
+done
+
+WIPE_VOLS=0
+ROTATE_OK=1
+if (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=CHANGEME-" .env; then
+  warn "Detected ${#STALE_VOLS[@]} existing project volume(s) — likely from a prior install:"
+  for v in "${STALE_VOLS[@]}"; do say "    • $v"; done
+  say ""
+  say "  These volumes have data initialized with the OLD passwords. If I"
+  say "  generate fresh secrets now, the stack will fail to authenticate."
+  say ""
+  if (( WIPE_VOLUMES_FLAG == 1 )); then
+    WIPE_VOLS=1
+  elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    warn "  Non-interactive mode: leaving CHANGEME-* placeholders in .env."
+    warn "  Either re-run with --wipe-volumes, or set the passwords in .env"
+    warn "  to match what the existing volumes were initialized with."
+    ROTATE_OK=0
+  else
+    say "  Choose:"
+    say "    [w] ${BOLD}wipe${RESET} the volumes and start fresh ${RED}(deletes all data)${RESET}"
+    say "    [k] ${BOLD}keep${RESET} the volumes — I'll leave .env passwords as CHANGEME-*"
+    say "        and you set them to match the existing data manually"
+    say "    [a] ${BOLD}abort${RESET}"
+    while true; do
+      printf "  ${BOLD}> ${RESET}"
+      read -r choice || choice="a"
+      case "$choice" in
+        w|W) WIPE_VOLS=1; break ;;
+        k|K) ROTATE_OK=0; break ;;
+        a|A|"") die "Aborted by user." ;;
+        *) warn "Choose w / k / a" ;;
+      esac
+    done
+  fi
+fi
+
+if (( WIPE_VOLS == 1 )); then
+  step "Wiping existing volumes"
+  docker volume rm "${STALE_VOLS[@]}" 2>&1 | sed 's|^|  |'
+  ok "Volumes removed. Fresh secrets will work on first boot."
+fi
+
 # Replace CHANGEME-* placeholders idempotently. A var that has already been
-# rotated (no CHANGEME prefix) is left alone.
+# rotated (no CHANGEME prefix) is left alone. Skipped entirely if the user
+# chose to keep stale volumes (ROTATE_OK=0) — they'll align passwords
+# manually.
 rotate_placeholder() {
   local var="$1"
+  if (( ROTATE_OK == 0 )); then return 0; fi
   if grep -Eq "^${var}=CHANGEME-" .env; then
     local secret
     secret=$(gen_secret)
@@ -182,7 +244,7 @@ rotate_placeholder AGENTCC_INTERNAL_API_KEY
 rotate_placeholder AGENTCC_ADMIN_TOKEN
 
 # S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
-if grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
+if (( ROTATE_OK == 1 )) && grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
   minio_pwd=$(grep -E '^MINIO_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2-)
   sed_inplace -E "s|^S3_SECRET_KEY=CHANGEME-.*|S3_SECRET_KEY=${minio_pwd}|" .env
   ok "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD"
