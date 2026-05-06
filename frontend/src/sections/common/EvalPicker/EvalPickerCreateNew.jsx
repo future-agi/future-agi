@@ -75,8 +75,14 @@ const SOURCE_LABELS = {
 };
 
 const EvalPickerCreateNew = ({ onBack, onSave }) => {
-  const { source, sourceId, sourceColumns, setSelectedEval, setStep } =
-    useEvalPickerContext();
+  const {
+    source,
+    sourceId,
+    sourceRowType,
+    sourceColumns,
+    setSelectedEval,
+    setStep,
+  } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -964,7 +970,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               <Box sx={{ flex: 1, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
-                  source === "task" ||
                   source === "custom" ||
                   source === "run-experiment" ||
                   source === "run-optimization") && (
@@ -982,6 +987,20 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
+                  />
+                )}
+                {source === "task" && (
+                  <TracingTestMode
+                    ref={sourceRef}
+                    templateId={draftId}
+                    variables={isComposite ? compositeUnionKeys : variables}
+                    onTestResult={handleTestResult}
+                    onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
+                    initialProjectId={sourceId}
+                    initialRowType={sourceRowType}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {source === "tracing" && (
