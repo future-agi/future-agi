@@ -210,6 +210,83 @@ if [[ "$NO_UP" -eq 1 ]]; then
   exit 0
 fi
 
+# ---------------- port preflight ----------------
+# Catch host-port collisions BEFORE the slow docker compose up. Without
+# this, compose retries 3× on what's actually a structural conflict.
+step "Checking host ports"
+
+env_port() {
+  local var="$1" default="$2"
+  local v
+  v=$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)
+  printf '%s' "${v:-$default}"
+}
+
+port_holder() {
+  # lsof / ss exit non-zero when nothing's bound. Disable both errexit and
+  # ERR-trap inheritance just for this function so a clean "nothing's
+  # listening" doesn't get reported as an install failure.
+  set +eE
+  local port="$1" out=""
+  if command -v lsof >/dev/null 2>&1; then
+    out=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null)
+    [[ -n "$out" ]] && awk 'NR>1 {printf "%s (pid %s)\n", $1, $2; exit}' <<<"$out"
+  elif command -v ss >/dev/null 2>&1; then
+    out=$(ss -ltn 2>/dev/null)
+    [[ -n "$out" ]] && awk -v p=":$port\$" '$4 ~ p {print $0; exit}' <<<"$out"
+  fi
+  set -eE
+  return 0
+}
+
+# Light-mode ports. PeerDB UI (3001) only collides in full mode.
+declare -a PORTS_TO_CHECK=(
+  "FRONTEND_PORT:3000"
+  "BACKEND_PORT:8000"
+  "AGENTCC_GATEWAY_PORT:8090"
+  "SERVING_PORT:8080"
+  "CODE_EXECUTOR_PORT:8060"
+)
+[[ "$FULL" -eq 1 ]] && PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001")
+
+CONFLICTS=()
+for entry in "${PORTS_TO_CHECK[@]}"; do
+  var="${entry%%:*}"
+  default="${entry##*:}"
+  port=$(env_port "$var" "$default")
+  holder=$(port_holder "$port" 2>/dev/null) || holder=""
+  if [[ -n "$holder" ]]; then
+    # Allow our own already-running container to "hold" the port — re-runs
+    # of bin/install on the same project are fine. Anything else collides.
+    if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
+      project_name=$(basename "$ROOT")
+      if docker ps --format '{{.Names}}\t{{.Ports}}' \
+           | awk -v p=":$port->" -v proj="^${project_name}-" \
+                '$0 ~ p && $1 ~ proj' \
+           | grep -q .; then
+        ok "  $var=$port  (held by this project's container — fine)"
+        continue
+      fi
+    fi
+    CONFLICTS+=("$var=$port  ←  $holder")
+    warn "  $var=$port  is taken by $holder"
+  else
+    ok "  $var=$port  free"
+  fi
+done
+
+if (( ${#CONFLICTS[@]} > 0 )); then
+  say ""
+  say "  ${BOLD}${YELLOW}Port conflicts detected.${RESET} Two ways to resolve:"
+  say ""
+  say "    1. ${BOLD}Free the port${RESET} — stop the process / container that's holding it."
+  say "    2. ${BOLD}Override in .env${RESET} — pick a free host port. Example:"
+  say "         ${DIM}CODE_EXECUTOR_PORT=8062${RESET}"
+  say ""
+  say "  Then re-run: ${BOLD}./bin/install${RESET}"
+  exit 1
+fi
+
 # ---------------- collect first-user creds ----------------
 # Done up-front so the rest of the install can run unattended. Captured
 # values are used after the backend reports healthy. Press Enter on the
