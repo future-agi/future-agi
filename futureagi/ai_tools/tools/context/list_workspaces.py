@@ -14,17 +14,38 @@ class ListWorkspacesTool(BaseTool):
     input_model = EmptyInput
 
     def execute(self, params: EmptyInput, context: ToolContext) -> ToolResult:
-        from accounts.models.workspace import Workspace
+        from accounts.models.workspace import Workspace, WorkspaceMembership
 
-        workspaces = (
-            Workspace.objects.filter(
-                organization=context.organization,
-                is_active=True,
-                deleted=False,
+        user = context.user
+        org = context.organization
+
+        if user.has_global_workspace_access(org):
+            # Org Admin/Owner: see all workspaces
+            workspaces = (
+                Workspace.objects.filter(
+                    organization=org,
+                    is_active=True,
+                    deleted=False,
+                )
+                .order_by("-is_default", "name")
+                .values_list("id", "name", "is_default", "created_at")
             )
-            .order_by("-is_default", "name")
-            .values_list("id", "name", "is_default", "created_at")
-        )
+        else:
+            # Members/Viewers: only workspaces they have active membership in
+            accessible_ws_ids = WorkspaceMembership.no_workspace_objects.filter(
+                user=user, is_active=True
+            ).values_list("workspace_id", flat=True)
+
+            workspaces = (
+                Workspace.objects.filter(
+                    id__in=accessible_ws_ids,
+                    organization=org,
+                    is_active=True,
+                    deleted=False,
+                )
+                .order_by("-is_default", "name")
+                .values_list("id", "name", "is_default", "created_at")
+            )
 
         rows = []
         data_list = []

@@ -22,7 +22,8 @@ class AddWorkspaceMemberTool(BaseTool):
     name = "add_workspace_member"
     description = (
         "Adds an existing organization user to a workspace with a specified role. "
-        "If the user is already a member, their role is updated. Requires admin permissions."
+        "If the user is already a member, their role is updated. "
+        "Requires workspace admin or organization admin permissions."
     )
     category = "users"
     input_model = AddWorkspaceMemberInput
@@ -33,24 +34,40 @@ class AddWorkspaceMemberTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import (
-            OrganizationRoles,
             Workspace,
             WorkspaceMembership,
+        )
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import (
+            can_invite_at_level,
+            get_effective_workspace_level,
         )
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
-            return ToolResult.error(
-                "You do not have permission to add workspace members. "
-                "Only Owner, Admin, or Member roles can add members to workspaces.",
-                error_code="PERMISSION_DENIED",
+        # Validate role input
+        VALID_WS_ROLES = {"workspace_admin", "workspace_member", "workspace_viewer"}
+        if params.role not in VALID_WS_ROLES:
+            return ToolResult.validation_error(
+                f"Invalid role '{params.role}'. "
+                f"Must be one of: {', '.join(sorted(VALID_WS_ROLES))}"
+            )
+
+        # Check actor has admin-level access to the target workspace
+        actor_ws_level = get_effective_workspace_level(actor, params.workspace_id)
+        if actor_ws_level is None or actor_ws_level < Level.WORKSPACE_ADMIN:
+            return ToolResult.permission_denied(
+                "You must be a workspace admin or organization admin "
+                "to add members to this workspace."
+            )
+
+        # Enforce: cannot grant a role at or above own level (unless Owner)
+        target_level = Level.from_string(params.role)
+        if not can_invite_at_level(actor_ws_level, target_level):
+            return ToolResult.permission_denied(
+                f"You cannot assign the '{params.role}' role — "
+                "it requires a higher privilege level than yours."
             )
 
         # Validate workspace

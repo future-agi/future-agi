@@ -49,22 +49,24 @@ class InviteUsersTool(BaseTool):
             WorkspaceMembership,
         )
         from accounts.utils import generate_password
+        from tfc.constants.levels import Level
         from tfc.constants.roles import RoleMapping, RolePermissions
+        from tfc.permissions.utils import (
+            can_invite_at_level,
+            get_effective_workspace_level,
+            get_org_membership,
+        )
 
         org = context.organization
         inviter = context.user
 
-        # Permission check: only Owner/Admin/Member can invite
-        if inviter.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
-            return ToolResult.error(
-                "You do not have permission to invite users. "
-                "Only Owner, Admin, or Member roles can invite.",
-                error_code="PERMISSION_DENIED",
+        # Permission check: resolve actor's org-level RBAC
+        actor_membership = get_org_membership(inviter)
+        if actor_membership is None:
+            return ToolResult.permission_denied(
+                "You are not a member of this organization."
             )
+        actor_level = actor_membership.level_or_legacy
 
         # Validate emails
         email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -99,6 +101,16 @@ class InviteUsersTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
+        # Check actor has admin access to all target workspaces
+        if actor_level < Level.ADMIN:
+            for ws in workspaces:
+                ws_level = get_effective_workspace_level(inviter, ws.id)
+                if ws_level is None or ws_level < Level.WORKSPACE_ADMIN:
+                    return ToolResult.permission_denied(
+                        f"You must be a workspace admin to invite users "
+                        f"to workspace '{ws.name}'."
+                    )
+
         # Determine workspace role
         organization_level_roles = [
             OrganizationRoles.OWNER,
@@ -112,6 +124,20 @@ class InviteUsersTool(BaseTool):
             workspace_role = RoleMapping.get_workspace_role(role)
         else:
             workspace_role = role
+
+        # Validate workspace role and enforce hierarchy
+        try:
+            target_level = Level.from_string(workspace_role)
+        except ValueError:
+            return ToolResult.validation_error(
+                f"Invalid workspace role: {workspace_role}"
+            )
+
+        if not can_invite_at_level(actor_level, target_level):
+            return ToolResult.permission_denied(
+                f"You cannot assign the '{workspace_role}' role — "
+                "it requires a higher privilege level."
+            )
 
         results = []
         errors = []
