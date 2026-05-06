@@ -145,7 +145,10 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
+        # Derive from BACKEND_PORT so port-preflight auto-switching stays in
+        # sync with what the bundle calls. Override VITE_HOST_API directly
+        # only when pointing at a non-localhost backend (real deploy).
+        VITE_HOST_API: ${VITE_HOST_API:-http://localhost:${BACKEND_PORT:-8000}}
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
         VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
     ports:

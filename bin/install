@@ -454,6 +454,15 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   if (( apply == 1 )); then
     set_env_var "$var" "$suggestion"
     ok "  $var=$suggestion  written to .env"
+    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. The frontend
+    # bundle bakes the URL at build time; if .env still has the old
+    # localhost:8000 default after we switch BACKEND_PORT, the bundle
+    # would call a port that's no longer ours.
+    if [[ "$var" == "BACKEND_PORT" ]] && \
+       grep -Eq '^VITE_HOST_API=https?://localhost:[0-9]+/?$' .env; then
+      sed_inplace -E "s|^VITE_HOST_API=.*|VITE_HOST_API=http://localhost:${suggestion}|" .env
+      ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+    fi
   else
     UNRESOLVED+=("$var=$port  ←  $holder")
   fi
