@@ -74,17 +74,16 @@ class TraceExploreInput(PydanticBaseModel):
     )
     action: str = Field(
         description=(
-            "Action to perform:\n"
-            "- 'summary' — overview with span counts, errors, latency\n"
-            "- 'filter_spans' — filter by field=value (e.g. query='observation_type=llm')\n"
-            "- 'span_detail' — full span input/output (query=span_id)\n"
-            "- 'span_tree' — hierarchical view of all spans\n"
-            "- 'errors' — list error spans\n"
-            "- 'slow_spans' — list slowest spans\n"
-            "- 'list_trace_spans' — fetch spans for a trace (query=trace_id)\n"
-            "- 'keys' — list top-level data keys\n"
-            "- 'get' — read a specific path (query=field.path)\n"
-            "- 'search' — substring search (query=text)"
+            "Action to perform. Works on any root: "
+            "'keys' (list fields), 'get' (read path, query=field.path), "
+            "'search' (find text, query=substring). "
+            "Trace-only (root=trace): "
+            "'summary' (overview), 'span_tree' (hierarchy), "
+            "'filter_spans' (query=field=value, e.g. observation_type=llm), "
+            "'span_detail' (query=span_id, fetches full input/output), "
+            "'errors', 'slow_spans'. "
+            "Session-only (root=session): "
+            "'list_trace_spans' (query=trace_id, fetches spans for a trace)."
         )
     )
     query: Optional[str] = Field(
@@ -102,13 +101,15 @@ class TraceExploreInput(PydanticBaseModel):
 class TraceExplorerTool(BaseTool):
     name = "explore_trace"
     description = (
-        "Navigate eval context data (trace / session / span / row / call). "
-        "Workflow: 1) action='summary' to understand what's there, "
-        "2) action='filter_spans' query='observation_type=llm' to find specific spans, "
-        "3) action='span_detail' query='<span_id>' to see full input/output. "
-        "Other actions: 'keys', 'get' query='path', 'search' query='text', "
-        "'span_tree', 'errors', 'slow_spans', "
-        "'list_trace_spans' query='<trace_id>' (for session drill-down)."
+        "Explore eval context data. Use the `root` parameter to select which "
+        "context to explore (trace/session/span/call/row). "
+        "See the 'Additional Context Available' or 'Eval Context' section in "
+        "your prompt for which roots are loaded and recommended actions. "
+        "Common workflows:\n"
+        "- Trace: summary → filter_spans query='observation_type=llm' → span_detail query='<id>'\n"
+        "- Session: keys → get query='traces[0]' → list_trace_spans query='<trace_id>' → span_detail\n"
+        "- Span/Call: keys → get query='input' or get query='transcript'\n"
+        "- Row: keys → get query='<column_name>'"
     )
     category = "web"  # Same category as web_search so it loads together
     input_model = TraceExploreInput
