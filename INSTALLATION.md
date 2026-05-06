@@ -81,8 +81,11 @@ docker exec futureagi-backend-1 python manage.py create_user \
 
 > **Team invites and password resets require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments.
 
-To stop everything: `docker compose down`. Data persists in named volumes across restarts.
-To wipe all data: `docker compose down -v`.
+To stop everything: `./bin/uninstall` (or `docker compose down`). Data persists in named volumes across restarts.
+
+To wipe all data: `./bin/uninstall --wipe-data` (or `docker compose down -v`).
+
+To fully remove the install (containers, volumes, `.env`, built images): `./bin/uninstall --purge`.
 
 ### Without the installer
 
