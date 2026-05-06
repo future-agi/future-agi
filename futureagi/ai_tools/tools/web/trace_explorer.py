@@ -382,10 +382,11 @@ class TraceExplorerTool(BaseTool):
             if m:
                 models.add(m)
 
+        _status = "error" if error_count > 0 else "ok"
         lines = [
             f"## Trace Summary",
             f"**Name:** {data.get('trace_name', data.get('name', 'unnamed'))}",
-            f"**Status:** {data.get('status', '?')}",
+            f"**Status:** {_status}",
             f"**Total spans:** {total_spans}",
             f"**Errors:** {error_count}",
             f"**Total latency:** {total_latency}ms",
