@@ -68,6 +68,11 @@ class EvalResult:
     end_time: float | None = None
     duration: float | None = None
 
+    # Cost tracking (populated from the evaluator instance post-run so callers
+    # can emit billing events without having to hold the instance themselves).
+    cost: dict | None = None
+    token_usage: dict | None = None
+
 
 def run_eval(request: EvalRequest) -> EvalResult:
     """
@@ -94,6 +99,14 @@ def run_eval(request: EvalRequest) -> EvalResult:
         raise ValueError(
             f"eval_type_id not found in EvalTemplate config for '{eval_template.name}'"
         )
+
+    call_type = request.inputs.get("call_type", "")
+    if call_type in ("protect", "protect_flash") and eval_type_id != "DeterministicEvaluator":
+        eval_type_id = "DeterministicEvaluator"
+        # Patch template config so format_eval_value uses DeterministicEvaluator branch
+        eval_template.config = {**eval_template.config, "eval_type_id": "DeterministicEvaluator"}
+        if not request.model:
+            request.model = "protect_flash" if call_type == "protect_flash" else "protect"
 
     is_futureagi = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -171,4 +184,6 @@ def run_eval(request: EvalRequest) -> EvalResult:
         start_time=start_time,
         end_time=end_time,
         duration=end_time - start_time,
+        cost=getattr(eval_instance, "cost", None),
+        token_usage=getattr(eval_instance, "token_usage", None),
     )

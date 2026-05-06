@@ -44,6 +44,7 @@ import OutputTypeConfig from "src/sections/evals/components/OutputTypeConfig";
 import FewShotExamples from "src/sections/evals/components/FewShotExamples";
 import CompositeDetailPanel from "src/sections/evals/components/CompositeDetailPanel";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
+import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
@@ -65,6 +66,8 @@ import { canonicalEntries } from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
+  buildCompositeSourceModeProps,
+  getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
@@ -187,6 +190,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
   const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
+  const compositeUnionKeys = useCompositeChildrenUnionKeys(
+    compositeDetail?.children || [],
+  );
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
@@ -237,32 +243,32 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       getEvalRequiredKeys(normalizedEvalData) ||
       [];
 
-    // When required_keys exist, use them as the authoritative variable list.
-    // This is critical for Jinja2 evals where extractJinjaVariables() only
-    // returns root names (e.g. "file") instead of the full expressions the
-    // backend expects (e.g. "file.code", "language | lower").
-    if (requiredKeys.length > 0) {
+    if (evalType === "code") {
       return [...new Set(requiredKeys)];
     }
 
-    if (evalType === "code") {
-      return [];
+    // System evals + Jinja mode: use static required_keys.
+    // Jinja's extractJinjaVariables() only returns root names (e.g. "file")
+    // not full paths (e.g. "file.code"), so requiredKeys is authoritative.
+    if ((isSystemEval || templateFormat === "jinja") && requiredKeys.length > 0) {
+      return [...new Set(requiredKeys)];
     }
-    let templateVars;
-    if (templateFormat === "jinja") {
-      templateVars = extractJinjaVariables(instructions || "");
-    } else {
-      const matches =
-        (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-      templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
-    }
-    return [...new Set(templateVars)];
+
+    // User evals (mustache): prefer live extraction so mapping updates as user types.
+    const matches =
+      (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
+    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    if (templateVars.length > 0) return [...new Set(templateVars)];
+    // Fallback: stored required_keys (before instructions hydrate)
+    if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
+    return [];
   }, [
     instructions,
     normalizedFullEval,
     normalizedEvalData,
     evalType,
     isComposite,
+    isSystemEval,
     compositeDetail,
     templateFormat,
   ]);
@@ -274,6 +280,27 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       ([key]) => !variableSet.has(key),
     );
   }, [functionParamsSchema, variables]);
+
+  const compositeSourceModeProps = useMemo(
+    () =>
+      buildCompositeSourceModeProps({
+        isComposite,
+        fullEval,
+        compositeDetail,
+        compositeChildWeights,
+      }),
+    [isComposite, fullEval, compositeDetail, compositeChildWeights],
+  );
+
+  const sourceModeVariables = useMemo(
+    () =>
+      getSourceModeVariables({
+        isComposite,
+        variables,
+        compositeUnionKeys,
+      }),
+    [isComposite, variables, compositeUnionKeys],
+  );
 
   const hasValidPromptMessages = useMemo(
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
@@ -1202,6 +1229,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   onTemplateFormatChange={setTemplateFormat}
                   datasetColumns={datasetColumns}
                   datasetJsonSchemas={datasetJsonSchemas}
+                  mappedVariables={sourceMapping}
                   disabled={isInstructionsReadOnly}
                   modelSelectorDisabled={false}
                   mode={agentMode}
@@ -1430,7 +1458,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
@@ -1441,20 +1469,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    initialMapping={evalData?.mapping}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {(source === "simulation" || source === "test") && (
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1463,6 +1493,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "create-simulate" && (
@@ -1480,7 +1511,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1490,6 +1521,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "custom" && (
@@ -1506,7 +1538,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "composite" && (

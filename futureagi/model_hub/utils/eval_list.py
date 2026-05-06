@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import TYPE_CHECKING, Iterable
 
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 from django.utils import timezone
 
 from agentic_eval.core_evals.fi_evals.eval_type import (
@@ -77,9 +77,10 @@ def derive_eval_type(template: "EvalTemplate") -> str:
 
     Uses the dedicated eval_type field if set.
     Falls back to tag/config-based detection for backward compatibility.
-    For composites, returns the union of child eval types (e.g. "code, llm").
+    For composites, returns a single normalized type so response schemas and
+    filters stay compatible with the 3-type contract.
     """
-    # Composite: return union of child eval types
+    # Composite: return a single canonical type
     if getattr(template, "template_type", "single") == "composite":
         return _derive_composite_eval_type(template)
 
@@ -108,7 +109,7 @@ def derive_eval_type(template: "EvalTemplate") -> str:
 
 
 def _derive_composite_eval_type(template: "EvalTemplate") -> str:
-    """Return comma-separated union of child eval types for a composite."""
+    """Return a single canonical eval type for a composite."""
     from model_hub.models.evals_metric import CompositeEvalChild
 
     child_types = list(
@@ -116,8 +117,23 @@ def _derive_composite_eval_type(template: "EvalTemplate") -> str:
         .select_related("child")
         .values_list("child__eval_type", flat=True)
     )
-    unique = sorted(set(t or "llm" for t in child_types))
-    return ", ".join(unique) if unique else "composite"
+    return infer_composite_eval_type(child_types)
+
+
+def infer_composite_eval_type(child_types: Iterable[str | None]) -> str:
+    """Collapse composite child types into one API-safe eval type.
+
+    Mixed composites still need a single `eval_type` because the API and DB
+    field only support `llm`, `code`, or `agent`. We use the strongest child
+    type present so agent-containing composites remain discoverable as agent
+    evals, code-only mixes remain code, and llm is the fallback.
+    """
+    normalized = {t if t in {"llm", "code", "agent"} else "llm" for t in child_types}
+    if "agent" in normalized:
+        return "agent"
+    if "code" in normalized:
+        return "code"
+    return "llm"
 
 
 def derive_output_type(template: "EvalTemplate") -> str:
@@ -146,12 +162,26 @@ def derive_output_type(template: "EvalTemplate") -> str:
     return _OUTPUT_TYPE_MAP.get(output, "percentage")
 
 
+def get_organization_display_name(template: "EvalTemplate") -> str:
+    organization = getattr(template, "organization", None)
+    if not organization:
+        return "User"
+
+    display_name = (
+        getattr(organization, "display_name", "")
+        or getattr(organization, "name", "")
+        or ""
+    ).strip()
+    return display_name or "User"
+
+
 def get_created_by_name(template: "EvalTemplate") -> str:
     """
     Get display name for the template creator.
 
     Returns "System" for system-owned templates, or the user's name/email
-    for user-owned templates. Falls back to checking EvalTemplateVersion.created_by.
+    for user-owned templates. Falls back to EvalTemplateVersion.created_by,
+    then to the organization display name for legacy rows without creator metadata.
     """
     if template.owner == OwnerChoices.SYSTEM.value:
         return "System"
@@ -196,7 +226,7 @@ def get_created_by_name(template: "EvalTemplate") -> str:
     except Exception:
         pass
 
-    return "User"
+    return get_organization_display_name(template)
 
 
 def build_user_eval_list_items(
@@ -379,16 +409,21 @@ def build_eval_list_queryset(
                 deleted=False,
                 created_by__email__in=created_by_list,
             ).values_list("eval_template_id", flat=True)
+            org_q = Q(organization__display_name__in=created_by_list) | Q(
+                organization__name__in=created_by_list
+            )
             if "System" in created_by_list:
                 qs = qs.filter(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
+                    | org_q
                     | Q(owner="system")
                 )
             else:
                 qs = qs.filter(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
+                    | org_q
                 )
 
         # Note: eval_type filter is applied in-memory after fetching because
@@ -397,6 +432,40 @@ def build_eval_list_queryset(
         # a denormalized eval_type field to EvalTemplate in a future phase.
 
     return qs
+
+
+def fetch_version_metadata(
+    template_ids: Iterable[str],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """
+    Bulk-fetch version count and default version_number for a set of templates.
+
+    Returns:
+        (counts_by_template_id, default_version_number_by_template_id)
+        Templates with no versions are absent from both maps; callers should
+        fall back to count=1 / "V1" for display.
+    """
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    tids = [str(t) for t in template_ids]
+    if not tids:
+        return {}, {}
+
+    counts: dict[str, int] = {}
+    for row in (
+        EvalTemplateVersion.objects.filter(eval_template_id__in=tids)
+        .values("eval_template_id")
+        .annotate(c=Count("id"))
+    ):
+        counts[str(row["eval_template_id"])] = row["c"]
+
+    defaults: dict[str, int] = {}
+    for v in EvalTemplateVersion.objects.filter(
+        eval_template_id__in=tids, is_default=True
+    ).only("eval_template_id", "version_number"):
+        defaults[str(v.eval_template_id)] = v.version_number
+
+    return counts, defaults
 
 
 def compute_thirty_day_data(

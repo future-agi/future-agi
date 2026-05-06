@@ -6,7 +6,7 @@ Hourly Stripe usage reporting + daily dunning checks. The consumer workflow runs
 """
 
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, List
 
 import structlog
 
@@ -14,6 +14,13 @@ from tfc.temporal.drop_in import temporal_activity
 from tfc.temporal.schedules.config import ScheduleConfig
 
 logger = structlog.get_logger(__name__)
+
+
+def _monthly_closing_workflow() -> Any:
+    """Lazy import — workflow module pulls in temporalio's sandbox guards."""
+    from tfc.temporal.billing.workflows import MonthlyClosingWorkflow
+
+    return MonthlyClosingWorkflow
 
 
 @temporal_activity(time_limit=300, queue="default")
@@ -71,13 +78,6 @@ def evaluate_budgets_catchup_activity():
 BILLING_SCHEDULES: List[ScheduleConfig] = [
     # sync-usage-to-db: REMOVED — now runs inside UsageConsumerWorkflow (every 60s)
     ScheduleConfig(
-        schedule_id="monthly-usage-reset",
-        activity_name="monthly_reset_activity",
-        interval_seconds=86400,  # Daily — activity is idempotent, only acts on 1st of month
-        queue="default",
-        description="Monthly usage reset: snapshot counters, clear Redis, update billing periods",
-    ),
-    ScheduleConfig(
         schedule_id="budget-catchup",
         activity_name="evaluate_budgets_catchup_activity",
         interval_seconds=900,
@@ -99,10 +99,15 @@ BILLING_SCHEDULES: List[ScheduleConfig] = [
         description="Process dunning steps for past_due orgs (daily)",
     ),
     ScheduleConfig(
-        schedule_id="monthly-invoice-generation",
-        activity_name="generate_monthly_invoices_activity",
-        interval_seconds=86400,  # Daily — activity is idempotent, only generates once per period
-        queue="tasks_l",
-        description="Generate monthly invoices for all paid orgs (runs daily, acts on 1st of month)",
+        schedule_id="monthly-closing",
+        activity_name="monthly_closing_activity",
+        cron_expression="0 0 1 * *",
+        catchup_window_seconds=7 * 86400,
+        queue="tasks_s",
+        description=(
+            "Flush closing-period Redis usage to UsageSummary, then generate "
+            "invoices for all paid orgs."
+        ),
+        workflow_class=_monthly_closing_workflow(),
     ),
 ]

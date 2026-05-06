@@ -49,6 +49,8 @@ const ObserveToolbar = ({
   setDateFilter,
   // Filter
   hasActiveFilter,
+  canSaveView,
+  onSaveView,
   isFilterOpen,
   onFilterToggle,
   filters,
@@ -58,6 +60,9 @@ const ObserveToolbar = ({
   onApplyExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
+  // prepends the matching id filter(s) to its property picker.
+  tab,
   // Columns
   columns,
   onColumnVisibilityChange,
@@ -82,6 +87,7 @@ const ObserveToolbar = ({
   onToggleNonAnnotated,
   // Group
   groupBy,
+  hiddenGroupByOptions,
   onGroupByChange,
   // Grid
   rowCount,
@@ -109,6 +115,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Spans view — swaps "Trace Name" filter label to "Span Name"
+  isSpansView = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -381,7 +389,9 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
+            tab={tab}
             isSimulator={isSimulator}
+            isSpansView={isSpansView}
             source={
               mode === "sessions"
                 ? "sessions"
@@ -467,14 +477,21 @@ const ObserveToolbar = ({
             }}
           />
 
-          {/* Save view — appears when filters are active (traces only) */}
-          {isTraces && hasActiveFilter && (
+          {/* Save view — updates the currently-active saved view in place
+              when its state has diverged from the saved baseline. The "+"
+              button in the tab bar handles save-as-new. */}
+          {canSaveView && (
             <Button
               variant="outlined"
               size="small"
               startIcon={<Iconify icon="mdi:content-save-outline" width={16} />}
-              onClick={(e) => {
-                // Find the "+" button in the tab bar and click it to open the save view popover
+              onClick={() => {
+                if (typeof onSaveView === "function") {
+                  onSaveView();
+                  return;
+                }
+                // Fallback: open create-new popover via the "+" button if no
+                // explicit save handler was wired (e.g. an older mount path).
                 const createBtn = document.querySelector(
                   "[data-create-view-btn]",
                 );
@@ -486,8 +503,9 @@ const ObserveToolbar = ({
                 borderColor: "primary.main",
                 color: "primary.main",
                 "&:hover": {
-                  bgcolor: "primary.lighter",
+                  bgcolor: "action.hover",
                   borderColor: "primary.main",
+                  color: "primary.main",
                 },
               }}
             >
@@ -531,6 +549,7 @@ const ObserveToolbar = ({
             onToggleNonAnnotated={onToggleNonAnnotated}
             groupBy={groupBy}
             onGroupByChange={onGroupByChange}
+            hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
@@ -572,6 +591,8 @@ ObserveToolbar.propTypes = {
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   hasActiveFilter: PropTypes.bool,
+  canSaveView: PropTypes.bool,
+  onSaveView: PropTypes.func,
   isFilterOpen: PropTypes.bool,
   onFilterToggle: PropTypes.func,
   filters: PropTypes.array,
@@ -596,6 +617,7 @@ ObserveToolbar.propTypes = {
   showNonAnnotated: PropTypes.bool,
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onGroupByChange: PropTypes.func,
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
@@ -611,12 +633,14 @@ ObserveToolbar.propTypes = {
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(ObserveToolbar);

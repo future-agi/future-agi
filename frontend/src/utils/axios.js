@@ -46,7 +46,7 @@ function snakeToCamelKey(key) {
 // phantom aliases like `numOfWords` for a template variable the user named
 // `num_of_words`. The outer field itself still gets a camelCase alias — only
 // the inner keys of that object are left alone (TH-4375).
-const USER_KEYED_MAP_FIELDS = new Set(["variable_names"]);
+const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders", "params", "headers"]);
 
 // Build a camelCase→snake_case lookup table for each object we alias.
 function buildAliasTable(obj) {
@@ -531,7 +531,7 @@ export const endpoints = {
     createProperty: "/model-hub/dataset/properties/",
     promptSummary: (id) => `/model-hub/dataset/${id}/run-prompt-stats/`,
     evalsSummary: (id) => `/model-hub/dataset/${id}/eval-stats/`,
-    annotationSummary: (id) => `model-hub/dataset/${id}/annotation-summary/`,
+    annotationSummary: (id) => `/model-hub/dataset/${id}/annotation-summary/`,
     baseColumndata: "/model-hub/datasets/get-base-columns/",
     criticalIssue: (id) => `/model-hub/datasets/explanation-summary/${id}/`,
     criticalIssueRefresh: (id) =>
@@ -541,9 +541,9 @@ export const endpoints = {
       `/model-hub/datasets/${id}/compare-datasets/download/`,
     getSummaryTable: (id) => `/model-hub/datasets/${id}/compare-stats/`,
     getCompareDatasetRow: (compareId, rowId) =>
-      `model-hub/datasets/get-compare-row/${compareId}/${rowId}/`,
+      `/model-hub/datasets/get-compare-row/${compareId}/${rowId}/`,
     deleteCompareDataset: (compareId) =>
-      `model-hub/datasets/delete-compare/${compareId}/`,
+      `/model-hub/datasets/delete-compare/${compareId}/`,
   },
   dataPoints: {
     getColumns: "/model-hub/data-points/column-config/",
@@ -586,21 +586,21 @@ export const endpoints = {
     edit: "/model-hub/custom-metric/update/",
     all: "/model-hub/custom-metric/all/",
     tagOptions: "/model-hub/custom-metric/tag-options/",
-    testMetric: "model-hub/custom-metric/test/",
+    testMetric: "/model-hub/custom-metric/test/",
   },
   performance: {
-    graphData: "model-hub/performance/",
-    tableData: "model-hub/performance/detail/",
-    tableExport: "model-hub/performance/export/",
-    getFilterOptions: (modelId) => `model-hub/performance/options/${modelId}/`,
+    graphData: "/model-hub/performance/",
+    tableData: "/model-hub/performance/detail/",
+    tableExport: "/model-hub/performance/export/",
+    getFilterOptions: (modelId) => `/model-hub/performance/options/${modelId}/`,
     getTagDistribution: (modelId) =>
-      `model-hub/performance/tag-distribution/${modelId}/`,
+      `/model-hub/performance/tag-distribution/${modelId}/`,
   },
   performanceReport: {
-    create: (modelId) => `model-hub/performance/report/${modelId}/`,
-    list: (modelId) => `model-hub/performance/report/${modelId}/`,
+    create: (modelId) => `/model-hub/performance/report/${modelId}/`,
+    list: (modelId) => `/model-hub/performance/report/${modelId}/`,
     delete: (modelId, reportId) =>
-      `model-hub/performance/report/${modelId}/${reportId}/`,
+      `/model-hub/performance/report/${modelId}/${reportId}/`,
   },
   connectors: {
     getDraftId: "/data-connector/draft/",
@@ -617,9 +617,9 @@ export const endpoints = {
     updateConnection: "/data-connector/connection/",
   },
   optimization: {
-    createOptimization: "model-hub/optimize-dataset/",
-    stopOptimization: (id) => `model-hub/dataset-optimization/${id}/stop/`,
-    getAll: "model-hub/optimize-dataset/",
+    createOptimization: "/model-hub/optimize-dataset/",
+    stopOptimization: (id) => `/model-hub/dataset-optimization/${id}/stop/`,
+    getAll: "/model-hub/optimize-dataset/",
     getColumns: (id) => `/model-hub/optimize-dataset/${id}/column-config/`,
     updateColumns: (id) => `/model-hub/optimize-dataset/${id}/column-config/`,
     getOptimizeRightAnswer: (model_id, optimization_id) =>
@@ -635,7 +635,7 @@ export const endpoints = {
     updatePromptTemplateExploreColumns: (model_id, optimization_id) =>
       `/model-hub/optimize-dataset/${model_id}/column-config/prompt-template-explore/${optimization_id}/`,
     getPromptTemplateResults: (modelId, optimizationId) =>
-      `model-hub/optimize-dataset/${modelId}/prompt-template-result/${optimizationId}/`,
+      `/model-hub/optimize-dataset/${modelId}/prompt-template-result/${optimizationId}/`,
     getOptimizationDetail: (modelId, optimizationId) =>
       `/model-hub/optimize-dataset/${modelId}/${optimizationId}/`,
   },
@@ -693,7 +693,7 @@ export const endpoints = {
     list: "/model-hub/datasets/huggingface/list/",
     detail: "/model-hub/datasets/huggingface/detail/",
     addHuggingFaceRow: (datasetId) =>
-      `model-hub/develops/${datasetId}/add_rows_from_huggingface/`,
+      `/model-hub/develops/${datasetId}/add_rows_from_huggingface/`,
   },
   develop: {
     modelList: "/model-hub/api/models_list/",
@@ -752,7 +752,7 @@ export const endpoints = {
       `/model-hub/develops/${datasetId}/delete_column/${columnId}/`,
     deleteDataset: () => "/model-hub/develops/delete_dataset/",
     addDatasetColumn: (datasetId) =>
-      `model-hub/develops/${datasetId}/add_columns/`,
+      `/model-hub/develops/${datasetId}/add_columns/`,
     addRowFromExistingDataset: (datasetId) =>
       `/model-hub/develops/${datasetId}/add_rows_from_existing_dataset/`,
     getRowData: (datasetId) => `/model-hub/develops/${datasetId}/get-row-data/`,
@@ -788,7 +788,7 @@ export const endpoints = {
     evaluateRows: () => `/model-hub/evaluate-rows/`,
     evaluateRunRows: () => `/model-hub/run-prompt-for-rows/`,
     eval: {
-      createCustomEval: `model-hub/create_custom_evals/`,
+      createCustomEval: `/model-hub/create_custom_evals/`,
       getEvalsList: (datasetId) =>
         `/model-hub/develops/${datasetId}/get_evals_list/`,
       getCompareEvalsList: () => `/model-hub/datasets/compare/get-evals-list/`,
@@ -889,12 +889,12 @@ export const endpoints = {
       runPromptOptions: "/model-hub/develops/retrieve_run_prompt_options/",
       voiceOptions: "/model-hub/api/model_voices/",
       createCustomVoice: "/model-hub/tts-voices/",
-      createTemplateId: "model-hub/prompt-templates/",
+      createTemplateId: "/model-hub/prompt-templates/",
       createPromptDraft: `/model-hub/prompt-templates/create-draft/`,
       getPrompt: (id) => `/model-hub/prompt-templates/${id}/`,
       getNameChange: (id) => `/model-hub/prompt-templates/${id}/save-name/`,
-      generatePrompt: "model-hub/prompt-templates/generate-prompt/",
-      generateVariables: "model-hub/prompt-templates/generate-variables/",
+      generatePrompt: "/model-hub/prompt-templates/generate-prompt/",
+      generateVariables: "/model-hub/prompt-templates/generate-variables/",
       getStatus: (/** @type {string} */ id) =>
         `/model-hub/prompt-templates/${id}/get-run-status/`,
       getPromptVersions: () => `/model-hub/prompt-history-executions/`,
@@ -908,7 +908,7 @@ export const endpoints = {
       promptExecutions: () => `/model-hub/prompt-executions/`,
       promptDelete: (id) => `/model-hub/prompt-templates/${id}/`,
       promptMultiDelete: `/model-hub/prompt-templates/bulk-delete/`,
-      analyzePrompt: "model-hub/prompt-templates/analyze-prompt/",
+      analyzePrompt: "/model-hub/prompt-templates/analyze-prompt/",
       improvePrompt: "/model-hub/prompt-templates/improve-prompt/",
       updatePrompt: `/model-hub/prompt-templates/improve-prompt/`,
       responseSchema: "/model-hub/response_schema/",
@@ -937,9 +937,9 @@ export const endpoints = {
       getEvaluationConfigs: (id) =>
         `/model-hub/prompt-templates/${id}/evaluation-configs/`,
       createOrUpdateEvalConfig: (id) =>
-        `model-hub/prompt-templates/${id}/update-evaluation-configs/`,
+        `/model-hub/prompt-templates/${id}/update-evaluation-configs/`,
       deleteEvalConfig: (promptTemplate, evalId) =>
-        `model-hub/prompt-templates/${promptTemplate}/delete-evaluation-config/?id=${evalId}`,
+        `/model-hub/prompt-templates/${promptTemplate}/delete-evaluation-config/?id=${evalId}`,
       runEvalsOnMultipleVersions: (id) =>
         `/model-hub/prompt-templates/${id}/run-evals-on-multiple-versions/`,
       promptLabels: "/model-hub/prompt-labels/",
@@ -1020,6 +1020,16 @@ export const endpoints = {
         `/model-hub/experiments/v2/${expId}/json-schema/`,
       getExperimentDerivedVariables: (expId) =>
         `/model-hub/experiments/v2/${expId}/derived-variables/`,
+      feedback: {
+        getTemplate: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-template/`,
+        create: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/`,
+        getDetails: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/get-feedback-details/`,
+        submit: ( experimentId) =>
+          `/model-hub/experiments/v2/${experimentId}/feedback/submit-feedback/`,
+      },
     },
     apiKey: {
       create: "/model-hub/api-keys/",
@@ -1135,7 +1145,7 @@ export const endpoints = {
     submitFeedback: `/tracer/observation-span/submit_feedback/`,
     applySubmitFeedback: `/tracer/observation-span/submit_feedback_action_type/`,
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
-      `tracer/observation-span/get_evaluation_details?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
+      `/tracer/observation-span/get_evaluation_details?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => `/tracer/eval-task/`,
     getEvalTaskDetails: (id) =>
       `/tracer/eval-task/get_eval_details/?eval_id=${id}`,
@@ -1156,7 +1166,7 @@ export const endpoints = {
     addExistingDataset: `/tracer/dataset/add_to_existing_dataset/`,
     addNewDataset: `/tracer/dataset/add_to_new_dataset/`,
     reRunTracerEvalutation: `/tracer/custom-eval-config/run_evaluation/`,
-    getCodeBlockTracer: `tracer/project/project_sdk_code/`,
+    getCodeBlockTracer: `/tracer/project/project_sdk_code/`,
     getEvalGraph: `/tracer/charts/fetch_graph/`,
     getSystemMetricList: "/tracer/project/fetch_system_metrics/",
     muteAlerts: "/tracer/user-alerts/bulk-mute/",
@@ -1194,7 +1204,7 @@ export const endpoints = {
   },
   scenarios: {
     list: "/simulate/scenarios/",
-    getColumns: "simulate/scenarios/get-columns/",
+    getColumns: "/simulate/scenarios/get-columns/",
     create: "/simulate/scenarios/create/",
     detail: (id) => `/simulate/scenarios/${id}/`,
     edit: (id) => `/simulate/scenarios/${id}/edit/`,

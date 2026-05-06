@@ -4709,9 +4709,11 @@ class TestAnnotationGraphQueryBuilder:
         query, params = builder.build()
         assert isinstance(query, str)
         assert isinstance(params, dict)
-        # Post-revamp: annotations live in model_hub_score with a single
-        # JSON `value` column.  Float metric uses JSONExtractFloat.
+        # Post-revamp: numeric and star annotations live in model_hub_score
+        # and may store their value under either `value` or `rating`.
+        assert "JSONHas(value, 'rating')" in query
         assert "JSONExtractFloat(value, 'value')" in query
+        assert "JSONExtractFloat(value, 'rating')" in query
         assert "model_hub_score" in query
         assert "FINAL" in query
         assert "_peerdb_is_deleted = 0" in query
@@ -4783,7 +4785,8 @@ class TestAnnotationGraphQueryBuilder:
         )
         query, params = builder.build()
         assert "has(" in query
-        assert "JSONExtract" in query
+        assert "JSONExtract(value, 'selected', 'Array(String)')" in query
+        assert "JSONExtractString(value, 'selected')" not in query
         assert "choice_value" in params
         assert params["choice_value"] == "Good"
 
@@ -4800,7 +4803,7 @@ class TestAnnotationGraphQueryBuilder:
             value=None,
         )
         query, _ = builder.build()
-        assert "JSONExtractFloat(value, 'value')" in query
+        assert "JSONExtractFloat(value, 'rating')" in query
 
     def test_build_text_query(self):
         """Text output type should produce count() per time bucket."""
@@ -4831,7 +4834,7 @@ class TestAnnotationGraphQueryBuilder:
             output_type="unknown_type",
         )
         query, _ = builder.build()
-        assert "JSONExtractFloat(value, 'value')" in query
+        assert "JSONExtractFloat(value, 'rating')" in query
 
     def test_default_time_range(self):
         """When no dates provided, should default to 7-day range."""

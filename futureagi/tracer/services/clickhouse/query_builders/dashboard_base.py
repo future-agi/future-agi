@@ -11,20 +11,27 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tracer.services.clickhouse.query_builders.dashboard import (
     AGGREGATIONS,
+    AVERAGING_AGGREGATIONS,
     FILTER_OPERATORS,
     GRANULARITY_TO_CH,
     PRESET_RANGES,
     _coerce_filter_value,
     _generate_time_buckets,
     _parse_dt,
+    rescale_rate_to_percent,
 )
 
-# Re-export for convenience so subclasses can import from this module
+# Re-export for convenience so subclasses can import from this module.
+# ``rescale_rate_to_percent`` and ``AVERAGING_AGGREGATIONS`` live in
+# ``dashboard.py`` (the import root) to avoid the cycle that would
+# otherwise force inline imports here.
 __all__ = [
     "AGGREGATIONS",
+    "AVERAGING_AGGREGATIONS",
     "FILTER_OPERATORS",
     "GRANULARITY_TO_CH",
     "PRESET_RANGES",
+    "rescale_rate_to_percent",
     "_coerce_filter_value",
     "_generate_time_buckets",
     "_parse_dt",
@@ -119,7 +126,7 @@ class DashboardQueryBuilderBase:
                 elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 ts = ts.isoformat()
-            val = row.get("value", 0)
+            val = row.get("value")
             if isinstance(val, float):
                 val = round(val, 6)
             series_data[breakdown_key][ts] = val
@@ -163,7 +170,8 @@ class DashboardQueryBuilderBase:
             ``unit``, and ``series``.
         """
         metric_name = metric_info.get("name", "")
-        unit = unit_map.get(metric_name, "")
+        metric_key = metric_info.get("id") or metric_name
+        unit = unit_map.get(metric_key, unit_map.get(metric_name, ""))
 
         series_data = self._build_series_data(rows, name_map, name_map_breakdown)
 
@@ -175,7 +183,11 @@ class DashboardQueryBuilderBase:
                 filled.append(
                     {
                         "timestamp": bucket_ts,
-                        "value": data_map.get(bucket_ts, 0),
+                        # Preserve missing buckets as null so frontend can
+                        # distinguish "no data" from a real 0 value.
+                        "value": data_map[bucket_ts]
+                        if bucket_ts in data_map
+                        else None,
                     }
                 )
             series.append({"name": name, "data": filled})

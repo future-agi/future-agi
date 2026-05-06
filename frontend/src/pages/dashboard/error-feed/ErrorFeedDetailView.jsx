@@ -280,6 +280,7 @@ export default function ErrorFeedDetailView() {
                 variant="contained"
                 color="primary"
                 startIcon={<Iconify icon="mdi:check" width={13} />}
+                disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
                     clusterId: currentError.clusterId,
@@ -301,6 +302,7 @@ export default function ErrorFeedDetailView() {
                 startIcon={
                   <Iconify icon="mdi:check-circle-outline" width={13} />
                 }
+                disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
                     clusterId: currentError.clusterId,
@@ -322,6 +324,7 @@ export default function ErrorFeedDetailView() {
                 size="small"
                 variant="outlined"
                 startIcon={<Iconify icon="mdi:eye-off-outline" width={13} />}
+                disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
                     clusterId: currentError.clusterId,

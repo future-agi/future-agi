@@ -206,9 +206,9 @@ class TestDatasetDimensions:
         expected = {"dataset", "column_name", "column_source", "cell_status"}
         assert set(DATASET_FILTER_COLUMNS.keys()) == expected
 
-    def test_breakdown_columns_use_dict_lookups(self):
+    def test_breakdown_columns_use_supported_expressions(self):
         for name, expr in DATASET_BREAKDOWN_COLUMNS.items():
-            assert "c." in expr or "dictGet" in expr
+            assert "c." in expr or "dictGet" in expr or "toString" in expr
 
 
 # ============================================================================
@@ -490,7 +490,7 @@ class TestDatasetBreakdowns:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "breakdown_value" in sql
-        assert "dataset_dict" in sql
+        assert "toString(c.dataset_id)" in sql
         assert "GROUP BY" in sql
 
     def test_eval_template_breakdown(self, system_metric_config):
@@ -545,9 +545,17 @@ class TestDatasetFilters:
         ]
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
-        assert "dataset_dict" in sql
+        assert "FROM model_hub_dataset FINAL" in sql
+        assert "AND name IN %(df_0_val)s" in sql
         assert "IN" in sql
         assert "df_0_val" in params
+
+    def test_workspace_filter_uses_dataset_table(self, system_metric_config):
+        builder = DatasetQueryBuilder(system_metric_config)
+        sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
+        assert "SELECT id FROM model_hub_dataset FINAL" in sql
+        assert "workspace_id = toUUID(%(workspace_id)s)" in sql
+        assert "workspace_id" in params
 
     def test_cell_status_filter(self, system_metric_config):
         system_metric_config["filters"] = [
@@ -812,7 +820,7 @@ class TestDatasetResultFormatting:
         result = builder.format_results([(metric_info, rows)])
         series = result["metrics"][0]["series"]
         # Find the data point with the matching timestamp
-        found = [d for d in series[0]["data"] if d["value"] != 0]
+        found = [d for d in series[0]["data"] if d["value"] is not None]
         assert len(found) == 1
         assert found[0]["value"] == round(1.23456789012345, 6)
 

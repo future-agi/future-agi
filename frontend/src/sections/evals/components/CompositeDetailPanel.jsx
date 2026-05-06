@@ -186,7 +186,10 @@ const CompositeDetailPanel = ({
       {editable ? (
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-            Name*
+            Name
+            <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+              *
+            </Box>
           </Typography>
           <TextField
             fullWidth

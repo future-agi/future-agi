@@ -3,14 +3,18 @@ import {
   Autocomplete,
   Box,
   Chip,
+  ClickAwayListener,
   CircularProgress,
   IconButton,
   InputAdornment,
+  Paper,
+  Popper,
   Tab,
   Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -25,7 +29,9 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -141,7 +147,7 @@ function JsonEntries({ data, depth = 0 }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>
-      {entries.map(([key, val]) => {
+      {entries.map(([key, val], idx) => {
         const isObj = val !== null && typeof val === "object";
         return (
           <JsonEntryRow
@@ -150,6 +156,7 @@ function JsonEntries({ data, depth = 0 }) {
             entryValue={val}
             isObject={isObj}
             depth={depth}
+            isLast={idx === entries.length - 1}
           />
         );
       })}
@@ -157,8 +164,9 @@ function JsonEntries({ data, depth = 0 }) {
   );
 }
 
-function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
+function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
   const [open, setOpen] = useState(false);
+  const [valueExpanded, setValueExpanded] = useState(false);
 
   return (
     <Box sx={{ py: 0.25 }}>
@@ -174,7 +182,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           px: 0.5,
           py: 0.15,
         }}
-        onClick={() => isObject && setOpen(!open)}
+        onClick={(e) => {
+          if (!isObject) return;
+          e.stopPropagation();
+          setOpen(!open);
+        }}
       >
         {isObject && (
           <Iconify
@@ -184,52 +196,71 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           />
         )}
         {!isObject && <Box sx={{ width: 12, flexShrink: 0 }} />}
-        <Typography
-          variant="caption"
-          fontWeight={600}
+        <Box
           sx={{
-            fontSize: "11px",
-            minWidth: 60,
-            flexShrink: 0,
-            color: "text.secondary",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 0.5,
+            flex: 1,
+            minWidth: 0,
+            ...(isLast || (isObject && open)
+              ? {}
+              : { borderBottom: "1px solid", borderColor: "divider" }),
           }}
         >
-          {entryKey}
-        </Typography>
-        {!isObject && (
           <Typography
             variant="caption"
+            fontWeight={600}
             sx={{
               fontSize: "11px",
-              color: "primary.main",
-              wordBreak: "break-all",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
+              minWidth: 60,
+              flexShrink: 0,
+              color: "text.secondary",
             }}
           >
-            {entryValue === null
-              ? "null"
-              : entryValue === true
-                ? "true"
-                : entryValue === false
-                  ? "false"
-                  : String(entryValue)}
+            {entryKey}
           </Typography>
-        )}
-        {isObject && !open && (
-          <Typography
-            variant="caption"
-            color="text.disabled"
-            sx={{ fontSize: "10px" }}
-          >
-            {Array.isArray(entryValue)
-              ? `[${entryValue.length}]`
-              : `{${Object.keys(entryValue).length}}`}
-          </Typography>
-        )}
+          {!isObject && (
+            <Typography
+              variant="caption"
+              onClick={(e) => {
+                e.stopPropagation();
+                setValueExpanded((v) => !v);
+              }}
+              sx={{
+                fontSize: "11px",
+                color: "primary.main",
+                wordBreak: "break-all",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                display: "-webkit-box",
+                WebkitLineClamp: valueExpanded ? 9999 : 2,
+                WebkitBoxOrient: "vertical",
+                cursor: "pointer",
+                "&:hover": { opacity: 0.85 },
+              }}
+            >
+              {entryValue === null
+                ? "null"
+                : entryValue === true
+                  ? "true"
+                  : entryValue === false
+                    ? "false"
+                    : String(entryValue)}
+            </Typography>
+          )}
+          {isObject && !open && (
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ fontSize: "10px" }}
+            >
+              {Array.isArray(entryValue)
+                ? `[${entryValue.length}]`
+                : `{${Object.keys(entryValue).length}}`}
+            </Typography>
+          )}
+        </Box>
       </Box>
       {isObject && open && (
         <Box
@@ -245,6 +276,241 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
       )}
     </Box>
   );
+}
+
+// ---------------------------------------------------------------------------
+// ColumnTreeSelect — dropdown with tree view for column + nested path selection
+// ---------------------------------------------------------------------------
+function buildTree(columnNames) {
+  const roots = [];
+  const nodeMap = {}; // path → node
+
+  const getOrCreate = (path, label, parentList) => {
+    if (nodeMap[path]) return nodeMap[path];
+    const node = { id: path, label, path, children: [] };
+    nodeMap[path] = node;
+    parentList.push(node);
+    return node;
+  };
+
+  columnNames.forEach((fullPath) => {
+    // Split into segments: "col.a.b" → ["col","a","b"], "col[0].x" → ["col","[0]","x"]
+    const segments = [];
+    let current = "";
+    for (let i = 0; i < fullPath.length; i++) {
+      const ch = fullPath[i];
+      if (ch === ".") {
+        if (current) segments.push(current);
+        current = "";
+      } else if (ch === "[") {
+        if (current) segments.push(current);
+        current = "[";
+      } else if (ch === "]") {
+        current += "]";
+        segments.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    if (current) segments.push(current);
+
+    if (segments.length === 1) {
+      getOrCreate(fullPath, segments[0], roots);
+    } else {
+      // Walk segments, creating intermediate nodes
+      let parentList = roots;
+      let builtPath = "";
+      for (let i = 0; i < segments.length; i++) {
+        const sep = i === 0 ? "" : segments[i].startsWith("[") ? "" : ".";
+        builtPath += sep + segments[i];
+        const node = getOrCreate(builtPath, segments[i], parentList);
+        parentList = node.children;
+      }
+    }
+  });
+  return roots;
+}
+
+function renderTreeNode(node, onSelect) {
+  const hasKids = node.children.length > 0;
+  return (
+    <TreeItem
+      key={node.id}
+      nodeId={node.id}
+      label={
+        <Typography
+          sx={{
+            fontSize: "12px",
+            fontFamily: "monospace",
+            fontWeight: hasKids ? 600 : 400,
+            color: hasKids ? "text.primary" : "text.secondary",
+            py: 0.15,
+          }}
+          onClick={(e) => { e.stopPropagation(); onSelect(node.path); }}
+        >
+          {node.label}
+        </Typography>
+      }
+    >
+      {hasKids && node.children.map((child) => renderTreeNode(child, onSelect))}
+    </TreeItem>
+  );
+}
+
+function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+  const [open, setOpen] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const anchorRef = useRef(null);
+  const tree = useMemo(() => buildTree(columnNames), [columnNames]);
+
+  // Only filter when user is actively typing, not when re-opening with a selected value
+  const filtered = useMemo(() => {
+    if (!typing || !value) return tree;
+    const q = value.toLowerCase();
+    const filterNodes = (nodes) =>
+      nodes.map((node) => {
+        if (node.path.toLowerCase().startsWith(q)) return node;
+        const kids = filterNodes(node.children);
+        if (kids.length) return { ...node, children: kids };
+        return null;
+      }).filter(Boolean);
+    return filterNodes(tree);
+  }, [tree, value, typing]);
+
+  // Collect all node IDs for default expansion
+  const allIds = useMemo(() => {
+    const ids = [];
+    const walk = (nodes) => nodes.forEach((n) => { ids.push(n.id); walk(n.children); });
+    walk(filtered);
+    return ids;
+  }, [filtered]);
+
+  const handleSelect = (path) => {
+    onChange(path);
+    setOpen(false);
+    setTyping(false);
+  };
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      <TextField
+        ref={anchorRef}
+        size="small"
+        fullWidth
+        value={value}
+        placeholder="Select column"
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setTyping(true);
+          onChange(e.target.value);
+          if (!open) setOpen(true);
+        }}
+        InputProps={{
+          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+          endAdornment: (
+            <InputAdornment position="end">
+              <Iconify
+                icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+                width={16}
+                sx={{ color: "text.disabled", cursor: "pointer" }}
+                onClick={() => { setOpen((p) => !p); setTyping(false); }}
+              />
+            </InputAdornment>
+          ),
+        }}
+        sx={{
+          ...(isUnmapped && {
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+          }),
+        }}
+      />
+      {open && filtered.length > 0 && (
+        <Popper
+          open
+          anchorEl={anchorRef.current}
+          placement="bottom-start"
+          style={{ zIndex: 1301, width: anchorRef.current?.offsetWidth || 240 }}
+        >
+          <ClickAwayListener onClickAway={(e) => {
+            // Don't close if clicking the input field itself
+            if (anchorRef.current?.contains(e.target)) return;
+            setOpen(false);
+            setTyping(false);
+          }}>
+            <Paper
+              elevation={8}
+              sx={{ mt: 0.5, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
+            >
+              <Box sx={{ maxHeight: 260, overflow: "auto", py: 0.5 }}>
+                <TreeView
+                  defaultExpanded={allIds}
+                  defaultCollapseIcon={<Iconify icon="mdi:chevron-down" width={14} sx={{ color: "text.disabled" }} />}
+                  defaultExpandIcon={<Iconify icon="mdi:chevron-right" width={14} sx={{ color: "text.disabled" }} />}
+                  sx={{
+                    "& .MuiTreeItem-content": { py: 0.1, borderRadius: "4px" },
+                    "& .MuiTreeItem-content:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  {filtered.map((node) => renderTreeNode(node, handleSelect))}
+                </TreeView>
+              </Box>
+            </Paper>
+          </ClickAwayListener>
+        </Popper>
+      )}
+    </Box>
+  );
+}
+
+// Walk a JSON value and extract dot-notation keys (max 3 levels deep).
+function extractKeysFromValue(raw) {
+  let parsed = null;
+  if (raw && typeof raw === "object") parsed = raw;
+  else if (typeof raw === "string" && raw.trim()) {
+    try { const p = JSON.parse(raw); if (p && typeof p === "object") parsed = p; } catch { /* not JSON */ }
+  }
+  if (!parsed) return [];
+  const keys = [];
+  const walk = (obj, prefix, depth) => {
+    if (depth > 3 || !obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) {
+      // Show first 3 indices (or less if array is shorter)
+      const count = Math.min(obj.length, 3);
+      for (let i = 0; i < count; i++) {
+        keys.push(`${prefix}[${i}]`);
+        // Recurse into each element to discover nested object keys
+        if (obj[i] && typeof obj[i] === "object") {
+          walk(obj[i], `${prefix}[${i}]`, depth + 1);
+        }
+      }
+      return;
+    }
+    for (const k of Object.keys(obj)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      keys.push(path);
+      if (obj[k] && typeof obj[k] === "object") walk(obj[k], path, depth + 1);
+    }
+  };
+  walk(parsed, "", 0);
+  return keys;
+}
+
+// Resolve a dot/bracket path inside a parsed JSON value.
+function resolveNestedValue(raw, jsonPath) {
+  let parsed = null;
+  if (raw && typeof raw === "object") parsed = raw;
+  else if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch { return raw; }
+  }
+  if (!parsed) return raw;
+  const parts = jsonPath.split(/[.[\]]/).filter(Boolean);
+  let cur = parsed;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = /^\d+$/.test(p) ? (Array.isArray(cur) ? cur[parseInt(p, 10)] : undefined) : (typeof cur === "object" ? cur[p] : undefined);
+  }
+  return cur;
 }
 
 const DatasetTestMode = React.forwardRef(
@@ -263,6 +529,7 @@ const DatasetTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       initialMapping = null,
       isComposite = false,
+      compositeAdhocConfig = null,
       sourceColumns,
       extraColumns,
     },
@@ -292,6 +559,7 @@ const DatasetTestMode = React.forwardRef(
 
     // Dataset data
     const [columns, setColumns] = useState([]);
+    const [jsonSchemas, setJsonSchemas] = useState({});
     const [rows, setRows] = useState([]);
     const [totalRows, setTotalRows] = useState(0);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
@@ -318,6 +586,7 @@ const DatasetTestMode = React.forwardRef(
     // resulting error_details into `result` for EvalResultDisplay.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // 1. Fetch dataset list — paginated + searchable
     const fetchDatasets = useCallback(async (page, search, append) => {
@@ -423,6 +692,7 @@ const DatasetTestMode = React.forwardRef(
           const jsonSchemas = schemaRes.data?.result || {};
 
           setColumns(cols);
+          setJsonSchemas(jsonSchemas);
           setRows(tableRows);
           setTotalRows(total);
           setCurrentRowIndex(0);
@@ -511,37 +781,51 @@ const DatasetTestMode = React.forwardRef(
       return m;
     }, [extraColumns]);
 
-    // Column names for variable mapping dropdown
-    // When sourceColumns is provided (e.g. workbench mode), use those instead
-    // of dataset columns. sourceColumns may be objects with headerName/field or strings.
-    const columnNames = useMemo(() => {
+    // Build expanded column names (with JSON sub-paths) and name→ID
+    // lookup in one pass. Discovers nested keys from both the backend
+    // JSON schema AND runtime cell-value inspection of the current row.
+    const { columnNames, nameToId } = useMemo(() => {
       if (isWorkbenchMode) {
-        return sourceColumns.map((col) =>
+        const names = sourceColumns.map((col) =>
           typeof col === "string"
             ? col
             : col.headerName || col.field || col.name || col.label || "",
         );
+        return { columnNames: names, nameToId: {} };
       }
-      const base = columns
-        .filter((c) => c.id && c.name && !["id", "orgId"].includes(c.name))
-        .map((c) => c.name);
-      if (!extraColumns?.length) return base;
-      // Virtual columns ("Output", "Prompt Chain" for experiments) render
-      // first so they're prominent in the dropdown AND win auto-mapping
-      // ties — auto-map iterates columnNames in order and takes the first
-      // match, so real dataset columns that happen to collide with eval
-      // variable names shouldn't shadow the experiment virtuals.
+      const names = [];
+      const n2id = {};
+      const seen = new Set();
+      const add = (display, id) => {
+        if (seen.has(display)) return;
+        seen.add(display);
+        names.push(display);
+        if (id) n2id[display] = id;
+      };
+      columns.forEach((c) => {
+        if (!c.id || !c.name || ["id", "orgId"].includes(c.name)) return;
+        add(c.name, c.id);
+        // Collect sub-paths from backend schema + runtime cell values
+        const schemaPaths = jsonSchemas?.[c.id]?.keys || [];
+        const cell = currentRow?.[c.id];
+        const runtimePaths = cell ? extractKeysFromValue(cell?.cell_value ?? cell) : [];
+        const allPaths = new Set([...schemaPaths, ...runtimePaths]);
+        allPaths.forEach((path) => {
+          // Bracket paths: "col[0]" not "col.[0]"
+          const sep = path.startsWith("[") ? "" : ".";
+          add(`${c.name}${sep}${path}`, `${c.id}${sep}${path}`);
+        });
+      });
+      if (!extraColumns?.length) return { columnNames: names, nameToId: n2id };
       const extras = (extraColumns || [])
-        .map((col) =>
-          typeof col === "string"
-            ? col
-            : col.headerName || col.field || col.name || col.label || "",
-        )
+        .map((col) => (typeof col === "string" ? col : col.headerName || col.field || col.name || col.label || ""))
         .filter(Boolean);
       const extraSet = new Set(extras);
-      const baseWithoutExtras = base.filter((n) => !extraSet.has(n));
-      return [...extras, ...baseWithoutExtras];
-    }, [columns, sourceColumns, extraColumns, isWorkbenchMode]);
+      return {
+        columnNames: [...extras, ...names.filter((n) => !extraSet.has(n))],
+        nameToId: n2id,
+      };
+    }, [columns, sourceColumns, extraColumns, isWorkbenchMode, jsonSchemas, currentRow]);
 
     // Workbench mode: map display name → field identifier (e.g. "model_output" → "output_prompt")
     const sourceNameToField = useMemo(() => {
@@ -557,17 +841,19 @@ const DatasetTestMode = React.forwardRef(
       return m;
     }, [sourceColumns, isWorkbenchMode]);
 
-    // Resolve UUID-based mapping values to column names (edit mode).
-    // The saved mapping uses column UUIDs but the dropdown shows names.
-    // Experiment virtual columns are also saved by field ("output",
-    // "prompt_chain"); resolve those to their display names too.
+    // Resolve UUID-based mapping values to display names (edit mode).
+    // Handles both plain UUIDs and "uuid.path" nested references.
     const uuidResolutionDone = React.useRef(false);
     useEffect(() => {
       if (!columns.length && !Object.keys(extraFieldToName).length) return;
       if (uuidResolutionDone.current) return;
       const idToName = {};
       columns.forEach((c) => {
-        if (c.id && c.name) idToName[c.id] = c.name;
+        if (!c.id || !c.name) return;
+        idToName[c.id] = c.name;
+        // Reverse-map nested IDs: "uuid.path" → "col.path"
+        const paths = jsonSchemas?.[c.id]?.keys || [];
+        paths.forEach((p) => { idToName[`${c.id}.${p}`] = `${c.name}.${p}`; });
       });
       setMapping((prev) => {
         const next = { ...prev };
@@ -575,18 +861,27 @@ const DatasetTestMode = React.forwardRef(
         Object.keys(next).forEach((variable) => {
           const val = next[variable];
           if (!val) return;
-          if (idToName[val]) {
-            next[variable] = idToName[val];
-            changed = true;
-          } else if (extraFieldToName[val]) {
-            next[variable] = extraFieldToName[val];
-            changed = true;
-          }
+          if (idToName[val]) { next[variable] = idToName[val]; changed = true; }
+          else if (extraFieldToName[val]) { next[variable] = extraFieldToName[val]; changed = true; }
         });
         if (changed) uuidResolutionDone.current = true;
         return changed ? next : prev;
       });
-    }, [columns, extraFieldToName]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [columns, extraFieldToName, jsonSchemas]);
+
+    // Prune stale mapping keys when variables list changes (instruction edits).
+    useEffect(() => {
+      if (!variables.length) return;
+      const varSet = new Set(variables);
+      setMapping((prev) => {
+        const pruned = {};
+        let changed = false;
+        Object.keys(prev).forEach((k) => {
+          if (varSet.has(k)) pruned[k] = prev[k]; else changed = true;
+        });
+        return changed ? pruned : prev;
+      });
+    }, [variables]);
 
     // Auto-map variables to columns when names match (case-insensitive)
     useEffect(() => {
@@ -652,6 +947,9 @@ const DatasetTestMode = React.forwardRef(
         const inputDataTypes = {};
         const rowContext = {};
         const imageUrls = [];
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
 
         if (isWorkbenchMode) {
           // Workbench mode: mapping sends variable → field name (e.g. input_prompt)
@@ -665,23 +963,35 @@ const DatasetTestMode = React.forwardRef(
             }
           }
         } else {
-          // Dataset mode: mapping sends variable → actual cell values
-          // Map template variables to dataset columns
+          // Dataset mode: mapping sends variable → actual cell values.
+          // Supports nested paths (e.g. "col.key" → resolve from cell JSON).
           for (const variable of variables) {
             const mappedColName = mapping[variable];
             if (mappedColName && currentRow) {
-              const col = columns.find((c) => c.name === mappedColName);
+              let baseName = mappedColName;
+              let jsonPath = null;
+              const dot = mappedColName.indexOf(".");
+              const bracket = mappedColName.indexOf("[");
+              if (dot > 0 && (bracket < 0 || dot < bracket)) {
+                baseName = mappedColName.substring(0, dot);
+                jsonPath = mappedColName.substring(dot + 1);
+              } else if (bracket > 0) {
+                baseName = mappedColName.substring(0, bracket);
+                jsonPath = mappedColName.substring(bracket);
+              }
+              const col = columns.find((c) => c.name === baseName);
               if (col) {
                 const cell = currentRow[col.id];
-                evalMapping[variable] = cell?.cell_value ?? cell ?? "";
-                const dt = col.data_type || "text";
-                if (["image", "images"].includes(dt)) {
-                  inputDataTypes[variable] = "image";
-                } else if (dt === "audio") {
-                  inputDataTypes[variable] = "audio";
-                } else {
-                  inputDataTypes[variable] = "text";
+                let cellValue = cell?.cell_value ?? cell ?? "";
+                if (jsonPath) {
+                  const resolved = resolveNestedValue(cellValue, jsonPath);
+                  if (resolved !== undefined && resolved !== null) {
+                    cellValue = typeof resolved === "object" ? JSON.stringify(resolved) : String(resolved);
+                  }
                 }
+                evalMapping[variable] = cellValue;
+                const dt = col.data_type || "text";
+                inputDataTypes[variable] = ["image", "images"].includes(dt) ? "image" : dt === "audio" ? "audio" : "text";
               }
             }
           }
@@ -720,12 +1030,29 @@ const DatasetTestMode = React.forwardRef(
 
         // Composite evals use the composite execute endpoint
         const { data } = isComposite
-          ? await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-              mapping: evalMapping,
-              error_localizer: errorLocalizerEnabled,
-              input_data_types: inputDataTypes,
-              row_context: rowContext,
-            })
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    config: compositeConfig,
+                    error_localizer: errorLocalizerEnabled,
+                    input_data_types: inputDataTypes,
+                    row_context: rowContext,
+                  }),
+                },
+              }
+            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
+                mapping: evalMapping,
+                model,
+                config: compositeConfig,
+                error_localizer: errorLocalizerEnabled,
+                input_data_types: inputDataTypes,
+                row_context: rowContext,
+              })
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -742,9 +1069,20 @@ const DatasetTestMode = React.forwardRef(
             });
 
         if (data?.status) {
-          setResult(data.result);
-          onTestResult?.(true, data.result);
-          if (errorLocalizerEnabled && data.result?.log_id) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
@@ -775,6 +1113,10 @@ const DatasetTestMode = React.forwardRef(
       isWorkbenchMode,
       sourceNameToField,
       codeParams,
+      isComposite,
+      compositeAdhocConfig,
+      model,
+      executeCompositeAdhoc,
     ]);
 
     // Readiness: dataset selected + (all variables mapped OR a non-template
@@ -787,17 +1129,9 @@ const DatasetTestMode = React.forwardRef(
       hasNonTemplateContext ||
       variables.every((v) => mapping[v]);
 
-    // Build a name→ID lookup so the save payload uses column UUIDs (which the
-    // backend's eval_runner expects) while the test playground uses names.
-    const nameToId = useMemo(() => {
-      const map = {};
-      columns.forEach((c) => {
-        if (c.id && c.name) map[c.name] = c.id;
-      });
-      return map;
-    }, [columns]);
-
-    // Mapping with column IDs for the save payload
+    // Mapping with column IDs for the save payload.
+    // nameToId (from columnMaps memo above) already handles nested paths.
+    // For freeSolo typed paths not in the map, resolve base column → uuid.
     const idMapping = useMemo(() => {
       const m = {};
       if (isWorkbenchMode) {
@@ -806,20 +1140,23 @@ const DatasetTestMode = React.forwardRef(
         });
       } else {
         Object.entries(mapping).forEach(([variable, colName]) => {
-          // Extras resolve to their own field (e.g. "Output" → "output") and
-          // bypass the dataset UUID lookup since they don't exist in columns.
-          m[variable] =
-            extraNameToField[colName] || nameToId[colName] || colName;
+          if (!colName) return;
+          if (extraNameToField[colName]) { m[variable] = extraNameToField[colName]; return; }
+          if (nameToId[colName]) { m[variable] = nameToId[colName]; return; }
+          // freeSolo: "col.typed_path" → "uuid.typed_path"
+          const dot = colName.indexOf(".");
+          const bracket = colName.indexOf("[");
+          const split = dot > 0 && (bracket < 0 || dot < bracket) ? dot : bracket > 0 ? bracket : -1;
+          if (split > 0) {
+            const base = colName.substring(0, split);
+            const baseId = nameToId[base];
+            if (baseId) { m[variable] = `${baseId}${colName.substring(split)}`; return; }
+          }
+          m[variable] = colName;
         });
       }
       return m;
-    }, [
-      mapping,
-      nameToId,
-      isWorkbenchMode,
-      sourceNameToField,
-      extraNameToField,
-    ]);
+    }, [mapping, nameToId, isWorkbenchMode, sourceNameToField, extraNameToField]);
     const isReady = (!!selectedDatasetId || isWorkbenchMode) && allMapped;
 
     useEffect(() => {
@@ -1262,68 +1599,16 @@ const DatasetTestMode = React.forwardRef(
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
-                  <Autocomplete
-                    size="small"
-                    options={
-                      mapping[variable] &&
-                      !columnNames.includes(mapping[variable])
-                        ? [mapping[variable], ...columnNames]
-                        : columnNames
-                    }
-                    value={mapping[variable] || null}
-                    onChange={(_, val) =>
+                  <ColumnTreeSelect
+                    columnNames={columnNames}
+                    value={mapping[variable] || ""}
+                    onChange={(val) =>
                       setMapping((prev) => ({
                         ...prev,
                         [variable]: val || "",
                       }))
                     }
-                    openOnFocus
-                    autoHighlight
-                    selectOnFocus
-                    handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt === val}
-                    sx={{
-                      flex: 1,
-                      ...(isUnmapped && {
-                        "& .MuiOutlinedInput-notchedOutline": {
-                          borderColor: "warning.main",
-                        },
-                      }),
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        placeholder="Select column (required)"
-                        InputProps={{
-                          ...params.InputProps,
-                          sx: {
-                            ...params.InputProps.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            height: 30,
-                            py: 0,
-                          },
-                        }}
-                      />
-                    )}
-                    renderOption={(props, col) => {
-                      const { key, ...rest } = props;
-                      return (
-                        <Box
-                          component="li"
-                          key={key}
-                          {...rest}
-                          sx={{
-                            ...rest.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                          }}
-                        >
-                          {col}
-                        </Box>
-                      );
-                    }}
-                    ListboxProps={{ style: { maxHeight: 260 } }}
+                    isUnmapped={isUnmapped}
                   />
                 </Box>
               );
@@ -1417,6 +1702,8 @@ DatasetTestMode.propTypes = {
   initialMapping: PropTypes.object,
   sourceColumns: PropTypes.array,
   extraColumns: PropTypes.array,
+  isComposite: PropTypes.bool,
+  compositeAdhocConfig: PropTypes.object,
 };
 
 export default DatasetTestMode;

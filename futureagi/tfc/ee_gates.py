@@ -54,6 +54,70 @@ def voice_sim_oss_gate_response() -> Response | None:
     )
 
 
+def _is_oss() -> bool:
+    """True when the deployment is OSS (ee/ stripped or DeploymentMode.is_oss)."""
+    try:
+        from ee.usage.deployment import DeploymentMode
+
+        return DeploymentMode.is_oss()
+    except ImportError:
+        return True  # ee.usage absent → OSS
+
+
+def strip_turing_from_config_options(
+    config_params_option: dict | None,
+) -> dict:
+    """When running OSS, drop Turing/Protect models from the `model` option
+    list so the frontend dropdown never offers a model the gate would 402.
+
+    Returns a copy; the original dict is not mutated. No-op on cloud."""
+    if not config_params_option:
+        return config_params_option or {}
+    if not _is_oss():
+        return config_params_option
+
+    model_options = config_params_option.get("model")
+    if not isinstance(model_options, list):
+        return config_params_option
+
+    filtered = [m for m in model_options if not is_turing_model(m)]
+    return {**config_params_option, "model": filtered}
+
+
+def turing_oss_gate_for_template(
+    model_name: object,
+    template_id: object = None,
+    eval_type: object = None,
+) -> Response | None:
+    """Variant of `turing_oss_gate_response` that skips the gate for code
+    eval templates. Code evals execute Python/JS — the model field is
+    irrelevant for them, so we shouldn't 402 when the frontend leaves the
+    model defaulted to a Turing value.
+
+    Pass `eval_type` directly when the caller already knows it (avoids a
+    DB lookup); otherwise we resolve it from `template_id`."""
+    if eval_type and str(eval_type).lower() == "code":
+        return None
+
+    if template_id:
+        try:
+            from model_hub.models.evals_metric import EvalTemplate
+
+            tpl = (
+                EvalTemplate.no_workspace_objects.filter(
+                    id=template_id, deleted=False
+                )
+                .only("eval_type")
+                .first()
+            )
+            if tpl is not None and tpl.eval_type == "code":
+                return None
+        except Exception:
+            pass  # fall through to normal gate
+
+    return turing_oss_gate_response(model_name)
+
+
 def turing_oss_gate_response(model_name: object) -> Response | None:
     """Return a 402 response if the model is a Turing/Protect model AND
     the deployment is OSS. Return None otherwise so the caller proceeds.

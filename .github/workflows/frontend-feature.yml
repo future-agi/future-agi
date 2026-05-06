@@ -2,7 +2,7 @@ name: Frontend Feature Branch Pipeline
 
 on:
   push:
-    branches: [feature/*, feat/*, bugfix/*, hotfix/*, refactor/*, docs/*, test/*, chore/*, release/*]
+    branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*]
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-feature.yml'
@@ -26,7 +26,8 @@ jobs:
           echo "Branch name: $branch_name"
 
           # Define the regex pattern for valid branch names
-          branch_regex="^(feature|bugfix|hotfix|refactor|docs|test|chore|release)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
+          # Types match Conventional Commits prefixes used in CONTRIBUTING.md.
+          branch_regex="^(feat|fix|chore|docs|refactor|test|perf)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
 
           # Validate branch name
           if [[ ! $branch_name =~ $branch_regex ]]; then

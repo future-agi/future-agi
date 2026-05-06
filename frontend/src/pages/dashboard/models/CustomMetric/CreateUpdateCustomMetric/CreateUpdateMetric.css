@@ -1,0 +1,24 @@
+.define-metric-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+}
+
+.define-metric-bottom-toolbar {
+  /* height: 54px; */
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding: 0px 4px 4px 4px;
+}
+
+.define-metric-bottom-toolbar-container {
+  width: 100%;
+  height: 100%;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  background-color: var(--bg-paper);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}

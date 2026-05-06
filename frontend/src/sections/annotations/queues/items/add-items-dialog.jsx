@@ -307,7 +307,7 @@ async function fetchAllDatasetRowIds(
       validFilters,
       [],
       search || "",
-      { enabled: true, staleTime: 30000 },
+      { enabled: true, staleTime: 30000, pageSize: DATASET_ROWS_LIMIT },
     );
     const data = await queryClient.fetchQuery(queryOptions);
     const rows = data?.data?.result?.table ?? [];
@@ -499,6 +499,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               selectAllInfo.filters,
               selectAllInfo.search,
             );
+            itemsToAdd = allIds.map((id) => ({
+              source_type: "dataset_row",
+              source_id: id,
+            }));
           } else if (sourceType === "observation_span") {
             allIds = await fetchAllSpanIds(
               selectAllInfo.projectId,
@@ -506,6 +510,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
+            itemsToAdd = allIds.map((id) => ({
+              source_type: "observation_span",
+              source_id: id,
+            }));
           } else {
             // sourceType === "trace": fetch trace IDs then convert to root spans
             const traceIds = await fetchAllTraceIds(
@@ -535,25 +543,9 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
           setIsResolving(false);
         }
       } else {
-        let ids = Array.from(selectedIds);
-        let effectiveSourceType = sourceType;
-
-        if (sourceType === "trace") {
-          const rootSpanMap = await fetchRootSpans(ids);
-          const originalCount = ids.length;
-          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-          effectiveSourceType = "observation_span";
-          const droppedCount = originalCount - ids.length;
-          if (droppedCount > 0) {
-            enqueueSnackbar(
-              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-              { variant: "warning" },
-            );
-          }
-        }
-
+        const ids = Array.from(selectedIds);
         itemsToAdd = ids.map((id) => ({
-          source_type: effectiveSourceType,
+          source_type: sourceType,
           source_id: id,
         }));
       }
@@ -995,7 +987,7 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
           validFilters,
           sort,
           search,
-          { enabled: true, staleTime: 0 },
+          { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
         );
         const data = await queryClient.fetchQuery({ ...queryOptions });
         const rows = data?.data?.result?.table ?? [];

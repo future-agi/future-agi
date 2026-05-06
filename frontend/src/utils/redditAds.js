@@ -64,14 +64,8 @@ export function initReddit() {
   initialized = true;
 }
 
-/**
- * Fire a Reddit signup conversion with Advanced Matching (email).
- * Called after a real account is created (email or OAuth/SSO).
- *
- * `transactionId` dedupes repeats server-side on Reddit's end.
- * `email` is hashed by Reddit for match-back against their user graph.
- */
-export function trackRedditSignup({ email, method = "email", userId } = {}) {
+
+export function trackRedditSignup({ email, userId } = {}) {
   if (!rdtReady()) return;
   if (!isEnabled()) return;
 
@@ -79,12 +73,17 @@ export function trackRedditSignup({ email, method = "email", userId } = {}) {
   if (!normalizedEmail) return;
 
   try {
+    window.rdt("init", REDDIT_PIXEL_ID, {
+      optOut: false,
+      useDecimalCurrencyValues: true,
+      email: normalizedEmail,
+      externalId: String(userId || ""),
+    });
+
     window.rdt("track", "SignUp", {
       currency: AD_CONVERSION_CURRENCY,
       value: AD_CONVERSION_VALUE,
-      transactionId: String(userId || normalizedEmail),
-      email: normalizedEmail,
-      customEventName: method,
+      conversionId: String(userId || normalizedEmail),
     });
   } catch (err) {
     logger.error("Reddit signup conversion failed", err);

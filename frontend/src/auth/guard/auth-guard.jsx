@@ -13,6 +13,7 @@ import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
@@ -38,6 +39,7 @@ function Container({ children }) {
   const router = useRouter();
 
   const { authenticated, method, user } = useAuthContext();
+  const postLoginPath = usePostLoginPath();
 
   const [checked, setChecked] = useState(false);
 
@@ -122,7 +124,6 @@ function Container({ children }) {
         if (typeof window.rdt === "function") {
           trackRedditSignup({
             email: user.email,
-            method: provider,
             userId: String(user.id),
           });
         }
@@ -148,13 +149,13 @@ function Container({ children }) {
       // If user has an organization_role, they're already part of an org (invited or owner)
       // Skip onboarding and go straight to dashboard
       if (user?.organization_role) {
-        router.replace("/dashboard/falcon-ai");
+        router.replace(postLoginPath);
       } else {
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");
     }
-  }, [user, router]);
+  }, [postLoginPath, user, router]);
 
   // Gate "no org → setup-org" redirect on isOrgReady to avoid false
   // redirects while org context is still hydrating.

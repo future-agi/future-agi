@@ -31,6 +31,8 @@ const TopMenu = ({
   titles,
   setTitles,
   total,
+  templateFormat,
+  setTemplateFormat,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   // const [titles, setTitles] = useState([]);
@@ -102,6 +104,8 @@ const TopMenu = ({
         setVersionList={setVersionList}
         total={total}
         currentTitle={currentTitle}
+        templateFormat={templateFormat}
+        setTemplateFormat={setTemplateFormat}
       />
     </Box>
   );
@@ -133,4 +137,6 @@ TopMenu.propTypes = {
   titles: PropTypes.array,
   setTitles: PropTypes.func,
   total: PropTypes.number,
+  templateFormat: PropTypes.string,
+  setTemplateFormat: PropTypes.func,
 };

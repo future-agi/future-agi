@@ -1,0 +1,47 @@
+meta {
+  name: Log model inference
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{host}}:{{port}}/log/model/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+}
+
+body:json {
+  {
+      "prediction_timestamp": 1715543537,
+      "model_id": "xpUfDhqNKs",
+      "model_type": 10,
+      "environment": 1,
+      "model_version": "1.1",
+      "batch_id": "1",
+      "prediction_id": "something",
+      "prediction_label": {
+          "content": "The 2020 World Series was played in Texas at Globe Life Field in Arlington.",
+          "role": "assistant"
+        },
+      "actual_label": {},
+      "features": { "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Who won the world series in 2020?"},
+      {"role": "assistant", "content": "The Los Angeles Dodgers won the World Series in 2020."},
+      {"role": "user", "content": "Where was it played?"}
+    ]},
+      "embedding_features": null,
+      "shap_values": null,
+      "tags": null,
+      "eval_results": {
+          "metric1": {
+              "score": 1
+          }
+      }
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router";
@@ -7,10 +7,13 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import ObserveHeaderProvider from "src/sections/project/context/ObserveHeaderContextProvider";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { useGetWorkspaceSavedViews } from "src/api/project/saved-views";
 
 import LLMTracingView from "../../LLMTracing/LLMTracingView";
 import SessionsView from "../../SessionsView/Sessions-view";
 import UserDetailTabBar from "./UserDetailTabBar";
+
+const USER_DETAIL_TAB_TYPE = "user_detail";
 
 // Cross-project user detail page.
 // ---------------------------------------------------------------------------
@@ -30,9 +33,6 @@ const CrossProjectUserDetailPage = () => (
   </ObserveHeaderProvider>
 );
 
-const TRACE_DISPLAY_KEY = (uid) => `user-display-${uid}`;
-const TRACE_FILTERS_KEY = (uid) => `user-filters-${uid}`;
-
 const UserDetailPageBody = () => {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -46,56 +46,6 @@ const UserDetailPageBody = () => {
     activeTab === "traces" ? "traces" : "sessions",
   );
 
-  const { setActiveViewConfig } = useObserveHeader();
-
-  // -------------------------------------------------------------------------
-  // Saved-view capture + apply
-  // -------------------------------------------------------------------------
-  // Capture reads the inner view's current state:
-  //   - traces: namespaced localStorage (LLMTracingView already persists there)
-  //   - sessions: v1 only stores {sub_tab} — Sessions-view has no config
-  //     restore path yet (driven by URL state, not context)
-  const getConfigFor = useCallback(
-    (which) => {
-      if (which !== "traces") return {};
-      try {
-        const rawDisplay = localStorage.getItem(TRACE_DISPLAY_KEY(userId));
-        const rawFilters = localStorage.getItem(TRACE_FILTERS_KEY(userId));
-        const display = rawDisplay ? JSON.parse(rawDisplay) : null;
-        const filtersBlob = rawFilters ? JSON.parse(rawFilters) : null;
-        // LLMTracingView consumes activeViewConfig with shape
-        // { display, filters, extraFilters, compareFilters, ... }. Pass
-        // through what exists; missing keys are ignored by the consumer.
-        return {
-          ...(display ? { display } : {}),
-          ...(filtersBlob?.filters ? { filters: filtersBlob.filters } : {}),
-          ...(filtersBlob?.extraFilters
-            ? { extraFilters: filtersBlob.extraFilters }
-            : {}),
-          ...(filtersBlob?.dateFilter
-            ? { dateFilter: filtersBlob.dateFilter }
-            : {}),
-        };
-      } catch {
-        return {};
-      }
-    },
-    [userId],
-  );
-
-  // Apply:
-  //   - traces: push config into the ObserveHeader context — LLMTracingView's
-  //     existing `activeViewConfig` effect will restore display + filters
-  //   - sessions: no-op in v1 (just flips the sub-tab via onTabChange)
-  const applyConfigFor = useCallback(
-    (which, cfg) => {
-      if (which === "traces") {
-        setActiveViewConfig(cfg || null);
-      }
-    },
-    [setActiveViewConfig],
-  );
-
   const handleTabChange = useCallback(
     (nextTabKey, nextSubTab) => {
       setActiveTab(nextTabKey);
@@ -103,6 +53,39 @@ const UserDetailPageBody = () => {
     },
     [setActiveTab, subTab],
   );
+
+  // Hydrate activeViewConfig + the rendered subTab on hard-refresh / direct
+  // URL load. UserDetailTabBar already reacts to activeTab changes via click,
+  // but a page reload mounts the heavy sub-view (SessionsView / LLMTracingView)
+  // before the tab bar's effect lands — leaving filters / column visibility /
+  // extraFilters stuck at defaults until the user clicks the tab again.
+  // Mirrors ObservePage's hydration pattern. Re-runs only when the URL tab
+  // key or the saved-views list changes; the value for `userTab=view-<id>`
+  // is stable across saved-views refetches so the apply effect doesn't
+  // churn on every mutation invalidate.
+  const { setActiveViewConfig } = useObserveHeader();
+  const { data: workspaceSavedViewsData } =
+    useGetWorkspaceSavedViews(USER_DETAIL_TAB_TYPE);
+  const lastHydratedTabRef = useRef(null);
+  useEffect(() => {
+    if (!activeTab || !activeTab.startsWith("view-")) {
+      lastHydratedTabRef.current = null;
+      return;
+    }
+    if (lastHydratedTabRef.current === activeTab) return;
+    const customViews =
+      workspaceSavedViewsData?.customViews ??
+      workspaceSavedViewsData?.custom_views ??
+      [];
+    if (!customViews.length) return;
+    const viewId = activeTab.slice(5);
+    const view = customViews.find((v) => v.id === viewId);
+    if (!view?.config) return;
+    lastHydratedTabRef.current = activeTab;
+    setActiveViewConfig(view.config);
+    const targetSubTab = view.config.sub_tab || view.config.subTab;
+    if (targetSubTab && targetSubTab !== subTab) setSubTab(targetSubTab);
+  }, [activeTab, workspaceSavedViewsData, setActiveViewConfig, subTab]);
 
   // Styles — match ObservePage exactly
   const containerStyles = useMemo(
@@ -248,8 +231,6 @@ const UserDetailPageBody = () => {
             <UserDetailTabBar
               activeTab={activeTab}
               onTabChange={handleTabChange}
-              getConfigFor={getConfigFor}
-              applyConfigFor={applyConfigFor}
             />
             <Box
               sx={{

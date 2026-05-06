@@ -75,30 +75,12 @@ def _log_and_deduct_cost_for_standalone_eval(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
-    # Dual-write: emit usage event for new billing system
-    try:
-        try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
-
-        emit(
-            UsageEvent(
-                org_id=str(user.organization.id),
-                event_type=api_call_type,
-                properties={
-                    "source": "standalone_v2",
-                    "source_id": str(eval_template.id),
-                },
-            )
-        )
-    except Exception:
-        pass  # Metering failure must not break the action
-
+    # NOTE: No pre-eval UsageEvent emission. The cost isn't known until the
+    # eval finishes, and UsageEvent.amount defaults to 1 — emitting here
+    # would charge a flat 1 credit on every call (and double-bill on success
+    # alongside the post-eval cost-based emit in `_run_eval`). The UI path
+    # in `model_hub/views/utils/evals.py` follows the same pattern: only the
+    # post-eval cost-based event is emitted to the new billing system.
     return api_call_log_row
 
 
@@ -242,6 +224,48 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     api_call_log_row.config = json.dumps(config_dict)
     api_call_log_row.status = APICallStatusChoices.SUCCESS.value
     api_call_log_row.save()
+
+    # Dual-write: emit cost-based usage event for new billing system.
+    # The pre-eval emit in _log_and_deduct_cost_for_standalone_eval has no
+    # amount (cost is unknown until the eval runs), so without this post-eval
+    # emit SDK/API-key evals never produce a billable UsageEvent. (TH-3402)
+    try:
+        try:
+            from ee.usage.schemas.events import UsageEvent
+        except ImportError:
+            UsageEvent = None
+        try:
+            from ee.usage.services.config import BillingConfig
+        except ImportError:
+            BillingConfig = None
+        try:
+            from ee.usage.services.emitter import emit
+        except ImportError:
+            emit = None
+
+        billing_config = BillingConfig.get()
+        eval_cost = result.cost or {}
+        llm_cost = eval_cost.get("total_cost", 0)
+        per_run_fee = billing_config.get_eval_per_run_fee()
+        actual_cost = llm_cost + per_run_fee
+        credits = billing_config.calculate_ai_credits(actual_cost)
+
+        api_call_type = _get_api_call_type(model)
+        emit(
+            UsageEvent(
+                org_id=str(user.organization.id),
+                event_type=api_call_type,
+                amount=credits,
+                properties={
+                    "source": "standalone_v2",
+                    "source_id": str(eval_template.id),
+                    "raw_cost_usd": str(actual_cost),
+                    "log_id": str(api_call_log_row.log_id),
+                },
+            )
+        )
+    except Exception:
+        pass  # Metering failure must not break the action
 
     logger.info(f"Standalone Eval | Completed: user: {user.id}")
 
@@ -396,7 +420,7 @@ def _run_protect(
         for rk in template_required_keys:
             if rk not in protect_inputs:
                 protect_inputs[rk] = input_text
-        protect_inputs["call_type"] = "protect"
+        protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
             user, eval_template, True, protect_inputs, workspace=workspace
@@ -408,6 +432,7 @@ def _run_protect(
                     eval_template=eval_template,
                     inputs=protect_inputs,
                     config_overrides=config or {},
+                    model="protect_flash" if protect_flash else None,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )

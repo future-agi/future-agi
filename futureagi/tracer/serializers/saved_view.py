@@ -70,7 +70,15 @@ class SavedViewCreateSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     name = serializers.CharField(max_length=255)
     tab_type = serializers.ChoiceField(
-        choices=["traces", "spans", "voice", "imagine", "users", "user_detail"]
+        choices=[
+            "traces",
+            "spans",
+            "voice",
+            "imagine",
+            "users",
+            "user_detail",
+            "sessions",
+        ]
     )
     visibility = serializers.ChoiceField(
         choices=["personal", "project"], default="personal"
@@ -156,7 +164,15 @@ class ReorderItemSerializer(serializers.Serializer):
 class SavedViewReorderSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     tab_type = serializers.ChoiceField(
-        choices=["traces", "spans", "voice", "imagine", "users", "user_detail"],
+        choices=[
+            "traces",
+            "spans",
+            "voice",
+            "imagine",
+            "users",
+            "user_detail",
+            "sessions",
+        ],
         required=False,
     )
     order = ReorderItemSerializer(many=True)

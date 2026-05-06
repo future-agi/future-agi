@@ -29,7 +29,11 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import { canonicalEntries, canonicalKeys } from "src/utils/utils";
+import {
+  canonicalEntries,
+  canonicalKeys,
+  stripAttributePathPrefix,
+} from "src/utils/utils";
 
 import {
   InlineAudio,
@@ -42,8 +46,10 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { JsonValueTree } from "./DatasetTestMode";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const ROW_TYPES = ["Span", "Trace", "Session"];
 
@@ -215,6 +221,8 @@ const TracingTestMode = React.forwardRef(
       // already-configured eval so the user's previous mapping is preserved).
       initialMapping = null,
       errorLocalizerEnabled = false,
+      isComposite = false,
+      compositeAdhocConfig = null,
     },
     ref,
   ) => {
@@ -330,6 +338,7 @@ const TracingTestMode = React.forwardRef(
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // ── Fetch project list (skip when project is pre-selected/locked) ──
     useEffect(() => {
@@ -654,13 +663,11 @@ const TracingTestMode = React.forwardRef(
         }
       };
       walk(source, "");
-      // Strip `span_attributes.` prefix and dedupe against top-level keys.
+      // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
       const seen = new Set();
       const flattened = [];
       keys.forEach((k) => {
-        const short = k.startsWith("span_attributes.")
-          ? k.slice("span_attributes.".length)
-          : k;
+        const short = stripAttributePathPrefix(k);
         if (seen.has(short)) return;
         seen.add(short);
         flattened.push(short);
@@ -679,7 +686,7 @@ const TracingTestMode = React.forwardRef(
     }, [spanDetail]);
 
     const fieldNames = useMemo(
-      () => walkedFromDetail || rowFields.map((f) => f.key),
+      () => walkedFromDetail || rowFields.map((f) => f?.colId || f?.key),
       [walkedFromDetail, rowFields],
     );
 
@@ -783,8 +790,11 @@ const TracingTestMode = React.forwardRef(
         // "input.value" — which may have been soft-flattened from
         // "span_attributes.input.value") always resolves to the correct
         // value, even when the top-level key shadows a deeper path.
-        const ARRAY_PEEK = 10;
-        const DICT_LIMIT = 50;
+        // Limits match the dropdown walker so every path offered in the UI
+        // also resolves — otherwise deep paths (e.g. gen_ai.* under a big
+        // span_attributes dict) would be selectable but unresolvable.
+        const ARRAY_PEEK = 500;
+        const DICT_LIMIT = 5000;
         const valueMap = {};
         const walkValues = (node, prefix) => {
           if (Array.isArray(node)) {
@@ -797,7 +807,12 @@ const TracingTestMode = React.forwardRef(
             });
             return;
           }
-          for (const [k, v] of Object.entries(node)) {
+          // canonicalEntries drops the camelCase aliases the axios
+          // interceptor layers on — otherwise valueMap gets both
+          // `span_attributes.*` and `spanAttributes.*` branches of the
+          // same data, and only the snake side is stripped by the
+          // soft-flatten below.
+          for (const [k, v] of canonicalEntries(node)) {
             if (k.startsWith("_")) continue;
             const path = prefix ? `${prefix}.${k}` : k;
             valueMap[path] = v;
@@ -854,10 +869,9 @@ const TracingTestMode = React.forwardRef(
           }
         }
 
-        // Auto-context IDs — the evaluator resolves {{span}}, {{trace}},
-        // {{session}} references against data fetched server-side by ID.
-        // The backend runs voice-span enrichment (recording, transcript,
-        // metrics) when the span is a Vapi conversation.
+        // Single-eval playground resolves {{span}} / {{trace}} /
+        // {{session}} server-side from IDs. Composite execution expects
+        // the concrete context objects directly.
         const autoCtx = {};
         const _spanId = currentRow?.span_id || currentRow?.spanId;
         const _traceId = currentRow?.trace_id || currentRow?.traceId;
@@ -869,26 +883,69 @@ const TracingTestMode = React.forwardRef(
           autoCtx.session_id = _sessionId;
         if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
 
-        const { data } = await axios.post(
-          endpoints.develop.eval.evalPlayground,
-          {
-            template_id: tid,
-            model,
-            error_localizer: errorLocalizerEnabled,
-            config: {
-              mapping: evalMapping,
-              ...(Object.keys(codeParams || {}).length > 0
-                ? { params: codeParams }
-                : {}),
-            },
-            ...autoCtx,
-          },
-        );
+        const compositeCtx = {};
+        if (rowType === "Span" && spanDetail) compositeCtx.span_context = spanDetail;
+        if (rowType === "Trace" && currentRow)
+          compositeCtx.trace_context = currentRow;
+        if (rowType === "Session" && currentRow)
+          compositeCtx.session_context = currentRow;
+        if (rowType === "VoiceCall" && currentRow)
+          compositeCtx.trace_context = currentRow;
+
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
+
+        const { data } = isComposite
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    error_localizer: errorLocalizerEnabled,
+                    config: compositeConfig,
+                    ...compositeCtx,
+                  }),
+                },
+              }
+            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
+                mapping: evalMapping,
+                model,
+                error_localizer: errorLocalizerEnabled,
+                config: compositeConfig,
+                ...compositeCtx,
+              })
+          : await axios.post(endpoints.develop.eval.evalPlayground, {
+              template_id: tid,
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: evalMapping,
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...autoCtx,
+            });
 
         if (data?.status) {
-          setResult(data.result);
-          onTestResult?.(true, data.result);
-          if (errorLocalizerEnabled && data.result?.log_id) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
@@ -917,9 +974,12 @@ const TracingTestMode = React.forwardRef(
       rowType,
       onTestResult,
       errorLocalizerEnabled,
+      isComposite,
+      compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
       model,
+      executeCompositeAdhoc,
     ]);
 
     useImperativeHandle(
@@ -1887,6 +1947,8 @@ TracingTestMode.propTypes = {
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,
+  isComposite: PropTypes.bool,
+  compositeAdhocConfig: PropTypes.object,
 };
 
 export default TracingTestMode;

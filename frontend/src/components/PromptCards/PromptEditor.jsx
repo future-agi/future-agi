@@ -339,6 +339,23 @@ const PromptEditor = React.forwardRef(
       }
     }, [variableValidator]);
 
+    // Re-highlight when template format changes (mustache ↔ jinja)
+    useEffect(() => {
+      const quill = quillRef.current;
+      if (quill && allowVariables) {
+        placeEditBolt(
+          quill,
+          appliedVariableData,
+          theme,
+          openVariableEditor,
+          showEditEmbed,
+          allVariablesValid,
+          variableValidator,
+          jinjaMode,
+        );
+      }
+    }, [jinjaMode]);
+
     const onTextChange = (_, __, source) => {
       const quill = quillRef.current;
       if (source === "user" && allowVariables) {

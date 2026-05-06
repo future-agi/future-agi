@@ -411,6 +411,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       <Box
         sx={{
           flex: 1,
+          height: "100%",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",

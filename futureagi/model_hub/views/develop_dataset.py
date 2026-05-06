@@ -141,6 +141,7 @@ from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import (
     FUNCTION_CONFIG_EVALS,
     NOT_UI_EVALS,
@@ -168,9 +169,11 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
+from sdk.utils.helpers import _get_api_call_type
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 
 # Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
@@ -2043,7 +2046,14 @@ class GetDatasetTableView(APIView):
             # the dataset; use column_order only for sorting.
             column_order = dataset.column_order or []
             column_order_set = set(column_order)
-            all_columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+            qs = Column.objects.filter(dataset=dataset, deleted=False)
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                qs = qs.exclude(source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ])
+            all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
             # Names of EVALUATION_REASON columns in this dataset. Reason columns
@@ -2683,7 +2693,14 @@ class GetRowDataView(APIView):
             error_messages = []
             cells = Cell.objects.filter(row__in=rows, deleted=False)
             column_order = dataset.column_order or []
-            all_columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+            qs = Column.objects.filter(dataset=dataset, deleted=False)
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                qs = qs.exclude(source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ])
+            all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
             # Apply filters if any
@@ -6065,6 +6082,11 @@ class DownloadDatasetView(APIView):
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
             # Get all columns in the correct order
+            _exp_sources = [
+                SourceChoices.EXPERIMENT.value,
+                SourceChoices.EXPERIMENT_EVALUATION.value,
+                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+            ]
             column_order = dataset.column_order or []
             if column_order:
                 from django.db.models import Case, IntegerField, Value, When
@@ -6088,6 +6110,8 @@ class DownloadDatasetView(APIView):
                 columns = Column.objects.filter(
                     dataset_id=dataset_id, deleted=False
                 ).order_by("id")
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                columns = columns.exclude(source__in=_exp_sources)
 
             # Create DataFrame
             rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
@@ -6747,7 +6771,9 @@ class GetEvalConfigView(APIView):
                 "model": template.model,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
@@ -6818,7 +6844,9 @@ class GetEvalConfigView(APIView):
                 "function_params_schema": function_params_schema,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
                 "check_internet": template.config.get("check_internet", False),
@@ -6910,7 +6938,9 @@ class GetEvalStructureView(APIView):
             "models": template.config.get("models", ""),
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
             "kb_id": None,
             "error_localizer": template.error_localizer_enabled,
             "choices": template.choices,
@@ -6991,7 +7021,9 @@ class GetEvalStructureView(APIView):
             "kb_id": eval.kb_id,
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7071,11 +7103,7 @@ class StartEvalsProcess(APIView):
             column_order_changed = False
 
             for user_eval_metric in eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(user_eval_metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(user_eval_metric.template)
 
                 source_id = str(user_eval_metric.id)
                 column = existing_columns.get(str(source_id))
@@ -7323,9 +7351,13 @@ class EditAndRunUserEvalView(APIView):
         return bool(value)
 
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7573,9 +7605,13 @@ class AddUserEvalView(CreateAPIView):
         return bool(value)
 
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7754,17 +7790,7 @@ class AddUserEvalView(CreateAPIView):
                     dataset = Dataset.no_workspace_objects.select_for_update().get(
                         id=id1
                     )
-                    # Composite evals: aggregation-on → float, off → text.
-                    # Single evals: derive from config.output.
-                    if template.template_type == "composite":
-                        data_type = "float" if template.aggregation_enabled else "text"
-                    else:
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                    data_type = infer_eval_result_column_data_type(template)
 
                     column = Column.objects.create(
                         name=validated_data.get("name"),
@@ -10786,10 +10812,40 @@ def run_evaluation_task(evaluation_data):
             }
 
         futures = []
+        blocked_metric_ids = set()
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(metric_id)
                 if metric:
+                    try:
+                        from ee.usage.services.metering import check_usage
+                    except ImportError:
+                        check_usage = None
+
+                    if check_usage is not None:
+                        api_call_type = _get_api_call_type(
+                            metric.model or ModelChoices.TURING_LARGE.value
+                        )
+                        usage_check = check_usage(
+                            str(metric.organization.id), api_call_type
+                        )
+                        if not usage_check.allowed:
+                            from model_hub.tasks.user_evaluation import (
+                                _mark_cells_usage_limit_error,
+                            )
+
+                            UserEvalMetric.objects.filter(id=metric_id).update(
+                                status=StatusType.FAILED.value
+                            )
+                            blocked_metric_ids.add(str(metric_id))
+                            _mark_cells_usage_limit_error(metric, usage_check)
+                            logger.warning(
+                                "dataset_eval_rerun_usage_limit_exceeded",
+                                eval_id=str(metric_id),
+                                reason=usage_check.reason,
+                            )
+                            continue
+
                     properties = get_mixpanel_properties(
                         org=metric.organization,
                         eval=metric,
@@ -10805,9 +10861,24 @@ def run_evaluation_task(evaluation_data):
                     logger.info(
                         " ----- INSIDE run_evaluation_task | Initializing the EvaluationRunner for each metric -----"
                     )
+                    runner_args = dict(args)
+                    if not runner_args.get("source"):
+                        runner_args["source"] = "dataset_evaluation"
+                    if not runner_args.get("source_id"):
+                        runner_args["source_id"] = metric.template.id
+                    runner_source_configs = dict(
+                        runner_args.get("source_configs") or {}
+                    )
+                    if metric.dataset_id:
+                        runner_source_configs.setdefault(
+                            "dataset_id", str(metric.dataset_id)
+                        )
+                    runner_source_configs.setdefault("source", "dataset")
+                    runner_args["source_configs"] = runner_source_configs
+
                     evaluation_runner = EvaluationRunner(
                         user_eval_metric_id=metric_id,
-                        **args,
+                        **runner_args,
                     )
 
                     # Wrap function with OTel context propagation for thread safety
@@ -10852,9 +10923,15 @@ def run_evaluation_task(evaluation_data):
                 )
 
         # Update status to completed for successful metrics
-        UserEvalMetric.objects.filter(id__in=metric_ids).update(
-            status=StatusType.COMPLETED.value
-        )
+        completed_metric_ids = [
+            metric_id
+            for metric_id in metric_ids
+            if str(metric_id) not in blocked_metric_ids
+        ]
+        if completed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
+                status=StatusType.COMPLETED.value
+            )
     except Exception as e:
         # Handle exceptions and log errors
         UserEvalMetric.objects.filter(id__in=metric_ids).update(
@@ -11447,6 +11524,7 @@ class GetBaseColumnsView(APIView):
 
             # Get all columns per dataset in a single query
             excluded_sources = [
+                SourceChoices.EXPERIMENT.value,
                 SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
                 SourceChoices.EVALUATION_TAGS.value,
                 SourceChoices.OPTIMISATION_EVALUATION_TAGS.value,
@@ -13227,12 +13305,9 @@ class AddCompareExperimentEvalView(APIView):
                         dataset = Dataset.no_workspace_objects.select_for_update().get(
                             id=dataset_id
                         )
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                        data_type = infer_eval_result_column_data_type(
+                            user_eval_metric.template
+                        )
 
                         column = Column.objects.create(
                             name=validated_data.get("name"),
@@ -13319,11 +13394,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
 
             # Process each metric for column creation
             for metric in user_eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(metric.template)
 
                 # Get or create evaluation column
                 column, created = Column.objects.get_or_create(
@@ -14748,12 +14819,13 @@ def get_json_column_schemas(dataset):
     """
     from model_hub.utils.json_path_resolver import (
         extract_json_schema_for_column,
+        parse_json_safely,
     )
 
-    # Get JSON-type columns
+    # Get JSON-type columns + text columns that may contain JSON values
     json_columns = Column.objects.filter(
         dataset=dataset,
-        data_type="json",
+        data_type__in=["json", "text"],
         deleted=False,
     )
 
@@ -14764,39 +14836,54 @@ def get_json_column_schemas(dataset):
         metadata = column.metadata or {}
         json_schema = metadata.get("json_schema")
 
-        if json_schema and json_schema.get("keys"):
+        if json_schema and (json_schema.get("keys") or json_schema.get("max_array_count")):
             # Use cached schema
-            result[str(column.id)] = {
+            entry = {
                 "name": column.name,
                 "keys": json_schema.get("keys", []),
                 "sample": json_schema.get("sample"),
             }
+            if json_schema.get("max_array_count"):
+                entry["max_array_count"] = json_schema["max_array_count"]
+            result[str(column.id)] = entry
         else:
-            # Extract schema from all cells (up to 500 for performance)
-            sample_cells = (
-                Cell.objects.filter(
-                    column=column,
-                    deleted=False,
-                )
+            # Extract schema from cells. For text columns, check a small
+            # sample first to avoid wasting time on non-JSON content.
+            base_qs = (
+                Cell.objects.filter(column=column, deleted=False)
                 .exclude(value__isnull=True)
                 .exclude(value="")
-                .values_list("value", flat=True)[:500]
             )
+
+            if column.data_type == "text":
+                # Quick check: peek at first 3 non-empty cells
+                peek = list(base_qs.values_list("value", flat=True)[:3])
+                has_json = any(
+                    parse_json_safely(v)[1] for v in peek
+                )
+                if not has_json:
+                    continue
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
+            else:
+                sample_cells = list(base_qs.values_list("value", flat=True)[:500])
 
             if sample_cells:
                 schema = extract_json_schema_for_column(list(sample_cells))
 
-                if schema.get("keys"):
+                if schema.get("keys") or schema.get("max_array_count"):
                     # Store schema in column metadata
                     metadata["json_schema"] = schema
                     column.metadata = metadata
                     column.save(update_fields=["metadata"])
 
-                    result[str(column.id)] = {
+                    entry = {
                         "name": column.name,
                         "keys": schema.get("keys", []),
                         "sample": schema.get("sample"),
                     }
+                    if schema.get("max_array_count"):
+                        entry["max_array_count"] = schema["max_array_count"]
+                    result[str(column.id)] = entry
 
     # Get images-type columns and calculate max_images_count
     images_columns = Column.objects.filter(

@@ -335,11 +335,30 @@ const CustomCellRender = (props) => {
     );
   }
 
-  if (
-    originType === OriginTypes.ANNOTATION_LABEL &&
-    dataType === DataTypes.ARRAY
-  ) {
-    return <AnnotationArrayCellRenderer value={value} cellData={cellData} />;
+  if (originType === OriginTypes.ANNOTATION_LABEL) {
+    if (dataType === DataTypes.ARRAY) {
+      return <AnnotationArrayCellRenderer value={value} cellData={cellData} />;
+    }
+    if (typeof value === "string" && value.trim().startsWith("{")) {
+      let parsedEnvelope = null;
+      try {
+        parsedEnvelope = JSON.parse(value.replaceAll("'", '"'));
+      } catch {
+        parsedEnvelope = null;
+      }
+      if (
+        parsedEnvelope &&
+        typeof parsedEnvelope === "object" &&
+        ("selected" in parsedEnvelope ||
+          "rating" in parsedEnvelope ||
+          "value" in parsedEnvelope ||
+          "text" in parsedEnvelope)
+      ) {
+        return (
+          <AnnotationArrayCellRenderer value={value} cellData={cellData} />
+        );
+      }
+    }
   }
 
   switch (dataType) {

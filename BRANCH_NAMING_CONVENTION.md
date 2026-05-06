@@ -14,16 +14,18 @@ This document defines the branch naming conventions for this project to ensure c
 ### Components
 
 #### 1. **Type** (Required)
+
+Matches the Conventional Commits prefixes used in `CONTRIBUTING.md`.
+
 | Type | Description | Example |
 |------|-------------|---------|
-| `feature` | New features or enhancements | `feature/AUTH-123-user-login` |
-| `bugfix` | Bug fixes | `bugfix/BUG-456-fix-login-error` |
-| `hotfix` | Critical production fixes | `hotfix/CRIT-789-security-patch` |
-| `refactor` | Code refactoring without new features | `refactor/TECH-101-cleanup-utils` |
+| `feat` | New features or enhancements | `feat/AUTH-123-user-login` |
+| `fix` | Bug fixes | `fix/BUG-456-login-error` |
+| `chore` | Maintenance tasks, build changes | `chore/BUILD-404-upgrade-deps` |
 | `docs` | Documentation updates | `docs/DOC-202-update-readme` |
+| `refactor` | Code refactoring without behavior changes | `refactor/TECH-101-cleanup-utils` |
 | `test` | Adding or updating tests | `test/TEST-303-add-unit-tests` |
-| `chore` | Maintenance tasks, build changes | `chore/BUILD-404-update-deps` |
-| `release` | Release preparation | `release/v1.2.3` |
+| `perf` | Performance improvements | `perf/PERF-500-optimize-query` |
 
 #### 2. **Ticket ID** (Optional but Recommended)
 - Use your project management system ticket ID
@@ -38,26 +40,22 @@ This document defines the branch naming conventions for this project to ensure c
 ## ✅ Valid Examples
 
 ```bash
-# Feature branches
-feature/AUTH-123-user-authentication
-feature/PAY-456-stripe-integration
-feature/search-functionality
+# Features
+feat/AUTH-123-user-authentication
+feat/PAY-456-stripe-integration
+feat/search-functionality
 
 # Bug fixes
-bugfix/LOGIN-789-fix-password-reset
-bugfix/UI-101-button-alignment
-bugfix/memory-leak-fix
-
-# Hotfixes
-hotfix/SECURITY-999-xss-vulnerability
-hotfix/PROD-111-database-connection
+fix/LOGIN-789-password-reset
+fix/UI-101-button-alignment
+fix/memory-leak
 
 # Other types
 refactor/TECH-222-restructure-components
 docs/update-testing-guide
 test/add-integration-tests
 chore/UPDATE-333-upgrade-react
-release/v2.1.0
+perf/PERF-500-list-view-pagination
 ```
 
 ## ❌ Invalid Examples
@@ -66,42 +64,38 @@ release/v2.1.0
 # Bad: No type
 user-login-feature
 
+# Bad: Disallowed type (use `feat` / `fix`, not the long forms)
+feature/user-login
+bugfix/button-alignment
+hotfix/security-patch
+release/v1.2.3
+
 # Bad: Spaces
-feature/user login page
+feat/user login page
 
 # Bad: CamelCase
-feature/userLoginPage
+feat/userLoginPage
 
 # Bad: Too vague
-feature/fix
+fix/fix
 
 # Bad: Special characters
-feature/user@login!
+feat/user@login!
 
 # Bad: Too long
-feature/TICKET-123-implement-comprehensive-user-authentication-system-with-oauth-and-2fa
+feat/TICKET-123-implement-comprehensive-user-authentication-system-with-oauth-and-2fa
 ```
 
 ## 🚀 Branch Lifecycle
 
-### Main Branches
-- `main` - Production-ready code
-- `develop` - Integration branch for features
-- `dev` - Development/testing branch
+### Main Branch
+- `main` — production-ready code; PRs target this directly (see `CONTRIBUTING.md`).
 
-### Feature Workflow
-1. Create branch from `develop`
-2. Follow naming convention
-3. Develop feature
-4. Create PR to `develop`
-5. After review, merge and delete branch
-
-### Hotfix Workflow
-1. Create branch from `main`
-2. Use `hotfix/` prefix
-3. Fix critical issue
-4. Create PR to both `main` and `develop`
-5. After merge, delete branch
+### Workflow
+1. Branch from `main` using a valid `type/short-description` name.
+2. Make focused changes — keep the diff small.
+3. Open a PR against `main`.
+4. After review and merge, delete the branch.
 
 ## 🛠️ Enforcement
 
@@ -125,15 +119,15 @@ Configure your IDE to suggest branch names:
 **VS Code Settings:**
 ```json
 {
-  "git.branchPrefix": "feature/",
+  "git.branchPrefix": "feat/",
   "git.branchSuggestions": [
-    "feature/",
-    "bugfix/",
-    "hotfix/",
-    "refactor/",
+    "feat/",
+    "fix/",
+    "chore/",
     "docs/",
+    "refactor/",
     "test/",
-    "chore/"
+    "perf/"
   ]
 }
 ```
@@ -141,11 +135,11 @@ Configure your IDE to suggest branch names:
 ### Branch Creation Helper Script
 Use the provided script for easy branch creation:
 ```bash
-# Create a feature branch with ticket ID
-./scripts/create-branch.sh feature user-authentication AUTH-123
+# Create a feat branch with ticket ID
+./scripts/create-branch.sh feat user-authentication AUTH-123
 
-# Create a bugfix branch with ticket ID  
-./scripts/create-branch.sh bugfix login-error BUG-456
+# Create a fix branch with ticket ID
+./scripts/create-branch.sh fix login-error BUG-456
 
 # Create a docs branch without ticket ID
 ./scripts/create-branch.sh docs update-readme
@@ -161,16 +155,16 @@ The script will:
 Add to your `.gitconfig`:
 ```bash
 [alias]
-  new-feature = "!f() { git checkout -b feature/$1; }; f"
-  new-bugfix = "!f() { git checkout -b bugfix/$1; }; f"
-  new-hotfix = "!f() { git checkout -b hotfix/$1; }; f"
+  new-feat = "!f() { git checkout -b feat/$1; }; f"
+  new-fix = "!f() { git checkout -b fix/$1; }; f"
+  new-chore = "!f() { git checkout -b chore/$1; }; f"
 ```
 
 Usage:
 ```bash
-git new-feature TICKET-123-user-login
-git new-bugfix BUG-456-fix-button
-git new-hotfix CRIT-789-security-patch
+git new-feat TICKET-123-user-login
+git new-fix BUG-456-button-alignment
+git new-chore UPDATE-333-upgrade-react
 ```
 
 ## 🎯 Best Practices
@@ -214,12 +208,12 @@ git push origin -u new-valid-name
 
 The following regex pattern validates branch names:
 ```regex
-^(feature|bugfix|hotfix|refactor|docs|test|chore|release)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$
+^(feat|fix|chore|docs|refactor|test|perf)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$
 ```
 
 ### Pattern Breakdown:
 - `^` - Start of string
-- `(feature|bugfix|hotfix|refactor|docs|test|chore|release)` - Valid types
+- `(feat|fix|chore|docs|refactor|test|perf)` - Valid types (Conventional Commits)
 - `\/` - Forward slash separator
 - `[a-zA-Z0-9]+` - At least one alphanumeric character
 - `([a-zA-Z0-9\-]*[a-zA-Z0-9])?` - Optional additional chars with hyphens
@@ -238,15 +232,16 @@ The following regex pattern validates branch names:
 ## Quick Reference Card
 
 ```
-Types: feature, bugfix, hotfix, refactor, docs, test, chore, release
-Format: type/TICKET-123-short-description
+Types: feat, fix, chore, docs, refactor, test, perf
+Format: type/TICKET-123-short-description (ticket optional)
 Examples:
-  ✅ feature/AUTH-123-user-login
-  ✅ bugfix/UI-456-button-fix
-  ✅ hotfix/PROD-789-critical-fix
-  ❌ feature/user login
-  ❌ fix-something
-  ❌ myFeatureBranch
+  ✅ feat/AUTH-123-user-login
+  ✅ fix/UI-456-button-alignment
+  ✅ docs/update-readme
+  ❌ feature/user-login        (use `feat`)
+  ❌ bugfix/button-fix         (use `fix`)
+  ❌ feat/user login           (no spaces)
+  ❌ myFeatureBranch           (no type prefix)
 ```
 
 For questions or suggestions, please create an issue or reach out to the development team. 

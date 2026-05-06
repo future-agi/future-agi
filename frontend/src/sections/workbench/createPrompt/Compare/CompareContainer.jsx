@@ -21,6 +21,7 @@ const CompareContainer = () => {
     isImportDatasetDrawerOpen,
     setImportDatasetDrawerOpen,
     setVariableData,
+    templateFormat,
   } = usePromptWorkbenchContext();
 
   const handleOpenDrawer = () => {
@@ -33,7 +34,7 @@ const CompareContainer = () => {
     setVariableDrawerOpen(true);
   };
 
-  const variables = useExtractAllVariables(prompts);
+  const variables = useExtractAllVariables(prompts, templateFormat);
 
   return (
     <Box

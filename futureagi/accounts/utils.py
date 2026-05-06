@@ -180,8 +180,12 @@ def first_signup(data, mode=None):
     data["email"] = data["email"].lower()
     old_email = data.pop("old_email", None).lower() if data.get("old_email") else None
     update_true = data.pop("update_true", False)
-    generated_password = generate_password()
-    data["password"] = generated_password
+    user_provided_password = data.get("password") or ""
+    if user_provided_password:
+        generated_password = None
+    else:
+        generated_password = generate_password()
+        data["password"] = generated_password
     data.pop("allow_email", False)  # Remove but don't store
     # Extract domain from email
     email_parts = data["email"].split("@")
@@ -283,7 +287,8 @@ def first_signup(data, mode=None):
             OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
             )
-        process_post_registration(user.id, generated_password)
+        if generated_password:
+            process_post_registration(user.id, generated_password)
 
         return user
 

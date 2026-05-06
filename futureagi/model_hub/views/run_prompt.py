@@ -311,7 +311,17 @@ def render_template(
         )
 
 
-def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, model_name):
+class JsonStr(dict):
+    """Dict subclass that renders as its original JSON string via str()/Jinja.
+    Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
+    def __init__(self, data, raw):
+        super().__init__(data)
+        self._raw = raw
+    def __str__(self):
+        return self._raw
+
+
+def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None):
     try:
         media_error = None
         # Debug: Log input messages to see what template we're processing
@@ -353,14 +363,20 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                     parts = column.name.split(".")
                     current = context
 
-                    # Determine the value to store - parse JSON columns for dot notation access
+                    # Determine the value to store - parse JSON for dot notation access.
+                    # For any column with a JSON string value, parse it into a
+                    # JsonStr dict so {{col.key}} works via Jinja attribute access
+                    # while {{col}} still renders as the original JSON string.
                     cell_value = cell.value if cell.value is not None else ""
-                    if column.data_type == "json" and cell_value:
+                    if cell_value and isinstance(cell_value, str):
                         from model_hub.utils.json_path_resolver import parse_json_safely
 
                         parsed_json, is_valid = parse_json_safely(cell_value)
-                        if is_valid:
-                            # Use parsed dict to enable {{column.property}} access
+                        if is_valid and isinstance(parsed_json, dict):
+                            cell_value = JsonStr(parsed_json, cell_value)
+                        elif is_valid and isinstance(parsed_json, list) and template_format in ("jinja", "jinja2"):
+                            # Only parse lists for Jinja mode ({% for %} iteration).
+                            # Mustache/default mode keeps the raw JSON string.
                             cell_value = parsed_json
 
                     # Create nested objects
@@ -413,6 +429,7 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                         context,
                         image_counter,
                         model_name,
+                        template_format=template_format,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -421,6 +438,7 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                         context,
                         image_counter,
                         model_name,
+                        template_format=template_format,
                     )
 
                 # If no content was processed, keep original
@@ -449,7 +467,7 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
             return messages
 
 
-def process_list_content(content, column_info, context, image_counter, model_name):
+def process_list_content(content, column_info, context, image_counter, model_name, template_format=None):
     """Process list-type content with proper media handling"""
     processed_content = []
 
@@ -462,6 +480,7 @@ def process_list_content(content, column_info, context, image_counter, model_nam
                 context,
                 image_counter,
                 model_name,
+                template_format=template_format,
             )
             processed_content.extend(text_segments)
         else:
@@ -476,14 +495,14 @@ def process_list_content(content, column_info, context, image_counter, model_nam
     return processed_content
 
 
-def process_string_content(content, column_info, context, image_counter, model_name):
+def process_string_content(content, column_info, context, image_counter, model_name, template_format=None):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
-        content, column_info, context, image_counter, model_name
+        content, column_info, context, image_counter, model_name, template_format=template_format
     )
 
 
-def process_text_with_media(text, column_info, context, image_counter, model_name):
+def process_text_with_media(text, column_info, context, image_counter, model_name, template_format=None):
     """Process text content, handling both templates and media placeholders"""
     try:
         # Get the text and fix doubled-up quotes
@@ -593,9 +612,13 @@ def process_text_with_media(text, column_info, context, image_counter, model_nam
         text = sanitize_uuids_in_template(text)
         logger.debug(f"Template after UUID sanitization: {text[:500]}")
 
-        # Render template using multi-format renderer (default: jinja2)
+        # Render template using multi-format renderer
+        # Map frontend format names to backend constants
+        effective_format = template_format
+        if effective_format == "jinja":
+            effective_format = TEMPLATE_FORMAT_JINJA2
         try:
-            processed_text = render_template(text, context)
+            processed_text = render_template(text, context, template_format=effective_format)
         except Exception as render_error:
             logger.exception(
                 f"Template rendering failed: {render_error}. Template: {text[:200]}..."
@@ -1180,6 +1203,7 @@ class RunPrompts:
                     row_id=row.id,
                     col_id=column.id,
                     model_name=self.run_prompt_model.model,
+                    template_format=(self.run_prompt_model.run_prompt_config or {}).get("template_format"),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(

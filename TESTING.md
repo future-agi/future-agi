@@ -83,7 +83,7 @@ Today, CI covers the frontend; backend CI is on the roadmap. Workflows in [`.git
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `frontend-feature.yml` | push to `feature/*`, `bugfix/*`, `hotfix/*`, `refactor/*`, `chore/*`, `docs/*`, `test/*`, `release/*` | Branch-name validation, type check, unit tests, build verification |
+| `frontend-feature.yml` | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification |
 | `frontend-develop.yml` | push to `develop`/`dev` + PRs into `main`/`develop`/`dev` | Quality gates, integration tests, build check, Lighthouse (PRs only) |
 | `frontend-main.yml` | push to `main` | Full suite with coverage + production build |
 | `frontend-deploy-*.yaml` | manual or on main | Environment-specific deploys (EU, GCP, prod, dev CDN) |
