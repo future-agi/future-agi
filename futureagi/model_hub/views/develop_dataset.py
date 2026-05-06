@@ -7280,14 +7280,10 @@ class DeleteEvalsView(APIView):
                             ]
                             dataset.save()
 
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True)
-
-                        # Update metrics for all affected columns
+                        # Update metrics BEFORE deleting columns — the
+                        # lookup scopes by dataset via the Column row, which
+                        # must still be visible (deleted=False) for
+                        # BaseModelManager to find it.
                         metrics = UserEvalMetric.get_metrics_using_column(
                             getattr(request, "organization", None)
                             or request.user.organization.id,
@@ -7296,6 +7292,13 @@ class DeleteEvalsView(APIView):
                         for metric in metrics:
                             metric.column_deleted = True
                             metric.save()
+
+                        # Delete all related columns
+                        Column.objects.filter(
+                            Q(id=column.id)
+                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                            deleted=False,
+                        ).update(deleted=True)
 
                 # Delete the eval_metric itself when delete_column is True
                 eval_metric.deleted = True
