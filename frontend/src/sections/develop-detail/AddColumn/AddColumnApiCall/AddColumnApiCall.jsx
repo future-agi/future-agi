@@ -1,6 +1,6 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import {
@@ -12,7 +12,7 @@ import AddFieldInput from "./AddFieldInput";
 import RequestBody from "./RequestBody";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getAddColumnApiCallValidation } from "./validation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { enqueueSnackbar } from "src/components/snackbar";
@@ -66,6 +66,7 @@ export const AddColumnApiCallChild = ({
   const { dataset } = useParams();
 
   const { refreshGrid } = useDevelopDetailContext();
+  const queryClient = useQueryClient();
 
   const allColumns = useDatasetColumnConfig(dataset);
 
@@ -76,12 +77,19 @@ export const AddColumnApiCallChild = ({
     ),
   });
 
+  // Track which editId we've already loaded data for so that background
+  // re-renders (e.g. React Query refetches on window-focus) don't silently
+  // overwrite the user's in-progress edits via reset().
+  const loadedEditIdRef = useRef(null);
+
   useEffect(() => {
-    if (initialData) {
+    if (initialData && loadedEditIdRef.current !== editId) {
       reset(initialData);
+      loadedEditIdRef.current = editId;
     } else if (!editId) {
       // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
+      loadedEditIdRef.current = null;
     }
   }, [initialData, reset, editId]);
 
@@ -107,8 +115,17 @@ export const AddColumnApiCallChild = ({
       enqueueSnackbar("API Call column updated successfully", {
         variant: "success",
       });
+      queryClient.invalidateQueries({
+        queryKey: ["dynamic-column-config", editId],
+      });
+      loadedEditIdRef.current = null;
       refreshGrid();
       onClose();
+    },
+    onError: () => {
+      enqueueSnackbar("Failed to update API Call column", {
+        variant: "error",
+      });
     },
   });
 
@@ -360,6 +377,14 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
 
   const allColumns = useDatasetColumnConfig(dataset, true);
 
+  // Memoize so the child receives a stable reference and its useEffect
+  // does not fire on every parent re-render.
+  const memoizedInitialData = useMemo(() => {
+    return columnConfig
+      ? transformDynamicColumnConfig("api_call", columnConfig, allColumns)
+      : initialData;
+  }, [columnConfig, allColumns, initialData]);
+
   return (
     <Drawer
       anchor="right"
@@ -389,15 +414,7 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
       )}
       <ShowComponent condition={!isLoadingColumnConfig}>
         <AddColumnApiCallChild
-          initialData={
-            columnConfig
-              ? transformDynamicColumnConfig(
-                  "api_call",
-                  columnConfig,
-                  allColumns,
-                )
-              : initialData
-          }
+          initialData={memoizedInitialData}
           onFormSubmit={onFormSubmit}
           onClose={onClose}
           editId={editId}
