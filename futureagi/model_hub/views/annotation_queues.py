@@ -517,6 +517,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         )
         if fmt == "csv":
             return self._build_csv_export(queue, items_qs, scores_by_item, pk)
+        if fmt == "xlsx":
+            return self._build_xlsx_export(queue, items_qs, scores_by_item, pk)
 
         return self._gm.success_response(result)
 
@@ -912,6 +914,210 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         safe_pk = quote(str(pk), safe="")
         response["Content-Disposition"] = (
             f'attachment; filename="queue_{safe_pk}_annotations.csv"'
+        )
+        return response
+
+    def _build_xlsx_export(self, queue, items_qs, scores_by_item, pk):
+        """XLSX export with merged two-row headers — row 1 is the group
+        title (Call details, Metrics, Evals, <label>, <label> Notes…),
+        row 2 is the column name under each group, data starts row 3.
+        """
+        import io
+        from urllib.parse import quote
+
+        from django.http import HttpResponse
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        data = self._build_export_data(queue, items_qs, scores_by_item)
+        users = data["users"]
+        labels = data["labels"]
+        eval_names = data["eval_names"]
+        metric_columns = data["metric_columns"]
+        rows = data["rows"]
+
+        annotator_display = [
+            getattr(u, "name", None) or getattr(u, "email", None) or str(u.id)
+            for u in users
+        ]
+        n_users = len(users)
+        n_call_cols = len(self._CALL_DETAIL_COLUMNS)
+        n_metrics = len(metric_columns)
+        n_evals = len(eval_names)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Annotations"
+
+        # ---- row 1: group headers ----
+        cursor = 1
+        ws.cell(row=1, column=cursor, value="Call details")
+        if n_call_cols > 1:
+            ws.merge_cells(
+                start_row=1,
+                start_column=cursor,
+                end_row=1,
+                end_column=cursor + n_call_cols - 1,
+            )
+        cursor += n_call_cols
+
+        if n_metrics > 0:
+            ws.cell(row=1, column=cursor, value="Metrics")
+            if n_metrics > 1:
+                ws.merge_cells(
+                    start_row=1,
+                    start_column=cursor,
+                    end_row=1,
+                    end_column=cursor + n_metrics - 1,
+                )
+            cursor += n_metrics
+
+        if n_evals > 0:
+            ws.cell(row=1, column=cursor, value="Evals")
+            if n_evals > 1:
+                ws.merge_cells(
+                    start_row=1,
+                    start_column=cursor,
+                    end_row=1,
+                    end_column=cursor + n_evals - 1,
+                )
+            cursor += n_evals
+
+        notes_group_starts = []
+        for label in labels:
+            type_label = (
+                str(label.type).replace("_", " ").title() if label.type else ""
+            )
+            group_title = (
+                f"{label.name} ({type_label})" if type_label else label.name
+            )
+            ws.cell(row=1, column=cursor, value=group_title)
+            if n_users > 1:
+                ws.merge_cells(
+                    start_row=1,
+                    start_column=cursor,
+                    end_row=1,
+                    end_column=cursor + n_users - 1,
+                )
+            cursor += n_users
+            notes_group_starts.append(cursor)
+            ws.cell(row=1, column=cursor, value=f"{label.name} Notes")
+            if n_users > 1:
+                ws.merge_cells(
+                    start_row=1,
+                    start_column=cursor,
+                    end_row=1,
+                    end_column=cursor + n_users - 1,
+                )
+            cursor += n_users
+
+        last_col = max(cursor - 1, n_call_cols)
+
+        # ---- row 2: column names ----
+        col2 = 1
+        for header, _ in self._CALL_DETAIL_COLUMNS:
+            ws.cell(row=2, column=col2, value=header)
+            col2 += 1
+        for metric in metric_columns:
+            ws.cell(row=2, column=col2, value=metric)
+            col2 += 1
+        for eval_name in eval_names:
+            ws.cell(row=2, column=col2, value=eval_name)
+            col2 += 1
+        for _ in labels:
+            for name in annotator_display:
+                ws.cell(row=2, column=col2, value=name)
+                col2 += 1
+            for name in annotator_display:
+                ws.cell(row=2, column=col2, value=name)
+                col2 += 1
+
+        # ---- header styling ----
+        header_font = Font(bold=True)
+        header_align = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        group_fill = PatternFill(
+            fill_type="solid", start_color="E8EAF6", end_color="E8EAF6"
+        )
+        sub_fill = PatternFill(
+            fill_type="solid", start_color="F5F5F5", end_color="F5F5F5"
+        )
+        for col_idx in range(1, last_col + 1):
+            top = ws.cell(row=1, column=col_idx)
+            top.font = header_font
+            top.alignment = header_align
+            top.fill = group_fill
+            sub = ws.cell(row=2, column=col_idx)
+            sub.font = header_font
+            sub.alignment = header_align
+            sub.fill = sub_fill
+
+        # ---- data rows ----
+        user_ids = [u.id for u in users]
+        label_ids = [label.id for label in labels]
+        for ri, row in enumerate(rows, start=3):
+            ci = 1
+            for _, key in self._CALL_DETAIL_COLUMNS:
+                ws.cell(row=ri, column=ci, value=row[key])
+                ci += 1
+            for metric in metric_columns:
+                ws.cell(
+                    row=ri,
+                    column=ci,
+                    value=row["system_metrics"].get(metric, ""),
+                )
+                ci += 1
+            for eval_name in eval_names:
+                ws.cell(
+                    row=ri,
+                    column=ci,
+                    value=row["eval_values"].get(eval_name, ""),
+                )
+                ci += 1
+            for label_id in label_ids:
+                for user_id in user_ids:
+                    ws.cell(
+                        row=ri,
+                        column=ci,
+                        value=row["label_values"][label_id][user_id],
+                    )
+                    ci += 1
+                for user_id in user_ids:
+                    ws.cell(
+                        row=ri,
+                        column=ci,
+                        value=row["label_notes"][label_id][user_id],
+                    )
+                    ci += 1
+
+        # ---- column widths + freeze panes ----
+        for col_idx in range(1, last_col + 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = 18
+        # Recording Link is at column 3 in _CALL_DETAIL_COLUMNS — wider for URLs.
+        ws.column_dimensions[get_column_letter(3)].width = 48
+        # Per-label notes groups carry free-text — wider than value cells.
+        for start in notes_group_starts:
+            for offset in range(n_users):
+                ws.column_dimensions[
+                    get_column_letter(start + offset)
+                ].width = 40
+        ws.freeze_panes = "A3"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        response = HttpResponse(
+            buf.read(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        safe_pk = quote(str(pk), safe="")
+        response["Content-Disposition"] = (
+            f'attachment; filename="queue_{safe_pk}_annotations.xlsx"'
         )
         return response
 

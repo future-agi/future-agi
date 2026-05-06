@@ -292,6 +292,14 @@ export default function QueueAnalyticsTab({ queueId }) {
         >
           Export CSV
         </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Iconify icon="eva:download-fill" width={16} />}
+          onClick={() => handleExport("xlsx")}
+        >
+          Export Excel
+        </Button>
       </Stack>
 
       {/* Overview Cards */}
