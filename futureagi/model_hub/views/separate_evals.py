@@ -1276,6 +1276,7 @@ class EvalTemplateListView(APIView):
             compute_thirty_day_data,
             derive_eval_type,
             derive_output_type,
+            fetch_version_metadata,
             get_created_by_name,
         )
 
@@ -1356,6 +1357,10 @@ class EvalTemplateListView(APIView):
                         name.strip() if name.strip() else v.created_by.email
                     )
 
+            version_counts, default_version_numbers = fetch_version_metadata(
+                str(t.id) for t in templates
+            )
+
             # 8. Build response items
             items = []
             for template in templates:
@@ -1375,6 +1380,8 @@ class EvalTemplateListView(APIView):
                     else:
                         created_by = version_creators.get(tid, "User")
 
+                vcount = version_counts.get(tid, 0)
+                default_vnum = default_version_numbers.get(tid)
                 items.append(
                     EvalListItem(
                         id=tid,
@@ -1388,8 +1395,10 @@ class EvalTemplateListView(APIView):
                             else "user"
                         ),
                         created_by_name=created_by,
-                        version_count=1,
-                        current_version="V1",
+                        version_count=max(vcount, 1),
+                        current_version=(
+                            f"V{default_vnum}" if default_vnum else "V1"
+                        ),
                         last_updated=template.updated_at.isoformat(),
                         thirty_day_chart=[],
                         thirty_day_error_rate=[],
@@ -4988,9 +4997,11 @@ class EvalPlayGroundAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"), request.data.get("template_id")
+        )
         if gate is not None:
             return gate
 
@@ -5758,9 +5769,13 @@ class TestEvaluationTemplateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 

@@ -13,7 +13,7 @@ import { useRouter } from "src/routes/hooks";
 
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { PATH_AFTER_LOGIN } from "src/config-global";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useSnackbar } from "src/components/snackbar";
@@ -26,6 +26,7 @@ import RightSectionAuth from "./RightSectionAuth";
 
 export default function TwoFactorVerifyView() {
   const { login } = useAuthContext();
+  const postLoginPath = usePostLoginPath();
   const router = useRouter();
   const navigate = useNavigate();
   const location = useLocation();
@@ -121,7 +122,7 @@ export default function TwoFactorVerifyView() {
     // login() expects a response-shaped object with { status, data }
     await login({ status: 200, data });
 
-    router.push(PATH_AFTER_LOGIN);
+    router.push(postLoginPath);
   };
 
   // --------------- TOTP verification ---------------

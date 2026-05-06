@@ -1008,15 +1008,19 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # Cluster this project's unclustered eval results (idempotent —
-        # if another call already clustered everything, this is a no-op).
-        try:
-            from tracer.tasks.eval_clustering import cluster_eval_results_task
-
-            project_id = str(observation_span.project_id)
-            cluster_eval_results_task.delay(project_id)
-        except Exception:
-            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+        # DISABLED 2026-04-30 — per-row enqueue caused Aurora CPU saturation
+        # under load (incident: cron-driven historical EvalTask × N×M fan-out
+        # → 60+ cluster_eval_results_task/sec → embedding service connection
+        # resets → workflow pile-up). Re-enable only after per-project debounce
+        # is implemented (Temporal workflow ID dedup or Redis lock).
+        #
+        # try:
+        #     from tracer.tasks.eval_clustering import cluster_eval_results_task
+        #
+        #     project_id = str(observation_span.project_id)
+        #     cluster_eval_results_task.delay(project_id)
+        # except Exception:
+        #     logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
     except ValueError as e:

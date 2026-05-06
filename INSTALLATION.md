@@ -20,6 +20,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
   - [Ports reference](#ports-reference)
 - [Services and what they do](#services-and-what-they-do)
 - [Configuring LLM providers](#configuring-llm-providers)
+- [Email (SMTP)](#email-smtp)
 - [PeerDB mirror setup](#peerdb-mirror-setup)
 - [Upgrading](#upgrading)
 - [Backups](#backups)
@@ -44,6 +45,27 @@ When the backend logs `Application startup complete`, open:
 - **Frontend**: <http://localhost:3000>
 - **Backend API**: <http://localhost:8000>
 - **PeerDB UI**: <http://localhost:3001> (user/pass: `peerdb` / `peerdb`)
+
+### Create your first account
+
+Once the stack is up, create your admin account via the CLI:
+
+```bash
+docker exec -it future-agi-backend-1 python manage.py create_user
+```
+
+You will be prompted for your email, full name, and password. Then log in at <http://localhost:3000>.
+
+To pass credentials non-interactively (useful for automated setups):
+
+```bash
+docker exec future-agi-backend-1 python manage.py create_user \
+  --email you@example.com \
+  --name "Your Name" \
+  --password yourpassword
+```
+
+> **Team invites and password resets require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments.
 
 To stop everything: `docker compose down`. Data persists in named volumes across restarts.
 To wipe all data: `docker compose down -v`.
@@ -196,7 +218,7 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). `wal_level=logical` enabled for CDC. |
 | `clickhouse` | Analytics store. Traces/spans replicated here via PeerDB for fast querying. |
 | `redis` | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. |
-| `minio` | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. |
+| `minio` | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine
 
@@ -253,6 +275,51 @@ vertex:
 ```
 
 Rotate `GOOGLE_ACCESS_TOKEN` via a sidecar that calls `gcloud auth print-access-token`. **Do not mount `Vertex_AI_Creds.json` into the container** — it's covered by `.gitignore` but mounting it is still a bad habit.
+
+---
+
+## Email (SMTP)
+
+Email is **optional for the initial setup** — you can create your first account via the CLI (see [Create your first account](#create-your-first-account)). However, email is required for:
+
+- **Team invites** — invite links are sent by email
+- **Password resets** — reset tokens are delivered by email
+
+### Configuring Mailgun (recommended, free tier available)
+
+[Mailgun](https://www.mailgun.com/) offers 100 emails/day free. Sign up, add a sending domain, and copy your API key.
+
+Add to `.env`:
+
+```bash
+MAILGUN_API_KEY=your-mailgun-api-key
+MAILGUN_SENDER_DOMAIN=mail.yourdomain.com
+DEFAULT_FROM_EMAIL=Future AGI <noreply@mail.yourdomain.com>
+```
+
+Restart the backend: `docker compose up -d --force-recreate backend worker`.
+
+### Password reset without email
+
+If SMTP is not configured and a user needs a password reset, a shell admin can generate the reset link directly:
+
+```bash
+docker exec -it future-agi-backend-1 python manage.py shell
+```
+
+```python
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from accounts.models import User
+
+user = User.objects.get(email="user@example.com")
+uid = urlsafe_base64_encode(force_bytes(user.pk))
+token = default_token_generator.make_token(user)
+print(f"http://localhost:3000/auth/reset-password/{uid}/{token}/")
+```
+
+Share the printed URL with the user out-of-band (Slack, email, etc.).
 
 ---
 
