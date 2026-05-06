@@ -54,7 +54,7 @@ export function initTwitter() {
 
   initialized = true;
 }
- */
+
 export function trackTwitterSignup({ email, method = "email", userId } = {}) {
   if (!twqReady()) return;
   if (!isEnabled()) return;
