@@ -65,7 +65,7 @@ export function initReddit() {
 }
 
 
-export function trackRedditSignup({ email, method = "email", userId } = {}) {
+export function trackRedditSignup({ email, userId } = {}) {
   if (!rdtReady()) return;
   if (!isEnabled()) return;
 
@@ -83,9 +83,7 @@ export function trackRedditSignup({ email, method = "email", userId } = {}) {
     window.rdt("track", "SignUp", {
       currency: AD_CONVERSION_CURRENCY,
       value: AD_CONVERSION_VALUE,
-      transactionId: String(userId || normalizedEmail),
-      email: normalizedEmail,
-      customEventName: method,
+      conversionId: String(userId || normalizedEmail),
     });
   } catch (err) {
     logger.error("Reddit signup conversion failed", err);
