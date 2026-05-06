@@ -628,6 +628,7 @@ export default function UsageSummaryV2() {
   }, [overview]);
 
   const daysRemaining = useMemo(() => {
+    if (overview?.plan === "free") return null;
     if (!overview?.billing_period_end) return null;
     const end = new Date(overview.billing_period_end);
     const now = new Date();
