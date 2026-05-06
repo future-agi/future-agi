@@ -242,7 +242,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
-      const savedMapping = evalData?.mapping || {};
+      const savedMapping = normalizedEvalData?.mapping || {};
       const savedStdvars = ["input", "output", "expected"].filter(
         (v) => v in savedMapping,
       );
