@@ -678,7 +678,7 @@ export const endpoints = {
       paymentMethodDefault: (pmId) =>
         `/usage/v2/payment-methods/${pmId}/default/`,
       paymentMethodDelete: (pmId) => `/usage/v2/payment-methods/${pmId}/`,
-      deploymentInfo: `/usage/v2/deployment-info/`,
+      deploymentInfo: `/api/deployment-info/`,
     },
   },
   tools: {
