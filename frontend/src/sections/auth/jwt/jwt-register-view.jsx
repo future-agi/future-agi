@@ -18,6 +18,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
+import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
@@ -162,6 +163,11 @@ export default function JwtRegisterView() {
             userId: response?.result?.user_id,
           });
         }
+        trackTwitterSignup({
+          email: data.email,
+          method: "email",
+          userId: response?.result?.user_id,
+        });
 
         // Always navigate to login after registration
         // navigate(paths.auth.jwt.login);

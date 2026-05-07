@@ -11,6 +11,7 @@ import { useAuthContext } from "../hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
+import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
 
 // ----------------------------------------------------------------------
@@ -124,6 +125,11 @@ function Container({ children }) {
             userId: String(user.id),
           });
         }
+        trackTwitterSignup({
+          email: user.email,
+          method: provider,
+          userId: String(user.id),
+        });
       }
 
       if (window.location.pathname !== paths.auth.jwt.org_removed) {
