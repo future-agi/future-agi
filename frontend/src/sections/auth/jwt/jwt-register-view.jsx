@@ -348,7 +348,7 @@ export default function JwtRegisterView() {
       >
         By clicking continue, you agree to our
         <Link
-          href="https://futureagi.com/terms-and-conditions"
+          href="https://futureagi.com/terms"
           target="_blank"
           sx={{ cursor: "pointer" }}
         >
@@ -357,7 +357,7 @@ export default function JwtRegisterView() {
         </Link>{" "}
         and
         <Link
-          href="https://futureagi.com/privacy-policy"
+          href="https://futureagi.com/privacy"
           target="_blank"
           sx={{ cursor: "pointer" }}
         >
