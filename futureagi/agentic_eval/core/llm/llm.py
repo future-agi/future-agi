@@ -635,6 +635,11 @@ class LLM:
                         content = gw_response.choices[0].message.content
                         return content if content is not None else ""
 
+                    if self.provider == "turing":
+                        _resolved = os.environ.get(f"{payload['model'].upper()}_MODEL")
+                        if _resolved:
+                            payload["model"] = _resolved
+
                     if streaming:
                         payload["stream"] = True
                         payload["stream_options"] = {"include_usage": True}
@@ -796,6 +801,11 @@ class LLM:
                     if not gw_response.choices:
                         raise ValueError("Empty response from gateway")
                     return gw_response
+
+                if self.provider == "turing":
+                    _resolved = os.environ.get(f"{payload['model'].upper()}_MODEL")
+                    if _resolved:
+                        payload["model"] = _resolved
 
                 response = litellm.completion(
                     **payload,
