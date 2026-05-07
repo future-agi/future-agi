@@ -26,11 +26,11 @@ type ProviderFunc func(ctx context.Context, req *models.ChatCompletionRequest, m
 
 // Worker processes async jobs from a queue.
 type Worker struct {
-	store       *Store
-	queue       chan string
-	providerFn  ProviderFunc
-	maxWorkers  int
-	stopCh      chan struct{}
+	store      *Store
+	queue      chan string
+	providerFn ProviderFunc
+	maxWorkers int
+	stopCh     chan struct{}
 }
 
 // NewWorker creates a new async worker.

@@ -8,7 +8,13 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
+
+// ProviderContextKey is used to pass the LLM provider securely to plugins.
+type contextKey string
+
+const ProviderContextKey contextKey = "providerClient"
 
 // ProviderFunc is the function that calls the LLM provider.
 type ProviderFunc func(ctx context.Context, rc *models.RequestContext) error
@@ -70,7 +76,9 @@ func NewEngine(plugins ...Plugin) *Engine {
 }
 
 // Process executes the plugin pipeline: pre-plugins → provider call → post-plugins.
-func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provider providers.Provider, providerCall ProviderFunc) error {
+	// Inject the provider into the context so downstream plugins can extract it for reflexion retries.
+	ctx = context.WithValue(ctx, ProviderContextKey, provider)
 	// Pre-plugins (always sequential — order matters for security gates).
 	for _, p := range e.plugins {
 		start := time.Now()
@@ -87,7 +95,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			)
 			rc.Flags.ShortCircuited = true
 			rc.AddError(result.Error)
-			e.RunPostPlugins(ctx, rc)
+			e.RunPostPlugins(ctx, rc, provider)
 			return result.Error
 		}
 		if result.Action == ShortCircuit {
@@ -100,7 +108,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
+			e.RunPostPlugins(ctx, rc, provider)
 			return nil
 		}
 	}
@@ -108,7 +116,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Provider call
 	if err := ctx.Err(); err != nil {
 		rc.Flags.Timeout = true
-		e.RunPostPlugins(ctx, rc)
+		e.RunPostPlugins(ctx, rc, provider)
 		return models.ErrRequestTimeout("request timed out before provider call")
 	}
 
@@ -124,7 +132,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"error", err,
 			"elapsed", providerElapsed,
 		)
-		e.RunPostPlugins(ctx, rc)
+		e.RunPostPlugins(ctx, rc, provider)
 		return err
 	}
 	rc.RecordTiming("provider", time.Since(start))
@@ -132,7 +140,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		e.RunPostPlugins(ctx, rc, provider)
 	}
 	return nil
 }
@@ -144,7 +152,11 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+// when rc.Response and usage data are populated.
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext, provider providers.Provider) {
+	if provider != nil {
+		ctx = context.WithValue(ctx, ProviderContextKey, provider)
+	}
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).

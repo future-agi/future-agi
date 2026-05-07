@@ -118,7 +118,7 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the Future AGI evaluation API.

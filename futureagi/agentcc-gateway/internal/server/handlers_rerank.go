@@ -114,7 +114,7 @@ func (h *Handlers) Rerank(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}

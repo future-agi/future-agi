@@ -28,12 +28,12 @@ type RedisBudgetBackend interface {
 // Plugin enforces hierarchical spend budgets as a pipeline plugin.
 // Priority 90: runs after auth (100) and RBAC (95).
 type Plugin struct {
-	tracker      *budgetpkg.Tracker
-	pricing      *PricingLookup
-	enabled      bool
-	tenantStore  *tenant.Store
-	redisBudget  RedisBudgetBackend // nil = local-only
-	orgCounters  sync.Map           // orgID -> *orgHierarchyCounters
+	tracker     *budgetpkg.Tracker
+	pricing     *PricingLookup
+	enabled     bool
+	tenantStore *tenant.Store
+	redisBudget RedisBudgetBackend // nil = local-only
+	orgCounters sync.Map           // orgID -> *orgHierarchyCounters
 }
 
 // SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
@@ -607,22 +607,22 @@ func extractTags(rc *models.RequestContext) map[string]string {
 
 func defaultPricing() map[string]modelPricing {
 	return map[string]modelPricing{
-		"gpt-4o":                 {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"gpt-4o-mini":            {inputPerMTok: 0.15, outputPerMTok: 0.60},
-		"gpt-4-turbo":            {inputPerMTok: 10.00, outputPerMTok: 30.00},
-		"gpt-4":                  {inputPerMTok: 30.00, outputPerMTok: 60.00},
-		"gpt-3.5-turbo":          {inputPerMTok: 0.50, outputPerMTok: 1.50},
-		"o1":                     {inputPerMTok: 15.00, outputPerMTok: 60.00},
-		"o1-mini":                {inputPerMTok: 3.00, outputPerMTok: 12.00},
-		"o3-mini":                {inputPerMTok: 1.10, outputPerMTok: 4.40},
-		"claude-3-opus":          {inputPerMTok: 15.00, outputPerMTok: 75.00},
-		"claude-3-sonnet":        {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"claude-3-haiku":         {inputPerMTok: 0.25, outputPerMTok: 1.25},
-		"claude-3.5-sonnet":      {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"gemini-1.5-pro":         {inputPerMTok: 1.25, outputPerMTok: 5.00},
-		"gemini-1.5-flash":       {inputPerMTok: 0.075, outputPerMTok: 0.30},
-		"gemini-2.0-flash":       {inputPerMTok: 0.10, outputPerMTok: 0.40},
-		"command-r-plus":         {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"command-r":              {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4o":            {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"gpt-4o-mini":       {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4-turbo":       {inputPerMTok: 10.00, outputPerMTok: 30.00},
+		"gpt-4":             {inputPerMTok: 30.00, outputPerMTok: 60.00},
+		"gpt-3.5-turbo":     {inputPerMTok: 0.50, outputPerMTok: 1.50},
+		"o1":                {inputPerMTok: 15.00, outputPerMTok: 60.00},
+		"o1-mini":           {inputPerMTok: 3.00, outputPerMTok: 12.00},
+		"o3-mini":           {inputPerMTok: 1.10, outputPerMTok: 4.40},
+		"claude-3-opus":     {inputPerMTok: 15.00, outputPerMTok: 75.00},
+		"claude-3-sonnet":   {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"claude-3-haiku":    {inputPerMTok: 0.25, outputPerMTok: 1.25},
+		"claude-3.5-sonnet": {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"gemini-1.5-pro":    {inputPerMTok: 1.25, outputPerMTok: 5.00},
+		"gemini-1.5-flash":  {inputPerMTok: 0.075, outputPerMTok: 0.30},
+		"gemini-2.0-flash":  {inputPerMTok: 0.10, outputPerMTok: 0.40},
+		"command-r-plus":    {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"command-r":         {inputPerMTok: 0.15, outputPerMTok: 0.60},
 	}
 }

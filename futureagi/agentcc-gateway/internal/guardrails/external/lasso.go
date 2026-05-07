@@ -32,9 +32,9 @@ type lassoMessage struct {
 }
 
 type lassoResponse struct {
-	ViolationsDetected bool                       `json:"violations_detected"`
-	Deputies           map[string]bool            `json:"deputies"`
-	Findings           map[string][]lassoFinding  `json:"findings"`
+	ViolationsDetected bool                      `json:"violations_detected"`
+	Deputies           map[string]bool           `json:"deputies"`
+	Findings           map[string][]lassoFinding `json:"findings"`
 }
 
 type lassoFinding struct {

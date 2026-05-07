@@ -38,8 +38,8 @@ type crowdstrikeMessage struct {
 }
 
 type crowdstrikeResponse struct {
-	Status  string           `json:"status"`
-	Summary string           `json:"summary"`
+	Status  string            `json:"status"`
+	Summary string            `json:"summary"`
 	Result  crowdstrikeResult `json:"result"`
 }
 

@@ -68,7 +68,9 @@ func TestReplaceModelInBody(t *testing.T) {
 					t.Errorf("model = %q, want %q", got, "new")
 				}
 				// Check instructions are preserved.
-				var m struct{ Instructions string `json:"instructions"` }
+				var m struct {
+					Instructions string `json:"instructions"`
+				}
 				if err := jsonUnmarshal(result, &m); err == nil && m.Instructions != "help" {
 					t.Errorf("instructions not preserved")
 				}

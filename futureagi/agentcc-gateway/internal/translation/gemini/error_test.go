@@ -10,8 +10,8 @@ import (
 
 func TestErrorFromCanonical_AllTypes(t *testing.T) {
 	cases := []struct {
-		apiErr         *models.APIError
-		wantStatusCode int
+		apiErr           *models.APIError
+		wantStatusCode   int
 		wantGeminiStatus string
 	}{
 		{

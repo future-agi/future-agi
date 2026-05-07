@@ -33,19 +33,19 @@ type GCSBackend struct {
 	compress bool
 
 	// Auth
-	mu           sync.Mutex
-	accessToken  string
-	tokenExpiry  time.Time
-	clientEmail  string
-	privateKey   *rsa.PrivateKey
-	tokenURL     string
+	mu          sync.Mutex
+	accessToken string
+	tokenExpiry time.Time
+	clientEmail string
+	privateKey  *rsa.PrivateKey
+	tokenURL    string
 }
 
 // gcsServiceAccount represents the JSON key file structure.
 type gcsServiceAccount struct {
-	ClientEmail  string `json:"client_email"`
-	PrivateKey   string `json:"private_key"`
-	TokenURI     string `json:"token_uri"`
+	ClientEmail string `json:"client_email"`
+	PrivateKey  string `json:"private_key"`
+	TokenURI    string `json:"token_uri"`
 }
 
 // NewGCSBackend creates a GCS-backed cache.

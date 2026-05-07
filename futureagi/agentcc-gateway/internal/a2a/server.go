@@ -327,7 +327,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 	}
 
 	// Execute pipeline.
-	if err := s.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := s.engine.Process(ctx, rc, nil, providerCall); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			task.Status.State = TaskStatusCanceled
 			task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}

@@ -76,7 +76,7 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	return g
 }
 
-func (g *WebhookGuardrail) Name() string           { return g.name }
+func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check calls the webhook endpoint.

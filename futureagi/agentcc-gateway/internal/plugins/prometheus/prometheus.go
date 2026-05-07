@@ -24,8 +24,8 @@ func New(registry *metrics.Registry, enabled bool) *Plugin {
 	}
 }
 
-func (p *Plugin) Name() string     { return "prometheus" }
-func (p *Plugin) Priority() int    { return 998 }
+func (p *Plugin) Name() string         { return "prometheus" }
+func (p *Plugin) Priority() int        { return 998 }
 func (p *Plugin) IsPostParallel() bool { return true } // Counter updates, safe to parallelize.
 
 // ProcessRequest is a no-op for the Prometheus plugin.

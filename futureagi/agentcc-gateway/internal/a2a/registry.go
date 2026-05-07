@@ -12,12 +12,12 @@ import (
 
 // Agent represents a configured external A2A agent.
 type Agent struct {
-	Name        string   `json:"name"`
-	URL         string   `json:"url"`
-	Auth        A2AAuth  `json:"-"`
+	Name        string     `json:"name"`
+	URL         string     `json:"url"`
+	Auth        A2AAuth    `json:"-"`
 	Card        *AgentCard `json:"card,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Skills      []Skill  `json:"skills,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Skills      []Skill    `json:"skills,omitempty"`
 	healthy     atomic.Bool
 }
 

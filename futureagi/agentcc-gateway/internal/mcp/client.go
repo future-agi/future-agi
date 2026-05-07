@@ -15,8 +15,8 @@ type Client struct {
 	serverID  string
 	transport Transport
 	tools     atomic.Pointer[[]Tool]     // cached tool list (lock-free reads)
-	resources atomic.Pointer[[]Resource]  // cached resource list
-	prompts   atomic.Pointer[[]Prompt]    // cached prompt list
+	resources atomic.Pointer[[]Resource] // cached resource list
+	prompts   atomic.Pointer[[]Prompt]   // cached prompt list
 	healthy   atomic.Bool
 	mu        sync.Mutex // serializes reconnection
 	closed    atomic.Bool

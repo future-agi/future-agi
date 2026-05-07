@@ -12,11 +12,14 @@ import (
 
 // resolvedRule is a guardrail bound to its config-driven parameters.
 type resolvedRule struct {
-	guardrail Guardrail
-	mode      string // "sync" or "async"
-	action    Action
-	threshold float64
-	timeout   time.Duration
+	guardrail          Guardrail
+	mode               string // "sync" or "async"
+	action             Action
+	threshold          float64
+	timeout            time.Duration
+	onBlock            string
+	reflectMaxAttempts int
+	reflectTempBump    float64
 }
 
 // maxAsyncGuardrails limits the number of concurrent async guardrail goroutines.
@@ -57,11 +60,14 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 		}
 
 		resolved := resolvedRule{
-			guardrail: g,
-			mode:      rule.Mode,
-			action:    parseAction(rule.Action),
-			threshold: rule.Threshold,
-			timeout:   timeout,
+			guardrail:          g,
+			mode:               rule.Mode,
+			action:             parseAction(rule.Action),
+			threshold:          rule.Threshold,
+			timeout:            timeout,
+			onBlock:            rule.OnBlock,
+			reflectMaxAttempts: rule.ReflectMaxAttempts,
+			reflectTempBump:    rule.ReflectTempBump,
 		}
 
 		switch rule.Stage {
@@ -82,12 +88,12 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 
 // RunPre executes all pre-stage guardrails with optional per-key policy.
 func (e *Engine) RunPre(ctx context.Context, input *CheckInput, p *policy.Policy, rp policy.RequestPolicy) *PipelineResult {
-	return e.run(ctx, e.preGuardrails, input, p, rp)
+	return e.run(ctx, e.preGuardrails, input, p, rp, nil)
 }
 
-// RunPost executes all post-stage guardrails with optional per-key policy.
-func (e *Engine) RunPost(ctx context.Context, input *CheckInput, p *policy.Policy, rp policy.RequestPolicy) *PipelineResult {
-	return e.run(ctx, e.postGuardrails, input, p, rp)
+// RunPost executes all post-stage guardrails with optional per-key policy and reflexion.
+func (e *Engine) RunPost(ctx context.Context, input *CheckInput, p *policy.Policy, rp policy.RequestPolicy, regenerateFn func(context.Context, string) error) *PipelineResult {
+	return e.run(ctx, e.postGuardrails, input, p, rp, regenerateFn)
 }
 
 // PreCount returns the number of pre-stage guardrails.
@@ -106,7 +112,7 @@ func (e *Engine) PostCount() int {
 	return len(e.postGuardrails)
 }
 
-func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInput, p *policy.Policy, rp policy.RequestPolicy) *PipelineResult {
+func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInput, p *policy.Policy, rp policy.RequestPolicy, regenerateFn func(context.Context, string) error) *PipelineResult {
 	result := &PipelineResult{}
 
 	// Per-request policy: disabled skips all guardrails.
@@ -147,14 +153,47 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 			continue
 		}
 
-		// Sync execution with per-guardrail timeout.
-		checkResult := e.runSync(ctx, rule, input)
-		if checkResult == nil {
-			continue
+		maxAttempts := 0
+		if rule.onBlock == "reflect" && effectiveAction == ActionBlock && regenerateFn != nil {
+			maxAttempts = rule.reflectMaxAttempts
+			if maxAttempts <= 0 {
+				maxAttempts = 1
+			}
 		}
 
-		// Apply threshold.
-		triggered := shouldTrigger(checkResult, effectiveThreshold)
+		var checkResult *CheckResult
+		var triggered bool
+
+		for attempt := 0; attempt <= maxAttempts; attempt++ {
+			// Sync execution with per-guardrail timeout.
+			checkResult = e.runSync(ctx, rule, input)
+			if checkResult == nil {
+				triggered = false
+				break
+			}
+
+			// Apply threshold.
+			triggered = shouldTrigger(checkResult, effectiveThreshold)
+			if !triggered {
+				if attempt > 0 {
+					result.ReflexionSucceeded = true
+				}
+				break // Passed!
+			}
+
+			// If triggered and we have attempts left, trigger reflexion loop
+			if attempt < maxAttempts {
+				result.ReflexionAttempts++
+				slog.Info("guardrail triggered, reflecting", "guardrail", rule.guardrail.Name(), "attempt", attempt+1)
+
+				// Invoke callback to prompt the LLM to correct itself
+				if err := regenerateFn(ctx, checkResult.Message); err != nil {
+					slog.Warn("reflexion regeneration failed", "error", err)
+					break // Break out of loop, fall through to standard block
+				}
+			}
+		}
+
 		if !triggered {
 			continue
 		}

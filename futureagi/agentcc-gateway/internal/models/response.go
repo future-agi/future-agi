@@ -31,14 +31,14 @@ type Usage struct {
 
 // StreamChunk represents a single SSE chunk in a streaming response.
 type StreamChunk struct {
-	ID                string               `json:"id"`
-	Object            string               `json:"object"`
-	Created           int64                `json:"created"`
-	Model             string               `json:"model"`
-	Choices           []StreamChoice       `json:"choices"`
-	Usage             *Usage               `json:"usage,omitempty"`
-	AgentccMetadata     *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
-	SystemFingerprint string               `json:"system_fingerprint,omitempty"`
+	ID                string                 `json:"id"`
+	Object            string                 `json:"object"`
+	Created           int64                  `json:"created"`
+	Model             string                 `json:"model"`
+	Choices           []StreamChoice         `json:"choices"`
+	Usage             *Usage                 `json:"usage,omitempty"`
+	AgentccMetadata   *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
+	SystemFingerprint string                 `json:"system_fingerprint,omitempty"`
 }
 
 type AgentccStreamMetadata struct {

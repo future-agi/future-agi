@@ -11,9 +11,9 @@ import (
 
 // VaultConfig configures the HashiCorp Vault backend.
 type VaultConfig struct {
-	Address      string `yaml:"address" json:"address"`
-	Token        string `yaml:"token" json:"-"`
-	AppRoleID    string `yaml:"app_role_id" json:"-"`
+	Address       string `yaml:"address" json:"address"`
+	Token         string `yaml:"token" json:"-"`
+	AppRoleID     string `yaml:"app_role_id" json:"-"`
 	AppRoleSecret string `yaml:"app_role_secret" json:"-"`
 }
 

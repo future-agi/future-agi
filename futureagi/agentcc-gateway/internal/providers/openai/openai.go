@@ -945,13 +945,13 @@ func (p *Provider) GetBatch(ctx context.Context, batchID string) (*models.Provid
 	}
 
 	var oaiBatch struct {
-		ID              string `json:"id"`
-		Status          string `json:"status"`
-		OutputFileID    string `json:"output_file_id"`
-		ErrorFileID     string `json:"error_file_id"`
-		CreatedAt       int64  `json:"created_at"`
-		CompletedAt     *int64 `json:"completed_at"`
-		RequestCounts   struct {
+		ID            string `json:"id"`
+		Status        string `json:"status"`
+		OutputFileID  string `json:"output_file_id"`
+		ErrorFileID   string `json:"error_file_id"`
+		CreatedAt     int64  `json:"created_at"`
+		CompletedAt   *int64 `json:"completed_at"`
+		RequestCounts struct {
 			Total     int `json:"total"`
 			Completed int `json:"completed"`
 			Failed    int `json:"failed"`

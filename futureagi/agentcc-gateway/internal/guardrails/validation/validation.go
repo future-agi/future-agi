@@ -67,7 +67,7 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 	return g
 }
 
-func (g *ValidationGuardrail) Name() string           { return "input-validation" }
+func (g *ValidationGuardrail) Name() string            { return "input-validation" }
 func (g *ValidationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check validates messages against configured rules.

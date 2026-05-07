@@ -62,7 +62,7 @@ func New(cfg map[string]interface{}) *BlocklistGuardrail {
 	return g
 }
 
-func (g *BlocklistGuardrail) Name() string           { return "keyword-blocklist" }
+func (g *BlocklistGuardrail) Name() string            { return "keyword-blocklist" }
 func (g *BlocklistGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for blocklisted words/phrases.

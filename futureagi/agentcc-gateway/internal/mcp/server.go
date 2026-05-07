@@ -40,17 +40,17 @@ const (
 // It serves as a gateway: agents connect to Agentcc via MCP, and Agentcc
 // aggregates tools from all upstream MCP servers.
 type Server struct {
-	registry     *Registry
-	sessions     *SessionManager
-	clients      map[string]*Client // server ID → client
-	clientsMu    sync.RWMutex
-	depth        *DepthTracker
-	toolTimeout  time.Duration
-	serverInfo   Implementation
-	sseClients   map[string]chan []byte // session ID → SSE channel
-	sseMu        sync.RWMutex
-	guard        ToolCallGuard    // optional pre/post tool call guardrail
-	keyAuth      KeyAuthenticator // optional per-key tool filtering
+	registry    *Registry
+	sessions    *SessionManager
+	clients     map[string]*Client // server ID → client
+	clientsMu   sync.RWMutex
+	depth       *DepthTracker
+	toolTimeout time.Duration
+	serverInfo  Implementation
+	sseClients  map[string]chan []byte // session ID → SSE channel
+	sseMu       sync.RWMutex
+	guard       ToolCallGuard    // optional pre/post tool call guardrail
+	keyAuth     KeyAuthenticator // optional per-key tool filtering
 }
 
 // ServerConfig holds configuration for the MCP server.
@@ -81,10 +81,10 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	return &Server{
-		registry:   NewRegistry(cfg.Separator),
-		sessions:   NewSessionManager(cfg.SessionTTL),
-		clients:    make(map[string]*Client),
-		depth:      NewDepthTracker(cfg.MaxAgentDepth),
+		registry:    NewRegistry(cfg.Separator),
+		sessions:    NewSessionManager(cfg.SessionTTL),
+		clients:     make(map[string]*Client),
+		depth:       NewDepthTracker(cfg.MaxAgentDepth),
 		toolTimeout: cfg.ToolCallTimeout,
 		serverInfo: Implementation{
 			Name:    "agentcc-gateway",
@@ -668,13 +668,13 @@ func (s *Server) SessionCount() int {
 
 // TestToolResult is the result of a tool execution playground test.
 type TestToolResult struct {
-	Content        []ContentPart `json:"content,omitempty"`
-	IsError        bool          `json:"is_error"`
-	DurationMs     float64       `json:"duration_ms"`
-	GuardrailPre   string        `json:"guardrail_pre"`   // "pass", "blocked", or "skipped"
-	GuardrailPost  string        `json:"guardrail_post"`  // "pass", "blocked", or "skipped"
-	Error          string        `json:"error,omitempty"`
-	Server         string        `json:"server,omitempty"`
+	Content       []ContentPart `json:"content,omitempty"`
+	IsError       bool          `json:"is_error"`
+	DurationMs    float64       `json:"duration_ms"`
+	GuardrailPre  string        `json:"guardrail_pre"`  // "pass", "blocked", or "skipped"
+	GuardrailPost string        `json:"guardrail_post"` // "pass", "blocked", or "skipped"
+	Error         string        `json:"error,omitempty"`
+	Server        string        `json:"server,omitempty"`
 }
 
 // TestTool executes a tool call for the admin playground (no MCP session required).

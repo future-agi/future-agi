@@ -4,29 +4,29 @@ import "encoding/json"
 
 // ChatCompletionRequest represents an OpenAI-compatible chat completion request.
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Temperature      *float64        `json:"temperature,omitempty"`
-	TopP             *float64        `json:"top_p,omitempty"`
-	N                *int            `json:"n,omitempty"`
-	Stream           bool            `json:"stream,omitempty"`
-	StreamOptions    *StreamOptions  `json:"stream_options,omitempty"`
-	Stop             json.RawMessage `json:"stop,omitempty"`
-	MaxTokens        *int            `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int         `json:"max_completion_tokens,omitempty"`
-	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
-	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
-	LogitBias        map[string]int  `json:"logit_bias,omitempty"`
-	Logprobs         *bool           `json:"logprobs,omitempty"`
-	TopLogprobs      *int            `json:"top_logprobs,omitempty"`
-	User             string          `json:"user,omitempty"`
-	Seed             *int            `json:"seed,omitempty"`
-	Tools            []Tool          `json:"tools,omitempty"`
-	ToolChoice       json.RawMessage `json:"tool_choice,omitempty"`
-	ResponseFormat   *ResponseFormat `json:"response_format,omitempty"`
-	ServiceTier      string          `json:"service_tier,omitempty"`
-	Modalities       []string        `json:"modalities,omitempty"`
-	Audio            *AudioConfig    `json:"audio,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
+	N                   *int            `json:"n,omitempty"`
+	Stream              bool            `json:"stream,omitempty"`
+	StreamOptions       *StreamOptions  `json:"stream_options,omitempty"`
+	Stop                json.RawMessage `json:"stop,omitempty"`
+	MaxTokens           *int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
+	PresencePenalty     *float64        `json:"presence_penalty,omitempty"`
+	FrequencyPenalty    *float64        `json:"frequency_penalty,omitempty"`
+	LogitBias           map[string]int  `json:"logit_bias,omitempty"`
+	Logprobs            *bool           `json:"logprobs,omitempty"`
+	TopLogprobs         *int            `json:"top_logprobs,omitempty"`
+	User                string          `json:"user,omitempty"`
+	Seed                *int            `json:"seed,omitempty"`
+	Tools               []Tool          `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
+	ResponseFormat      *ResponseFormat `json:"response_format,omitempty"`
+	ServiceTier         string          `json:"service_tier,omitempty"`
+	Modalities          []string        `json:"modalities,omitempty"`
+	Audio               *AudioConfig    `json:"audio,omitempty"`
 
 	// Extra captures unknown fields for pass-through to providers.
 	Extra map[string]json.RawMessage `json:"-"`
@@ -103,11 +103,11 @@ func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 }
 
 type Message struct {
-	Role           string          `json:"role"`
-	Content        json.RawMessage `json:"content,omitempty"`
-	Name           string          `json:"name,omitempty"`
-	ToolCalls      []ToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID     string          `json:"tool_call_id,omitempty"`
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
 	// ThinkingBlocks carries Anthropic extended-thinking content blocks on the
 	// canonical OpenAI Message.  Non-standard field (LiteLLM convention); present
 	// only when the upstream provider returned thinking blocks.  JSON key is

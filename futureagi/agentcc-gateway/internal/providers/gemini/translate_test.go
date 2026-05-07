@@ -763,9 +763,9 @@ func TestTranslateVisionContent_Gemini_HTTPUrl(t *testing.T) {
 	}
 }
 
-// The ``file`` content block used to only accept ``file_id`` (a URL).
+// The “file“ content block used to only accept “file_id“ (a URL).
 // Callers (OpenAI-format chat completion with inline PDFs) send a
-// ``file_data`` data URI instead, which must be translated into a Gemini
+// “file_data“ data URI instead, which must be translated into a Gemini
 // inlineData part rather than silently dropped.
 func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	content := json.RawMessage(`[
@@ -791,8 +791,8 @@ func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	}
 }
 
-// Remote files via ``file_id`` should still be forwarded as a fileData
-// part (with default MIME type fallback when ``format`` is absent).
+// Remote files via “file_id“ should still be forwarded as a fileData
+// part (with default MIME type fallback when “format“ is absent).
 func TestTranslateVisionContent_Gemini_FileIDWithDefaultMime(t *testing.T) {
 	content := json.RawMessage(`[
 		{"type":"file","file":{"file_id":"https://example.com/doc.pdf"}}

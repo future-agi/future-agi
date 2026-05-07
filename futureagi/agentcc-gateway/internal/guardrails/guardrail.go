@@ -26,6 +26,8 @@ const (
 	ActionWarn
 	// ActionLog records the result without affecting the request.
 	ActionLog
+	// ActionReflect triggers a regeneration attempt via the LLM.
+	ActionReflect
 )
 
 // CheckInput is the input to a guardrail check.
@@ -65,9 +67,11 @@ type TriggeredGuardrail struct {
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.
 type PipelineResult struct {
-	Blocked   bool
-	Warnings  []string
-	Triggered []TriggeredGuardrail
+	Blocked            bool
+	Warnings           []string
+	Triggered          []TriggeredGuardrail
+	ReflexionAttempts  int
+	ReflexionSucceeded bool
 }
 
 // shouldTrigger applies the configured threshold to score-based guardrails.
@@ -80,4 +84,11 @@ func shouldTrigger(result *CheckResult, threshold float64) bool {
 		return true
 	}
 	return !result.Pass && result.Score <= 0
+}
+
+// RuleConfig defines the behavior when a guardrail is triggered, including reflexion settings.
+type RuleConfig struct {
+	OnBlock            string  `json:"on_block"`
+	ReflectMaxAttempts int     `json:"reflect_max_attempts"`
+	ReflectTempBump    float64 `json:"reflect_temperature_bump,omitempty"`
 }

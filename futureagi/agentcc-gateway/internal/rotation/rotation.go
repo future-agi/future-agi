@@ -18,10 +18,10 @@ const (
 type KeyState struct {
 	ProviderID string     `json:"provider_id"`
 	Primary    string     `json:"primary"`               // current active key (masked in JSON)
-	Status     string     `json:"status"`                 // idle, pending, draining
-	PendingKey string     `json:"pending_key,omitempty"`  // new key awaiting promotion (masked)
-	OldKey     string     `json:"old_key,omitempty"`      // previous key during drain (masked)
-	DrainUntil *time.Time `json:"drain_until,omitempty"`  // when drain period ends
+	Status     string     `json:"status"`                // idle, pending, draining
+	PendingKey string     `json:"pending_key,omitempty"` // new key awaiting promotion (masked)
+	OldKey     string     `json:"old_key,omitempty"`     // previous key during drain (masked)
+	DrainUntil *time.Time `json:"drain_until,omitempty"` // when drain period ends
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 

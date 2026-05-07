@@ -28,8 +28,8 @@ type aporiaMessage struct {
 }
 
 type aporiaResponse struct {
-	Action   string          `json:"action"`
-	Explain  []aporiaExplain `json:"explain_log"`
+	Action  string          `json:"action"`
+	Explain []aporiaExplain `json:"explain_log"`
 }
 
 type aporiaExplain struct {
@@ -87,7 +87,7 @@ func (a *aporiaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 		Score:   1.0,
 		Message: msg,
 		Details: map[string]interface{}{
-			"action":     resp.Action,
+			"action":      resp.Action,
 			"explain_log": resp.Explain,
 		},
 	}

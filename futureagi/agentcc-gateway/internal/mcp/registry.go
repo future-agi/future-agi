@@ -9,11 +9,11 @@ import (
 
 // RegisteredTool is a tool from an upstream server, namespaced for the aggregated catalog.
 type RegisteredTool struct {
-	Server      string          // upstream server ID
-	OrigName    string          // original tool name on the server
-	Name        string          // namespaced name (server_toolname)
-	Tool        Tool            // full MCP tool definition
-	Stats       ToolStats       // usage statistics
+	Server   string    // upstream server ID
+	OrigName string    // original tool name on the server
+	Name     string    // namespaced name (server_toolname)
+	Tool     Tool      // full MCP tool definition
+	Stats    ToolStats // usage statistics
 }
 
 // ToolStats tracks per-tool usage counters (lock-free via atomics).
@@ -75,10 +75,10 @@ type RegisteredPrompt struct {
 // Registry aggregates tools from all connected upstream MCP servers.
 type Registry struct {
 	mu           sync.RWMutex
-	tools        map[string]*RegisteredTool    // namespaced name → tool
-	byServer     map[string][]string           // server ID → list of namespaced names
+	tools        map[string]*RegisteredTool // namespaced name → tool
+	byServer     map[string][]string        // server ID → list of namespaced names
 	separator    string
-	toolVersions map[string]ToolVersionInfo    // tool name → version info (set from config)
+	toolVersions map[string]ToolVersionInfo     // tool name → version info (set from config)
 	resources    map[string]*RegisteredResource // URI → resource
 	prompts      map[string]*RegisteredPrompt   // namespaced name → prompt
 }

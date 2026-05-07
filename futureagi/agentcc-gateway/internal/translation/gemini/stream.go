@@ -276,4 +276,3 @@ func buildErrorEvent(err error) []byte {
 	b, _ := json.Marshal(resp)
 	return []byte(fmt.Sprintf("data: %s\n\n", string(b)))
 }
-

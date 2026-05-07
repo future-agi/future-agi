@@ -278,7 +278,7 @@ func TestServerDepthExceeded(t *testing.T) {
 	}
 
 	w := postMCP(t, s, msg, map[string]string{
-		"MCP-Session-Id":  sessionID,
+		"MCP-Session-Id": sessionID,
 		HeaderAgentDepth: "5",
 	})
 

@@ -35,11 +35,11 @@ type grayswanMessage struct {
 }
 
 type grayswanResponse struct {
-	Violation                float64                    `json:"violation"`
-	ViolatedRules            []int                      `json:"violated_rules"`
-	Mutation                 bool                       `json:"mutation"`
-	IPI                      bool                       `json:"ipi"`
-	ViolatedRuleDescriptions []grayswanRuleDescription  `json:"violated_rule_descriptions"`
+	Violation                float64                   `json:"violation"`
+	ViolatedRules            []int                     `json:"violated_rules"`
+	Mutation                 bool                      `json:"mutation"`
+	IPI                      bool                      `json:"ipi"`
+	ViolatedRuleDescriptions []grayswanRuleDescription `json:"violated_rule_descriptions"`
 }
 
 type grayswanRuleDescription struct {

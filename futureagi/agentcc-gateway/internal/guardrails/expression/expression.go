@@ -43,7 +43,7 @@ func New(name string, cfg map[string]interface{}) *ExpressionGuardrail {
 	return g
 }
 
-func (g *ExpressionGuardrail) Name() string           { return g.name }
+func (g *ExpressionGuardrail) Name() string            { return g.name }
 func (g *ExpressionGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 func (g *ExpressionGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

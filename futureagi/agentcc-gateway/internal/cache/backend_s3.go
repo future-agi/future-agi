@@ -22,13 +22,13 @@ import (
 
 // S3Backend stores cached responses in Amazon S3.
 type S3Backend struct {
-	client     *http.Client
-	bucket     string
-	prefix     string
-	region     string
-	accessKey  string
-	secretKey  string
-	compress   bool
+	client    *http.Client
+	bucket    string
+	prefix    string
+	region    string
+	accessKey string
+	secretKey string
+	compress  bool
 }
 
 // NewS3Backend creates an S3-backed cache.

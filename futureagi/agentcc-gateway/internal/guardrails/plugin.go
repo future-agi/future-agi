@@ -11,6 +11,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -97,7 +98,30 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 			Metadata: rc.Metadata,
 		}
 
-		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
+		// Extract provider from context for reflexion
+		provider, ok := ctx.Value(pipeline.ProviderContextKey).(providers.Provider)
+		var regenerateFn func(context.Context, string) error
+		if ok && provider != nil {
+			regenerateFn = func(regenCtx context.Context, failureReason string) error {
+				correctionMsg := models.Message{
+					Role:    "system",
+					Content: []byte(`Your previous response was blocked by a guardrail. Reason: ` + failureReason + `. Please rewrite your response to comply.`),
+				}
+				rc.Request.Messages = append(rc.Request.Messages, correctionMsg)
+
+				resp, err := provider.ChatCompletion(regenCtx, rc.Request)
+				if err != nil {
+					return err
+				}
+
+				// Update state with the new safe response
+				rc.Response = resp
+				input.Response = resp
+				return nil
+			}
+		}
+
+		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy, regenerateFn)
 
 		if result.Blocked {
 			rc.Response = nil
@@ -111,6 +135,7 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 			return pipeline.ResultError(models.ErrGuardrailBlocked(
 				"content_blocked",
 				p.buildBlockMessage(result),
+				result.ReflexionAttempts, // Pass attempt count to the error
 			))
 		}
 
@@ -215,6 +240,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			return pipeline.ResultError(models.ErrGuardrailBlocked(
 				"content_blocked",
 				p.buildBlockMessage(result),
+				0, // No reflexion attempts in dynamic guardrails yet
 			))
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
@@ -463,6 +489,7 @@ func (p *GuardrailPlugin) processResult(rc *models.RequestContext, result *Pipel
 		return pipeline.ResultError(models.ErrGuardrailBlocked(
 			"content_blocked",
 			p.buildBlockMessage(result),
+			0, // Pre-stage doesn't have reflexion
 		))
 	}
 

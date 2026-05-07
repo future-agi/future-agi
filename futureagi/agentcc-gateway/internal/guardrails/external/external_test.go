@@ -297,13 +297,13 @@ func TestBedrock_Intervened(t *testing.T) {
 	defer srv.Close()
 
 	g := New("test-bedrock", map[string]interface{}{
-		"provider":           "bedrock_guardrails",
-		"endpoint":           srv.URL,
-		"guardrail_id":       "abc123",
-		"guardrail_version":  "1",
-		"access_key":         "ak",
-		"secret_key":         "sk",
-		"region":             "us-east-1",
+		"provider":          "bedrock_guardrails",
+		"endpoint":          srv.URL,
+		"guardrail_id":      "abc123",
+		"guardrail_version": "1",
+		"access_key":        "ak",
+		"secret_key":        "sk",
+		"region":            "us-east-1",
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "attack")}))
@@ -806,8 +806,8 @@ func TestLasso_Safe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"violations_detected": false,
-			"deputies":           map[string]bool{},
-			"findings":           map[string]interface{}{},
+			"deputies":            map[string]bool{},
+			"findings":            map[string]interface{}{},
 		})
 	}))
 	defer srv.Close()
@@ -829,8 +829,8 @@ func TestLasso_EndpointAppendClassify(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"violations_detected": false,
-			"deputies":           map[string]bool{},
-			"findings":           map[string]interface{}{},
+			"deputies":            map[string]bool{},
+			"findings":            map[string]interface{}{},
 		})
 	}))
 	defer srv.Close()

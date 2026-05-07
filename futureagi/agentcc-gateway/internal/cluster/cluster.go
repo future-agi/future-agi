@@ -24,14 +24,14 @@ type Node struct {
 // This initial implementation uses an in-memory registry suitable for
 // single-node operation. The interface supports future Redis backing.
 type Manager struct {
-	mu        sync.RWMutex
-	node      Node
-	nodes     map[string]*Node
-	ttl       time.Duration
-	interval  time.Duration
-	drainTTL  time.Duration
-	stopCh    chan struct{}
-	stopped   bool
+	mu       sync.RWMutex
+	node     Node
+	nodes    map[string]*Node
+	ttl      time.Duration
+	interval time.Duration
+	drainTTL time.Duration
+	stopCh   chan struct{}
+	stopped  bool
 }
 
 // NewManager creates a new cluster manager from config.

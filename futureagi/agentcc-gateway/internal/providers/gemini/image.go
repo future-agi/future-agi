@@ -24,8 +24,8 @@ type geminiPredictInstance struct {
 }
 
 type geminiPredictParameters struct {
-	SampleCount    int    `json:"sampleCount,omitempty"`
-	AspectRatio    string `json:"aspectRatio,omitempty"`
+	SampleCount      int    `json:"sampleCount,omitempty"`
+	AspectRatio      string `json:"aspectRatio,omitempty"`
 	PersonGeneration string `json:"personGeneration,omitempty"`
 }
 

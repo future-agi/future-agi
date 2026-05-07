@@ -41,14 +41,14 @@ type Job struct {
 
 // JobResponse is the serialized form returned to clients.
 type JobResponse struct {
-	ID           string          `json:"id"`
-	Status       JobStatus       `json:"status"`
-	EndpointType string          `json:"endpoint_type"`
-	CreatedAt    time.Time       `json:"created_at"`
-	StartedAt    *time.Time      `json:"started_at,omitempty"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	ExpiresAt    time.Time       `json:"expires_at"`
-	Response     json.RawMessage `json:"response,omitempty"`
+	ID           string           `json:"id"`
+	Status       JobStatus        `json:"status"`
+	EndpointType string           `json:"endpoint_type"`
+	CreatedAt    time.Time        `json:"created_at"`
+	StartedAt    *time.Time       `json:"started_at,omitempty"`
+	CompletedAt  *time.Time       `json:"completed_at,omitempty"`
+	ExpiresAt    time.Time        `json:"expires_at"`
+	Response     json.RawMessage  `json:"response,omitempty"`
 	Error        *models.APIError `json:"error,omitempty"`
 }
 

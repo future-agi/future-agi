@@ -162,13 +162,13 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		h.handleResponseStream(ctx, w, rc, rp, body, orgID)
+		h.handleResponseStream(ctx, w, rc, rp, body, orgID, provider)
 	} else {
-		h.handleResponseNonStream(ctx, w, rc, rp, body, orgID)
+		h.handleResponseNonStream(ctx, w, rc, rp, body, orgID, provider)
 	}
 }
 
-func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, orgID string) {
+func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, orgID string, provider providers.Provider) {
 	// Wrap the provider call so it runs through the pipeline engine
 	// (auth, rate limiting, budget, cost, logging, guardrails).
 	var respBody []byte
@@ -211,7 +211,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -253,7 +253,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 	w.Write(respBody)
 }
 
-func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, orgID string) {
+func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, orgID string, provider providers.Provider) {
 	// Run pre-plugins (auth, rate limit, budget, guardrails) via engine.Process.
 	// The provider call starts the stream; post-plugins run after the stream ends.
 	var stream io.ReadCloser
@@ -267,7 +267,7 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.engine.Process(ctx, rc, provider, providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -335,7 +335,7 @@ streamLoop:
 
 	// Run post-plugins (cost, logging, etc.) after stream completes.
 	rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
-	h.engine.RunPostPlugins(ctx, rc)
+	h.engine.RunPostPlugins(ctx, rc, provider)
 }
 
 // GetResponse handles GET /v1/responses/{id}.

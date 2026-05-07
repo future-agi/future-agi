@@ -91,7 +91,7 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 	return g
 }
 
-func (g *ContentModerationGuardrail) Name() string           { return "content-moderation" }
+func (g *ContentModerationGuardrail) Name() string            { return "content-moderation" }
 func (g *ContentModerationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates messages for harmful content.

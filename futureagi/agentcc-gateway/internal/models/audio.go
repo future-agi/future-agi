@@ -4,7 +4,7 @@ package models
 type SpeechRequest struct {
 	Model          string   `json:"model"`
 	Input          string   `json:"input"`
-	Voice          string   `json:"voice"`                    // "alloy"|"echo"|"fable"|"onyx"|"nova"|"shimmer"
+	Voice          string   `json:"voice"`                     // "alloy"|"echo"|"fable"|"onyx"|"nova"|"shimmer"
 	ResponseFormat string   `json:"response_format,omitempty"` // "mp3"|"opus"|"aac"|"flac"|"wav"|"pcm"
 	Speed          *float64 `json:"speed,omitempty"`           // 0.25 to 4.0
 }

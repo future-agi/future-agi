@@ -22,7 +22,7 @@ func New(cfg map[string]interface{}) *SystemPromptGuardrail {
 	}
 }
 
-func (g *SystemPromptGuardrail) Name() string           { return "system-prompt-protection" }
+func (g *SystemPromptGuardrail) Name() string            { return "system-prompt-protection" }
 func (g *SystemPromptGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check detects system prompt extraction attempts in user messages.

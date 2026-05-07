@@ -24,7 +24,7 @@ func New(cfg map[string]interface{}) *HallucinationGuardrail {
 	}
 }
 
-func (g *HallucinationGuardrail) Name() string           { return "hallucination-detection" }
+func (g *HallucinationGuardrail) Name() string            { return "hallucination-detection" }
 func (g *HallucinationGuardrail) Stage() guardrails.Stage { return guardrails.StagePost }
 
 // Check looks for hallucination indicators in LLM responses.

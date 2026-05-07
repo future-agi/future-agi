@@ -17,9 +17,9 @@ import (
 
 // Credentials holds AWS credentials.
 type Credentials struct {
-	AccessKeyID    string
+	AccessKeyID     string
 	SecretAccessKey string
-	SessionToken   string
+	SessionToken    string
 }
 
 // loadCredentials loads AWS credentials from provider config.
@@ -32,9 +32,9 @@ func loadCredentials(cfg config.ProviderConfig) (*Credentials, error) {
 	}
 
 	return &Credentials{
-		AccessKeyID:    accessKey,
+		AccessKeyID:     accessKey,
 		SecretAccessKey: secretKey,
-		SessionToken:   cfg.AWSSessionToken,
+		SessionToken:    cfg.AWSSessionToken,
 	}, nil
 }
 

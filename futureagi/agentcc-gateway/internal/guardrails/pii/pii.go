@@ -88,7 +88,7 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	return g
 }
 
-func (g *PIIGuardrail) Name() string           { return "pii-detection" }
+func (g *PIIGuardrail) Name() string            { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for PII and returns a result.

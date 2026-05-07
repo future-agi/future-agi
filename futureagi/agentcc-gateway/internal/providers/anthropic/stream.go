@@ -61,9 +61,9 @@ type messageDeltaData struct {
 }
 
 type contentBlockStartData struct {
-	Type  string `json:"type"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.

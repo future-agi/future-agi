@@ -22,9 +22,9 @@ type hiddenlayerRequest struct {
 }
 
 type hiddenlayerResponse struct {
-	Flagged    bool                  `json:"flagged"`
-	RiskScore  float64               `json:"risk_score"`
-	Detections []hiddenlayerDetect   `json:"detections"`
+	Flagged    bool                `json:"flagged"`
+	RiskScore  float64             `json:"risk_score"`
+	Detections []hiddenlayerDetect `json:"detections"`
 }
 
 type hiddenlayerDetect struct {

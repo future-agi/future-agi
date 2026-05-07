@@ -3,8 +3,8 @@ package models
 // BatchRequest represents a single request within a provider-level batch.
 type BatchRequest struct {
 	CustomID string                `json:"custom_id"`
-	Method   string                `json:"method"`   // POST
-	URL      string                `json:"url"`       // /v1/chat/completions
+	Method   string                `json:"method"` // POST
+	URL      string                `json:"url"`    // /v1/chat/completions
 	Body     ChatCompletionRequest `json:"body"`
 }
 

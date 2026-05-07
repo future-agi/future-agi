@@ -12,8 +12,8 @@ import (
 
 // TopicGuardrail restricts conversations to allowed topics or blocks forbidden topics.
 type TopicGuardrail struct {
-	allowedTopics    []topicMatcher
-	forbiddenTopics  []topicMatcher
+	allowedTopics   []topicMatcher
+	forbiddenTopics []topicMatcher
 }
 
 type topicMatcher struct {
@@ -38,7 +38,7 @@ func New(cfg map[string]interface{}) *TopicGuardrail {
 	return g
 }
 
-func (g *TopicGuardrail) Name() string           { return "topic-restriction" }
+func (g *TopicGuardrail) Name() string            { return "topic-restriction" }
 func (g *TopicGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check enforces topic restrictions.

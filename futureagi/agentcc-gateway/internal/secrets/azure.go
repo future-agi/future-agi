@@ -13,7 +13,7 @@ import (
 
 // AzureConfig configures the Azure Key Vault backend.
 type AzureConfig struct {
-	VaultURL     string `yaml:"vault_url" json:"vault_url"`         // default vault URL
+	VaultURL     string `yaml:"vault_url" json:"vault_url"` // default vault URL
 	TenantID     string `yaml:"tenant_id" json:"-"`
 	ClientID     string `yaml:"client_id" json:"-"`
 	ClientSecret string `yaml:"client_secret" json:"-"`

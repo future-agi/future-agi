@@ -23,8 +23,8 @@ func New(logger *auditpkg.Logger, enabled bool) *Plugin {
 	}
 }
 
-func (p *Plugin) Name() string     { return "audit" }
-func (p *Plugin) Priority() int    { return 900 }
+func (p *Plugin) Name() string         { return "audit" }
+func (p *Plugin) Priority() int        { return 900 }
 func (p *Plugin) IsPostParallel() bool { return true } // Async event emitter, safe to parallelize.
 
 // ProcessRequest emits pre-request audit events.

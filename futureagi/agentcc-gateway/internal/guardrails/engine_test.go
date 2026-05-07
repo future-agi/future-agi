@@ -714,7 +714,7 @@ func TestEngine_PostStage(t *testing.T) {
 		Request:  &models.ChatCompletionRequest{Model: "gpt-4o"},
 		Response: resp,
 		Metadata: map[string]string{},
-	}, nil, policy.RequestPolicyNone)
+	}, nil, policy.RequestPolicyNone, nil)
 
 	if !result.Blocked {
 		t.Fatal("post-stage should block toxic response")
