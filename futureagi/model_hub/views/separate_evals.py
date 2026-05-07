@@ -1273,10 +1273,10 @@ class EvalTemplateListView(APIView):
         from model_hub.types import EvalListItem, EvalListResponse
         from model_hub.utils.eval_list import (
             build_eval_list_queryset,
-            compute_thirty_day_data,
             derive_eval_type,
             derive_output_type,
-            get_created_by_name,
+            fetch_version_metadata,
+            get_organization_display_name,
         )
 
         try:
@@ -1312,7 +1312,7 @@ class EvalTemplateListView(APIView):
                     )[:1],
                     to_attr="_prefetched_evaluators",
                 ),
-            )
+            ).select_related("organization")
 
             # 3. Sort
             order_field = req.get("sort_by", "updated_at")
@@ -1356,6 +1356,10 @@ class EvalTemplateListView(APIView):
                         name.strip() if name.strip() else v.created_by.email
                     )
 
+            version_counts, default_version_numbers = fetch_version_metadata(
+                str(t.id) for t in templates
+            )
+
             # 8. Build response items
             items = []
             for template in templates:
@@ -1373,8 +1377,12 @@ class EvalTemplateListView(APIView):
                         u = prefetched[0].user
                         created_by = (getattr(u, "name", "") or "").strip() or u.email
                     else:
-                        created_by = version_creators.get(tid, "User")
+                        created_by = version_creators.get(tid) or (
+                            get_organization_display_name(template)
+                        )
 
+                vcount = version_counts.get(tid, 0)
+                default_vnum = default_version_numbers.get(tid)
                 items.append(
                     EvalListItem(
                         id=tid,
@@ -1388,8 +1396,10 @@ class EvalTemplateListView(APIView):
                             else "user"
                         ),
                         created_by_name=created_by,
-                        version_count=1,
-                        current_version="V1",
+                        version_count=max(vcount, 1),
+                        current_version=(
+                            f"V{default_vnum}" if default_vnum else "V1"
+                        ),
                         last_updated=template.updated_at.isoformat(),
                         thirty_day_chart=[],
                         thirty_day_error_rate=[],
@@ -4166,7 +4176,7 @@ class EvalUsageStatsView(APIView):
     GET /model-hub/eval-templates/<id>/usage/
 
     Returns usage stats, chart data, and paginated eval logs.
-    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d)
+    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
     """
 
     _gm = GeneralMethods()
@@ -4179,6 +4189,8 @@ class EvalUsageStatsView(APIView):
         "7d": timedelta(days=7),
         "30d": timedelta(days=30),
         "90d": timedelta(days=90),
+        "180d": timedelta(days=180),
+        "365d": timedelta(days=365),
     }
 
     def get(self, request, template_id, *args, **kwargs):
@@ -4988,9 +5000,11 @@ class EvalPlayGroundAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"), request.data.get("template_id")
+        )
         if gate is not None:
             return gate
 
@@ -5626,9 +5640,13 @@ class TestEvaluationTemplateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 

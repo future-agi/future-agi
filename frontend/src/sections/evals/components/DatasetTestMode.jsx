@@ -147,7 +147,7 @@ function JsonEntries({ data, depth = 0 }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>
-      {entries.map(([key, val]) => {
+      {entries.map(([key, val], idx) => {
         const isObj = val !== null && typeof val === "object";
         return (
           <JsonEntryRow
@@ -156,6 +156,7 @@ function JsonEntries({ data, depth = 0 }) {
             entryValue={val}
             isObject={isObj}
             depth={depth}
+            isLast={idx === entries.length - 1}
           />
         );
       })}
@@ -163,8 +164,9 @@ function JsonEntries({ data, depth = 0 }) {
   );
 }
 
-function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
+function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
   const [open, setOpen] = useState(false);
+  const [valueExpanded, setValueExpanded] = useState(false);
 
   return (
     <Box sx={{ py: 0.25 }}>
@@ -180,7 +182,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           px: 0.5,
           py: 0.15,
         }}
-        onClick={() => isObject && setOpen(!open)}
+        onClick={(e) => {
+          if (!isObject) return;
+          e.stopPropagation();
+          setOpen(!open);
+        }}
       >
         {isObject && (
           <Iconify
@@ -190,52 +196,71 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           />
         )}
         {!isObject && <Box sx={{ width: 12, flexShrink: 0 }} />}
-        <Typography
-          variant="caption"
-          fontWeight={600}
+        <Box
           sx={{
-            fontSize: "11px",
-            minWidth: 60,
-            flexShrink: 0,
-            color: "text.secondary",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 0.5,
+            flex: 1,
+            minWidth: 0,
+            ...(isLast || (isObject && open)
+              ? {}
+              : { borderBottom: "1px solid", borderColor: "divider" }),
           }}
         >
-          {entryKey}
-        </Typography>
-        {!isObject && (
           <Typography
             variant="caption"
+            fontWeight={600}
             sx={{
               fontSize: "11px",
-              color: "primary.main",
-              wordBreak: "break-all",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
+              minWidth: 60,
+              flexShrink: 0,
+              color: "text.secondary",
             }}
           >
-            {entryValue === null
-              ? "null"
-              : entryValue === true
-                ? "true"
-                : entryValue === false
-                  ? "false"
-                  : String(entryValue)}
+            {entryKey}
           </Typography>
-        )}
-        {isObject && !open && (
-          <Typography
-            variant="caption"
-            color="text.disabled"
-            sx={{ fontSize: "10px" }}
-          >
-            {Array.isArray(entryValue)
-              ? `[${entryValue.length}]`
-              : `{${Object.keys(entryValue).length}}`}
-          </Typography>
-        )}
+          {!isObject && (
+            <Typography
+              variant="caption"
+              onClick={(e) => {
+                e.stopPropagation();
+                setValueExpanded((v) => !v);
+              }}
+              sx={{
+                fontSize: "11px",
+                color: "primary.main",
+                wordBreak: "break-all",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                display: "-webkit-box",
+                WebkitLineClamp: valueExpanded ? 9999 : 2,
+                WebkitBoxOrient: "vertical",
+                cursor: "pointer",
+                "&:hover": { opacity: 0.85 },
+              }}
+            >
+              {entryValue === null
+                ? "null"
+                : entryValue === true
+                  ? "true"
+                  : entryValue === false
+                    ? "false"
+                    : String(entryValue)}
+            </Typography>
+          )}
+          {isObject && !open && (
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ fontSize: "10px" }}
+            >
+              {Array.isArray(entryValue)
+                ? `[${entryValue.length}]`
+                : `{${Object.keys(entryValue).length}}`}
+            </Typography>
+          )}
+        </Box>
       </Box>
       {isObject && open && (
         <Box
@@ -380,6 +405,12 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
           setTyping(true);
           onChange(e.target.value);
           if (!open) setOpen(true);
+        }}
+        autoComplete="off"
+        inputProps={{
+          autoComplete: "off",
+          autoCorrect: "off",
+          spellCheck: false,
         }}
         InputProps={{
           sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },

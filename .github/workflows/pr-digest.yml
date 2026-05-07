@@ -10,6 +10,8 @@ on:
 
 jobs:
   digest:
+    # Skip on forks — secrets aren't available there and the run would just spam Actions logs.
+    if: github.repository == 'future-agi/future-agi'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -25,5 +27,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # PAT with read:org scope; needed to detect org members whose membership is private.
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .github/scripts/pr-digest.mjs

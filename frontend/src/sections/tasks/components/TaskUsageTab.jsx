@@ -10,6 +10,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import CellMarkdown from "src/sections/common/CellMarkdown";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
@@ -301,13 +303,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
         borderColor: "divider",
       }}
     >
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+      <CustomTooltip
+        show
+        title={label}
+        placement="top-start"
+        enterDelay={300}
+        size="small"
       >
-        {label}
-      </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            width: 90,
+            flexShrink: 0,
+            pt: 0.25,
+            pr: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Typography>
+      </CustomTooltip>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         {chip ? (
           <Chip
@@ -548,7 +566,6 @@ const DetailPanelContent = ({ row, isDark }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
-
   return (
     <Box
       sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
@@ -748,17 +765,15 @@ const DetailPanelContent = ({ row, isDark }) => {
                     >
                       Explanation
                     </Typography>
-                    <Typography
-                      variant="body2"
+                    <Box
                       sx={{
                         fontSize: "12px",
                         color: "text.secondary",
                         lineHeight: 1.6,
-                        whiteSpace: "pre-wrap",
                       }}
                     >
-                      {row.reason}
-                    </Typography>
+                      <CellMarkdown spacing={0} text={row.reason} />
+                    </Box>
                   </>
                 )
               )}

@@ -43,6 +43,10 @@ const SkeletonLoader = () => (
     <Skeleton sx={{ width: "100%", height: "10px" }} variant="rounded" />
   </Box>
 );
+
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
 const StatusCellRenderer = (data) => {
   const theme = useTheme();
 
@@ -68,7 +72,7 @@ const StatusCellRenderer = (data) => {
   if (cellValue?.startsWith("[") && cellValue?.endsWith("]")) {
     cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
   }
-  if (!cellValue || cellValue === undefined || cellValue === "") return;
+  if (!hasRenderableCellValue(cellValue)) return;
 
   return (
     <>
@@ -571,8 +575,7 @@ const DatapointDrawerChild = ({
                     Error
                   </Box>
                 ) : (
-                  runEval?.cellValue &&
-                  runEval?.cellValue !== "" && (
+                  hasRenderableCellValue(runEval?.cellValue) && (
                     <>
                       <ShowComponent condition={!Array.isArray(finalArray)}>
                         <Chip

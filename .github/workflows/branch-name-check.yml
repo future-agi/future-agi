@@ -19,7 +19,7 @@ jobs:
           fi
 
           # Enforce type/short-description pattern
-          PATTERN="^(feat|fix|chore|docs|refactor|test|perf)/[a-z0-9][a-z0-9._-]+$"
+          PATTERN="^(feat|fix|chore|docs|refactor|test|perf)/[A-Za-z0-9][A-Za-z0-9._-]+$"
 
           if [[ "$BRANCH" =~ $PATTERN ]]; then
             echo "✅ Branch name '$BRANCH' follows convention"

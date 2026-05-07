@@ -1209,7 +1209,7 @@ export function isValidUrl(str) {
   if (typeof str !== "string" || !str) return false;
   try {
     const url = new URL(str);
-    return url.protocol === "https:";
+    return url.protocol === "https:" || url.protocol === "http:";
   } catch {
     return false;
   }

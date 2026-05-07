@@ -37,10 +37,13 @@ x-backend-env: &backend-env
   ENV_TYPE: ${ENV_TYPE:-development}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
 
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: http://gateway:8090
+  AGENTCC_GATEWAY_INTERNAL_URL: http://gateway:8090
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
+  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
   MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
@@ -78,8 +81,19 @@ x-backend-env: &backend-env
   REDIS_LOCK_URL: redis://redis:6379/2
   REDIS_STATE_URL: redis://redis:6379/2
 
+  # RabbitMQ for Django Channels / Celery compatibility
+  CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-user}:${RABBITMQ_PASSWORD:-password}@rabbitmq:5672//
+
   # Object storage (MinIO)
+  # STORAGE_BACKEND drives URL routing: "minio" for the OSS local stack,
+  # "s3" for AWS S3, "gcs" for GCS S3-interop.
+  # S3_ENDPOINT_URL is the internal hostname the backend uses to reach
+  # MinIO. MINIO_URL is what gets baked into URLs returned to the
+  # browser — must be reachable from the user's machine. Override
+  # MINIO_URL when accessing the host from outside localhost.
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
   S3_ENDPOINT_URL: http://minio:9000
+  MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
   S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
   S3_BUCKET: futureagi
@@ -142,6 +156,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       temporal:
         condition: service_healthy
       gateway:
@@ -168,6 +184,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -185,6 +203,7 @@ services:
       - .env
     environment:
       AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
@@ -288,6 +307,20 @@ services:
       - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -514,6 +547,7 @@ volumes:
   postgres-data:
   clickhouse-data:
   redis-data:
+  rabbitmq-data:
   minio-data:
   peerdb-catalog-data:
   peerdb-minio-data:

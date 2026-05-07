@@ -169,9 +169,11 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
+from sdk.utils.helpers import _get_api_call_type
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 
 # Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
@@ -6769,7 +6771,9 @@ class GetEvalConfigView(APIView):
                 "model": template.model,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
@@ -6840,7 +6844,9 @@ class GetEvalConfigView(APIView):
                 "function_params_schema": function_params_schema,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
                 "check_internet": template.config.get("check_internet", False),
@@ -6932,7 +6938,9 @@ class GetEvalStructureView(APIView):
             "models": template.config.get("models", ""),
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
             "kb_id": None,
             "error_localizer": template.error_localizer_enabled,
             "choices": template.choices,
@@ -7013,7 +7021,9 @@ class GetEvalStructureView(APIView):
             "kb_id": eval.kb_id,
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7341,9 +7351,13 @@ class EditAndRunUserEvalView(APIView):
         return bool(value)
 
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7591,9 +7605,13 @@ class AddUserEvalView(CreateAPIView):
         return bool(value)
 
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -10794,10 +10812,40 @@ def run_evaluation_task(evaluation_data):
             }
 
         futures = []
+        blocked_metric_ids = set()
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(metric_id)
                 if metric:
+                    try:
+                        from ee.usage.services.metering import check_usage
+                    except ImportError:
+                        check_usage = None
+
+                    if check_usage is not None:
+                        api_call_type = _get_api_call_type(
+                            metric.model or ModelChoices.TURING_LARGE.value
+                        )
+                        usage_check = check_usage(
+                            str(metric.organization.id), api_call_type
+                        )
+                        if not usage_check.allowed:
+                            from model_hub.tasks.user_evaluation import (
+                                _mark_cells_usage_limit_error,
+                            )
+
+                            UserEvalMetric.objects.filter(id=metric_id).update(
+                                status=StatusType.FAILED.value
+                            )
+                            blocked_metric_ids.add(str(metric_id))
+                            _mark_cells_usage_limit_error(metric, usage_check)
+                            logger.warning(
+                                "dataset_eval_rerun_usage_limit_exceeded",
+                                eval_id=str(metric_id),
+                                reason=usage_check.reason,
+                            )
+                            continue
+
                     properties = get_mixpanel_properties(
                         org=metric.organization,
                         eval=metric,
@@ -10813,9 +10861,24 @@ def run_evaluation_task(evaluation_data):
                     logger.info(
                         " ----- INSIDE run_evaluation_task | Initializing the EvaluationRunner for each metric -----"
                     )
+                    runner_args = dict(args)
+                    if not runner_args.get("source"):
+                        runner_args["source"] = "dataset_evaluation"
+                    if not runner_args.get("source_id"):
+                        runner_args["source_id"] = metric.template.id
+                    runner_source_configs = dict(
+                        runner_args.get("source_configs") or {}
+                    )
+                    if metric.dataset_id:
+                        runner_source_configs.setdefault(
+                            "dataset_id", str(metric.dataset_id)
+                        )
+                    runner_source_configs.setdefault("source", "dataset")
+                    runner_args["source_configs"] = runner_source_configs
+
                     evaluation_runner = EvaluationRunner(
                         user_eval_metric_id=metric_id,
-                        **args,
+                        **runner_args,
                     )
 
                     # Wrap function with OTel context propagation for thread safety
@@ -10860,9 +10923,15 @@ def run_evaluation_task(evaluation_data):
                 )
 
         # Update status to completed for successful metrics
-        UserEvalMetric.objects.filter(id__in=metric_ids).update(
-            status=StatusType.COMPLETED.value
-        )
+        completed_metric_ids = [
+            metric_id
+            for metric_id in metric_ids
+            if str(metric_id) not in blocked_metric_ids
+        ]
+        if completed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
+                status=StatusType.COMPLETED.value
+            )
     except Exception as e:
         # Handle exceptions and log errors
         UserEvalMetric.objects.filter(id__in=metric_ids).update(
