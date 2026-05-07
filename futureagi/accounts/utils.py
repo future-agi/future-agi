@@ -178,8 +178,9 @@ def first_signup(data, mode=None):
         raise Exception("Email not provided")
 
     data["email"] = data["email"].lower()
-    old_email = data.pop("old_email", None).lower() if data.get("old_email") else None
-    update_true = data.pop("update_true", False)
+    # Defensive stripping of deprecated account-update parameters
+    data.pop("old_email", None)
+    data.pop("update_true", None)
     user_provided_password = data.get("password") or ""
     if user_provided_password:
         generated_password = None
@@ -207,65 +208,43 @@ def first_signup(data, mode=None):
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")
 
-    if update_true and old_email:
+    serializer = UserSignupSerializer(data=data)
+    if serializer.is_valid():
+        user = serializer.save()
+        organization = Organization.objects.create(
+            name=data["company_name"], region=settings.REGION
+        )
+        user.organization = organization
+        user.organization_role = "Owner"
+        user.is_active = True
+        user.save()
+
+        # Create OrganizationMembership for RBAC (1-user-1-org invariant)
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+
+        OrganizationMembership.objects.get_or_create(
+            user=user,
+            organization=organization,
+            defaults={
+                "role": "Owner",
+                "level": Level.OWNER,
+                "is_active": True,
+            },
+        )
+
+        # Create billing subscription (Free plan default).
+        # Skip when ee is absent — no subscription model.
         try:
-            user = User.objects.get(email=old_email)
-            # Check if new email is used by another user
-            new_email = data.get("email", "")
-            if User.objects.filter(email=new_email).exclude(id=user.id).exists():
-                raise Exception("A user with the new email already exists.")
+            from ee.usage.utils.usage_entries import (
+                create_organization_subscription_if_not_exists,
+            )
 
-            # Remove email from validation since we're updating
-            data_copy = data.copy()
-            data_copy.pop("email", None)
-            serializer = UserSignupSerializer(user, data=data_copy, partial=True)
-            if serializer.is_valid():
-                user = serializer.save()
-                # Update email separately after validation
-                user.email = data["email"]
-                user.save()
-            else:
-                raise Exception(f"Invalid data: {serializer.errors}")
-        except User.DoesNotExist as e:
-            raise Exception("User with old email not found") from e
+            create_organization_subscription_if_not_exists(organization)
+        except ImportError:
+            pass
     else:
-        serializer = UserSignupSerializer(data=data)
-        if serializer.is_valid():
-            user = serializer.save()
-            organization = Organization.objects.create(
-                name=data["company_name"], region=settings.REGION
-            )
-            user.organization = organization
-            user.organization_role = "Owner"
-            user.is_active = True
-            user.save()
-
-            # Create OrganizationMembership for RBAC (1-user-1-org invariant)
-            from accounts.models.organization_membership import OrganizationMembership
-            from tfc.constants.levels import Level
-
-            OrganizationMembership.objects.get_or_create(
-                user=user,
-                organization=organization,
-                defaults={
-                    "role": "Owner",
-                    "level": Level.OWNER,
-                    "is_active": True,
-                },
-            )
-
-            # Create billing subscription (Free plan default).
-            # Skip when ee is absent — no subscription model.
-            try:
-                from ee.usage.utils.usage_entries import (
-                    create_organization_subscription_if_not_exists,
-                )
-
-                create_organization_subscription_if_not_exists(organization)
-            except ImportError:
-                pass
-        else:
-            raise Exception(f"Invalid data: {serializer.errors}")
+        raise Exception(f"Invalid data: {serializer.errors}")
 
     email = data.get("email", None)
     organization = get_user_organization(user)
