@@ -1,22 +1,43 @@
-# Dockerfile
+# syntax=docker/dockerfile:1.6
 
 # Stage 1: Build the React app
 FROM node:20.17 AS build
 
-# Build args forwarded from docker-compose. Vite reads env vars prefixed
-# VITE_ at build time and bakes them into the bundle.
-ARG VITE_HOST_API=http://localhost:8000
-ARG VITE_ENVIRONMENT=production
-ENV VITE_HOST_API=${VITE_HOST_API} \
-    VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
-
 WORKDIR /app
 
+# Keep ARG/ENV below this RUN so VITE_* changes don't bust the install cache.
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked \
+    yarn install --frozen-lockfile
 
 COPY . ./
-RUN yarn build
+
+ARG VITE_HOST_API=http://localhost:8000
+ARG VITE_ASSETS_API=
+ARG VITE_ENVIRONMENT=production
+ARG VITE_MIXPANEL_TOKEN=
+ARG VITE_HELP_LINK=
+ARG VITE_GENERATE_LINK=
+ARG VITE_GOOGLE_SITE_KEY=
+ARG VITE_AG_GRID_LICENSE_KEY=
+ARG VITE_STRIPE_PUBLIC_KEY=
+ARG VITE_PENDO_API_KEY=
+ARG VITE_SENTRY_DSN=
+ENV VITE_HOST_API=${VITE_HOST_API} \
+    VITE_ASSETS_API=${VITE_ASSETS_API} \
+    VITE_ENVIRONMENT=${VITE_ENVIRONMENT} \
+    VITE_MIXPANEL_TOKEN=${VITE_MIXPANEL_TOKEN} \
+    VITE_HELP_LINK=${VITE_HELP_LINK} \
+    VITE_GENERATE_LINK=${VITE_GENERATE_LINK} \
+    VITE_GOOGLE_SITE_KEY=${VITE_GOOGLE_SITE_KEY} \
+    VITE_AG_GRID_LICENSE_KEY=${VITE_AG_GRID_LICENSE_KEY} \
+    VITE_STRIPE_PUBLIC_KEY=${VITE_STRIPE_PUBLIC_KEY} \
+    VITE_PENDO_API_KEY=${VITE_PENDO_API_KEY} \
+    VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+
+RUN --mount=type=cache,target=/app/node_modules/.cache,sharing=locked \
+    --mount=type=cache,target=/app/node_modules/.vite,sharing=locked \
+    yarn build
 
 # Stage 1b (dev only): live Vite dev server for hot reload. Selected via
 # `target: dev` in docker-compose.dev.yml. Source is bind-mounted at runtime;

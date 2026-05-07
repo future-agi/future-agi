@@ -21,10 +21,17 @@ services:
     build:
       context: ./frontend
       args:
-        # Baked into the Vite bundle at build time. If you change this,
-        # rebuild with `docker compose -f docker-compose.frontend.yml build`.
         VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
+        VITE_ASSETS_API: ${VITE_ASSETS_API:-}
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-production}
+        VITE_MIXPANEL_TOKEN: ${VITE_MIXPANEL_TOKEN:-}
+        VITE_HELP_LINK: ${VITE_HELP_LINK:-}
+        VITE_GENERATE_LINK: ${VITE_GENERATE_LINK:-}
+        VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+        VITE_AG_GRID_LICENSE_KEY: ${VITE_AG_GRID_LICENSE_KEY:-}
+        VITE_STRIPE_PUBLIC_KEY: ${VITE_STRIPE_PUBLIC_KEY:-}
+        VITE_PENDO_API_KEY: ${VITE_PENDO_API_KEY:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     image: futureagi/frontend:local
     ports:
       - "${FRONTEND_PORT:-3000}:80"

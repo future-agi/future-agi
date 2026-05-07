@@ -12,6 +12,7 @@
 # ports, Temporal UI), layer the dev overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # ============================================================================
+name: core-backend
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
 x-peerdb-catalog: &peerdb-catalog
@@ -125,8 +126,16 @@ services:
       context: ./frontend
       args:
         VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
+        VITE_ASSETS_API: ${VITE_ASSETS_API:-}
         VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
+        VITE_MIXPANEL_TOKEN: ${VITE_MIXPANEL_TOKEN:-}
+        VITE_HELP_LINK: ${VITE_HELP_LINK:-}
+        VITE_GENERATE_LINK: ${VITE_GENERATE_LINK:-}
         VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+        VITE_AG_GRID_LICENSE_KEY: ${VITE_AG_GRID_LICENSE_KEY:-}
+        VITE_STRIPE_PUBLIC_KEY: ${VITE_STRIPE_PUBLIC_KEY:-}
+        VITE_PENDO_API_KEY: ${VITE_PENDO_API_KEY:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     depends_on:
@@ -545,7 +554,11 @@ services:
 
 volumes:
   postgres-data:
+    external: true
+    name: core-backend_database-data
   clickhouse-data:
+    external: true
+    name: core-backend_clickhouse_data
   redis-data:
   rabbitmq-data:
   minio-data:
