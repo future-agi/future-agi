@@ -537,8 +537,23 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     @staticmethod
     def _flatten_score_value(value):
         """Unwrap Score.value's conventional JSON wrapper to the inner
-        scalar (`rating` / `value` / `text` / joined `selected`).
+        scalar (`rating` / `value` / `text` / joined `selected`). A
+        wrapper key that's present but None doesn't short-circuit — we
+        keep looking so a partially-populated payload still surfaces a
+        useful value. Nested dicts inside a wrapper key are JSONified
+        rather than passed through raw (csv.writer would otherwise emit
+        a Python repr).
         """
+        import json
+
+        def _coerce(v):
+            if isinstance(v, dict):
+                try:
+                    return json.dumps(v, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    return str(v)
+            return v
+
         if value is None:
             return ""
         if not isinstance(value, dict):
@@ -546,17 +561,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 return ", ".join(str(v) for v in value)
             return value
         for key in ("rating", "value", "text"):
-            if key in value:
-                inner = value[key]
-                if isinstance(inner, list):
-                    return ", ".join(str(v) for v in inner)
-                return "" if inner is None else inner
+            if key not in value:
+                continue
+            inner = value[key]
+            if inner is None:
+                continue
+            if isinstance(inner, list):
+                return ", ".join(str(v) for v in inner)
+            return _coerce(inner)
         selected = value.get("selected")
         if isinstance(selected, list):
             return ", ".join(str(v) for v in selected)
-        # Unknown shape — emit JSON so data isn't lost.
-        import json
-
         try:
             return json.dumps(value, ensure_ascii=False)
         except (TypeError, ValueError):
@@ -595,15 +610,16 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     @staticmethod
     def _resolve_recording_link(item) -> str:
         """Best-effort recording URL — only meaningful for call_execution
-        items. Tries known provider paths inside provider_call_data and
-        falls back to customer_log_url.
+        items. Prefers the canonical top-level fields, then falls back
+        to provider-specific paths in provider_call_data.
         """
         ce = getattr(item, "call_execution", None)
         if ce is None:
             return ""
-        log_url = getattr(ce, "customer_log_url", None)
-        if isinstance(log_url, str) and log_url:
-            return log_url
+        for attr in ("recording_url", "stereo_recording_url"):
+            url = getattr(ce, attr, None)
+            if isinstance(url, str) and url:
+                return url
         pcd = getattr(ce, "provider_call_data", None) or {}
         if not isinstance(pcd, dict):
             return ""
@@ -680,17 +696,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             row = getattr(item, "dataset_row", None)
             if row is None:
                 return {}
-            from model_hub.models.develop_dataset import Cell
-
-            eval_cells = (
-                Cell.objects.filter(
-                    row=row,
-                    column__source__in=("evaluation", "experiment_evaluation"),
-                    deleted=False,
-                )
-                .select_related("column")
-                .order_by("column__name", "created_at")
-            )
+            # `eval_cells` is attached by _build_export_data's Prefetch.
+            eval_cells = getattr(row, "eval_cells", None) or []
             out = {}
             for cell in eval_cells:
                 col = cell.column
@@ -701,20 +708,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 out[name] = "" if cell.value is None else cell.value
             return out
 
+        # `active_eval_logs` is attached by _build_export_data's Prefetch.
         eval_logs = None
         if src == "trace":
             trace = getattr(item, "trace", None)
             if trace is not None:
-                eval_logs = trace.eval_logs.filter(deleted=False).select_related(
-                    "custom_eval_config"
-                )
+                eval_logs = getattr(trace, "active_eval_logs", None)
         elif src == "observation_span":
             span = getattr(item, "observation_span", None)
             if span is not None:
-                eval_logs = span.eval_logs.filter(deleted=False).select_related(
-                    "custom_eval_config"
-                )
-        if eval_logs is None:
+                eval_logs = getattr(span, "active_eval_logs", None)
+        if not eval_logs:
             return {}
 
         out = {}
@@ -765,7 +769,27 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         labels = [ql.label for ql in queue_labels if ql.label is not None]
 
         # Pre-fetch FK-linked source objects and their eval children so the
-        # per-item loop below doesn't fan out into N+1 queries.
+        # per-item loop below doesn't fan out into N+1 queries. The Prefetch
+        # objects with to_attr= matter: _collect_evals_for_item reads the
+        # cached attributes directly (active_eval_logs / eval_cells) — using
+        # the default related-manager would re-issue the filter and waste
+        # the prefetch.
+        from django.db.models import Prefetch
+
+        from model_hub.models.develop_dataset import Cell
+        from tracer.models.observation_span import EvalLogger
+
+        active_eval_logs_qs = EvalLogger.objects.filter(
+            deleted=False
+        ).select_related("custom_eval_config")
+        eval_cells_qs = (
+            Cell.objects.filter(
+                column__source__in=("evaluation", "experiment_evaluation"),
+                deleted=False,
+            )
+            .select_related("column")
+            .order_by("column__name", "created_at")
+        )
         items_qs = items_qs.select_related(
             "trace",
             "trace__project",
@@ -775,8 +799,21 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             "dataset_row",
             "prototype_run",
         ).prefetch_related(
-            "trace__eval_logs__custom_eval_config",
-            "observation_span__eval_logs__custom_eval_config",
+            Prefetch(
+                "trace__eval_logs",
+                queryset=active_eval_logs_qs,
+                to_attr="active_eval_logs",
+            ),
+            Prefetch(
+                "observation_span__eval_logs",
+                queryset=active_eval_logs_qs,
+                to_attr="active_eval_logs",
+            ),
+            Prefetch(
+                "dataset_row__cell_set",
+                queryset=eval_cells_qs,
+                to_attr="eval_cells",
+            ),
         )
 
         rows = []
