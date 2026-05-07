@@ -20,16 +20,22 @@
 #       containers. Use this for a real self-host.
 #
 # Quick start:
-#   cp .env.example .env
+#   cp .env.example .env       # optional — empty .env works fine
 #   docker compose up                                    # light
 #   COMPOSE_PROFILES=full docker compose up              # full
 #
 # Open http://localhost:3000 once the frontend logs "ready".
-# First boot builds the backend image (~10 min). Subsequent boots are instant.
+# First boot pulls images from Docker Hub (~30s). No source builds.
 #
-# For hot-reload development (volume mounts, per-queue workers, exposed DB
-# ports, Temporal UI), layer the dev overlay:
+# Pin a specific release (recommended for production): set FUTURE_AGI_VERSION
+# in .env (defaults to whatever this file's defaults pin to — currently
+# v1.22.41).
+#
+# For hot-reload development (build from source, volume mounts, per-queue
+# workers, exposed DB ports, Temporal UI), layer the dev overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# For production deployments, see ./deploy/README.md.
 # ============================================================================
 
 name: futureagi
@@ -54,7 +60,9 @@ x-peerdb-minio-env: &peerdb-minio-env
   PEERDB_CLICKHOUSE_AWS_S3_BUCKET_NAME: peerdbbucket
 
 x-backend-env: &backend-env
-  SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-change-me}
+  # Local-only defaults. deploy/docker-compose.production.yml re-binds these
+  # with ${VAR:?error} guards so prod refuses to boot on the dev values.
+  SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
   ENV_TYPE: ${ENV_TYPE:-development}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
@@ -63,8 +71,8 @@ x-backend-env: &backend-env
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
   AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
-  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
   MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
@@ -131,7 +139,7 @@ x-backend-env: &backend-env
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   AWS_REGION: ${AWS_REGION:-us-east-1}
 
-  # Future AGI Cloud API (optional, EE-tier only)
+  # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
 
@@ -142,27 +150,25 @@ services:
   # ==========================================================================
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
-        VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
-        VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+    image: futureagi/frontend:${FUTURE_AGI_VERSION:-v1.22.41}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      # Empty -> SPA falls back through src/config-global.js: import.meta.env
+      # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
+      # deployment (e.g. https://api.example.com for split-domain).
+      VITE_HOST_API: ${VITE_HOST_API:-}
     depends_on:
       - backend
     restart: unless-stopped
 
   backend:
-    build:
-      context: ./futureagi
-      dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-v1.22.41}
     ports:
       - "${BACKEND_PORT:-8000}:80"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
       SERVICE_TYPE: backend
@@ -186,12 +192,10 @@ services:
     restart: unless-stopped
 
   worker:
-    build:
-      context: ./futureagi
-      dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-v1.22.41}
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
@@ -209,64 +213,44 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # LLM gateway (agentcc) — proxies provider APIs used by the backend.
-  # Ships with config.example.yaml as the default. Copy to
-  # agentcc-gateway/config.yaml and edit to enable more providers.
-  # --------------------------------------------------------------------------
-
+  # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
+  # the shipped example via AGENTCC_CONFIG_PATH).
   agentcc-gateway:
-    build:
-      context: ./agentcc-gateway
+    image: futureagi/agentcc-gateway:${FUTURE_AGI_VERSION:-v1.22.41}
     ports:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
-      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      # Provider creds for the gateway live in agentcc-gateway/config.yaml,
-      # which interpolates ${ENV_VAR}s from this .env at gateway start. Add
-      # whatever env vars your config.yaml references (e.g. for Vertex, you
-      # might add GOOGLE_ACCESS_TOKEN here and reference it from config.yaml).
     volumes:
-      # Default to the shipped example config. Override by setting
-      # AGENTCC_CONFIG_PATH in .env (e.g. agentcc-gateway/config.yaml).
       - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # Embedding / model-serving service
-  # --------------------------------------------------------------------------
-
   serving:
-    build:
-      context: ./futureagi/model_serving
-      dockerfile: Dockerfile.oss
+    image: futureagi/serving:${FUTURE_AGI_VERSION:-v1.22.41}
     ports:
       - "${SERVING_PORT:-8080}:8080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
     depends_on:
       - backend
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # Sandboxed code executor for eval code. Requires `privileged: true` for
-  # nsjail namespace creation — won't run on Fargate / managed container
-  # platforms that disallow privileged containers.
-  # --------------------------------------------------------------------------
-
+  # Requires privileged: true for nsjail namespaces — won't run on Fargate /
+  # managed platforms that disallow privileged containers.
   code-executor:
-    build:
-      context: ./futureagi/code-executor
+    image: futureagi/code-executor:${FUTURE_AGI_VERSION:-v1.22.41}
     ports:
       - "${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true

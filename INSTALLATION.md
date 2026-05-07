@@ -37,14 +37,15 @@ cd future-agi
 ./bin/install
 ```
 
-First boot builds the backend image from source (~10–15 minutes on a modern laptop). Subsequent boots take under 30 seconds.
+First boot pulls images from Docker Hub (~30 seconds on a fast connection). No source builds.
 
-`bin/install` does four things:
+`bin/install` does three things:
 
-1. Copies `.env.example` → `.env` if missing.
-2. Generates real secrets in place of every `CHANGEME-*` placeholder (idempotent — won't clobber values you've already set).
-3. Brings up the stack with `docker compose up -d`.
-4. Polls `http://localhost:8000/health/` until the backend is ready, then prompts you to create your first user.
+1. Copies `.env.example` → `.env` if missing (compose's inlined defaults make even an empty `.env` valid for local use).
+2. Brings up the stack with `docker compose up -d`.
+3. Polls `http://localhost:8000/health/` until the backend is ready, then prompts you to create your first user.
+
+For production, do not rely on local-only defaults. See [`deploy/README.md`](deploy/README.md).
 
 Useful flags:
 
@@ -92,7 +93,7 @@ To fully remove the install (containers, volumes, `.env`, built images): `./bin/
 If you'd rather run the steps by hand:
 
 ```bash
-cp .env.example .env       # then edit, replacing every CHANGEME-* value
+cp .env.example .env       # optional — empty .env works fine for local
 docker compose up          # add COMPOSE_PROFILES=full for the PeerDB stack
 ```
 
@@ -105,8 +106,8 @@ docker compose up          # add COMPOSE_PROFILES=full for the PeerDB stack
 | Docker Engine | 24.0+ | Docker Desktop on Mac/Windows, or native Docker on Linux |
 | Docker Compose | v2.20+ | `docker compose version` should print v2.x |
 | RAM | 8 GB | 16 GB recommended (ClickHouse and the worker each hold ~1 GB) |
-| Disk | 20 GB free | Initial image builds are ~6 GB; data grows from there |
-| CPU | 4 cores | 8+ cores materially speeds up the initial build |
+| Disk | 20 GB free | Image pulls are ~3 GB; data grows from there |
+| CPU | 4 cores | — |
 | Platform | `privileged: true` supported | `code-executor` needs it — won't run on Fargate, Cloud Run, or some PaaS |
 
 On Docker Desktop for Mac, give Docker at least **8 GB RAM** and **64 GB disk** under Settings → Resources. The defaults are often too small.
@@ -119,16 +120,20 @@ Three compose files at the repo root. Pick one or compose them with `-f`.
 
 ### Mode 1 — Full OSS stack
 
-The default. 21 services including frontend, backend, gateway, worker, serving, code-executor, databases, Temporal, and PeerDB CDC.
+Two profiles, gated by `COMPOSE_PROFILES`:
+
+- **light** (default, `COMPOSE_PROFILES` unset, ~12 containers) — frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, temporal. Analytics views (Observe / Trace) show empty data without PeerDB.
+- **full** (`COMPOSE_PROFILES=full`, ~22 containers) — adds the PeerDB CDC stack so analytics views populate.
 
 ```bash
-docker compose up          # foreground
-docker compose up -d       # detached
-docker compose ps          # check status
-docker compose logs -f backend   # tail a service's logs
+docker compose up                                # light, foreground
+docker compose up -d                             # light, detached
+COMPOSE_PROFILES=full docker compose up -d       # full
+docker compose ps
+docker compose logs -f backend
 ```
 
-Use this for self-hosted evaluation or production. Binds the frontend publicly on `0.0.0.0:3000` and keeps all data stores on `127.0.0.1` so only the host can reach them. Put a reverse proxy (nginx, Caddy, Traefik) in front of the frontend for HTTPS.
+Binds the frontend on `0.0.0.0:3000`; data stores stay on `127.0.0.1`. Put a reverse proxy in front of the frontend for HTTPS in any non-laptop deployment.
 
 ### Mode 2 — Development mode
 
@@ -154,14 +159,10 @@ For users who run the backend elsewhere (a VM, Future AGI Cloud, another Compose
 
 ```bash
 VITE_HOST_API=https://api.your-backend.example.com \
-  docker compose -f docker-compose.frontend.yml up --build
+  docker compose -f docker-compose.frontend.yml up -d
 ```
 
-Or set `VITE_HOST_API` in `.env` and run without the inline variable. Since Vite bakes the API URL into the JS bundle at build time, changing `VITE_HOST_API` requires a rebuild:
-
-```bash
-docker compose -f docker-compose.frontend.yml build --no-cache frontend
-```
+Or set `VITE_HOST_API` in `.env` and run without the inline variable. Restart the container to pick up changes — no rebuild required (the entrypoint regenerates `/config.js` from `VITE_HOST_API` on each start).
 
 ---
 
@@ -175,28 +176,19 @@ docker compose -f docker-compose.frontend.yml build --no-cache frontend
 cp .env.example .env
 ```
 
-Every knob in the compose file has a sensible default, so the stack will boot against an unedited `.env.example`. In production you must change the `CHANGEME` values (see below).
+Every knob in the compose file has a sensible local default, so the stack boots against an empty `.env`. For production, see [`deploy/README.md`](deploy/README.md) — the production overlay re-binds these with `${VAR:?error}` guards and refuses to boot on dev fallbacks.
 
-### Secrets that must be changed
+### Optional values
 
-Before running in anything other than a local evaluation:
-
-| Variable | Generate with | Used by |
-|---|---|---|
-| `SECRET_KEY` | `openssl rand -hex 32` | Django — session signing, CSRF, password reset tokens |
-| `PG_PASSWORD` | `openssl rand -base64 24` | Postgres auth |
-| `MINIO_ROOT_PASSWORD` | `openssl rand -base64 24` | Object storage auth |
-| `AGENTCC_INTERNAL_API_KEY` | `openssl rand -hex 32` | Shared secret between backend and gateway |
-
-Optional — only needed if you enable the corresponding feature:
+Only needed if you enable the corresponding feature:
 
 | Variable | Used by |
 |---|---|
 | `OPENAI_API_KEY` | Evaluations, agent loops, text simulation |
 | `ANTHROPIC_API_KEY` | Same as above |
 | `GOOGLE_API_KEY` | Gemini models |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock models, S3 object storage (production) |
-| `FUTURE_AGI_CLOUD_API_KEY` | EE-tier Cloud API features (Falcon AI, Turing, Protect, insights). Leave blank on OSS. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock models, S3 object storage |
+| `FUTURE_AGI_CLOUD_API_KEY` | Future AGI Cloud API features. Leave blank to run fully offline. |
 
 ### Ports reference
 
@@ -388,14 +380,14 @@ Or inspect and create mirrors manually at <http://localhost:3001>.
 
 ## Upgrading
 
+Bump `FUTURE_AGI_VERSION` in `.env` to a newer release tag, then:
+
 ```bash
-cd future-agi
-git pull
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
-Backend migrations run automatically on startup. Downtime is ~30 seconds for the backend restart. Workers restart independently.
+Backend migrations run automatically on startup. Downtime is ~30 seconds for the backend restart. Workers restart independently. To roll back, set `FUTURE_AGI_VERSION` to the previous tag and re-run the same two commands.
 
 If a release note mentions breaking changes to PeerDB mirrors, re-run `docker compose run --rm peerdb-init bash /setup.sh`.
 
@@ -460,11 +452,12 @@ You changed `PG_PASSWORD` after the volume was created. Postgres initializes the
 - Wipe and reinitialize: `docker compose down -v` (⚠ destroys all data).
 
 ### Frontend loads but API calls fail with CORS errors
-The frontend bundle was built with a `VITE_HOST_API` that doesn't match your current backend URL. Rebuild:
+You're on a split-domain deployment without `VITE_HOST_API` set. Set it in `.env` (or your production env file) to your absolute backend URL and restart the frontend container:
 ```bash
-docker compose build --no-cache frontend
+echo "VITE_HOST_API=https://api.example.com" >> .env
 docker compose up -d frontend
 ```
+The container's entrypoint regenerates `/config.js` on each start, so no rebuild is needed.
 
 ### `code-executor` crashes with `clone: Operation not permitted`
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.
@@ -475,9 +468,6 @@ Source tables don't exist yet. Let the backend finish migrations, then:
 docker compose run --rm peerdb-init bash /setup.sh
 ```
 
-### Build hangs on `uv pip install`
-Slow mirror or rate-limited PyPI. Retry after 60 seconds, or set `UV_TIMEOUT=1200` in the Dockerfile.
-
 ### `temporal-server` keeps restarting
 Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise Docker Desktop's RAM to 8 GB+.
 
@@ -485,16 +475,7 @@ Postgres connection is the usual cause. Check `docker compose logs postgres` for
 
 ## Production hardening
 
-The defaults are tuned for development. Before putting this in front of real users:
-
-1. **Change every `CHANGEME` in `.env`.** At minimum: `SECRET_KEY`, `PG_PASSWORD`, `MINIO_ROOT_PASSWORD`, `AGENTCC_INTERNAL_API_KEY`.
-2. **Use real S3, not MinIO.** Set `S3_ENDPOINT_URL=https://s3.amazonaws.com`, provide AWS credentials, drop the `minio` service.
-3. **Use managed Postgres / ClickHouse / Redis** for production. Point the env vars at them, drop the compose services.
-4. **Set `ENV_TYPE=prod`** — enables gunicorn-style process counts, disables debug output, runs `check --deploy`.
-5. **Set `FAST_STARTUP=false`** so migrations and cache tables run on every deploy.
-6. **Put HTTPS in front.** Caddy, nginx, Traefik, or an ALB. Terminate TLS at the proxy; the frontend and backend do not speak TLS directly.
-7. **Back up Postgres and ClickHouse on a schedule.** See [Backups](#backups).
-8. **Monitor**. The backend emits Prometheus metrics at `/metrics`; add a scraper.
+See [`deploy/README.md`](deploy/README.md) for the production deployment guide. It covers the production overlay (`deploy/docker-compose.production.yml`), required secrets, deployment topologies (compose, k8s single-origin, k8s split-domain), reverse-proxy/TLS, backups, upgrades, and the pre-flight checklist.
 
 ---
 
