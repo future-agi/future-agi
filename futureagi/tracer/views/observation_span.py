@@ -2912,12 +2912,197 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
         """
-        DEPRECATED: Use get_span_attributes_list instead.
+        Return the list of attribute paths the EvalPicker should expose for
+        a given ``row_type`` so users can map eval inputs against the right
+        unit of evaluation.
 
-        This endpoint is maintained for backward compatibility and delegates
-        to get_span_attributes_list.
+        This is the public attribute-list endpoint — every EvalPicker /
+        FilterRow caller in the frontend hits it (15+ call sites; see
+        ``getEvalAttributeList`` in ``frontend/src/utils/axios.js``).
+        ``get_span_attributes_list`` above is an internal-only helper for
+        the spans-only path; it has no direct FE callers and is invoked
+        only via this method's ``row_type=spans`` delegation. The earlier
+        "DEPRECATED, use get_span_attributes_list instead" comment was
+        misleading — kept this naming for backward compatibility with the
+        15+ FE call sites.
+
+        Query params:
+            filters: JSON string with ``{"project_id": "<uuid>"}`` (required).
+            row_type: one of ``spans`` / ``traces`` / ``sessions``
+                      (default ``spans`` — matches pre-row_type behaviour).
+
+        Response shapes:
+          - ``spans``: flat list of distinct ``span_attributes`` keys
+            observed in the project. Unchanged from the legacy behaviour.
+          - ``traces``: trace-level model fields (``input``, ``output``,
+            etc.) plus ``spans.<n>.<key>`` paths where ``n`` ranges from
+            0 to (max-spans-per-trace observed in the project − 1) and
+            ``<key>`` is each observed span attribute key.
+          - ``sessions``: session-level model fields plus
+            ``traces.<i>.<trace_field>`` and ``traces.<i>.spans.<j>.<key>``
+            paths sized to the observed maxes.
+
+        Position counts come from a sample of the project's most recent
+        ``_OBSERVED_MAX_SAMPLE_SIZE`` traces / sessions — keeps the
+        enumeration query cheap while capturing the typical maximum.
         """
-        return self.get_span_attributes_list(request, *args, **kwargs)
+        try:
+            filters = self.request.query_params.get("filters", "{}")
+            if filters:
+                filters = json.loads(filters)
+
+            project_id = filters.get("project_id")
+            if not project_id:
+                return self._gm.bad_request("project_id is required")
+
+            row_type = self.request.query_params.get("row_type", "spans")
+
+            if row_type == "spans" or row_type == "voiceCalls":
+                # voiceCalls share the spans surface for the picker; they
+                # have their own evaluator pipeline upstream of EvalTask.
+                return self.get_span_attributes_list(request, *args, **kwargs)
+
+            span_attribute_keys = self._get_span_attribute_keys(project_id)
+
+            if row_type == "traces":
+                paths = self._build_trace_attribute_paths(
+                    project_id, span_attribute_keys
+                )
+                return self._gm.success_response(paths)
+
+            if row_type == "sessions":
+                paths = self._build_session_attribute_paths(
+                    project_id, span_attribute_keys
+                )
+                return self._gm.success_response(paths)
+
+            return self._gm.bad_request(
+                f"Unknown row_type {row_type!r}. Expected one of: "
+                "spans, traces, sessions, voiceCalls."
+            )
+
+        except Exception as e:
+            logger.exception(f"error fetching eval attributes list: {str(e)}")
+            return self._gm.bad_request(
+                f"error fetching the eval attributes list {str(e)}"
+            )
+
+    # Trace + session model fields the resolver allow-lists; mirrors the
+    # frozensets in tracer.utils.eval. Hand-synced so a model change shows
+    # up in both places at review time.
+    _TRACE_PUBLIC_FIELDS = (
+        "input",
+        "output",
+        "name",
+        "error",
+        "tags",
+        "metadata",
+        "external_id",
+    )
+    _SESSION_PUBLIC_FIELDS = ("name", "bookmarked")
+
+    # Cap on how many entities to scan when computing observed maxes.
+    # Most projects' traces have a few-to-dozens of spans; bounding the
+    # sample keeps the path enumeration query cheap.
+    _OBSERVED_MAX_SAMPLE_SIZE = 100
+
+    def _get_span_attribute_keys(self, project_id: str) -> list:
+        """Resolve the project's distinct span_attributes keys.
+
+        Mirrors the dispatch in ``get_span_attributes_list``: ClickHouse
+        first when enabled and reachable, PG fallback otherwise. Reused
+        by the trace + session attribute path builders.
+        """
+        from tracer.services.clickhouse.query_service import (
+            AnalyticsQueryService,
+            QueryType,
+        )
+
+        analytics = AnalyticsQueryService()
+        if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+            try:
+                result = analytics.get_span_attribute_keys_ch(str(project_id))
+                if result:
+                    return list(result)
+            except Exception as ch_err:
+                logger.warning(
+                    "CH span attribute keys failed in get_eval_attributes_list, "
+                    "falling back to PG",
+                    error=str(ch_err),
+                )
+
+        return list(SQL_query_handler.get_span_attributes_for_project(project_id))
+
+    def _max_spans_per_trace(self, project_id: str) -> int:
+        """Max span count observed across the project's most recent traces.
+
+        Bounds the indexed positions we expose under ``spans.<n>.<...>``.
+        Sampling the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces keeps
+        the aggregate cheap on large projects while still capturing the
+        typical maximum (a project that ever produced 12-span traces will
+        have done so within its recent history).
+        """
+        from django.db.models import Count, Max
+
+        sample_trace_ids = Trace.objects.filter(
+            project_id=project_id
+        ).order_by("-created_at").values_list("id", flat=True)[
+            : self._OBSERVED_MAX_SAMPLE_SIZE
+        ]
+        agg = (
+            ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
+            .values("trace_id")
+            .annotate(span_count=Count("id"))
+            .aggregate(max_count=Max("span_count"))
+        )
+        return agg["max_count"] or 0
+
+    def _max_traces_per_session(self, project_id: str) -> int:
+        """Max trace count observed across the project's most recent sessions."""
+        from django.db.models import Count, Max
+        from tracer.models.trace_session import TraceSession
+
+        sample_session_ids = TraceSession.objects.filter(
+            project_id=project_id
+        ).order_by("-created_at").values_list("id", flat=True)[
+            : self._OBSERVED_MAX_SAMPLE_SIZE
+        ]
+        agg = (
+            Trace.objects.filter(session_id__in=sample_session_ids)
+            .values("session_id")
+            .annotate(trace_count=Count("id"))
+            .aggregate(max_count=Max("trace_count"))
+        )
+        return agg["max_count"] or 0
+
+    def _build_trace_attribute_paths(
+        self, project_id: str, span_attribute_keys: list
+    ) -> list:
+        """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
+        index up to the observed max spans-per-trace."""
+        paths = list(self._TRACE_PUBLIC_FIELDS)
+        max_spans = self._max_spans_per_trace(project_id)
+        for i in range(max_spans):
+            for key in span_attribute_keys:
+                paths.append(f"spans.{i}.{key}")
+        return paths
+
+    def _build_session_attribute_paths(
+        self, project_id: str, span_attribute_keys: list
+    ) -> list:
+        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
+        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
+        session and spans-per-trace."""
+        paths = list(self._SESSION_PUBLIC_FIELDS)
+        max_traces = self._max_traces_per_session(project_id)
+        max_spans = self._max_spans_per_trace(project_id)
+        for i in range(max_traces):
+            for trace_field in self._TRACE_PUBLIC_FIELDS:
+                paths.append(f"traces.{i}.{trace_field}")
+            for j in range(max_spans):
+                for key in span_attribute_keys:
+                    paths.append(f"traces.{i}.spans.{j}.{key}")
+        return paths
 
     @action(detail=False, methods=["get"])
     def get_observation_span_fields(self, request, *args, **kwargs):

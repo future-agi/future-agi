@@ -337,13 +337,17 @@ const TaskConfigPanel = ({
     enabled: !projectLocked,
   });
 
-  // Eval attributes for variable mapping
+  // Eval attributes for variable mapping. Includes rowType so the picker
+  // shows the right paths per target type — span attribute keys for spans,
+  // trace fields + spans.first/last.<key> for traces, session fields +
+  // traces.{first,last}.spans.{first,last}.<key> for sessions.
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
