@@ -10,27 +10,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { paths } from "src/routes/paths";
 
 export function useDeploymentMode() {
   const { data, isLoading } = useQuery({
     queryKey: ["deployment-info"],
-    queryFn: async () => {
-      try {
-        return await axios.get(endpoints.settings.v2.deploymentInfo);
-      } catch (err) {
-        // OSS builds without the ee/usage module don't register
-        // /usage/v2/deployment-info/. Treat 404 as "we're on OSS" instead
-        // of letting the error bubble — every consumer of this hook would
-        // otherwise re-mount in a tight loop, causing visible UI flicker.
-        if (err?.response?.status === 404) {
-          return { data: { result: { mode: "oss" } } };
-        }
-        throw err;
-      }
-    },
+    queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),
     select: (res) => res.data?.result?.mode || "oss",
     staleTime: Infinity,
-    retry: false,
+    retry: 1,
   });
 
   const mode = data || "oss";
@@ -42,4 +30,9 @@ export function useDeploymentMode() {
     isEE: mode === "ee",
     isLoading,
   };
+}
+
+export function usePostLoginPath() {
+  const { isOSS } = useDeploymentMode();
+  return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
 }
