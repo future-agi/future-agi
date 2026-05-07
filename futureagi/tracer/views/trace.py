@@ -1089,7 +1089,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             raw_log = attrs.get("raw_log") or {}
             provider = trace.provider or "vapi"
 
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=attrs
+            )
             voice_metrics = self._extract_voice_turn_and_talk_metrics(attrs, raw_log)
 
             # Observation spans are served by the detail endpoint — skip
@@ -3616,7 +3618,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             raw_log = attrs.get("raw_log") or {}
             provider = root_span.provider or "vapi"
 
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=attrs
+            )
             voice_metrics = self._extract_voice_turn_and_talk_metrics(attrs, raw_log)
 
             recording = self._build_recording_dict(attrs)
@@ -3789,7 +3793,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         if isinstance(metadata_map, dict):
             metadata = metadata_map
 
-        processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+        processed_log = ObservabilityService.process_raw_logs(
+            raw_log, provider, span_attributes=span_attrs
+        )
         voice_metrics = self._extract_voice_turn_and_talk_metrics(span_attrs, raw_log)
 
         attr_str = row.get("span_attr_str") or {}
@@ -5206,7 +5212,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Process raw_log through existing provider-specific logic
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=span_attrs
+            )
 
             entry = {
                 **processed_log,
