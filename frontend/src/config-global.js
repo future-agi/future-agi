@@ -39,6 +39,16 @@ export const GA_ID = import.meta.env.VITE_GA_ID;
 export const REDDIT_PIXEL_ID = import.meta.env.VITE_REDDIT_PIXEL_ID;
 export const REDDIT_ADS_ENABLED = import.meta.env.VITE_REDDIT_ADS_ENABLED;
 
+export const TWITTER_PIXEL_ID = import.meta.env.VITE_TWITTER_PIXEL_ID;
+export const TWITTER_ADS_ENABLED = import.meta.env.VITE_TWITTER_ADS_ENABLED;
+
+
+export const AD_CONVERSION_VALUE = (() => {
+  const n = Number(import.meta.env.VITE_AD_CONVERSION_VALUE);
+  return Number.isFinite(n) ? n : undefined;
+})();
+export const AD_CONVERSION_CURRENCY = import.meta.env.VITE_AD_CONVERSION_CURRENCY;
+
 export const FIREBASE_API = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,

@@ -413,8 +413,11 @@ ANYMAIL = {
         "MAILGUN_SENDER_DOMAIN"
     ),  # your Mailgun domain, if needed
 }
-EMAIL_BACKEND = (
-    "anymail.backends.mailgun.EmailBackend"  # or sendgrid.EmailBackend, or...
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "anymail.backends.mailgun.EmailBackend"
+    if os.getenv("MAILGUN_API_KEY")
+    else "django.core.mail.backends.console.EmailBackend",
 )
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"

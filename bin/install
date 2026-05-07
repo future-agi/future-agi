@@ -8,6 +8,10 @@
 #   ./bin/install --no-up              # bootstrap .env only; don't start
 #   ./bin/install --wipe-volumes       # wipe stale project volumes and
 #                                      # re-init with fresh secrets
+#   ./bin/install --new-instance       # if existing volumes are detected,
+#                                      # spin up an isolated copy as
+#                                      # `futureagi-2`, `futureagi-3`, …
+#                                      # without touching the originals
 #   ./bin/install -y                   # non-interactive (CI / unattended).
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
@@ -46,15 +50,17 @@ SKIP_USER=${SKIP_USER_CREATION:-0}
 NO_UP=0
 NON_INTERACTIVE=0
 WIPE_VOLUMES_FLAG=0
+NEW_INSTANCE_FLAG=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
     --skip-user-creation) SKIP_USER=1 ;;
     --no-up) NO_UP=1 ;;
     --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
+    --new-instance) NEW_INSTANCE_FLAG=1 ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
@@ -168,6 +174,29 @@ gen_secret() {
   fi
 }
 
+# Find the next free project name in the futureagi-N family by checking
+# for existing volumes. Used when --new-instance is requested.
+next_free_project_name() {
+  local base="futureagi" n=2
+  while docker volume ls --format '{{.Name}}' 2>/dev/null \
+         | grep -q "^${base}-${n}_"; do
+    n=$((n + 1))
+  done
+  echo "${base}-${n}"
+}
+
+# Set / replace COMPOSE_PROJECT_NAME in .env. Compose reads this and it
+# overrides the `name:` in docker-compose.yml, so volumes / containers /
+# networks become ${name}_*, ${name}-N, ${name}_default.
+set_project_name_in_env() {
+  local name="$1"
+  if grep -Eq '^COMPOSE_PROJECT_NAME=' .env; then
+    sed_inplace -E "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${name}|" .env
+  else
+    printf "\nCOMPOSE_PROJECT_NAME=%s\n" "$name" >> .env
+  fi
+}
+
 # Stale-volume guard. If a previous stack-up (in this dir or another with
 # the same compose project name) created persistent volumes, those volumes
 # are already initialized with the OLD password. Rotating CHANGEME-* now
@@ -193,25 +222,41 @@ if (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=C
   say ""
   if (( WIPE_VOLUMES_FLAG == 1 )); then
     WIPE_VOLS=1
+  elif (( NEW_INSTANCE_FLAG == 1 )); then
+    project_name="$(next_free_project_name)"
+    set_project_name_in_env "$project_name"
+    STALE_VOLS=()
+    ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+    say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
   elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
     warn "  Non-interactive mode: leaving CHANGEME-* placeholders in .env."
-    warn "  Either re-run with --wipe-volumes, or set the passwords in .env"
-    warn "  to match what the existing volumes were initialized with."
+    warn "  Re-run with --wipe-volumes (deletes data) or --new-instance"
+    warn "  (creates an isolated copy) — or set passwords in .env to match"
+    warn "  what the existing volumes were initialized with."
     ROTATE_OK=0
   else
     say "  Choose:"
+    say "    [n] ${BOLD}new instance${RESET} — spin up an isolated copy alongside this one"
+    say "        ${DIM}(volumes will be ${project_name}-2_*, ${project_name}-3_*, …)${RESET}"
     say "    [w] ${BOLD}wipe${RESET} the volumes and start fresh ${RED}(deletes all data)${RESET}"
     say "    [k] ${BOLD}keep${RESET} the volumes — I'll leave .env passwords as CHANGEME-*"
-    say "        and you set them to match the existing data manually"
+    say "        ${DIM}and you set them to match the existing data manually${RESET}"
     say "    [a] ${BOLD}abort${RESET}"
     while true; do
       printf "  ${BOLD}> ${RESET}"
       read -r choice || choice="a"
       case "$choice" in
+        n|N)
+          project_name="$(next_free_project_name)"
+          set_project_name_in_env "$project_name"
+          STALE_VOLS=()
+          ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+          say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
+          break ;;
         w|W) WIPE_VOLS=1; break ;;
         k|K) ROTATE_OK=0; break ;;
         a|A|"") die "Aborted by user." ;;
-        *) warn "Choose w / k / a" ;;
+        *) warn "Choose n / w / k / a" ;;
       esac
     done
   fi
@@ -265,16 +310,11 @@ else
   ok "Mode: light (default — set --full to add the PeerDB stack)"
 fi
 
-if [[ "$NO_UP" -eq 1 ]]; then
-  step "Done (--no-up)"
-  say "  .env is ready. Bring up the stack with:"
-  say "    ${BOLD}$DC up -d${RESET}"
-  exit 0
-fi
-
 # ---------------- port preflight ----------------
 # Catch host-port collisions BEFORE the slow docker compose up. Without
 # this, compose retries 3× on what's actually a structural conflict.
+# Runs before the --no-up exit so port overrides land in .env even when
+# you're only bootstrapping.
 step "Checking host ports"
 
 env_port() {
@@ -301,12 +341,16 @@ port_holder() {
   return 0
 }
 
-# Find the first free TCP port starting from $1 (skipping any we've already
-# suggested in this same run, so two conflicting services can't both be
-# offered the same alternative).
+# Find the first free TCP port starting from $1, skipping any we've already
+# suggested in this same run (so two conflicting services can't both be
+# offered the same alternative). Result is written to FREE_PORT (a global
+# variable) so updates to SUGGESTED_PORTS persist — `$(find_free_port ...)`
+# would run in a subshell, hiding the array mutation from the next call.
 declare -a SUGGESTED_PORTS=()
+FREE_PORT=""
 find_free_port() {
   local p="$1"
+  FREE_PORT=""
   while (( p < 65535 )); do
     if [[ -z "$(port_holder "$p" 2>/dev/null)" ]]; then
       local seen=0 s
@@ -316,7 +360,7 @@ find_free_port() {
       done
       if (( seen == 0 )); then
         SUGGESTED_PORTS+=("$p")
-        echo "$p"
+        FREE_PORT="$p"
         return 0
       fi
     fi
@@ -335,15 +379,26 @@ set_env_var() {
   fi
 }
 
-# Light-mode ports. PeerDB UI (3001) only collides in full mode.
+# All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
+# they still collide with anything else on that interface (other docker
+# stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
 declare -a PORTS_TO_CHECK=(
   "FRONTEND_PORT:3000"
   "BACKEND_PORT:8000"
   "AGENTCC_GATEWAY_PORT:8090"
   "SERVING_PORT:8080"
   "CODE_EXECUTOR_PORT:8060"
+  "PG_PORT:5432"
+  "CH_HTTP_PORT:8123"
+  "CH_PORT:9000"
+  "REDIS_PORT:6379"
+  "MINIO_API_PORT:9005"
+  "MINIO_CONSOLE_PORT:9006"
+  "TEMPORAL_PORT:7233"
 )
-[[ "$FULL" -eq 1 ]] && PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001")
+if [[ "$FULL" -eq 1 ]]; then
+  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
+fi
 
 declare -a UNRESOLVED=()
 for entry in "${PORTS_TO_CHECK[@]}"; do
@@ -371,7 +426,8 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   fi
 
   # Find a suggested replacement.
-  suggestion=$(find_free_port $((port + 1)) || true)
+  suggestion=""
+  find_free_port $((port + 1)) && suggestion="$FREE_PORT" || true
   if [[ -z "$suggestion" ]]; then
     warn "  $var=$port  is taken by $holder  (no free port found above)"
     UNRESOLVED+=("$var=$port  ←  $holder")
@@ -398,6 +454,15 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   if (( apply == 1 )); then
     set_env_var "$var" "$suggestion"
     ok "  $var=$suggestion  written to .env"
+    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. The frontend
+    # bundle bakes the URL at build time; if .env still has the old
+    # localhost:8000 default after we switch BACKEND_PORT, the bundle
+    # would call a port that's no longer ours.
+    if [[ "$var" == "BACKEND_PORT" ]] && \
+       grep -Eq '^VITE_HOST_API=https?://localhost:[0-9]+/?$' .env; then
+      sed_inplace -E "s|^VITE_HOST_API=.*|VITE_HOST_API=http://localhost:${suggestion}|" .env
+      ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+    fi
   else
     UNRESOLVED+=("$var=$port  ←  $holder")
   fi
@@ -411,6 +476,13 @@ if (( ${#UNRESOLVED[@]} > 0 )); then
   say "  Free the port (stop the process / container) or set the var in .env"
   say "  to a free port, then re-run ${BOLD}./bin/install${RESET}."
   exit 1
+fi
+
+if [[ "$NO_UP" -eq 1 ]]; then
+  step "Done (--no-up)"
+  say "  .env is ready. Bring up the stack with:"
+  say "    ${BOLD}$DC up -d${RESET}"
+  exit 0
 fi
 
 # ---------------- collect first-user creds ----------------
@@ -483,7 +555,11 @@ fi
 step "Starting the stack"
 
 attempt=0
-until $DC up -d --remove-orphans; do
+# --build forces a rebuild of any service with `build:` set, so a stale
+# image tag from a previous worktree (or an outdated layer) doesn't carry
+# old source into a new install. Docker's layer cache makes this fast
+# when nothing has actually changed.
+until $DC up -d --build --remove-orphans; do
   attempt=$((attempt + 1))
   if [[ "$attempt" -ge 3 ]]; then
     die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
@@ -516,11 +592,29 @@ done
 # ---------------- create captured user ----------------
 if [[ -n "$USER_EMAIL" ]]; then
   step "Creating your account"
-  if $DC exec -T backend python manage.py create_user \
-       --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" >/dev/null 2>&1; then
-    ok "Account created for $USER_EMAIL"
+  # Capture stderr to show the real error if the command fails. Disable
+  # errexit + errtrace inside the subshell so a non-zero exit doesn't
+  # fire the script-level ERR trap (which would print a misleading
+  # "install failed" line before our own error handling runs).
+  set +eE
+  trap - ERR
+  if cu_out=$($DC exec -T backend python manage.py create_user \
+                --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1); then
+    cu_rc=0
   else
-    warn "create_user failed. Run it manually:"
+    cu_rc=$?
+  fi
+  trap 'on_err $LINENO' ERR
+  set -eE
+
+  if (( cu_rc == 0 )); then
+    ok "Account created for $USER_EMAIL"
+  elif printf '%s' "$cu_out" | grep -qiE "already exists|UNIQUE constraint"; then
+    ok "Account already exists for $USER_EMAIL — sign in normally"
+  else
+    warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
+    printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
+    warn "Run it manually after the stack settles:"
     warn "  $DC exec -it backend python manage.py create_user"
   fi
 fi

@@ -63,6 +63,9 @@ const SkeletonLoader = () => (
   </Box>
 );
 
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
 const ViewDetailsCellRenderer = (props) => {
   const { data = {}, node, setRunEval, disabled } = props;
   const theme = useTheme();
@@ -762,8 +765,7 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      evalOpen?.cellValue &&
-                      evalOpen?.cellValue !== "" && (
+                      hasRenderableCellValue(evalOpen?.cellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
