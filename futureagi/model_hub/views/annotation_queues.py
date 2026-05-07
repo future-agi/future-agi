@@ -522,9 +522,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response(result)
 
-    # ------------------------------------------------------------------
-    # Export helpers
-    # ------------------------------------------------------------------
+    # ── Export helpers ────────────────────────────────────────────────
 
     @staticmethod
     def _slugify_for_header(text: str) -> str:
@@ -536,13 +534,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @staticmethod
     def _flatten_score_value(value):
-        """Unwrap Score.value's conventional JSON wrapper to the inner
-        scalar (`rating` / `value` / `text` / joined `selected`). A
-        wrapper key that's present but None doesn't short-circuit — we
-        keep looking so a partially-populated payload still surfaces a
-        useful value. Nested dicts inside a wrapper key are JSONified
-        rather than passed through raw (csv.writer would otherwise emit
-        a Python repr).
+        """Unwrap Score.value's wrapper to a scalar. Skips None inners so
+        a partial payload falls through to the next candidate; nested
+        dicts get JSONified instead of leaking a Python repr into a cell.
         """
         import json
 
@@ -609,9 +603,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @staticmethod
     def _resolve_recording_link(item) -> str:
-        """Best-effort recording URL — only meaningful for call_execution
-        items. Prefers the canonical top-level fields, then falls back
-        to provider-specific paths in provider_call_data.
+        """Recording URL for call_execution items — top-level fields first,
+        then provider-specific paths inside provider_call_data.
         """
         ce = getattr(item, "call_execution", None)
         if ce is None:
@@ -664,17 +657,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @classmethod
     def _collect_evals_for_item(cls, item) -> dict:
-        """Return ``{eval_name: scalar_value}`` for a queue item.
-
-        Per source type:
-          - ``call_execution``: flatten ``CallExecution.eval_outputs`` JSON.
-          - ``trace``: ``Trace.eval_logs`` (EvalLogger via FK).
-          - ``observation_span``: ``ObservationSpan.eval_logs``.
-          - ``dataset_row``: per-row Cells where ``column.source`` is
-            ``"evaluation"`` or ``"experiment_evaluation"`` — those columns
-            hold eval results and the cell value is the per-row output.
-          - ``trace_session`` / ``prototype_run``: empty for now — would
-            need cross-trace aggregation or a separate eval mechanism.
+        """Return ``{eval_name: value}`` for a queue item — source-type
+        aware. trace_session / prototype_run are not yet wired up.
         """
         src = item.source_type
         if src == "call_execution":
@@ -688,7 +672,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     continue
                 name = payload.get("name") or str(eval_id)
                 value = payload.get("output")
-                # Last-write-wins if multiple outputs share a name.
                 out[name] = "" if value is None else value
             return out
 
@@ -696,19 +679,20 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             row = getattr(item, "dataset_row", None)
             if row is None:
                 return {}
-            # `eval_cells` is attached by _build_export_data's Prefetch.
+            # eval_cells / active_eval_logs are attached by the Prefetches
+            # in _build_export_data; reading them avoids re-firing the query.
             eval_cells = getattr(row, "eval_cells", None) or []
             out = {}
             for cell in eval_cells:
                 col = cell.column
                 if col is None:
                     continue
-                name = col.name or str(col.id)
-                # Last-write-wins if multiple cells share a column name.
-                out[name] = "" if cell.value is None else cell.value
+                # Last-write-wins on duplicate column names.
+                out[col.name or str(col.id)] = (
+                    "" if cell.value is None else cell.value
+                )
             return out
 
-        # `active_eval_logs` is attached by _build_export_data's Prefetch.
         eval_logs = None
         if src == "trace":
             trace = getattr(item, "trace", None)
@@ -728,14 +712,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @classmethod
     def _collect_system_metrics_for_item(cls, item) -> dict:
-        """Return ``{field_name: value}`` for system metrics that live on
-        the item's linked source object. Empty dict when the item's
-        source_type has no metric mapping or its FK target is missing.
+        """Return ``{field: value}`` from the item's linked source object,
+        or ``{}`` if its source_type has no metric mapping.
         """
         fields = cls._SYSTEM_METRICS_BY_SOURCE.get(item.source_type, [])
         if not fields:
             return {}
-        # source_type matches the attribute name on QueueItem.
+        # source_type matches the QueueItem attribute holding the FK.
         source_obj = getattr(item, item.source_type, None)
         if source_obj is None:
             return {}
@@ -768,12 +751,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         )
         labels = [ql.label for ql in queue_labels if ql.label is not None]
 
-        # Pre-fetch FK-linked source objects and their eval children so the
-        # per-item loop below doesn't fan out into N+1 queries. The Prefetch
-        # objects with to_attr= matter: _collect_evals_for_item reads the
-        # cached attributes directly (active_eval_logs / eval_cells) — using
-        # the default related-manager would re-issue the filter and waste
-        # the prefetch.
+        # to_attr matters: _collect_evals_for_item reads the cached
+        # attributes directly. Without it, accessing the related manager
+        # re-issues the filter and discards the prefetch.
         from django.db.models import Prefetch
 
         from model_hub.models.develop_dataset import Cell
@@ -955,9 +935,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         return response
 
     def _build_xlsx_export(self, queue, items_qs, scores_by_item, pk):
-        """XLSX export with merged two-row headers — row 1 is the group
-        title (Call details, Metrics, Evals, <label>, <label> Notes…),
-        row 2 is the column name under each group, data starts row 3.
+        """Same data as CSV, with merged group titles in row 1 above the
+        sub-column names in row 2. Data starts row 3.
         """
         import io
         from urllib.parse import quote
@@ -1129,12 +1108,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     )
                     ci += 1
 
-        # ---- column widths + freeze panes ----
+        # column widths + freeze panes — wider for URL and notes cells
         for col_idx in range(1, last_col + 1):
             ws.column_dimensions[get_column_letter(col_idx)].width = 18
-        # Recording Link is at column 3 in _CALL_DETAIL_COLUMNS — wider for URLs.
-        ws.column_dimensions[get_column_letter(3)].width = 48
-        # Per-label notes groups carry free-text — wider than value cells.
+        ws.column_dimensions[get_column_letter(3)].width = 48  # Recording Link
         for start in notes_group_starts:
             for offset in range(n_users):
                 ws.column_dimensions[
