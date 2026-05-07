@@ -181,7 +181,11 @@ def first_signup(data, mode=None):
     # Defensive stripping of deprecated account-update parameters
     data.pop("old_email", None)
     data.pop("update_true", None)
-    generated_password = generate_password()
+    user_provided_password = data.get("password") or ""
+    if user_provided_password:
+        generated_password = None
+    else:
+        generated_password = generate_password()
     data["password"] = generated_password
     data.pop("allow_email", False)  # Remove but don't store
     # Extract domain from email
@@ -262,7 +266,8 @@ def first_signup(data, mode=None):
             OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
             )
-        process_post_registration(user.id, generated_password)
+        if generated_password:
+            process_post_registration(user.id, generated_password)
 
         return user
 

@@ -45,6 +45,52 @@ _FORMAT_TO_MIME = {
     "au": "audio/basic",
 }
 
+# Reverse map: prefer the canonical extension for each MIME type. Used
+# to append a .ext to MinIO object keys so the frontend (which detects
+# media by extension regex) can render the URL as an image/audio/video
+# instead of a plain link.
+_MIME_TO_EXT = {
+    # audio
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/flac": "flac",
+    "audio/aac": "aac",
+    "audio/mp4": "m4a",
+    "audio/webm": "webm",
+    "audio/x-ms-wma": "wma",
+    "audio/aiff": "aiff",
+    "audio/basic": "au",
+    # image
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+    # video
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+    "video/x-msvideo": "avi",
+    # docs
+    "application/pdf": "pdf",
+    "text/plain": "txt",
+    "text/csv": "csv",
+    "text/html": "html",
+    "application/json": "json",
+}
+
+
+def _ext_from_mime(content_type: str | None) -> str:
+    """Map a MIME type to a canonical file extension (no dot). Returns
+    an empty string for unknown types."""
+    if not content_type:
+        return ""
+    return _MIME_TO_EXT.get(content_type.split(";")[0].strip().lower(), "")
+
+
 # Maximum audio file size (50MB) - prevents memory exhaustion attacks
 MAX_AUDIO_FILE_SIZE = 50 * 1024 * 1024
 
@@ -282,9 +328,7 @@ def upload_document_to_s3(
         if not file_url:
             raise ValueError(get_error_message("EMPTY_DATA"))
 
-        # Generate new object_key for each call if not provided
-        if object_key is None:
-            object_key = f"tempcust/{uuid.uuid4()}"
+        _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
 
@@ -364,6 +408,10 @@ def upload_document_to_s3(
                 traceback.print_exc()
                 raise ValueError(get_error_message("INVALID_BASE64_STRING")) from e
 
+        if _generated_object_key:
+            ext = _ext_from_mime(content_type) or "bin"
+            object_key = f"tempcust/{uuid.uuid4()}.{ext}"
+
         minio_client = get_storage_client()
         ensure_bucket(minio_client, bucket_name)
         # Upload the document bytes to S3
@@ -434,9 +482,11 @@ def upload_image_to_s3(
         if not img_base64_str:
             raise ValueError(get_error_message("EMPTY_DATA"))
 
-        # Generate new object_key for each call if not provided
-        if object_key is None:
-            object_key = f"tempcust/{uuid.uuid4()}"
+        # Defer object_key generation until we know the format so the
+        # URL carries an extension (.png/.jpg/...). Frontend renderers
+        # detect media by extension, so a key like "tempcust/{uuid}"
+        # without one would render as a plain link.
+        _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
 
@@ -484,6 +534,9 @@ def upload_image_to_s3(
             in_mem_file.seek(0)
             img_bytes = in_mem_file.getvalue()
             format_detected = "jpeg"
+
+        if _generated_object_key:
+            object_key = f"tempcust/{uuid.uuid4()}.{format_detected}"
 
         minio_client = get_storage_client()
         ensure_bucket(minio_client, bucket_name)
@@ -594,8 +647,7 @@ def upload_audio_to_s3_duration(
 ):
     try:
         bucket_name = UPLOAD_BUCKET_NAME
-        if object_key is None:
-            object_key = f"tempcust/{uuid.uuid4()}"
+        _generated_object_key = object_key is None
         audio_format = None
         supported_formats = {"mp3", "wav", "mpeg"}
         if audio_base64_str in (None, "", "None"):
@@ -699,6 +751,10 @@ def upload_audio_to_s3_duration(
 
         # Upload the audio bytes to S3
         content_type = _FORMAT_TO_MIME.get(audio_format, "audio/mpeg")
+
+        if _generated_object_key:
+            ext = _ext_from_mime(content_type) or audio_format or "mp3"
+            object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client.put_object(
             bucket_name=bucket_name,
@@ -1476,8 +1532,10 @@ def upload_audio_to_s3(
     audio_data, bucket_name=os.getenv("MINIO_BUCKET_NAME"), object_key=None, org_id=None
 ):
     try:
-        if object_key is None:
-            object_key = f"tempcust/{uuid.uuid4()}"
+        # Defer object_key generation until we know the audio format so
+        # the URL carries a .mp3/.wav/etc. suffix that frontend renderers
+        # can detect.
+        _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
 
@@ -1604,6 +1662,10 @@ def upload_audio_to_s3(
                 if detected_format
                 else "audio/mpeg"
             )
+
+        if _generated_object_key:
+            ext = _ext_from_mime(content_type) or "mp3"
+            object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client = get_storage_client()
         ensure_bucket(minio_client, bucket_name)
@@ -1753,8 +1815,7 @@ def upload_video_to_s3(
     org_id=None,
 ):
     try:
-        if object_key is None:
-            object_key = f"tempcust/{uuid.uuid4()}"
+        _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
 
@@ -1780,6 +1841,10 @@ def upload_video_to_s3(
             except (binascii.Error, TypeError):
                 raise ValueError("Invalid video data provided.")  # noqa: B904
 
+        if _generated_object_key:
+            ext = _ext_from_mime(content_type) or "mp4"
+            object_key = f"tempcust/{uuid.uuid4()}.{ext}"
+
         minio_client = get_storage_client()
         ensure_bucket(minio_client, bucket_name)
 
@@ -1796,7 +1861,7 @@ def upload_video_to_s3(
         if thumbnail:
             try:
                 thumbnail_bytes = extract_video_thumbnail(video_bytes)
-                thumbnail_object_key = f"tempcust/{uuid.uuid4()}"
+                thumbnail_object_key = f"tempcust/{uuid.uuid4()}.jpg"
 
                 minio_client.put_object(
                     bucket_name=bucket_name,

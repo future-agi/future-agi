@@ -22,6 +22,9 @@ const getScorePercentage = (s, decimalPlaces = 0) => {
   return Number(score.toFixed(decimalPlaces));
 };
 
+const hasRenderableValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
 // Normalise the `value_infos` blob into an object regardless of whether
 // the caller passed camelCase, snake_case, or a JSON string. The cell
 // layer upstream is inconsistent across grids (the backend returns a
@@ -142,7 +145,7 @@ const EvaluateCell = ({
   }
   if (output === OutputTypes.SCORE) {
     const result = parsedValueInfos?.data?.result;
-    if (!result) return null;
+    if (!hasRenderableValue(result)) return null;
     return (
       <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
         <Chip
@@ -194,8 +197,8 @@ const EvaluateCell = ({
     );
   }
   if (dataType === "float") {
-    // console.log("float", cellData.cellValue, value);
-    const bgColor = cellData?.cellValue
+    const hasValue = hasRenderableValue(cellData?.cellValue);
+    const bgColor = hasValue
       ? interpolateColorBasedOnScore(value, 1)
       : "";
     return (
@@ -210,7 +213,7 @@ const EvaluateCell = ({
             alignItems: "center",
           }}
         >
-          {cellData?.cellValue ? `${getScorePercentage(value)}%` : ""}
+          {hasValue ? `${getScorePercentage(value)}%` : ""}
           {compositeBadge}
           <RenderMeta
             originType={originType}

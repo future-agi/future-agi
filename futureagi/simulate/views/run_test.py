@@ -103,6 +103,7 @@ from simulate.utils.sql_query import (
     get_kpi_metrics_query,
 )
 from simulate.utils.test_execution_utils import TestExecutionUtils
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.error_codes import get_error_message
@@ -4359,7 +4360,9 @@ class GetEvalConfigStructureView(APIView):
                 "kb_id": str(eval_config.kb_id.id) if eval_config.kb_id else None,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "api_key_available": api_key_available,
             }
 

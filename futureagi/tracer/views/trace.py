@@ -3249,12 +3249,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 for config in eval_configs:
                     data = getattr(trace, f"metric_{config.id}")
                     if data and "score" in data:
-                        result[str(config.id)] = round(data["score"], 2)
+                        score = data["score"]
+                        result[str(config.id)] = round(score, 2) if score is not None else None
                     elif data:
                         for key, value in data.items():
-                            result[str(config.id) + "**" + key] = round(
-                                value["score"], 2
-                            )
+                            score = value["score"] if isinstance(value, dict) and "score" in value else None
+                            result[str(config.id) + "**" + key] = round(score, 2) if score is not None else None
                     reason = getattr(trace, f"metric_reason_{config.id}", None)
                     if reason:
                         result[f"{config.id}__reason"] = reason
