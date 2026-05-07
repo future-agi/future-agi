@@ -380,7 +380,13 @@ const TaskConfigPanel = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
+              config: {
+                ...(evalConfig.config || {}),
+                mapping: evalConfig.mapping,
+                ...(evalConfig.data_injection
+                  ? { run_config: { data_injection: evalConfig.data_injection } }
+                  : {}),
+              },
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -399,7 +405,13 @@ const TaskConfigPanel = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
+              config: {
+                ...(evalConfig.config || {}),
+                mapping: evalConfig.mapping,
+                ...(evalConfig.data_injection
+                  ? { run_config: { data_injection: evalConfig.data_injection } }
+                  : {}),
+              },
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );

@@ -10,6 +10,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { paths } from "src/routes/paths";
 
 export function useDeploymentMode() {
   const { data, isLoading } = useQuery({
@@ -29,4 +30,9 @@ export function useDeploymentMode() {
     isEE: mode === "ee",
     isLoading,
   };
+}
+
+export function usePostLoginPath() {
+  const { isOSS } = useDeploymentMode();
+  return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
 }

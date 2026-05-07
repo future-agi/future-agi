@@ -46,6 +46,7 @@ const NavItem = forwardRef(
       icon,
       info,
       disabled,
+      disabledTooltip,
       caption,
       roles,
       //
@@ -129,6 +130,16 @@ const NavItem = forwardRef(
       return null;
     }
 
+    if (disabled) {
+      return (
+        <CustomTooltip title={disabledTooltip || title} show={true} placement="right" arrow>
+          <Box sx={{ width: 1, minHeight: "30px", height: "30px" }}>
+            {renderContent}
+          </Box>
+        </CustomTooltip>
+      );
+    }
+
     if (externalLink)
       return (
         <CustomTooltip title={title} show placement="right" arrow>
@@ -184,6 +195,7 @@ NavItem.propTypes = {
   info: PropTypes.element,
   title: PropTypes.string,
   disabled: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
   hasChild: PropTypes.bool,
   caption: PropTypes.string,
   externalLink: PropTypes.bool,

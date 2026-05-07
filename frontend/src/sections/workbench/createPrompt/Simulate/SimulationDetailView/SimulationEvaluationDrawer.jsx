@@ -187,6 +187,8 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
                   editingEvalItem.template_id || editingEvalItem.templateId,
                 name: editingEvalItem.name,
                 mapping: editingEvalItem.mapping || {},
+                config: editingEvalItem.config || {},
+                run_config: editingEvalItem.config?.run_config || {},
               }
             : null
         }

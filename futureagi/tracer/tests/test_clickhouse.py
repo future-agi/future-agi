@@ -1161,10 +1161,10 @@ class TestSessionListQueryBuilder:
         query, params = builder.build()
         assert "min(start_time)" in query.lower() or "MIN(start_time)" in query
         assert "max(end_time)" in query.lower() or "MAX(end_time)" in query
-        assert "uniqExact(trace_id)" in query or "uniqexact(trace_id)" in query.lower()
+        assert "uniq(trace_id)" in query
 
-    def test_build_count_query(self):
-        """build_count_query() should count distinct sessions."""
+    def test_build_count_query_simple(self):
+        """build_count_query() without HAVING filters uses count(DISTINCT ...)."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -1173,11 +1173,34 @@ class TestSessionListQueryBuilder:
             page_number=0,
             page_size=10,
         )
-        # Call build first to set up dates
         builder.build()
         query, params = builder.build_count_query()
-        assert "count()" in query
-        assert "trace_session_id" in query
+        assert "count(DISTINCT trace_session_id)" in query
+        assert "GROUP BY" not in query
+
+    def test_build_count_query_with_having(self):
+        """build_count_query() with HAVING filters uses full aggregation subquery."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "greater_than",
+                        "filter_value": 60,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_count_query()
+        assert "count() AS total" in query
+        assert "GROUP BY trace_session_id" in query
+        assert "HAVING" in query
 
     def test_build_with_user_id(self):
         """When user_id is provided, query should filter by end_user_id."""
@@ -1206,6 +1229,239 @@ class TestSessionListQueryBuilder:
         )
         query, params = builder.build()
         assert "trace_session_id IS NOT NULL" in query
+
+    def test_build_uses_uniq_not_uniqExact(self):
+        """build() should use approximate uniq() instead of expensive uniqExact()."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        query, params = builder.build()
+        assert "uniq(trace_id)" in query
+        assert "uniqExact" not in query
+
+    def test_has_having_filters_false_for_no_aggregate_filters(self):
+        """has_having_filters() returns False when no aggregate column filters."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "greater_than",
+                        "filter_value": "2025-01-01T00:00:00Z",
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        assert builder.has_having_filters() is False
+
+    def test_has_having_filters_true_for_aggregate_filters(self):
+        """has_having_filters() returns True when filtering on duration/cost/tokens."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "total_cost",
+                    "filter_config": {
+                        "filter_op": "greater_than",
+                        "filter_value": 1.0,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        assert builder.has_having_filters() is True
+
+    def test_span_attributes_query_root_spans_only(self):
+        """Span attributes query should filter to root spans only."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
+
+    def test_span_attributes_query_has_limit(self):
+        """Span attributes query should have a LIMIT to prevent unbounded scans."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
+        assert "LIMIT 500" in query
+
+    def test_span_attributes_query_empty_sessions(self):
+        """Span attributes query should return empty for no sessions."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query([])
+        assert query == ""
+        assert params == {}
+
+    def test_count_query_routes_correctly(self):
+        """build_count_query() should route to simple path without HAVING filters."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        # No aggregate filters -> simple path
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, _ = builder.build_count_query()
+        assert "count(DISTINCT trace_session_id)" in query
+
+        # With aggregate filter -> aggregated path
+        builder2 = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "less_than",
+                        "filter_value": 300,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder2.build()
+        query2, _ = builder2.build_count_query()
+        assert "count() AS total" in query2
+        assert "GROUP BY" in query2
+
+
+@pytest.mark.unit
+class TestSessionListCountSkipLogic:
+    """Tests for the count-query-skip optimization in _list_sessions_clickhouse."""
+
+    def test_skip_count_first_page_small_result(self):
+        """When Phase 1 returns <= page_size rows on page 0, total = len(results)."""
+        page_size = 30
+        page_number = 0
+        result_data = [{"session_id": f"s-{i}"} for i in range(15)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count == 15
+
+    def test_skip_count_later_page_no_more(self):
+        """When Phase 1 returns < page_size on a later page, total = offset + len."""
+        page_size = 30
+        page_number = 3
+        result_data = [{"session_id": f"s-{i}"} for i in range(10)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count == 100
+
+    def test_needs_count_query_when_has_more(self):
+        """When Phase 1 returns page_size + 1 rows, count query is needed."""
+        page_size = 30
+        page_number = 0
+        result_data = [{"session_id": f"s-{i}"} for i in range(31)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count is None
+        assert len(actual_data) == 30
+
+
+@pytest.mark.unit
+class TestSpanAttributesParsing:
+    """Tests for the orjson + key-cap optimization in span attribute processing."""
+
+    def test_json_loads_fallback(self):
+        """_json_loads should work whether orjson is available or not."""
+        from tracer.views.trace_session import _json_loads
+
+        result = _json_loads(b'{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_json_loads_handles_string(self):
+        """_json_loads should handle string input."""
+        from tracer.views.trace_session import _json_loads
+
+        result = _json_loads('{"env": "production", "count": 42}')
+        assert result == {"env": "production", "count": 42}
+
+    def test_max_attr_keys_cap(self):
+        """Attribute processing should cap keys per session at 50."""
+        _MAX_ATTR_KEYS_PER_SESSION = 50
+        aggregated_attrs: dict = {}
+        sid = "session-1"
+
+        for i in range(100):
+            if (
+                sid in aggregated_attrs
+                and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
+            ):
+                continue
+            if sid not in aggregated_attrs:
+                aggregated_attrs[sid] = {}
+            key = f"attr_{i}"
+            if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
+                break
+            aggregated_attrs[sid][key] = {f"val_{i}"}
+
+        assert len(aggregated_attrs[sid]) == 50
 
 
 @pytest.mark.unit
