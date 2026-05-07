@@ -121,6 +121,7 @@ const NewTaskDrawerChild = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,

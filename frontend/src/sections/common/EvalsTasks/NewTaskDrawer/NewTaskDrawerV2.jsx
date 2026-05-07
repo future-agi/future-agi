@@ -195,6 +195,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
