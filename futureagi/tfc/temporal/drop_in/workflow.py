@@ -23,6 +23,8 @@ class TaskRunnerInput:
     kwargs: dict[str, Any]
     queue: str = "default"
     time_limit: Optional[int] = None  # Override default timeout
+    max_retries: Optional[int] = None
+    retry_delay: Optional[int] = None
 
 
 @dataclass
@@ -63,6 +65,21 @@ class TaskRunnerWorkflow:
             # Get timeout from activity metadata or use default
             time_limit = input.time_limit or 3600 * 12  # 12 hours default
 
+            # Build retry policy from decorator metadata when present; fall back
+            # to DEFAULT_RETRY_POLICY for in-flight workflows whose inputs
+            # predate the max_retries field. Mapping: decorator's max_retries
+            # is "retries beyond the first attempt", Temporal's maximum_attempts
+            # counts the first attempt too. max_retries=0 -> 1 attempt total.
+            if input.max_retries is not None:
+                retry_policy = RetryPolicy(
+                    initial_interval=timedelta(seconds=input.retry_delay or 5),
+                    maximum_interval=timedelta(minutes=5),
+                    maximum_attempts=max(1, input.max_retries + 1),
+                    backoff_coefficient=2.0,
+                )
+            else:
+                retry_policy = DEFAULT_RETRY_POLICY
+
             # Don't pin to workflow's build_id; bound stuck-time as safety net.
             result = await workflow.execute_activity(
                 input.activity_name,
@@ -73,7 +90,7 @@ class TaskRunnerWorkflow:
                 start_to_close_timeout=timedelta(seconds=time_limit),
                 schedule_to_start_timeout=timedelta(minutes=5),
                 heartbeat_timeout=timedelta(minutes=5),
-                retry_policy=DEFAULT_RETRY_POLICY,
+                retry_policy=retry_policy,
                 versioning_intent=VersioningIntent.DEFAULT,
             )
 
