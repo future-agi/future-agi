@@ -15,7 +15,18 @@ from typing import List, Optional, Tuple
 import structlog
 from django.contrib.auth import get_user_model
 from django.db import models
-from django.db.models import Avg, Count, Q, QuerySet, Sum
+from django.db.models import (
+    Avg,
+    Case,
+    Count,
+    F,
+    FloatField,
+    Q,
+    QuerySet,
+    Sum,
+    Value,
+    When,
+)
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -68,6 +79,18 @@ from tracer.types.feed_types import (
 
 logger = structlog.get_logger(__name__)
 User = get_user_model()
+
+
+# Coerce EvalLogger rows to a 0..1 score in SQL: prefer output_float when set,
+# otherwise treat output_bool as 1.0/0.0. Mirrors the pattern in
+# tracer/views/trace.py so eval aggregation has one canonical shape.
+EVAL_SCORE_EXPR = Case(
+    When(output_float__isnull=False, then=F("output_float")),
+    When(output_bool=True, then=Value(1.0)),
+    When(output_bool=False, then=Value(0.0)),
+    default=None,
+    output_field=FloatField(),
+)
 
 
 # Priority (backend) ↔ severity (frontend) mapping
@@ -939,30 +962,25 @@ def _eval_score_insights(trace_ids: List[str]) -> List[PatternInsight]:
     """Build per-eval average score insight cards for eval-sourced clusters.
 
     Returns one card per CustomEvalConfig that has scores on the cluster's traces,
-    sorted by lowest average first (worst evals surface first). Handles both
-    float-typed (LLM judge) and bool-typed (deterministic / sim) evals — bool
-    rows contribute as 0/1 so VAPI/sim eval clusters get insight cards too.
+    sorted by lowest average first (worst evals surface first).
     """
-    rows = EvalLogger.objects.filter(
-        trace_id__in=trace_ids,
-        custom_eval_config__isnull=False,
-        deleted=False,
-    ).values("custom_eval_config__name", "output_float", "output_bool")
-
-    by_name: dict = {}
-    for r in rows:
-        s = _eval_row_score(r["output_float"], r["output_bool"])
-        if s is None:
-            continue
-        by_name.setdefault(r["custom_eval_config__name"], []).append(s)
-
-    averaged = sorted(
-        ((name, statistics.fmean(scores)) for name, scores in by_name.items() if scores),
-        key=lambda kv: kv[1],
+    rows = (
+        EvalLogger.objects.filter(
+            trace_id__in=trace_ids,
+            custom_eval_config__isnull=False,
+            deleted=False,
+        )
+        .values("custom_eval_config__name")
+        .annotate(avg_score=Avg(EVAL_SCORE_EXPR))
+        .filter(avg_score__isnull=False)
+        .order_by("avg_score")
     )
     return [
-        PatternInsight(value=f"{round(avg * 100)}%", caption=f"avg {name}")
-        for name, avg in averaged
+        PatternInsight(
+            value=f"{round(r['avg_score'] * 100)}%",
+            caption=f"avg {r['custom_eval_config__name']}",
+        )
+        for r in rows
     ]
 
 
@@ -1081,31 +1099,22 @@ def _get_trace_totals_batch(trace_ids: List[str]) -> dict:
 
 def _get_trace_score(trace_id: str) -> Optional[float]:
     """Avg eval score for a trace. Bool-typed evals contribute as 0/1."""
-    rows = EvalLogger.objects.filter(trace_id=trace_id).values(
-        "output_float", "output_bool"
-    )
-    scores: List[float] = []
-    for r in rows:
-        s = _eval_row_score(r["output_float"], r["output_bool"])
-        if s is not None:
-            scores.append(s)
-    return statistics.fmean(scores) if scores else None
+    return EvalLogger.objects.filter(trace_id=trace_id).aggregate(
+        avg=Avg(EVAL_SCORE_EXPR)
+    )["avg"]
 
 
 def _get_trace_scores_batch(trace_ids: List[str]) -> dict:
     """Return {trace_id_str: avg eval score} — bool evals counted as 0/1."""
     if not trace_ids:
         return {}
-    rows = EvalLogger.objects.filter(trace_id__in=trace_ids).values(
-        "trace_id", "output_float", "output_bool"
+    rows = (
+        EvalLogger.objects.filter(trace_id__in=trace_ids)
+        .values("trace_id")
+        .annotate(avg=Avg(EVAL_SCORE_EXPR))
+        .filter(avg__isnull=False)
     )
-    by_trace: dict = {}
-    for r in rows:
-        s = _eval_row_score(r["output_float"], r["output_bool"])
-        if s is None:
-            continue
-        by_trace.setdefault(str(r["trace_id"]), []).append(s)
-    return {tid: statistics.fmean(vs) for tid, vs in by_trace.items()}
+    return {str(r["trace_id"]): r["avg"] for r in rows}
 
 
 def _get_scan_results_batch(trace_ids: List[str]) -> dict:
@@ -1577,18 +1586,6 @@ def _users_affected_in_window(trace_ids: List[str]) -> int:
     )
 
 
-def _eval_row_score(output_float, output_bool) -> Optional[float]:
-    """Treat an EvalLogger row as a 0..1 score. Bool evals = 0.0 / 1.0."""
-    if output_float is not None:
-        try:
-            return float(output_float)
-        except (TypeError, ValueError):
-            return None
-    if output_bool is not None:
-        return 1.0 if output_bool else 0.0
-    return None
-
-
 def _avg_eval_score(trace_ids: List[str]) -> Optional[float]:
     """Average eval score over a list of traces.
 
@@ -1598,15 +1595,9 @@ def _avg_eval_score(trace_ids: List[str]) -> Optional[float]:
     """
     if not trace_ids:
         return None
-    rows = EvalLogger.objects.filter(trace_id__in=trace_ids).values(
-        "output_float", "output_bool"
-    )
-    scores: List[float] = []
-    for r in rows:
-        s = _eval_row_score(r["output_float"], r["output_bool"])
-        if s is not None:
-            scores.append(s)
-    return statistics.fmean(scores) if scores else None
+    return EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
+        avg=Avg(EVAL_SCORE_EXPR)
+    )["avg"]
 
 
 def _project_scope_total(
@@ -1756,27 +1747,19 @@ def _fetch_score_trends(
             created_at__gte=since,
             custom_eval_config__isnull=False,
         )
-        .filter(Q(output_float__isnull=False) | Q(output_bool__isnull=False))
-        .annotate(day=TruncDate("created_at"))
-        .values(
-            "day",
-            "custom_eval_config__name",
-            "output_float",
-            "output_bool",
-            "created_at",
-        )
+        .annotate(day=TruncDate("created_at"), score=EVAL_SCORE_EXPR)
+        .filter(score__isnull=False)
+        .values("day", "custom_eval_config__name", "score", "created_at")
     )
     if not rows:
         return []
 
-    # Group: {label: {day: [scores...], "_prev": [...], "_cur": [...]}}
-    # Bool-typed evals contribute as 0.0 / 1.0 so the sparkline tracks pass-rate
-    # for sim/voice projects (which only emit bool eval verdicts).
+    # Group: {label: {day: [scores...], "_prev": [...], "_cur": [...]}}.
+    # Score coercion (float vs bool) is done in SQL via EVAL_SCORE_EXPR so the
+    # sparkline tracks pass-rate for sim/voice projects too.
     groups: dict = {}
     for r in rows:
-        score = _eval_row_score(r["output_float"], r["output_bool"])
-        if score is None:
-            continue
+        score = r["score"]
         label = r["custom_eval_config__name"] or "Unnamed eval"
         g = groups.setdefault(label, {"days": {}, "prev": [], "cur": [], "count": 0})
         g["days"].setdefault(r["day"], []).append(score)
