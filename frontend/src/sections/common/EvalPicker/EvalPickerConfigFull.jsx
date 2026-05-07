@@ -26,8 +26,11 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import {
   useEvalDetail,
   useUpdateEval,
@@ -154,6 +157,17 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
   const sourceRef = useRef(null);
+
+  // Local-only preview filter; not persisted (TH-4770).
+  const localFilterForm = useForm({ defaultValues: { filters: [] } });
+  const localFormFilters = useWatch({
+    control: localFilterForm.control,
+    name: "filters",
+  });
+  const localApiFilters = useMemo(
+    () => buildApiFilterArray(localFormFilters),
+    [localFormFilters],
+  );
 
   const handleSourceReadyChange = useCallback((ready, mapping) => {
     setSourceReady(ready);
@@ -1470,6 +1484,35 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   sx={{ alignItems: "flex-start" }}
                 />
               )}
+
+              {source === "task" && sourceId && (
+                <Box
+                  sx={{
+                    mt: 1,
+                    pt: 2,
+                    pb: 3,
+                    borderTop: 1,
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                    Filter preview rows
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", mb: 1.25 }}
+                  >
+                    Narrow down which row appears in the live preview.
+                    Doesn’t affect the task’s saved filters.
+                  </Typography>
+                  <TaskFilterBar
+                    control={localFilterForm.control}
+                    setValue={localFilterForm.setValue}
+                    projectId={sourceId}
+                  />
+                </Box>
+              )}
             </Box>
           }
           rightPanel={
@@ -1578,6 +1621,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    localFilters={localApiFilters}
                     {...compositeSourceModeProps}
                   />
                 )}

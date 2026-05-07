@@ -209,6 +209,15 @@ const TaskFilterBar = ({ control, setValue, projectId }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const addBtnRef = useRef(null);
 
+  // Re-anchor when chips swap the trigger DOM node, so an open popover
+  // doesn't end up attached to a detached element.
+  const hasFiltersForEffect = panelFilters.length > 0;
+  useEffect(() => {
+    if (anchorEl && addBtnRef.current && anchorEl !== addBtnRef.current) {
+      setAnchorEl(addBtnRef.current);
+    }
+  }, [hasFiltersForEffect, anchorEl]);
+
   const applyPanelFilters = useCallback(
     (next) => {
       setPanelFilters(next || []);

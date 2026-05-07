@@ -223,6 +223,8 @@ const TracingTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       isComposite = false,
       compositeAdhocConfig = null,
+      // Optional ad-hoc filters merged into the row-list `filters` param.
+      localFilters = [],
     },
     ref,
   ) => {
@@ -431,7 +433,7 @@ const TracingTestMode = React.forwardRef(
             project_id: selectedProjectId,
             page_number: 0,
             page_size: 50,
-            filters: JSON.stringify([]),
+            filters: JSON.stringify(localFilters || []),
             interval: "year",
           };
 
@@ -466,7 +468,9 @@ const TracingTestMode = React.forwardRef(
       };
 
       fetchData();
-    }, [selectedProjectId, rowType]);
+      // Stringify so the dep compares by value, not reference.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedProjectId, rowType, JSON.stringify(localFilters || [])]);
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
@@ -1151,39 +1155,67 @@ const TracingTestMode = React.forwardRef(
 
         {/* Row navigator */}
         {selectedProjectId &&
-          totalRows > 0 &&
+          (rows?.length ?? 0) > 0 &&
           !loading &&
           !isPendingNewFetch && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Test on row {currentRowIndex + 1} of {totalRows}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
+            }}
+          >
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "11px" }}
+            >
+              Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
+              {rows?.length ?? 0}
+              {(totalRows ?? 0) > (rows?.length ?? 0) && (
+                <Typography
+                  component="span"
+                  sx={{
+                    fontSize: "11px",
+                    color: "text.disabled",
+                    ml: 0.5,
+                  }}
+                >
+                  ({totalRows} matching total)
+                </Typography>
+              )}
             </Typography>
-            <IconButton
-              size="small"
-              disabled={currentRowIndex === 0}
-              onClick={() => {
-                setCurrentRowIndex((i) => Math.max(0, i - 1));
-                setResult(null);
-                setError(null);
-                onClearResult?.();
-              }}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:chevron-left" width={16} />
-            </IconButton>
-            <IconButton
-              size="small"
-              disabled={currentRowIndex >= totalRows - 1}
-              onClick={() => {
-                setCurrentRowIndex((i) => Math.min(totalRows - 1, i + 1));
-                setResult(null);
-                setError(null);
-                onClearResult?.();
-              }}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:chevron-right" width={16} />
-            </IconButton>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <IconButton
+                size="small"
+                disabled={currentRowIndex === 0}
+                onClick={() => {
+                  setCurrentRowIndex((i) => Math.max(0, i - 1));
+                  setResult(null);
+                  setError(null);
+                  onClearResult?.();
+                }}
+                sx={{ width: 24, height: 24 }}
+              >
+                <Iconify icon="mdi:chevron-left" width={16} />
+              </IconButton>
+              <IconButton
+                size="small"
+                disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                onClick={() => {
+                  setCurrentRowIndex((i) =>
+                    Math.min((rows?.length ?? 0) - 1, i + 1),
+                  );
+                  setResult(null);
+                  setError(null);
+                  onClearResult?.();
+                }}
+                sx={{ width: 24, height: 24 }}
+              >
+                <Iconify icon="mdi:chevron-right" width={16} />
+              </IconButton>
+            </Box>
           </Box>
         )}
 

@@ -48,7 +48,8 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
-function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   const userFilters = (oldFormatFilters || [])
     .filter((f) => f?.propertyId || f?.property)
     .map((f) => {
