@@ -58,6 +58,8 @@ export const EvaluateCell = ({ value, dataType, cellData }) => {
     const score = s * 100;
     return Number(score.toFixed(decimalPlaces));
   };
+  const hasRenderableValue = (cellValue) =>
+    cellValue !== undefined && cellValue !== null && cellValue !== "";
 
   if (Array.isArray(value?.output)) {
     return <EvaluateArrayCellRenderer value={value?.output} />;
@@ -96,7 +98,8 @@ export const EvaluateCell = ({ value, dataType, cellData }) => {
     );
   }
   if (dataType === "float" || cellData?.output_type == "score") {
-    const bgColor = cellData?.cell_value
+    const hasValue = hasRenderableValue(cellData?.cell_value);
+    const bgColor = hasValue
       ? interpolateColorBasedOnScore(value?.output, 1)
       : "";
     return (
@@ -108,7 +111,7 @@ export const EvaluateCell = ({ value, dataType, cellData }) => {
           height: "100%",
         }}
       >
-        {cellData?.cell_value ? `${getScorePercentage(value?.output)}%` : ""}
+        {hasValue ? `${getScorePercentage(value?.output)}%` : ""}
       </Box>
     );
   }
