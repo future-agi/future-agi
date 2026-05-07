@@ -16,6 +16,11 @@ import requests
 import structlog
 from agentic_eval.core.utils.functions import download_image_to_base64
 from agentic_eval.core.utils.model_config import ModelConfigs
+
+
+def _turing_aliases():
+    from model_hub.models.choices import ModelChoices
+    return {m.value for m in ModelChoices if m.name.startswith("TURING_")} | {"turing_large_xl"}
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from anthropic import AnthropicBedrock, AsyncAnthropic, AsyncAnthropicBedrock
 from botocore.exceptions import ClientError
@@ -652,7 +657,7 @@ class LLM:
                         content = gw_response.choices[0].message.content
                         return content if content is not None else ""
 
-                    if self.provider == "turing":
+                    if payload["model"] in _turing_aliases():
                         _resolved = os.environ.get(f"{payload['model'].upper()}_MODEL")
                         if _resolved:
                             payload["model"] = _resolved
@@ -819,7 +824,7 @@ class LLM:
                         raise ValueError("Empty response from gateway")
                     return gw_response
 
-                if self.provider == "turing":
+                if payload["model"] in _turing_aliases():
                     _resolved = os.environ.get(f"{payload['model'].upper()}_MODEL")
                     if _resolved:
                         payload["model"] = _resolved
