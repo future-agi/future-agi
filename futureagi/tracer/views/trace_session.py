@@ -43,7 +43,12 @@ from model_hub.models.score import Score
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EndUser,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 
@@ -1752,3 +1757,132 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             traceback.print_exc()
             return self._gm.bad_request(f"Error fetching the traces list: {str(e)}")
+
+    @action(detail=True, methods=["get"])
+    def eval_logs(self, request, *args, **kwargs):
+        """
+        Session-scoped eval log feed for the TracesDrawer "Evals" tab.
+
+        Session-level eval results NEVER appear on span- or trace-level
+        surfaces (the spans table, trace drawer, or span detail panel) —
+        this endpoint is the only place users can see them. Conversely,
+        span/trace evals never appear here: the ``target_type='session'``
+        filter walls the surfaces apart.
+
+        The response shape mirrors ``EvalTaskView.get_usage`` ``log_items``
+        so the FE can reuse the same renderer (ScoreCell, DetailRow,
+        ErrorDetails, ExpandableJson). Span/trace-only fields are dropped
+        because the ``eval_logger_target_type_fks`` check constraint
+        guarantees they're NULL on session rows.
+
+        Query params:
+            page (int, default 0)
+            page_size (int, default 25, max 100)
+        """
+        try:
+            # get_object() applies the org-scoped queryset filter and
+            # raises 404 if the caller can't access the session — the
+            # standard DRF auth pattern, no extra check needed here.
+            session = self.get_object()
+
+            page = max(int(request.query_params.get("page", 0)), 0)
+            page_size = min(
+                max(int(request.query_params.get("page_size", 25)), 1), 100
+            )
+
+            logs_qs = (
+                EvalLogger.objects.filter(
+                    trace_session_id=session.id,
+                    target_type=EvalTargetType.SESSION,
+                    deleted=False,
+                )
+                .select_related(
+                    "custom_eval_config",
+                    "custom_eval_config__eval_template",
+                )
+                .order_by("-created_at")
+            )
+            total_logs = logs_qs.count()
+            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+
+            items = []
+            for log in logs_page:
+                # Same Pass/Fail derivation as EvalTaskView.get_usage so
+                # the two surfaces render identically.
+                if log.error:
+                    result_label = "Error"
+                    score = None
+                    status = "error"
+                elif log.output_bool is True:
+                    result_label = "Passed"
+                    score = 1.0
+                    status = "success"
+                elif log.output_bool is False:
+                    result_label = "Failed"
+                    score = 0.0
+                    status = "success"
+                elif log.output_float is not None:
+                    score = float(log.output_float)
+                    result_label = "Passed" if score >= 0.5 else "Failed"
+                    status = "success"
+                elif log.output_str:
+                    result_label = log.output_str[:50]
+                    score = None
+                    status = "success"
+                else:
+                    result_label = ""
+                    score = None
+                    status = "success"
+
+                config = log.custom_eval_config
+                reason = log.eval_explanation or log.error_message or ""
+
+                items.append(
+                    {
+                        "id": str(log.id),
+                        "input": (session.name or "")[:200],
+                        "result": result_label,
+                        "score": score,
+                        "reason": reason,
+                        "status": status,
+                        "source": "eval_task",
+                        "created_at": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        ),
+                        "session_id": str(session.id),
+                        "eval_id": str(config.id) if config else None,
+                        "eval_name": config.name if config else None,
+                        "model": config.model if config else None,
+                        "detail": {
+                            "eval_name": config.name if config else None,
+                            "model": config.model if config else None,
+                            "output_type": (
+                                config.eval_template.output_type_normalized
+                                if config and config.eval_template
+                                else None
+                            ),
+                            "target_type": log.target_type,
+                            "session_id": str(session.id),
+                            "session_name": session.name,
+                            "output_bool": log.output_bool,
+                            "output_float": log.output_float,
+                            "output_str": log.output_str,
+                            "results_explanation": log.results_explanation,
+                            "error_message": log.error_message,
+                        },
+                    }
+                )
+
+            return self._gm.success_response(
+                {
+                    "items": items,
+                    "total": total_logs,
+                    "page": page,
+                    "page_size": page_size,
+                }
+            )
+        except Exception as e:
+            logger.exception(f"Error in fetching session eval logs: {str(e)}")
+            return self._gm.bad_request(
+                f"Error fetching session eval logs: {str(e)}"
+            )
