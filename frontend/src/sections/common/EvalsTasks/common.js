@@ -224,6 +224,7 @@ export const getDefaultTaskValues = (data, observeId) => {
       samplingRate: Number(data?.sampling_rate),
       evalsDetails: data?.evals_applied,
       runType: data?.run_type,
+      rowType: data?.row_type ?? "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
@@ -257,6 +258,7 @@ export const getDefaultTaskValues = (data, observeId) => {
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
