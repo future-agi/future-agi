@@ -2,13 +2,18 @@
 <html lang="en" style="max-height: 100vh;">
   <head>
     <meta charset="utf-8" />
-    <!-- Google Tag Manager -->
-    <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-      new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-      j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-      'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-      })(window,document,'script','dataLayer','GTM-PJVV29XF');
-    </script>  
+    <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
+         builds don't load third-party tracking) -->
+    <script>(function(){
+      var GTM_ID = "%VITE_GTM_ID%";
+      if (!GTM_ID || GTM_ID === "%" + "VITE_GTM_ID%") return;
+      (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+        new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+        j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+        'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+        })(window,document,'script','dataLayer',GTM_ID);
+    })();
+    </script>
     <!-- End Google Tag Manager -->
 
     <meta name="theme-color" content="#000000" />

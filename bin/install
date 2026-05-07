@@ -597,9 +597,14 @@ if [[ -n "$USER_EMAIL" ]]; then
   # fire the script-level ERR trap (which would print a misleading
   # "install failed" line before our own error handling runs).
   set +eE
-  cu_out=$($DC exec -T backend python manage.py create_user \
-             --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1)
-  cu_rc=$?
+  trap - ERR
+  if cu_out=$($DC exec -T backend python manage.py create_user \
+                --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1); then
+    cu_rc=0
+  else
+    cu_rc=$?
+  fi
+  trap 'on_err $LINENO' ERR
   set -eE
 
   if (( cu_rc == 0 )); then
