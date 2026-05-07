@@ -406,6 +406,12 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
           onChange(e.target.value);
           if (!open) setOpen(true);
         }}
+        autoComplete="off"
+        inputProps={{
+          autoComplete: "off",
+          autoCorrect: "off",
+          spellCheck: false,
+        }}
         InputProps={{
           sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
           endAdornment: (
