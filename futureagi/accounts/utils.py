@@ -186,7 +186,7 @@ def first_signup(data, mode=None):
         generated_password = None
     else:
         generated_password = generate_password()
-    data["password"] = generated_password
+        data["password"] = generated_password
     data.pop("allow_email", False)  # Remove but don't store
     # Extract domain from email
     email_parts = data["email"].split("@")

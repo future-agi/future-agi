@@ -128,7 +128,7 @@ def user_signup(request):
                     "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR")
                 ),
                 email=email,
-                old_email=request.data.get("old_email"),
+                old_email=bool(request.data.get("old_email")),
             )
 
         is_local = os.getenv("ENV_TYPE") == "local"
