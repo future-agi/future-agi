@@ -1981,6 +1981,7 @@ TracingTestMode.propTypes = {
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  localFilters: PropTypes.array,
 };
 
 export default TracingTestMode;
