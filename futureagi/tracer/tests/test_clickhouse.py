@@ -72,6 +72,104 @@ class TestClickHouseSchema:
         # spans_mv must appear before span_metrics_hourly
         assert names.index("spans_mv") < names.index("span_metrics_hourly")
 
+    def test_eval_logger_ddl_has_target_type_and_trace_session_columns(self):
+        """PR3: tracer_eval_logger DDL must carry the new row_type-stack columns.
+
+        Asserts (a) ``trace_session_id`` is present and Nullable, (b)
+        ``target_type`` is present with default 'span', (c) ``trace_id`` and
+        ``observation_span_id`` are Nullable. Also confirms the FE-relevant
+        EVAL_METRICS_HOURLY_MV filters out session rows so the rollup stays
+        span/trace-only.
+        """
+        from tracer.services.clickhouse.schema import (
+            CDC_EVAL_LOGGER,
+            EVAL_METRICS_HOURLY_MV,
+        )
+
+        # New columns
+        assert "trace_session_id Nullable(UUID)" in CDC_EVAL_LOGGER
+        assert "target_type LowCardinality(String) DEFAULT 'span'" in CDC_EVAL_LOGGER
+
+        # Existing FK columns must be Nullable for session rows to land
+        assert "trace_id Nullable(UUID)" in CDC_EVAL_LOGGER
+        assert "observation_span_id Nullable(String)" in CDC_EVAL_LOGGER
+
+        # Bloom filter index on the new discriminator + session FK
+        assert "idx_target_type target_type" in CDC_EVAL_LOGGER
+        assert "idx_trace_session_id trace_session_id" in CDC_EVAL_LOGGER
+
+        # Allow nullable key for trace_id in ORDER BY
+        assert "allow_nullable_key = 1" in CDC_EVAL_LOGGER
+
+        # MV stays span/trace-only (session rows have NULL trace_id and
+        # would break the trace_dict lookup)
+        assert "target_type IN ('span', 'trace')" in EVAL_METRICS_HOURLY_MV
+
+    def test_post_ddl_alters_evolves_existing_eval_logger_tables(self):
+        """ALTER statements bring already-created tracer_eval_logger tables forward."""
+        from tracer.services.clickhouse.schema import POST_DDL_ALTERS
+
+        joined = "\n".join(POST_DDL_ALTERS)
+        assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS trace_session_id" in joined
+        assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS target_type" in joined
+        assert "tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)" in joined
+        # The MODIFY trace_id must be sandwiched between DROP INDEX and ADD
+        # INDEX for idx_trace_id (CH refuses to alter a column that's part
+        # of a skip index — Code: 524).
+        drop_idx = joined.index("DROP INDEX IF EXISTS idx_trace_id")
+        modify = joined.index("MODIFY COLUMN trace_id Nullable(UUID)")
+        readd_idx = joined.index("ADD INDEX IF NOT EXISTS idx_trace_id ")
+        assert drop_idx < modify < readd_idx, (
+            "POST_DDL_ALTERS must order DROP INDEX → MODIFY COLUMN → ADD INDEX "
+            "for idx_trace_id; ClickHouse refuses to alter an indexed column."
+        )
+
+    def test_mv_recreate_manifest_consistency(self):
+        """Every MV_RECREATE_MANIFEST entry must resolve to a real DDL constant."""
+        from tracer.services.clickhouse import schema as ch_schema
+
+        for mv_name, manifest in ch_schema.MV_RECREATE_MANIFEST.items():
+            const_name = manifest["ddl_constant_name"]
+            ddl = getattr(ch_schema, const_name, None)
+            assert isinstance(ddl, str) and ddl.strip(), (
+                f"Manifest entry for '{mv_name}' references "
+                f"non-existent or empty DDL constant '{const_name}'"
+            )
+            # The MV must reference its declared source and target tables.
+            assert manifest["source_table"] in ddl, (
+                f"DDL for '{mv_name}' does not reference source_table "
+                f"{manifest['source_table']!r}"
+            )
+            assert manifest["target_table"] in ddl, (
+                f"DDL for '{mv_name}' does not reference target_table "
+                f"{manifest['target_table']!r}"
+            )
+
+    def test_mv_recreate_manifest_backfill_mirrors_mv_filter(self):
+        """The backfill_select must produce the same filtered row set as the MV.
+
+        For ``eval_metrics_hourly_mv`` specifically, the MV's WHERE clause
+        narrows to ``target_type IN ('span', 'trace')`` per PR3. The backfill
+        must include the same filter or it would re-aggregate rows the MV
+        wouldn't have processed.
+        """
+        from tracer.services.clickhouse.schema import (
+            EVAL_METRICS_HOURLY_MV,
+            MV_RECREATE_MANIFEST,
+        )
+
+        manifest = MV_RECREATE_MANIFEST["eval_metrics_hourly_mv"]
+        backfill = manifest["backfill_select"]
+
+        # Both must filter sessions out
+        assert "target_type IN ('span', 'trace')" in EVAL_METRICS_HOURLY_MV
+        assert "target_type IN ('span', 'trace')" in backfill
+        # Backfill carries the cutoff parameter
+        assert "%(cutoff)s" in backfill
+        # Backfill GROUP BY must match — the recreate command's chunk-injection
+        # logic relies on the GROUP BY marker being present.
+        assert "GROUP BY" in backfill
+
     def test_get_drop_statements(self):
         """Drop statements should be generated in reverse dependency order."""
         from tracer.services.clickhouse.schema import get_drop_statements

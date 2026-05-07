@@ -1078,19 +1078,24 @@ def _get_trace_totals_batch(trace_ids: List[str]) -> dict:
 
 
 def _get_trace_score(trace_id: str) -> Optional[float]:
-    """Average EvalLogger.output_float across the trace."""
-    agg = EvalLogger.objects.filter(trace_id=trace_id).aggregate(
-        avg=Avg("output_float")
-    )
+    """Average EvalLogger.output_float across span-level evals on the trace.
+
+    PR3: target_type='span' keeps this average comparable to its pre-row_type
+    behaviour. Trace-level evals (PR4) are a different semantic unit (one
+    per trace, not per span); their score should surface separately.
+    """
+    agg = EvalLogger.objects.filter(
+        trace_id=trace_id, target_type="span"
+    ).aggregate(avg=Avg("output_float"))
     return agg["avg"]
 
 
 def _get_trace_scores_batch(trace_ids: List[str]) -> dict:
-    """Return {trace_id_str: avg_output_float}."""
+    """Return {trace_id_str: avg_output_float} for span-level evals only."""
     if not trace_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids)
+        EvalLogger.objects.filter(trace_id__in=trace_ids, target_type="span")
         .values("trace_id")
         .annotate(avg=Avg("output_float"))
     )
@@ -1424,9 +1429,12 @@ def _fetch_traces_aggregates(cluster_id: str) -> TracesAggregates:
     failing = sum(1 for v in has_issues_map.values() if v)
     passing = sum(1 for v in has_issues_map.values() if not v)
 
-    # Avg eval score across all trace-level EvalLogger rows
+    # PR3: span-only — keeps the avg comparable to pre-row_type semantics.
+    # Trace-level evals (PR4) are a separate signal and surface elsewhere.
     avg_score = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
+        EvalLogger.objects.filter(
+            trace_id__in=trace_ids, target_type="span"
+        ).aggregate(
             avg=Avg("output_float")
         )["avg"]
         or 0.0
@@ -1570,10 +1578,15 @@ def _users_affected_in_window(trace_ids: List[str]) -> int:
 
 
 def _avg_eval_score(trace_ids: List[str]) -> Optional[float]:
-    """Average EvalLogger.output_float over a list of traces."""
+    """Average EvalLogger.output_float over span-level evals on a list of traces.
+
+    PR3: span-only filter. See _get_trace_score for rationale.
+    """
     if not trace_ids:
         return None
-    return EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
+    return EvalLogger.objects.filter(
+        trace_id__in=trace_ids, target_type="span"
+    ).aggregate(
         avg=Avg("output_float")
     )["avg"]
 
