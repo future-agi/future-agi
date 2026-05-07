@@ -733,6 +733,21 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       }
     }
 
+    // Ensure evaluation columns come before evaluation_reason in each
+    // group so the result renders by default (not the reason).
+    for (const key of Object.keys(grouping)) {
+      const grp = grouping[key];
+      if (grp.length > 1) {
+        grp.sort((a, b) => {
+          const aType = a.originType || a.origin_type || "";
+          const bType = b.originType || b.origin_type || "";
+          if (aType === "evaluation" && bType !== "evaluation") return -1;
+          if (bType === "evaluation" && aType !== "evaluation") return 1;
+          return 0;
+        });
+      }
+    }
+
     const columnMap = [];
 
     for (const [_, cols] of Object.entries(grouping)) {
