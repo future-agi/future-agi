@@ -25,6 +25,7 @@ import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
+import { isEditableElement } from "src/utils/keyboardUtils";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -862,6 +863,8 @@ const TaskUsageTab = ({ taskId }) => {
   useEffect(() => {
     if (detailIndex === null) return undefined;
     const handler = (e) => {
+      if (e.repeat) return;
+      if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
