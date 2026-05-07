@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
@@ -260,8 +260,14 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     id UUID,
 
     -- Foreign keys
-    trace_id UUID,
+    -- ``trace_id`` and ``observation_span_id`` are nullable so session-level
+    -- eval rows (PR4) can land here with NULL FKs; ``trace_session_id`` is
+    -- the new column that session rows populate. ``target_type``
+    -- discriminates the row shape (mirror of EvalLogger.target_type in PG).
+    trace_id Nullable(UUID),
     observation_span_id Nullable(String),
+    trace_session_id Nullable(UUID),
+    target_type LowCardinality(String) DEFAULT 'span',
     custom_eval_config_id UUID DEFAULT '00000000-0000-0000-0000-000000000000',
     eval_type_id Nullable(String),
 
@@ -302,12 +308,18 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     -- Secondary indexes
     INDEX idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_observation_span_id observation_span_id TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_target_type target_type TYPE bloom_filter GRANULARITY 1,
     INDEX idx_custom_eval_config_id custom_eval_config_id TYPE bloom_filter GRANULARITY 1
 )
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
+-- ORDER BY uses ``coalesce(trace_id, trace_session_id, id)`` would be ideal
+-- but ClickHouse requires ORDER BY columns to be deterministic. Keeping the
+-- existing key works because span/trace rows still populate trace_id and
+-- session rows simply sort with NULL trace_id at the partition's NULL bucket.
 ORDER BY (trace_id, custom_eval_config_id, id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
 # ---------------------------------------------------------------------------
@@ -435,6 +447,27 @@ CREATE DICTIONARY IF NOT EXISTS trace_dict (
 PRIMARY KEY id
 SOURCE(CLICKHOUSE(
     TABLE 'tracer_trace'
+    DB '{_CH_DATABASE}'
+))
+LIFETIME(MIN 30 MAX 60)
+LAYOUT(COMPLEX_KEY_HASHED(SHARDS 4));
+"""
+
+# ---------------------------------------------------------------------------
+# trace_session_dict — in-memory dictionary sourced from trace_session
+# PR3: lets eval_metrics_hourly_mv resolve project_id for session-target eval
+# rows (which have NULL trace_id). Mirrors trace_dict's shape and tuning.
+# ---------------------------------------------------------------------------
+TRACE_SESSION_DICT = f"""
+CREATE DICTIONARY IF NOT EXISTS trace_session_dict (
+    id UUID,
+    project_id UUID,
+    name Nullable(String),
+    _peerdb_is_deleted UInt8
+)
+PRIMARY KEY id
+SOURCE(CLICKHOUSE(
+    TABLE 'trace_session'
     DB '{_CH_DATABASE}'
 ))
 LIFETIME(MIN 30 MAX 60)
@@ -975,8 +1008,17 @@ TO eval_metrics_hourly
 AS
 SELECT
     coalesce(e.custom_eval_config_id, toUUID('00000000-0000-0000-0000-000000000000')) AS custom_eval_config_id,
-    -- Resolve project_id from the parent trace via the dictionary
-    dictGetOrDefault('trace_dict', 'project_id', toUUID(e.trace_id), toUUID('00000000-0000-0000-0000-000000000000')) AS project_id,
+    -- PR3: project_id resolution branches by target_type:
+    --   span / trace targets -> trace_dict lookup on trace_id
+    --   session target       -> trace_session_dict lookup on trace_session_id
+    -- Session rows have NULL trace_id, so the trace_dict lookup would
+    -- collapse them under the zero-UUID project_id. Branching on
+    -- target_type keeps each row in the correct project's bucket.
+    if(
+        e.target_type = 'session',
+        dictGetOrDefault('trace_session_dict', 'project_id', toUUID(e.trace_session_id), toUUID('00000000-0000-0000-0000-000000000000')),
+        dictGetOrDefault('trace_dict', 'project_id', toUUID(e.trace_id), toUUID('00000000-0000-0000-0000-000000000000'))
+    ) AS project_id,
     toStartOfHour(e.created_at)                                    AS hour,
 
     count()                                                        AS eval_count,
@@ -1743,6 +1785,7 @@ SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
     ("tracer_enduser", CDC_TRACER_ENDUSER),
     # Layer 2 — Dictionaries + denormalized spans
     ("trace_dict", TRACE_DICT),
+    ("trace_session_dict", TRACE_SESSION_DICT),
     ("enduser_dict", ENDUSER_DICT),
     ("model_hub_promptversion", CDC_MODEL_HUB_PROMPTVERSION),
     ("model_hub_prompttemplate", CDC_MODEL_HUB_PROMPTTEMPLATE),
@@ -1806,7 +1849,100 @@ POST_DDL_ALTERS: List[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     "eval_dataset_id String MATERIALIZED "
     "JSONExtractString(JSONExtractString(config), 'dataset_id')",
+    # PR3: evolve existing tracer_eval_logger tables to the row_type stack's
+    # new shape. CREATE TABLE IF NOT EXISTS skips already-created tables, so
+    # these ALTERs bring the schema forward in place. Idempotent thanks to
+    # IF NOT EXISTS / IF EXISTS clauses; ordering matters where the bloom
+    # index on trace_id has to be dropped before we can MODIFY the column.
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "trace_session_id Nullable(UUID)",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "target_type LowCardinality(String) DEFAULT 'span'",
+    # ClickHouse refuses to MODIFY a column that's part of a skip index
+    # (Code: 524 — "Trying to ALTER trace_id column which is a part of
+    # index idx_trace_id"). Drop the index, modify the column to Nullable
+    # so session rows (target_type='session') can write NULL trace_id,
+    # then re-add the index. All idempotent.
+    "ALTER TABLE tracer_eval_logger DROP INDEX IF EXISTS idx_trace_id",
+    "ALTER TABLE tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)",
+    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+    "idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1",
+    # Bloom filter indexes for the new columns (mirrors the existing
+    # idx_observation_span_id / idx_trace_id). Cheap filter queries.
+    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+    "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
+    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+    "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
 ]
+
+
+# ============================================================================
+# Materialized-view recreation manifest
+# ============================================================================
+#
+# CREATE MATERIALIZED VIEW IF NOT EXISTS skips already-existing views, so any
+# semantic change to an MV body (new WHERE clause, different aggregation,
+# additional join) requires DROP + CREATE on each environment that has the
+# old MV. To make this safe and replayable we keep an explicit manifest of
+# every MV that may need recreation, and ship a Django management command
+# (``manage.py recreate_clickhouse_mv``) that consumes it.
+#
+# Each entry carries:
+#   - ``ddl_constant_name``: name of the constant in this module that holds
+#     the canonical CREATE MATERIALIZED VIEW statement.
+#   - ``source_table`` / ``target_table``: the CDC table the MV reads and
+#     the AggregatingMergeTree (or similar) the MV writes into. Used by the
+#     command's gap-backfill path.
+#   - ``source_time_column``: the column we filter on when running the gap
+#     backfill (typically ``created_at``).
+#   - ``backfill_select``: the SELECT body to use for gap-backfill INSERTs
+#     (mirrors the MV's body verbatim minus the CREATE prefix; the command
+#     appends ``AND <source_time_column> >= %(cutoff)s`` to the WHERE
+#     clause). Set to ``None`` to opt the MV out of backfill (use case:
+#     MVs whose semantic change makes a partial re-aggregate incorrect —
+#     those need a full recompute via a one-off SRE script instead).
+#
+# The command verifies the deployed MV's SHOW CREATE matches the canonical
+# DDL after recreation, so a misconfigured manifest fails loudly.
+MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
+    "eval_metrics_hourly_mv": {
+        "ddl_constant_name": "EVAL_METRICS_HOURLY_MV",
+        "source_table": "tracer_eval_logger",
+        "target_table": "eval_metrics_hourly",
+        "source_time_column": "created_at",
+        # Mirrors EVAL_METRICS_HOURLY_MV's SELECT body verbatim. The command
+        # appends ``AND created_at >= %(cutoff)s`` to the WHERE clause when
+        # running the gap backfill — keep this in lockstep with the MV body
+        # above. A unit test asserts the WHERE clause shape so divergence
+        # surfaces immediately.
+        "backfill_select": """
+            INSERT INTO eval_metrics_hourly
+            SELECT
+                coalesce(e.custom_eval_config_id, toUUID('00000000-0000-0000-0000-000000000000')) AS custom_eval_config_id,
+                if(
+                    e.target_type = 'session',
+                    dictGetOrDefault('trace_session_dict', 'project_id', toUUID(e.trace_session_id), toUUID('00000000-0000-0000-0000-000000000000')),
+                    dictGetOrDefault('trace_dict', 'project_id', toUUID(e.trace_id), toUUID('00000000-0000-0000-0000-000000000000'))
+                ) AS project_id,
+                toStartOfHour(e.created_at)                                    AS hour,
+
+                count()                                                        AS eval_count,
+                ifNull(sumIf(e.output_float, e.output_float IS NOT NULL), 0)   AS float_sum,
+                countIf(e.output_float IS NOT NULL)                            AS float_count,
+                countIf(e.output_bool = 1)                                     AS bool_pass,
+                countIf(e.output_bool = 0 AND e.output_bool IS NOT NULL)       AS bool_fail,
+                countIf(e.error = 1)                                           AS error_count
+
+            FROM tracer_eval_logger AS e
+            WHERE e._peerdb_is_deleted = 0
+              AND e.created_at >= %(cutoff)s
+            GROUP BY
+                custom_eval_config_id,
+                project_id,
+                hour
+        """,
+    },
+}
 
 
 def get_all_schema_ddl() -> List[Tuple[str, str]]:

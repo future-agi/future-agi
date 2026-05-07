@@ -396,7 +396,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     total_count: totalCount = 0,
     start_time: startTime,
     end_time: endTime,
+    row_type: rowType = "spans",
   } = data;
+  const TOTAL_LABEL_BY_ROW_TYPE = {
+    spans: "Total Spans",
+    traces: "Total Traces",
+    sessions: "Total Sessions",
+    voiceCalls: "Total Calls",
+  };
+  const totalLabel = TOTAL_LABEL_BY_ROW_TYPE[rowType] || "Total Spans";
   const successRate =
     totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
   const errorRate =
@@ -475,7 +483,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         />
         <StatCard
           icon="solar:layers-linear"
-          label="Total Spans"
+          label={totalLabel}
           value={totalCount ?? 0}
           color="info.main"
           bgColor={alpha(theme.palette.info.main, 0.1)}
