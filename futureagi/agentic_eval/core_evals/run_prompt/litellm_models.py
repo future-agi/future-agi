@@ -165,14 +165,14 @@ class LiteLLMModelManager:
                 f"API key not configured for {provider}. Please add your API key in settings."
             )
         except ApiKey.MultipleObjectsReturned:
-            # Multiple rows matched — pick the most-recently-created one.
-            # This is a data integrity issue: log it so operators can clean up duplicate keys.
+            # Multiple rows matched — data integrity issue; log so operators can clean up.
+            # BaseModel.Meta.ordering = ('-created_at',) so .first() picks the newest row.
             logger.warning(
                 "api_key_multiple_rows_for_provider",
                 provider=provider,
                 query=str(query),
             )
-            api_key_entry = ApiKey.objects.filter(**query).order_by("-created_at").first()
+            api_key_entry = ApiKey.objects.filter(**query).first()
             if not api_key_entry:
                 raise ValueError(
                     f"API key not configured for {provider}. Please add your API key in settings."
