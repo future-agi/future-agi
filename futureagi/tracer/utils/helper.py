@@ -313,23 +313,6 @@ def update_column_config_based_on_eval_config(
             ):
                 column_config.append(present_config)
 
-        # One reason column per eval (regardless of output_type). Hidden by
-        # default — visible via the column picker. See TH-4136.
-        # No "Avg." prefix: reason is the latest explanation, not an average.
-        reason_id = f"{item.id}__reason"
-        reason_config = FieldConfig(
-            id=reason_id,
-            name=f"{item.name} - Reason",
-            group_by="Evaluation Metrics",
-            is_visible=False,
-            eval_template_id=eval_template_id,
-            source_field="reason",
-            parent_eval_id=str(item.id),
-        )
-        reason_config = asdict(reason_config)
-        if not any(config["id"] == reason_config["id"] for config in column_config):
-            column_config.append(reason_config)
-
     return column_config
 
 
