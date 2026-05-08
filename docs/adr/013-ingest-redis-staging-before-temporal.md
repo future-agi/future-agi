@@ -34,9 +34,13 @@ Redis (TTL handles cleanup).
 
 ## Consequences
 
-- A Redis failure between the view returning and the Temporal activity retrieving the
-  payload results in silent data loss (the activity gets `None` and must handle it).
+- If Redis returns `None` for the key (TTL expired or eviction), the activity logs
+  `trace_payload_not_found_in_redis` at ERROR level and raises `ValueError`. The
+  Temporal activity fails visibly; Temporal records the failure. The spans are lost
+  but the failure is neither silent nor swallowed.
+  Evidence: `futureagi/tracer/utils/trace_ingestion.py:670-675`.
 - Payloads with TTL `PAYLOAD_DEFAULT_TTL` (24h) are leaked storage if the activity
   never runs (e.g., Temporal worker outage lasting >24h).
 - The payload is stored in Redis, not in Temporal — it is not replay-safe. If the
-  activity fails and retries after TTL expiry, the retry finds no payload.
+  activity fails and Temporal retries it after TTL expiry, the retry will also fail
+  with the same `ValueError`.

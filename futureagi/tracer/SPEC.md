@@ -90,7 +90,7 @@ Temporal activity (not Celery). Queue: `trace_ingestion`. Timeout: 3600s. Max re
    - `project` — `Project` instance
    - `end_user`, `prompt_details`, `session_name` — optional extras
 
-6. **Database writes** (inside `transaction.atomic()`):
+6. **Database writes + scanner** (all inside `transaction.atomic()`):
    - `_fetch_or_create_traces()` — bulk get-or-create `Trace` rows using PostgreSQL COPY;
      handles `UniqueViolation` race conditions by re-fetching.
    - `_fetch_or_create_end_users()` — same pattern for `EndUser`.
@@ -98,13 +98,13 @@ Temporal activity (not Celery). Queue: `trace_ingestion`. Timeout: 3600s. Max re
    - `_fetch_prompt_versions()` — link LLM spans to `PromptVersion` rows.
    - `_bulk_insert_observation_spans()` — PostgreSQL COPY insert of `ObservationSpan` rows.
    - `_bulk_update_traces()` — update `input`, `output`, `session` on `Trace` from root spans.
+   - `_trigger_trace_scanner()` — queues `scan_traces_task` for traces whose root span
+     (`parent_span_id IS NULL`) has `end_time` set, filtered to `project.type == "observe"`.
+     **This fires inside the transaction** (`trace_ingestion.py:774`).
 
-7. **Queue scanner**: `_trigger_trace_scanner()` queues `scan_traces_task` for any trace
-   whose root span (`parent_span_id IS NULL`) has an `end_time` set, filtered to
-   `project.type == "observe"` (not `"experiment"`).
-
-8. **Usage metering** (outside transaction): emit `BillingEventType.TRACING_EVENT` with
-   `amount = num_traces`. OSS stub is a no-op.
+7. **Usage metering** (outside transaction, after commit): emit
+   `BillingEventType.TRACING_EVENT` with `amount = num_traces`. OSS stub is a no-op.
+   (`trace_ingestion.py:776` comment confirms post-commit placement.)
 
 ### Invariants
 
