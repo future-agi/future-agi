@@ -1898,6 +1898,7 @@ class EvalTemplateCreateV2View(APIView):
                 output_type_normalized=req.output_type,
                 pass_threshold=req.pass_threshold,
                 choice_scores=req.choice_scores,
+                error_localizer_enabled=req.error_localizer_enabled,
             )
 
             # 8. Create initial version (V1)
