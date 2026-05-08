@@ -1,6 +1,6 @@
 # Installation
 
-How to run Future AGI on your own infrastructure. This guide covers the three supported deployment modes, every configurable knob, and the common issues people hit on first boot.
+How to run Future AGI on your own infrastructure. This guide covers the supported deployment modes, every configurable knob, and the common issues people hit on first boot.
 
 If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 
@@ -21,7 +21,6 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 - [Services and what they do](#services-and-what-they-do)
 - [Configuring LLM providers](#configuring-llm-providers)
 - [Email (SMTP)](#email-smtp)
-- [PeerDB mirror setup](#peerdb-mirror-setup)
 - [Upgrading](#upgrading)
 - [Backups](#backups)
 - [Troubleshooting](#troubleshooting)
@@ -51,7 +50,6 @@ Useful flags:
 
 | Flag | What it does |
 |---|---|
-| `--full` | Adds the PeerDB CDC stack (~10 extra containers) for populated analytics views. Default is light mode. |
 | `--skip-user-creation` | Skip the first-user prompt. Run the `create_user` command later. |
 | `--no-up` | Bootstrap `.env` only; don't start the stack. |
 
@@ -59,7 +57,6 @@ When the backend logs `Application startup complete`, open:
 
 - **Frontend**: <http://localhost:3000>
 - **Backend API**: <http://localhost:8000>
-- **PeerDB UI** (full mode only): <http://localhost:3001> (user/pass: `peerdb` / `peerdb`)
 
 ### Create your first account
 
@@ -94,7 +91,7 @@ If you'd rather run the steps by hand:
 
 ```bash
 cp .env.example .env       # optional — empty .env works fine for local
-docker compose up          # add COMPOSE_PROFILES=full for the PeerDB stack
+docker compose up
 ```
 
 ---
@@ -118,17 +115,13 @@ On Docker Desktop for Mac, give Docker at least **8 GB RAM** and **64 GB disk** 
 
 Three compose files at the repo root. Pick one or compose them with `-f`.
 
-### Mode 1 — Full OSS stack
+### Mode 1 — OSS stack
 
-Two profiles, gated by `COMPOSE_PROFILES`:
-
-- **light** (default, `COMPOSE_PROFILES` unset, ~12 containers) — frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, temporal. Analytics views (Observe / Trace) show empty data without PeerDB.
-- **full** (`COMPOSE_PROFILES=full`, ~22 containers) — adds the PeerDB CDC stack so analytics views populate.
+The default Compose stack runs frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, rabbitmq, and temporal from published images.
 
 ```bash
-docker compose up                                # light, foreground
-docker compose up -d                             # light, detached
-COMPOSE_PROFILES=full docker compose up -d       # full
+docker compose up                                # foreground
+docker compose up -d                             # detached
 docker compose ps
 docker compose logs -f backend
 ```
@@ -209,9 +202,6 @@ All ports are configurable via `.env`. Defaults:
 | MinIO console | `9001` | same |
 | Temporal gRPC | `7233` | same |
 | Temporal UI | `8085` | dev mode only |
-| PeerDB server | `9900` | `127.0.0.1` |
-| PeerDB UI | `3001` | <http://localhost:3001> |
-
 To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port, and `docker compose --env-file .env.stackB -p stackb up`.
 
 ---
@@ -233,8 +223,8 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 
 | Service | Role |
 |---|---|
-| `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). `wal_level=logical` enabled for CDC. |
-| `clickhouse` | Analytics store. Traces/spans replicated here via PeerDB for fast querying. |
+| `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). |
+| `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries. |
 | `redis` | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. |
 | `minio` | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
@@ -243,19 +233,6 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | Service | Role |
 |---|---|
 | `temporal` | Durable workflow server (auto-setup). Shares the main Postgres. |
-
-### CDC (PeerDB)
-
-| Service | Role |
-|---|---|
-| `peerdb-catalog` | PeerDB's own Postgres (mirror definitions, state). |
-| `peerdb-temporal` | PeerDB's own Temporal cluster (mirror orchestration). Independent of the app's Temporal. |
-| `peerdb-minio` | PeerDB's own MinIO (staging for ClickHouse loads). |
-| `peerdb-flow-api` / `peerdb-flow-worker` / `peerdb-flow-snapshot-worker` | Mirror execution. |
-| `peerdb-server` / `peerdb-ui` | PeerDB API (port 9900) and web UI (port 3001). |
-| `peerdb-temporal-init` / `peerdb-init` | One-shot initialization: registers the `MirrorName` search attribute and creates mirrors from `scripts/peerdb-setup-mirrors.sh`. |
-
----
 
 ## Configuring LLM providers
 
@@ -267,14 +244,9 @@ The gateway ships with `config.example.yaml`, enabling OpenAI by default. To ena
       agentcc-gateway/config.yaml
    ```
 2. Uncomment the providers you want (Anthropic, Gemini, Bedrock, Vertex).
-3. Update the gateway mount in `docker-compose.yml` to point at `config.yaml` instead of `config.example.yaml`:
-   ```yaml
-   gateway:
-     volumes:
-       - ./agentcc-gateway/config.yaml:/app/config.yaml:ro
-   ```
+3. Set `AGENTCC_CONFIG_PATH=agentcc-gateway/config.yaml` in `.env`.
 4. Set the matching `*_API_KEY` env vars in `.env`.
-5. Restart: `docker compose up -d --force-recreate gateway`.
+5. Restart: `docker compose up -d --force-recreate agentcc-gateway`.
 
 Your `config.yaml` is gitignored by default — the example file uses `${VAR}` interpolation so the real key never has to live in source. Treat the file as a secret regardless.
 
@@ -341,42 +313,19 @@ Share the printed URL with the user out-of-band (Slack, email, etc.).
 
 ---
 
-## Stack modes: light vs full
+## Stack mode
 
-The compose stack ships in two modes, selected via `COMPOSE_PROFILES` in `.env`:
+The standard Compose stack runs the full OSS application path from published images:
 
 | Mode | Containers | What you get | When to use |
 |---|---|---|---|
-| **light** (default — `COMPOSE_PROFILES` unset) | ~12 | Frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, temporal | "Try it locally" — evaluate the product on a laptop. Observe/Trace analytics views render but show empty data. |
-| **full** (`COMPOSE_PROFILES=full`) | ~22 | Everything in light, plus the PeerDB CDC stack (10 containers) that streams Postgres → ClickHouse so analytics views populate | Real self-hosting. |
+| **standard** | ~12 | Frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, rabbitmq, temporal | Local evaluation, team installs, and VM-based self-hosting. |
 
-Switch modes by setting the env var and re-running `docker compose up` — no rebuild, no data loss.
+Start it with:
 
 ```bash
-# Light (default)
-docker compose up
-
-# Full
-COMPOSE_PROFILES=full docker compose up
-# or set COMPOSE_PROFILES=full in .env, then:
 docker compose up
 ```
-
-## PeerDB mirror setup (full mode only)
-
-PeerDB replicates your app's Postgres tables into ClickHouse so the analytics UI stays fast. Mirrors are registered once, then run continuously.
-
-When you first bring up `full` mode, the `peerdb-init` service attempts to create mirrors from `futureagi/scripts/peerdb-setup-mirrors.sh`. If the backend hasn't migrated yet, mirror creation will fail (the source tables don't exist). In that case:
-
-1. Wait for `docker compose logs backend` to show migrations complete.
-2. Re-run the init:
-   ```bash
-   COMPOSE_PROFILES=full docker compose run --rm peerdb-init bash /setup.sh
-   ```
-
-Or inspect and create mirrors manually at <http://localhost:3001>.
-
----
 
 ## Upgrading
 
@@ -389,10 +338,6 @@ docker compose up -d
 
 Backend migrations run automatically on startup. Downtime is ~30 seconds for the backend restart. Workers restart independently. To roll back, set `FUTURE_AGI_VERSION` to the previous tag and re-run the same two commands.
 
-If a release note mentions breaking changes to PeerDB mirrors, re-run `docker compose run --rm peerdb-init bash /setup.sh`.
-
----
-
 ## Backups
 
 Named Docker volumes hold all state:
@@ -403,8 +348,6 @@ docker volume ls | grep future-agi
 # future-agi_clickhouse-data
 # future-agi_redis-data
 # future-agi_minio-data
-# future-agi_peerdb-catalog-data
-# future-agi_peerdb-minio-data
 ```
 
 To back up Postgres:
@@ -462,12 +405,6 @@ The container's entrypoint regenerates `/config.js` on each start, so no rebuild
 ### `code-executor` crashes with `clone: Operation not permitted`
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.
 
-### PeerDB mirrors show "not started"
-Source tables don't exist yet. Let the backend finish migrations, then:
-```bash
-docker compose run --rm peerdb-init bash /setup.sh
-```
-
 ### `temporal-server` keeps restarting
 Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise Docker Desktop's RAM to 8 GB+.
 
@@ -475,7 +412,7 @@ Postgres connection is the usual cause. Check `docker compose logs postgres` for
 
 ## Production hardening
 
-See [`deploy/README.md`](deploy/README.md) for the production deployment guide. It covers the production overlay (`deploy/docker-compose.production.yml`), required secrets, deployment topologies (compose, k8s single-origin, k8s split-domain), reverse-proxy/TLS, backups, upgrades, and the pre-flight checklist.
+See [`deploy/README.md`](deploy/README.md) for the production deployment guide. It covers the production overlay (`deploy/docker-compose.production.yml`), required secrets, deployment topologies, reverse-proxy/TLS, backups, upgrades, and the pre-flight checklist.
 
 ---
 

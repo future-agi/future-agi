@@ -69,7 +69,7 @@ curl -fsS http://localhost:8000/healthz > /dev/null && echo "backend ok"
 
 The frontend image talks to backend via whatever URL you put in `VITE_HOST_API`. There is no in-container proxy — the browser calls the backend URL directly. Pick the shape:
 
-### A. Single-host docker compose, split-domain
+### A. Split-domain
 
 ```
 TLS proxy (Caddy/nginx)
@@ -79,7 +79,7 @@ TLS proxy (Caddy/nginx)
 
 Set `FRONTEND_URL=https://app.example.com` and `VITE_HOST_API=https://api.example.com`. Make sure backend's `CORS_ALLOWED_ORIGINS` includes `https://app.example.com`.
 
-### B. Single-host docker compose, single-origin via reverse proxy route-split
+### B. Single-origin via reverse proxy route-split
 
 ```
 TLS proxy (Caddy/nginx)
@@ -90,38 +90,7 @@ TLS proxy (Caddy/nginx)
 
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
 
-### C. Kubernetes, split-domain
-
-Frontend at `app.example.com`, backend at `api.example.com`. Set `VITE_HOST_API=https://api.example.com` on the frontend Pod env. Configure backend CORS for `app.example.com`.
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-spec:
-  rules:
-    - host: app.example.com
-      http:
-        paths:
-          - { path: /, pathType: Prefix, backend: { service: { name: frontend, port: { number: 80 } } } }
-    - host: api.example.com
-      http:
-        paths:
-          - { path: /, pathType: Prefix, backend: { service: { name: backend, port: { number: 80 } } } }
-```
-
-### D. Kubernetes, Ingress route-split (single host)
-
-```yaml
-spec:
-  rules:
-    - host: app.example.com
-      http:
-        paths:
-          - { path: /api, pathType: Prefix, backend: { service: { name: backend, port: { number: 80 } } } }
-          - { path: /,    pathType: Prefix, backend: { service: { name: frontend, port: { number: 80 } } } }
-```
-
-Set `VITE_HOST_API=/api`. Same-origin, no CORS work.
+Official Kubernetes manifests and Helm charts are coming soon. Until then, this production overlay is the supported self-hosting path.
 
 ## Reverse proxy + TLS
 
@@ -209,8 +178,7 @@ Roll back by setting `FUTURE_AGI_VERSION` to the previous tag and re-running the
 | redis | 256 MB | 0.5 core |
 | minio | 512 MB | 0.5 core |
 | temporal | 512 MB | 0.5 core |
-| **light total** | **~10 GB** | **~10 cores** |
-| `full` adds PeerDB stack | +4 GB | +4 cores |
+| **total** | **~10 GB** | **~10 cores** |
 
 ## Pre-flight checklist
 

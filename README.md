@@ -100,16 +100,15 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ## 🚀 Quickstart (60 seconds)
 
-Three ways, picked by how much you want to install:
+Two ways, picked by how much you want to install:
 
 <table width="100%">
 <tr>
-<th width="34%">Cloud (fastest)</th>
-<th width="36%">Self-host (Docker)</th>
-<th width="30%">Self-host (Kubernetes)</th>
+<th width="50%">Cloud (fastest)</th>
+<th width="50%">Self-host (Docker)</th>
 </tr>
 <tr valign="top">
-<td width="34%">
+<td width="50%">
 
 **No install. Free tier.**
 
@@ -123,9 +122,9 @@ pip install ai-evaluation
 <sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
 
 </td>
-<td width="36%">
+<td width="50%">
 
-**One command, full stack.**
+**One command, full stack. Published images, no source build.**
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
@@ -134,19 +133,7 @@ cd future-agi
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
-<sub>`./bin/install --full` to add the PeerDB CDC stack.</sub>
-
-</td>
-<td width="30%">
-
-**Production-grade, HA.**
-
-```bash
-helm repo add futureagi \
-helm install fagi futureagi/future-agi
-```
-
-<sub>Helm chart — v1 in progress. Until then, kubectl manifests in `deploy/`.</sub>
+<sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
 
 </td>
 </tr>
@@ -277,9 +264,10 @@ Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-
 -->
 | Target | Status | Notes |
 |---|:---:|---|
-|  Docker Compose | ✅ | `docker compose up -d` from a fresh clone |
-|  Kubernetes | ✅ | Plain manifests today; Helm chart v1 in progress |
-|  AWS / GCP / Azure | ✅ | Runs on any container runtime — ECS · Cloud Run · AKS · EKS · GKE |
+|  Docker Compose | ✅ | Published images with `docker compose up -d` from a fresh clone |
+|  Production Compose overlay | ✅ | `./deploy/setup.sh` generates secrets, pins image tags, pulls images, and starts the stack |
+|  Kubernetes / Helm | ⏳ | Official manifests and Helm charts are coming soon |
+|  AWS / GCP / Azure | ✅ | Run Docker Compose on a VM today; managed Kubernetes support is coming soon |
 |  AWS Marketplace | ⏳ | Coming soon |
 |  Air-gapped / on-prem | ✅ | No phone-home — [contact sales](mailto:sales@futureagi.com) |
 
