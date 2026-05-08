@@ -150,6 +150,14 @@ const DATE_OPS = [
 
 const BOOLEAN_OPS = [{ value: "is", label: "is" }];
 
+// thumbs_up_down annotations: 2 fixed display choices ("Thumbs Up"/"Thumbs Down").
+// Distinct from CATEGORICAL_OPS — we don't expose contains/not_contains for a
+// 2-value enum.
+const THUMBS_OPS = [
+  { value: "is", label: "is" },
+  { value: "is_not", label: "is not" },
+];
+
 // Direct ID columns on `spans` — the dashboard filter pipeline resolves
 // them via equality only (no col_type, no LIKE/IN expansion), so any
 // other operator silently no-ops. Restrict the UI accordingly.
@@ -220,6 +228,7 @@ const normalizeFieldType = (rawType) => {
 
 const getOperators = (fieldType) => {
   if (fieldType === "categorical") return CATEGORICAL_OPS;
+  if (fieldType === "thumbs") return THUMBS_OPS;
   if (fieldType === "text") return TEXT_OPS;
   const t = normalizeFieldType(fieldType);
   if (t === "number") return NUMBER_OPS;
@@ -244,6 +253,7 @@ const DEFAULT_OP_FOR_TYPE = {
   array: "contains",
   string: "is",
   categorical: "is",
+  thumbs: "is",
   text: "is",
 };
 
@@ -348,10 +358,15 @@ function useTraceFilterProperties(
             const ot = String(outputType).toLowerCase();
             if (ot === "numeric" || ot === "star") type = "number";
             else if (ot === "text") type = "text";
-            else type = "categorical"; // categorical, thumbs_up_down
+            else if (ot === "thumbs_up_down") type = "thumbs";
+            else type = "categorical";
           } else {
             type = normalizeFieldType(m.type);
           }
+          // thumbs labels have two fixed choices — surface them so the value
+          // picker renders a multi-select without needing a dashboard lookup.
+          const choices =
+            type === "thumbs" ? ["Thumbs Up", "Thumbs Down"] : m.choices;
           return {
             id: m.name,
             name: m.displayName || m.display_name || m.name,
@@ -359,7 +374,7 @@ function useTraceFilterProperties(
             rawCategory: m.category,
             type,
             outputType,
-            choices: m.choices,
+            choices,
           };
         }),
     staleTime: 60_000,
@@ -1014,10 +1029,13 @@ function FilterRow({
 
   const handlePropertySelect = useCallback(
     (prop) => {
-      // Preserve custom annotation types (categorical, text) — normalizeFieldType
-      // would collapse them to "string" losing operator/input specificity.
+      // Preserve custom annotation types (categorical, thumbs, text) —
+      // normalizeFieldType would collapse them to "string" losing
+      // operator/input specificity.
       const nt =
-        prop.type === "categorical" || prop.type === "text"
+        prop.type === "categorical" ||
+        prop.type === "thumbs" ||
+        prop.type === "text"
           ? prop.type
           : normalizeFieldType(prop.type);
       const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "is";
