@@ -23,6 +23,7 @@ class TaskRunnerInput:
     kwargs: dict[str, Any]
     queue: str = "default"
     time_limit: Optional[int] = None  # Override default timeout
+    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 5 min
 
 
 @dataclass
@@ -62,6 +63,10 @@ class TaskRunnerWorkflow:
         try:
             # Get timeout from activity metadata or use default
             time_limit = input.time_limit or 3600 * 12  # 12 hours default
+            # Default 6h: tasks_s and other queues can run deep enough that the
+            # old 5-min ScheduleToStart killed activities before workers picked
+            # them up. 6h gives the backlog time to drain without losing work.
+            schedule_to_start = input.schedule_to_start_timeout or 6 * 60 * 60
 
             # Don't pin to workflow's build_id; bound stuck-time as safety net.
             result = await workflow.execute_activity(
@@ -71,7 +76,7 @@ class TaskRunnerWorkflow:
                     "kwargs": input.kwargs,
                 },
                 start_to_close_timeout=timedelta(seconds=time_limit),
-                schedule_to_start_timeout=timedelta(minutes=5),
+                schedule_to_start_timeout=timedelta(seconds=schedule_to_start),
                 heartbeat_timeout=timedelta(minutes=5),
                 retry_policy=DEFAULT_RETRY_POLICY,
                 versioning_intent=VersioningIntent.DEFAULT,

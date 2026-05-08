@@ -38,6 +38,7 @@ class ScheduleConfig:
     description: Optional[str] = None
     overlap_policy: ScheduleOverlapPolicy = field(default=ScheduleOverlapPolicy.SKIP)
     workflow_class: Optional[Any] = None
+    schedule_to_start_timeout_seconds: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not self.cron_expression and self.interval_seconds <= 0:

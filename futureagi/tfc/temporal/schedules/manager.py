@@ -255,6 +255,7 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
                 args=[],
                 kwargs={},
                 queue=config.queue,
+                schedule_to_start_timeout=config.schedule_to_start_timeout_seconds,
             ),
             id=f"scheduled-{config.schedule_id}",
             task_queue=config.queue,
