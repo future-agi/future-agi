@@ -321,6 +321,33 @@ class JsonStr(dict):
         return self._raw
 
 
+_UNRESOLVED_TOKEN_RE = re.compile(r"\{\{[^}]+\}\}")
+
+
+def _warn_unresolved_placeholders(messages: list[dict]) -> None:
+    """Log a warning for any {{token}} that survived template substitution."""
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            tokens = _UNRESOLVED_TOKEN_RE.findall(content)
+            if tokens:
+                logger.warning(
+                    "populate_placeholders_unresolved_tokens",
+                    unresolved=tokens,
+                    role=msg.get("role"),
+                )
+        elif isinstance(content, list):
+            for item in content:
+                text = item.get("text", "") if isinstance(item, dict) else ""
+                tokens = _UNRESOLVED_TOKEN_RE.findall(text)
+                if tokens:
+                    logger.warning(
+                        "populate_placeholders_unresolved_tokens",
+                        unresolved=tokens,
+                        role=msg.get("role"),
+                    )
+
+
 def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None):
     try:
         media_error = None
@@ -451,6 +478,9 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                 # Preserve all message keys (name, tool_calls, tool_call_id, etc.)
                 processed_messages.append({**message, "content": processed_content})
 
+            # Warn on any unresolved {{...}} tokens that survived substitution.
+            # These will be sent to the LLM verbatim and produce wrong outputs.
+            _warn_unresolved_placeholders(processed_messages)
             return processed_messages
 
         except ValueError as e:
