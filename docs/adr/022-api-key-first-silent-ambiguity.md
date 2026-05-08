@@ -38,10 +38,12 @@ the admin or via race conditions in the API key creation endpoint. Raising
 
 ## Consequences
 
-- Which API key is used for an ambiguous lookup is non-deterministic across PostgreSQL
-  query plan changes, vacuum cycles, and row ordering.
+- `BaseModel.Meta.ordering = ('-created_at',)` means `.filter().first()` always picks
+  the most-recently-created row — so key selection is deterministic by insertion order.
+- The ordering guarantee is implicit (inherited, not stated at the call site), so future
+  callers or refactors may not realise the ordering invariant exists.
 - If one of the duplicate keys is expired or invalid, the silent `.first()` can pick
   it, causing intermittent authentication failures with no actionable error message.
-- No warning or metric is emitted when the fallback fires — operators have no
-  visibility into ambiguous-key lookups.
+- No warning or metric was emitted when the fallback fired — fixed: structured warning
+  now logged with provider and query context.
 - Filed as issue #319.
