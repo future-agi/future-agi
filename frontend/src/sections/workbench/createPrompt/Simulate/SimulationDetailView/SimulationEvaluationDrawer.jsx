@@ -76,24 +76,53 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
     refetchSimulation?.();
   }, [queryClient, promptTemplateId, simulationId, refetchSimulation]);
 
-  // Bridge — the new drawer returns a camelCase config; the backend expects
-  // snake_case. When `editingEvalItem` is set we route to the update endpoint
-  // and keep the existing SimulateEvalConfig row; otherwise we create a new
-  // config via the add endpoint.
+  // EvalPicker emits per-binding overrides (data_injection, agent_mode,
+  // check_internet, tools, knowledge_bases, summary, etc.) at the top level
+  // of `evalConfig`. The runtime engine reads them from `config.run_config`,
+  // so re-nest before save. Mirrors the shared EvaluationDrawer.
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       if (!simulationId) return;
       const editing = editingEvalItem;
+      const isComposite = evalConfig.templateType === "composite";
+
+      const runConfig = {};
+      if (!isComposite) {
+        if (evalConfig.model) runConfig.model = evalConfig.model;
+        if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
+        if (evalConfig.check_internet !== undefined)
+          runConfig.check_internet = !!evalConfig.check_internet;
+        if (evalConfig.summary) runConfig.summary = evalConfig.summary;
+        if (evalConfig.knowledge_base_id)
+          runConfig.knowledge_base_id = evalConfig.knowledge_base_id;
+        if (evalConfig.knowledge_bases)
+          runConfig.knowledge_bases = evalConfig.knowledge_bases;
+        if (evalConfig.tools) runConfig.tools = evalConfig.tools;
+        if (evalConfig.pass_threshold !== undefined)
+          runConfig.pass_threshold = evalConfig.pass_threshold;
+        if (
+          evalConfig.choice_scores &&
+          Object.keys(evalConfig.choice_scores).length
+        )
+          runConfig.choice_scores = evalConfig.choice_scores;
+      }
+      if (evalConfig.data_injection)
+        runConfig.data_injection = evalConfig.data_injection;
+      if (evalConfig.error_localizer_enabled !== undefined)
+        runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
+
       const payload = {
         template_id: evalConfig.templateId,
         name: evalConfig.name,
         model: evalConfig.model,
         mapping: evalConfig.mapping || {},
-        // Backend merges with the stored template config via
-        // normalize_eval_runtime_config, so passing the full template config
-        // (or an empty object) both work.
-        config: evalConfig.config || {},
-        error_localizer: false,
+        config: {
+          ...(evalConfig.config || {}),
+          ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
+        },
+        // Top-level field — the simulate update view writes
+        // SimulateEvalConfig.error_localizer separately from run_config.
+        error_localizer: !!runConfig.error_localizer_enabled,
         filters: {},
       };
       try {
