@@ -4,7 +4,6 @@ from enum import Enum
 class FutureAgiEvalTypeId(Enum):
     RANKING_EVAL = "RankingEvaluator"
     DETERMINISTIC_EVAL = "DeterministicEvaluator"
-    FORMAL_CONSTRAINT_EVAL = "FormalConstraintEvaluator"
 
 
 class LlmEvalTypeId(Enum):
@@ -103,6 +102,7 @@ class FunctionEvalTypeId(Enum):
     IS_REFUSAL = "IsRefusal"
     LATENCY_CHECK = "LatencyCheck"
     FLEISS_KAPPA = "FleissKappa"
+    FORMAL_CONSTRAINT_EVAL = "FormalConstraintEvaluator"
 
 
 class GroundedEvalTypeId(Enum):

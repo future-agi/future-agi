@@ -44,13 +44,22 @@ class SubscriptionTierChoices(str, Enum):
 
 
 class _NullCallLog:
-    """Returned by stub log functions. Passes all existing guard checks."""
+    """Returned by stub log functions. Passes all existing guard checks.
+
+    status starts as PROCESSING because call sites guard with:
+        if call_log.status != APICallStatusChoices.PROCESSING.value: raise ...
+    The subsequent .status = SUCCESS assignment and .save() are no-ops.
+    """
 
     def __init__(self):
-        self.status = APICallStatusChoices.SUCCESS.value
+        self.status = APICallStatusChoices.PROCESSING.value
 
     def save(self):
         pass
+
+    def __setattr__(self, name, value):
+        # Allow any attribute to be set (mimics a real model row)
+        object.__setattr__(self, name, value)
 
 
 class APICallLog(_NullCallLog):
@@ -58,7 +67,19 @@ class APICallLog(_NullCallLog):
 
 
 class OrganizationSubscription:
-    pass
+    """Stub for EE OrganizationSubscription model.
+
+    .objects.get() always raises DoesNotExist so callers fall through to
+    SubscriptionTierChoices.FREE.value — the correct OSS behaviour.
+    """
+
+    class DoesNotExist(Exception):
+        pass
+
+    class objects:
+        @staticmethod
+        def get(**kwargs):
+            raise OrganizationSubscription.DoesNotExist()
 
 
 def log_and_deduct_cost_for_resource_request(*args, **kwargs) -> _NullCallLog:
