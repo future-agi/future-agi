@@ -195,7 +195,7 @@ eval runs without that param.
 **Lookup priority:** workspace-scoped key → org-default key.
 
 **Known fragility:** if multiple `ApiKey` rows match the same `(org, provider)`,
-`.first()` is used — undefined ordering picks one silently. See ADR 024.
+`.first()` is used — undefined ordering picks one silently. See ADR 022.
 
 ### API key types
 

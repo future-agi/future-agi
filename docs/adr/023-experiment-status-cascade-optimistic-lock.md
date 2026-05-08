@@ -1,5 +1,5 @@
 ---
-status: Known limitation — filed as issue #321
+status: Known limitation — filed as issue #320
 date: 2026-05-08
 ---
 
