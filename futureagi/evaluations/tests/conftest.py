@@ -39,9 +39,11 @@ def _stub_django_deps():
     fake_utils = types.ModuleType("model_hub.utils")
     fake_utils.scoring = scoring_mod
 
-    sys.modules.setdefault("model_hub", fake_model_hub)
-    sys.modules.setdefault("model_hub.utils", fake_utils)
-    sys.modules.setdefault("model_hub.utils.scoring", scoring_mod)
+    # Force-set (not setdefault) so stubs win even if model_hub was partially
+    # imported before this conftest ran.
+    sys.modules["model_hub"] = fake_model_hub
+    sys.modules["model_hub.utils"] = fake_utils
+    sys.modules["model_hub.utils.scoring"] = scoring_mod
 
 
 _stub_django_deps()
