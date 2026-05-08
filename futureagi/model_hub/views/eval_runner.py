@@ -2017,7 +2017,9 @@ class EvaluationRunner:
             # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
             from evaluations.engine.preprocessing import preprocess_inputs
 
-            _mapped = preprocess_inputs(self.eval_template.name, _mapped)
+            _mapped = preprocess_inputs(
+                self.eval_template.config.get("eval_type_id", ""), _mapped
+            )
 
         # Inject row_context when full_row data injection is enabled.
         # data_injection lives in the user's eval metric config (run_config)
