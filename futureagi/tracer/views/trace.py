@@ -3110,16 +3110,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             default=None,
                             output_field=JSONField(),
                         ),
-                        # Per-trace reason (latest EvalLogger for this config).
-                        # Feeds the "{eval} - Reason" column added in TH-4136.
-                        f"metric_reason_{config.id}": Subquery(
-                            EvalLogger.objects.filter(
-                                trace_id=OuterRef("id"),
-                                custom_eval_config_id=config.id,
-                            )
-                            .order_by("-created_at")
-                            .values("eval_explanation")[:1]
-                        ),
                     }
                 )
 
@@ -3257,9 +3247,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         for key, value in data.items():
                             score = value["score"] if isinstance(value, dict) and "score" in value else None
                             result[str(config.id) + "**" + key] = round(score, 2) if score is not None else None
-                    reason = getattr(trace, f"metric_reason_{config.id}", None)
-                    if reason:
-                        result[f"{config.id}__reason"] = reason
 
                 # Add Root Span Annotations
                 for label in annotation_labels:
@@ -4656,7 +4643,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         sorted_eval_columns = sorted(eval_columns)
         for eval_name in sorted_eval_columns:
             fieldnames.append(eval_name)
-            fieldnames.append(f"{eval_name}_reason")
 
         response = HttpResponse(content_type="text/csv")
         filename = f"{project.name or 'project'}_voice_calls.csv"
@@ -4706,18 +4692,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Initialize eval columns with empty values
             for eval_name in sorted_eval_columns:
                 row_data[eval_name] = ""
-                row_data[f"{eval_name}_reason"] = ""
 
             # Fill in eval outputs
             if result.get("eval_outputs"):
                 for config_id, eval_data in result["eval_outputs"].items():
                     eval_name = eval_data.get("name", f"Eval_{config_id}")
                     output = eval_data.get("output", "")
-                    reason = eval_data.get("reason", "")
                     row_data[eval_name] = str(output) if output is not None else ""
-                    row_data[f"{eval_name}_reason"] = (
-                        str(reason) if reason is not None else ""
-                    )
 
             writer.writerow(row_data)
 
@@ -5022,9 +5003,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     entry[config_id] = (
                         avg_val if avg_val is not None else scores.get("pass_rate")
                     )
-                    reason = scores.get("reason")
-                    if reason:
-                        entry[f"{config_id}__reason"] = reason
                 else:
                     entry[config_id] = scores
 
