@@ -406,6 +406,12 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
           onChange(e.target.value);
           if (!open) setOpen(true);
         }}
+        autoComplete="off"
+        inputProps={{
+          autoComplete: "off",
+          autoCorrect: "off",
+          spellCheck: false,
+        }}
         InputProps={{
           sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
           endAdornment: (
@@ -1063,6 +1069,19 @@ const DatasetTestMode = React.forwardRef(
                   ? { params: codeParams }
                   : {}),
                 image_urls: imageUrls.length > 0 ? imageUrls : undefined,
+                // Send data_injection flags from contextOptions — same pattern
+                // as EvalPickerConfigFull (tracing tab) so the BE knows which
+                // context toggles are enabled.
+                ...(() => {
+                  const flags = {};
+                  if (contextOptions.includes("dataset_row")) flags.full_row = true;
+                  if (contextOptions.includes("full_row")) flags.full_row = true;
+                  if (contextOptions.includes("span_context")) flags.span_context = true;
+                  if (contextOptions.includes("trace_context")) flags.trace_context = true;
+                  if (contextOptions.includes("session_context")) flags.session_context = true;
+                  if (contextOptions.includes("call_context")) flags.call_context = true;
+                  return Object.keys(flags).length > 0 ? { data_injection: flags } : {};
+                })(),
               },
               input_data_types: inputDataTypes,
               row_context: rowContext,

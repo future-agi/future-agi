@@ -33,7 +33,7 @@
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
   <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm" alt="npm"></a>
-  <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
 </p>
 
 <p>
@@ -41,7 +41,7 @@
   <a href="#-quickstart-60-seconds"><b>Self-Host</b></a> ·
   <a href="https://docs.futureagi.com"><b>Docs</b></a> ·
   <a href="https://futureagi.com/blog"><b>Blog</b></a> ·
-  <a href="https://discord.gg/UjZ2gRT5p"><b>Discord</b></a> ·
+  <a href="https://discord.com/invite/n2tCUKBkAw"><b>Discord</b></a> ·
   <a href="https://github.com/orgs/future-agi/discussions"><b>Discussions</b></a>
 </p>
 
@@ -484,7 +484,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 1.  [Browse `good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 2.  Read the [Contributing Guide](CONTRIBUTING.md)
-3.  Say hi on [Discord](https://discord.gg/UjZ2gRT5p) or [Discussions](https://github.com/orgs/future-agi/discussions)
+3.  Say hi on [Discord](https://discord.com/invite/n2tCUKBkAw) or [Discussions](https://github.com/orgs/future-agi/discussions)
 4.  Sign the CLA on your first PR (automatic bot)
 
 <!--
@@ -499,7 +499,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 | | |
 |---|---|
-| 💬 [**Discord**](https://discord.gg/UjZ2gRT5p) | Real-time help from the team and community |
+| 💬 [**Discord**](https://discord.com/invite/n2tCUKBkAw) | Real-time help from the team and community |
 | 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
 | 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
 | 📝 [**Blog**](https://futureagi.com/blog) | Engineering & research posts |

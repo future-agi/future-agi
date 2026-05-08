@@ -25,7 +25,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     - ``max(end_time)`` -- session end
     - ``sum(cost)`` -- total cost
     - ``sum(total_tokens)`` -- total tokens
-    - ``uniqExact(trace_id)`` -- number of traces
+    - ``uniq(trace_id)`` -- number of traces (HyperLogLog, ~2% error)
     - ``argMin(input, start_time)`` -- first user message
     - ``argMax(input, start_time)`` -- last user message
 
@@ -129,7 +129,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             dateDiff('second', min(start_time), max(end_time)) AS duration,
             sum(cost) AS total_cost,
             sum(total_tokens) AS total_tokens,
-            uniqExact(trace_id) AS traces_count
+            uniq(trace_id) AS traces_count
         FROM {self.TABLE}
         {self.project_where()}
           AND trace_session_id IS NOT NULL
@@ -165,12 +165,59 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def has_having_filters(self) -> bool:
+        """Return True if any filters target aggregate columns (requiring HAVING)."""
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id in self.SESSION_FILTER_MAP:
+                return True
+        return False
+
     def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
         """Build a query to count total matching sessions (for pagination).
+
+        Uses a fast ``count(DISTINCT ...)`` path when no HAVING clauses are
+        needed, and falls back to the full aggregation subquery when aggregate
+        filters (duration, cost, tokens, traces_count) are present.
 
         Returns:
             A ``(query_string, params)`` tuple returning a single count.
         """
+        if not self.has_having_filters():
+            return self._build_simple_count_query()
+        return self._build_aggregated_count_query()
+
+    def _build_simple_count_query(self) -> Tuple[str, Dict[str, Any]]:
+        """Fast count using count(DISTINCT ...) — no GROUP BY needed."""
+        span_filters = self._extract_span_filters()
+        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        extra_where, extra_params = fb.translate(span_filters)
+
+        params = dict(self.params)
+        params.update(extra_params)
+
+        user_clause = ""
+        if self.user_id:
+            params["user_id"] = self.user_id
+            user_clause = "AND end_user_id = %(user_id)s"
+
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        query = f"""
+        SELECT count(DISTINCT trace_session_id) AS total
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND trace_session_id IS NOT NULL
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
+          {user_clause}
+          {filter_fragment}
+        """
+        return query, params
+
+    def _build_aggregated_count_query(self) -> Tuple[str, Dict[str, Any]]:
+        """Full aggregation count — required when HAVING clauses exist."""
         span_filters = self._extract_span_filters()
         fb = ClickHouseFilterBuilder(table=self.TABLE)
         extra_where, extra_params = fb.translate(span_filters)
@@ -198,7 +245,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 dateDiff('second', min(start_time), max(end_time)) AS duration,
                 sum(cost) AS total_cost,
                 sum(total_tokens) AS total_tokens,
-                uniqExact(trace_id) AS traces_count
+                uniq(trace_id) AS traces_count
             FROM {self.TABLE}
             {self.project_where()}
               AND trace_session_id IS NOT NULL
@@ -216,11 +263,15 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def build_span_attributes_query(
         self, session_ids: List[str]
     ) -> Tuple[str, Dict[str, Any]]:
-        """Fetch span attributes for all spans belonging to the given sessions.
+        """Fetch span attributes for root spans belonging to the given sessions.
 
-        Returns one row per span with trace_session_id, span_attributes_raw,
-        and typed Map columns (span_attr_str, span_attr_num) as fallback when
-        the raw JSON blob is empty.
+        Restricts to root spans only (where custom user-defined attributes
+        are typically set) and caps results at 500 rows to prevent unbounded
+        scans on sessions with many traces.
+
+        Returns one row per root span with trace_session_id,
+        span_attributes_raw, and typed Map columns (span_attr_str,
+        span_attr_num) as fallback when the raw JSON blob is empty.
         """
         if not session_ids:
             return "", {}
@@ -236,11 +287,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         PREWHERE trace_session_id IN %(attr_session_ids)s
         WHERE {self.project_filter_sql()}
           AND _peerdb_is_deleted = 0
+          AND (parent_span_id IS NULL OR parent_span_id = '')
           AND (
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0
             OR length(mapKeys(span_attr_num)) > 0
           )
+        LIMIT 500
         """
         return query, params
 

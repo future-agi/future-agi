@@ -5050,10 +5050,40 @@ class EvalPlayGroundAPIView(APIView):
                         logger.warning(f"Failed to fetch span {_span_id}: {_e}")
                 if trace_context is None and _trace_id:
                     try:
+                        from django.db.models import Count, Sum, Min, Max, Q
                         from tracer.models.trace import Trace
+                        from tracer.models.observation_span import ObservationSpan
 
                         _t = Trace.objects.filter(id=_trace_id).first()
                         if _t:
+                            # Aggregate stats from child spans (single query)
+                            _span_agg = ObservationSpan.objects.filter(
+                                trace=_t, deleted=False
+                            ).aggregate(
+                                span_count=Count("id"),
+                                error_count=Count("id", filter=Q(status="ERROR")),
+                                total_tokens=Sum("total_tokens"),
+                                total_cost=Sum("cost"),
+                                start_time=Min("start_time"),
+                                end_time=Max("end_time"),
+                                total_latency=Sum("latency_ms"),
+                            )
+
+                            # Lightweight span summaries for the agent to
+                            # browse and decide which to drill into.
+                            # Only fetch essential fields, cap at 200 spans.
+                            _span_summaries = list(
+                                ObservationSpan.objects.filter(
+                                    trace=_t, deleted=False
+                                )
+                                .order_by("start_time")
+                                .values(
+                                    "id", "name", "observation_type", "status",
+                                    "status_message", "latency_ms", "model",
+                                    "total_tokens", "cost", "parent_span_id",
+                                )[:200]
+                            )
+
                             trace_context = {
                                 "id": str(_t.id),
                                 "project_id": (
@@ -5065,26 +5095,140 @@ class EvalPlayGroundAPIView(APIView):
                                 ),
                                 "metadata": _t.metadata or {},
                                 "tags": _t.tags or [],
+                                "input": _t.input,
+                                "output": _t.output,
+                                "error": _t.error,
+                                "created_at": (
+                                    _t.created_at.isoformat() if _t.created_at else None
+                                ),
+                                "span_count": _span_agg["span_count"] or 0,
+                                "error_count": _span_agg["error_count"] or 0,
+                                "total_tokens": _span_agg["total_tokens"] or 0,
+                                "total_cost": (
+                                    float(round(_span_agg["total_cost"], 6))
+                                    if _span_agg["total_cost"]
+                                    else 0
+                                ),
+                                "total_latency_ms": _span_agg["total_latency"] or 0,
+                                "start_time": (
+                                    str(_span_agg["start_time"])
+                                    if _span_agg["start_time"]
+                                    else None
+                                ),
+                                "end_time": (
+                                    str(_span_agg["end_time"])
+                                    if _span_agg["end_time"]
+                                    else None
+                                ),
+                                "spans": _span_summaries,
                             }
                     except Exception as _e:
                         logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
                 if session_context is None and _session_id:
                     try:
+                        from django.db.models import Count, Sum, Min, Max, Q
+                        from tracer.models.trace import Trace
                         from tracer.models.trace_session import TraceSession
+                        from tracer.models.observation_span import ObservationSpan
 
                         _ss = TraceSession.objects.filter(id=_session_id).first()
                         if _ss:
+                            # Get trace IDs for this session
+                            _trace_qs = Trace.objects.filter(
+                                session=_ss, deleted=False
+                            )
+
+                            # Aggregate stats across all spans in session
+                            _sess_agg = ObservationSpan.objects.filter(
+                                trace__in=_trace_qs, deleted=False
+                            ).aggregate(
+                                total_spans=Count("id"),
+                                error_count=Count("id", filter=Q(status="ERROR")),
+                                total_tokens=Sum("total_tokens"),
+                                total_cost=Sum("cost"),
+                                start_time=Min("start_time"),
+                                end_time=Max("end_time"),
+                            )
+
+                            # Lightweight trace summaries for the agent to
+                            # browse and decide which to drill into. Use one
+                            # grouped aggregate instead of N+1 per-trace queries.
+                            _traces_page = list(
+                                _trace_qs.order_by("created_at")[:100]
+                            )
+                            _trace_ids = [_tr.id for _tr in _traces_page]
+                            _per_trace = {
+                                _row["trace_id"]: _row
+                                for _row in (
+                                    ObservationSpan.objects
+                                    .filter(trace_id__in=_trace_ids, deleted=False)
+                                    .values("trace_id")
+                                    .annotate(
+                                        span_count=Count("id"),
+                                        error_count=Count(
+                                            "id", filter=Q(status="ERROR")
+                                        ),
+                                        total_tokens=Sum("total_tokens"),
+                                        total_latency=Sum("latency_ms"),
+                                    )
+                                )
+                            }
+                            _trace_summaries = []
+                            for _tr in _traces_page:
+                                _agg = _per_trace.get(_tr.id, {})
+                                _err_count = _agg.get("error_count") or 0
+                                _trace_summaries.append({
+                                    "id": str(_tr.id),
+                                    "name": _tr.name,
+                                    "created_at": (
+                                        _tr.created_at.isoformat()
+                                        if _tr.created_at
+                                        else None
+                                    ),
+                                    "span_count": _agg.get("span_count") or 0,
+                                    "error_count": _err_count,
+                                    "total_tokens": _agg.get("total_tokens") or 0,
+                                    "total_latency_ms": _agg.get("total_latency") or 0,
+                                    "has_error": bool(_tr.error or _err_count > 0),
+                                })
+
+                            _start = _sess_agg["start_time"]
+                            _end = _sess_agg["end_time"]
+                            _duration = None
+                            if _start and _end:
+                                _duration = (
+                                    _end - _start
+                                ).total_seconds()
+
                             session_context = {
                                 "id": str(_ss.id),
                                 "name": _ss.name,
                                 "project_id": (
                                     str(_ss.project_id) if _ss.project_id else None
                                 ),
-                                "status": _ss.status,
-                                "start_time": (
-                                    str(_ss.start_time) if _ss.start_time else None
+                                "bookmarked": _ss.bookmarked,
+                                "created_at": (
+                                    _ss.created_at.isoformat()
+                                    if _ss.created_at
+                                    else None
                                 ),
-                                "end_time": str(_ss.end_time) if _ss.end_time else None,
+                                "trace_count": _trace_qs.count(),
+                                "total_spans": _sess_agg["total_spans"] or 0,
+                                "error_count": _sess_agg["error_count"] or 0,
+                                "total_tokens": _sess_agg["total_tokens"] or 0,
+                                "total_cost": (
+                                    float(round(_sess_agg["total_cost"], 6))
+                                    if _sess_agg["total_cost"]
+                                    else 0
+                                ),
+                                "start_time": (
+                                    str(_start) if _start else None
+                                ),
+                                "end_time": (
+                                    str(_end) if _end else None
+                                ),
+                                "duration_seconds": _duration,
+                                "traces": _trace_summaries,
                             }
                     except Exception as _e:
                         logger.warning(f"Failed to fetch session {_session_id}: {_e}")
