@@ -506,6 +506,13 @@ class Evaluator(ModelBaseModel):
 class EvalTemplateVersionManager(models.Manager):
     """Custom manager for EvalTemplateVersion with helper methods."""
 
+    # Sentinel used to distinguish "caller did not pass this column" from
+    # "caller passed None on purpose". When a caller doesn't pass a column,
+    # we snapshot the template's current value. When a caller explicitly
+    # passes None, we store None (e.g. composite versions don't have a
+    # threshold).
+    _UNSET = object()
+
     def create_version(
         self,
         eval_template,
@@ -516,13 +523,43 @@ class EvalTemplateVersionManager(models.Manager):
         user=None,
         organization=None,
         workspace=None,
+        # Column-level snapshot fields. If a caller passes _UNSET (the default),
+        # we copy the value from the template at version-creation time so the
+        # snapshot is faithful regardless of caller behavior. Explicit None or
+        # other values are honored verbatim.
+        output_type_normalized=_UNSET,
+        pass_threshold=_UNSET,
+        choice_scores=_UNSET,
+        error_localizer_enabled=_UNSET,
+        eval_tags=_UNSET,
     ):
         """
         Create a new version for an eval template.
         Auto-increments version_number based on existing versions.
         Uses select_for_update to prevent race conditions.
+
+        Snapshot columns (output_type_normalized, pass_threshold, choice_scores,
+        error_localizer_enabled, eval_tags) default to capturing the current
+        template value at version-creation time. Pass an explicit value to
+        override (e.g. composite versions that don't carry these fields).
         """
         from django.db import transaction
+
+        # Resolve snapshot columns from template defaults when caller didn't
+        # pass them. Done outside the atomic block — these are just attribute
+        # reads on the in-memory eval_template instance.
+        if output_type_normalized is self._UNSET:
+            output_type_normalized = eval_template.output_type_normalized
+        if pass_threshold is self._UNSET:
+            pass_threshold = eval_template.pass_threshold
+        if choice_scores is self._UNSET:
+            choice_scores = eval_template.choice_scores
+        if error_localizer_enabled is self._UNSET:
+            error_localizer_enabled = eval_template.error_localizer_enabled
+        if eval_tags is self._UNSET:
+            # ArrayField → list copy so later mutations to template.eval_tags
+            # don't propagate into the immutable version snapshot.
+            eval_tags = list(eval_template.eval_tags or [])
 
         with transaction.atomic():
             # Lock the template row to prevent concurrent version creation
@@ -547,6 +584,11 @@ class EvalTemplateVersionManager(models.Manager):
                 created_by=user,
                 organization=organization,
                 workspace=workspace,
+                output_type_normalized=output_type_normalized,
+                pass_threshold=pass_threshold,
+                choice_scores=choice_scores,
+                error_localizer_enabled=error_localizer_enabled,
+                eval_tags=eval_tags,
             )
 
             return version
@@ -619,6 +661,52 @@ class EvalTemplateVersion(ModelBaseModel):
         null=True,
         blank=True,
         related_name="eval_versions",
+    )
+
+    # --- Column-level snapshot fields (TH-4787) ---
+    # These mirror the EvalTemplate columns that aren't part of `config`.
+    # Captured at version-creation time so a restore is lossless. All are
+    # nullable: NULL means "this version pre-dates the snapshot fix" — the
+    # restore views skip restoring NULL fields and leave the template's
+    # current value intact in that case.
+    output_type_normalized = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text=(
+            "Normalized output type at this version: pass_fail, percentage, "
+            "deterministic. NULL on pre-snapshot versions."
+        ),
+    )
+    pass_threshold = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Pass threshold at this version (0.0-1.0). NULL on pre-snapshot "
+            "versions."
+        ),
+    )
+    choice_scores = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Choice→score mapping at this version. "
+            'NULL on pre-snapshot versions.'
+        ),
+    )
+    error_localizer_enabled = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Whether error localization was enabled at this version. NULL "
+            "on pre-snapshot versions."
+        ),
+    )
+    eval_tags = ArrayField(
+        models.CharField(max_length=100),
+        null=True,
+        blank=True,
+        help_text="Eval tags at this version. NULL on pre-snapshot versions.",
     )
 
     objects = EvalTemplateVersionManager()
