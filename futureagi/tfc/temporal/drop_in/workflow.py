@@ -23,6 +23,7 @@ class TaskRunnerInput:
     kwargs: dict[str, Any]
     queue: str = "default"
     time_limit: Optional[int] = None  # Override default timeout
+    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 6h
 
 
 @dataclass
