@@ -12,7 +12,10 @@ accumulate and hit PgBouncer's pool limit (~20 by default).
 import ast
 import json
 import os
+import re
 from typing import Any
+
+_UNRESOLVED_TOKEN_RE = re.compile(r"\{\{[^}]+\}\}")
 
 from django.db import close_old_connections
 from temporalio import activity
@@ -139,6 +142,15 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
             # Save the resolved agent_version back to TestExecution so
             # create_call_execution_records can read it from DB
             if agent_version:
+                # Warn: non-reproducible test — version resolved at runtime, not pinned.
+                # Callers should pin agent_version_id on RunTest before execution.
+                activity.logger.warning(
+                    "agent_version_resolved_at_runtime",
+                    test_execution_id=str(input.test_execution_id),
+                    agent_definition_id=str(test_execution.agent_definition_id),
+                    resolved_version_id=str(agent_version.id),
+                    resolved_version_number=agent_version.version_number,
+                )
                 test_execution.agent_version = agent_version
                 await test_execution.asave(update_fields=["agent_version_id"])
 
@@ -473,6 +485,40 @@ async def create_call_execution_records(
                                     f"Failed to generate dynamic prompt: {e}"
                                 )
                                 system_prompt = base_prompt
+
+                        # Validate that all {{tokens}} were resolved.
+                        # Unresolved tokens mean the dataset row is missing columns
+                        # referenced in the prompt — the call would receive garbled input.
+                        unresolved = _UNRESOLVED_TOKEN_RE.findall(system_prompt)
+                        if unresolved:
+                            missing_cols = sorted(set(
+                                t.strip("{}").strip() for t in unresolved
+                            ))
+                            ended_reason = (
+                                f"Unresolved template variables: {missing_cols}. "
+                                f"Ensure the dataset has columns matching these names."
+                            )
+                            activity.logger.error(
+                                "call_record_unresolved_tokens",
+                                row_id=str(row_id),
+                                unresolved=missing_cols,
+                                ended_reason=ended_reason,
+                            )
+                            call_execution.status = CallExecution.CallStatus.FAILED
+                            call_execution.ended_reason = ended_reason
+                            await call_execution.asave(update_fields=["status", "ended_reason"])
+                            # Create a FAILED CreateCallExecution so the UI surfaces the error
+                            await CreateCallExecution.objects.acreate(
+                                call_execution=call_execution,
+                                phone_number_id="",
+                                to_number=call_execution_phone_number,
+                                system_prompt=base_prompt,
+                                metadata=metadata,
+                                voice_settings=voice_settings,
+                                status=CreateCallExecution.CallStatus.FAILED,
+                            )
+                            call_ids.append(str(call_execution.id))
+                            continue
 
                         # Determine phone_number_id for CreateCallExecution
                         # For outbound calls, this will be empty (acquired later)
