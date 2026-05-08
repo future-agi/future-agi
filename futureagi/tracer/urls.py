@@ -43,7 +43,7 @@ from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
-from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
+from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link, query_shared_widget
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_session import TraceSessionView
 
@@ -95,6 +95,7 @@ urlpatterns = [
         name="get-annotation-labels",
     ),
     path("shared/<str:token>/", resolve_shared_link, name="resolve-shared-link"),
+    path("shared/<str:token>/widget-query/", query_shared_widget, name="query-shared-widget"),
     path("users/", UsersView.as_view(), name="users"),
     path("users/get_code_example/", GetUserCodeExampleView.as_view(), name="users"),
     # Deprecated — replaced by /feed/ endpoints (TH-3816 Phase 5)

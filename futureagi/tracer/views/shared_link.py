@@ -145,6 +145,91 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 
 
 # --------------------------------------------------------------------------
+# Shared widget query endpoint (no auth required for public links)
+# --------------------------------------------------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def query_shared_widget(request, token):
+    """
+    Execute a widget query for a shared dashboard.
+    The token is the shared link token; widget_id is passed in the body.
+    Only works for dashboards accessible via the shared link.
+    """
+    try:
+        link = SharedLink.objects.get(token=token, deleted=False)
+    except SharedLink.DoesNotExist:
+        return Response(
+            {"error": "Shared link not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not link.is_accessible:
+        reason = "expired" if link.is_expired else "revoked"
+        return Response(
+            {"error": f"This shared link has been {reason}"},
+            status=status.HTTP_410_GONE,
+        )
+
+    if link.access_type == AccessType.RESTRICTED:
+        if not request.user or not request.user.is_authenticated:
+            return Response(
+                {"error": "Authentication required to access this link"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        has_access = link.access_list.filter(
+            email=request.user.email, deleted=False
+        ).exists()
+        if not has_access and request.user != link.created_by:
+            return Response(
+                {"error": "You don't have access to this shared resource"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    if link.resource_type != "dashboard":
+        return Response(
+            {"error": "Widget queries only supported for dashboards"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    widget_id = request.data.get("widget_id")
+    if not widget_id:
+        return Response(
+            {"error": "widget_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from tracer.models.dashboard import DashboardWidget
+
+    widget = DashboardWidget.objects.filter(
+        id=widget_id,
+        dashboard__id=link.resource_id,
+        workspace__organization=link.organization,
+        deleted=False,
+    ).first()
+
+    if not widget:
+        return Response(
+            {"error": "Widget not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Reuse the DashboardWidgetViewSet query logic
+    from tracer.views.dashboard import DashboardWidgetViewSet
+
+    view = DashboardWidgetViewSet()
+    view.request = request
+    view.format_kwarg = None
+    view.kwargs = {}
+    view._gm = GeneralMethods()
+    view.permission_classes = []
+
+    # Call the view's execute_query method directly
+    return view.execute_query(request, pk=widget_id)
+
+
+# --------------------------------------------------------------------------
 # Public token-resolve endpoint (no auth required for public links)
 # --------------------------------------------------------------------------
 
@@ -270,6 +355,7 @@ def _resolve_resource(link):
 
         elif link.resource_type == "dashboard":
             from tracer.models.dashboard import Dashboard
+            from tracer.serializers.dashboard import DashboardWidgetSerializer
 
             dashboard = Dashboard.objects.filter(
                 id=link.resource_id,
@@ -277,10 +363,15 @@ def _resolve_resource(link):
             ).first()
             if not dashboard:
                 return None
+            # Include widget definitions so SharedView can render them
+            widgets = dashboard.widgets.filter(deleted=False).order_by(
+                "position", "created_at"
+            )
+            widget_data = DashboardWidgetSerializer(widgets, many=True).data
             return {
                 "id": str(dashboard.id),
                 "name": dashboard.name,
-                "config": dashboard.config,
+                "widgets": widget_data,
             }
 
         # Extend for other resource types as needed
