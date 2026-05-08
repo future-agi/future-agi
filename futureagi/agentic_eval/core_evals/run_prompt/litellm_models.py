@@ -165,8 +165,14 @@ class LiteLLMModelManager:
                 f"API key not configured for {provider}. Please add your API key in settings."
             )
         except ApiKey.MultipleObjectsReturned:
-            # Fallback to first match if multiple keys exist (e.g., workspace not specified)
-            api_key_entry = ApiKey.objects.filter(**query).first()
+            # Multiple rows matched — pick the most-recently-created one.
+            # This is a data integrity issue: log it so operators can clean up duplicate keys.
+            logger.warning(
+                "api_key_multiple_rows_for_provider",
+                provider=provider,
+                query=str(query),
+            )
+            api_key_entry = ApiKey.objects.filter(**query).order_by("-created_at").first()
             if not api_key_entry:
                 raise ValueError(
                     f"API key not configured for {provider}. Please add your API key in settings."
