@@ -364,21 +364,27 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
-    # Runtime override merge for AgentEvaluator.
+    # Runtime override merge.
     #
     # Priority (lowest to highest): template default → UserEvalMetric.run_config
     #                              → API-level runtime_config.run_config
     #
-    # The caller passes the merged UserEvalMetric.config as `runtime_config`,
-    # so any `run_config` sub-dict it contains is the user's per-attachment
-    # override. Additional API-level overrides can be stacked on top by the
-    # caller before invoking create_eval_instance — callers should merge those
-    # into runtime_config["run_config"] themselves.
+    # The caller passes the merged binding config (UserEvalMetric.config /
+    # CustomEvalConfig.config / SimulateEvalConfig.config) as `runtime_config`,
+    # so any `run_config` sub-dict it contains holds the user's per-attachment
+    # toggles from the EvalPicker (model, agent_mode, check_internet, tools,
+    # knowledge_bases, data_injection, summary, pass_threshold, choice_scores,
+    # multi_choice, reverse_output, error_localizer_enabled).
+    #
+    # We use an explicit `is not None` check rather than truthy `or` so that
+    # explicit False / 0 / "" overrides survive (e.g. check_internet=False on
+    # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
-    if eval_type_id_for_overrides == "AgentEvaluator" and runtime_config:
-        _overrides = (runtime_config or {}).get("run_config") or {}
-        # Whitelist: only keys that AgentEvaluator actually accepts.
-        _allowed = {
+    # Per-evaluator allow-list of keys that runtime overrides may touch. Only
+    # keys that the evaluator's __init__ actually consumes belong here —
+    # passing unknown kwargs raises TypeError at instantiation.
+    _RUNTIME_ALLOWED_KEYS = {
+        "AgentEvaluator": {
             "model",
             "agent_mode",
             "check_internet",
@@ -393,7 +399,36 @@ def create_eval_instance(
             "choice_scores",
             "reverse_output",
             "error_localizer_enabled",
-        }
+        },
+        # CustomPromptEvaluator (LLM-as-judge) supports the per-binding
+        # toggles the FE EvalPicker exposes, minus agent-only features
+        # (agent_mode, tools, summary, data_injection — none of which the
+        # single-LLM-call evaluator consumes).
+        #
+        # Note: `model` is intentionally NOT in this allow-list. The model
+        # kwarg has its own resolution path (caller passes `model=` to
+        # create_eval_instance, which prepare_eval_config uses to derive
+        # `api_key` / `provider` for non-Turing models). Letting run_config
+        # overwrite `config["model"]` after that derivation would leave a
+        # stale api_key in config — to override model on an LLM binding,
+        # update UserEvalMetric.model / CustomEvalConfig.model directly so
+        # the kwarg path picks it up.
+        "CustomPromptEvaluator": {
+            "check_internet",
+            "multi_choice",
+            "pass_threshold",
+            "output_type",
+            "choices",
+            "choice_scores",
+            "reverse_output",
+            "knowledge_base_id",
+            "knowledge_bases",
+            "error_localizer_enabled",
+        },
+    }
+    _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
+    if _allowed and runtime_config:
+        _overrides = (runtime_config or {}).get("run_config") or {}
         for key, value in _overrides.items():
             if key in _allowed and value is not None:
                 config[key] = value
