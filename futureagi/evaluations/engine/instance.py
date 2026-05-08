@@ -398,7 +398,7 @@ def create_eval_instance(
             "choices",
             "choice_scores",
             "reverse_output",
-            "error_localizer_enabled",
+            # error_localizer is handled at the surface-runner layer.
         },
         # CustomPromptEvaluator (LLM-as-judge) supports the per-binding
         # toggles the FE EvalPicker exposes, minus agent-only features
@@ -423,7 +423,7 @@ def create_eval_instance(
             "reverse_output",
             "knowledge_base_id",
             "knowledge_bases",
-            "error_localizer_enabled",
+            # error_localizer is handled at the surface-runner layer.
         },
     }
     _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
