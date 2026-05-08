@@ -279,4 +279,5 @@ dev = [
     "pytest-mock>=3.14.1",
     "pytest-xdist>=3.8.0",
     "hypothesis>=6.100.0",
+    "z3-solver>=4.13.0",
 ]
