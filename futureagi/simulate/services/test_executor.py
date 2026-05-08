@@ -102,7 +102,7 @@ from tfc.utils.error_codes import get_specific_error_message
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallType
 except ImportError:
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
     APICallType = None
 try:
     from ee.usage.services.metering import check_usage
@@ -112,7 +112,7 @@ try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
     deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 
 class TestExecutor:

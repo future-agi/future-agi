@@ -46,13 +46,13 @@ try:
     from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallTypeChoices
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
+    from tfc.oss_stubs.usage import refund_cost_for_api_call
 
 
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):

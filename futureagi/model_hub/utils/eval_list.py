@@ -23,7 +23,7 @@ from model_hub.types import EvalListFilters, ThirtyDayDataPoint
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
 
 if TYPE_CHECKING:
     from model_hub.models.evals_metric import EvalTemplate

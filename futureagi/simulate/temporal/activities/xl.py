@@ -1244,11 +1244,11 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     try:
         from ee.usage.models.usage import APICallStatusChoices
     except ImportError:
-        APICallStatusChoices = None
+        from tfc.oss_stubs.usage import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
-        log_and_deduct_cost_for_api_request = None
+        from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
     try:
         # Skip if no service_provider_call_id for VOICE agents

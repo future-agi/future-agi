@@ -44,7 +44,7 @@ from tfc.utils.error_codes import get_error_message
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
-    count_tiktoken_tokens = None
+    from tfc.oss_stubs.usage import count_tiktoken_tokens
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     OtherServicesManager,

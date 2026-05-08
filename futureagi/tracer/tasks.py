@@ -61,13 +61,13 @@ from tracer.utils.otel import SpanAttributes, convert_otel_span_to_observation_s
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
+    from tfc.oss_stubs.usage import refund_cost_for_api_call
 
 
 def _convert_attributes(attributes):

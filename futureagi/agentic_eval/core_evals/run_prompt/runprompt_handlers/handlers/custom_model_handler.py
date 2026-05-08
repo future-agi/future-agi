@@ -151,7 +151,7 @@ class CustomModelHandler(BaseModelHandler):
         try:
             from ee.usage.utils.usage_entries import count_tiktoken_tokens
         except ImportError:
-            count_tiktoken_tokens = None
+            from tfc.oss_stubs.usage import count_tiktoken_tokens
         from agentic_eval.core_evals.fi_utils.token_count_helper import (
             calculate_total_cost,
         )
