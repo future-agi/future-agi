@@ -39,7 +39,7 @@ Please include as much of the following as you can:
 - The main repo: `future-agi/future-agi`
 - Published SDKs: `ai-evaluation` (PyPI), `@traceai/*` (npm), and their Go/Java counterparts
 - Managed Cloud: `app.futureagi.com`, `api.futureagi.com`, `cloud.futureagi.com`
-- The Prism gateway: `futureagi/agentcc-gateway/`
+- The agentcc gateway: `agentcc-gateway/`
 
 **Out of scope:**
 

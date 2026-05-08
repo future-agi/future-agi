@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Future AGI — uninstaller / cleanup
+#
+#   ./bin/uninstall                    # stop containers, keep data + .env
+#   ./bin/uninstall --wipe-data        # also remove all futureagi_* volumes
+#                                      # (PERMANENTLY DELETES YOUR DATA)
+#   ./bin/uninstall --purge            # also remove .env, install-*.log,
+#                                      # and built/pulled project images
+#   ./bin/uninstall -y                 # skip per-step confirms (unattended)
+#
+# Each destructive step confirms separately, so you can stop after the
+# "stop containers" phase if you change your mind. A timestamped log is
+# written to uninstall-*.log.
+# ============================================================================
+
+set -eEuo pipefail
+
+# ---------------- output helpers ----------------
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
+else
+  BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; RESET=""
+fi
+say()   { printf "%s\n" "$*"; }
+step()  { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
+ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
+warn()  { printf "  ${YELLOW}!${RESET} %s\n" "$*" >&2; }
+die()   { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; exit 1; }
+
+on_err() {
+  local code=$? line=${1:-?}
+  printf "\n${RED}✗ uninstall failed (exit %d, line %s)${RESET}\n" "$code" "$line" >&2
+  exit "$code"
+}
+trap 'on_err $LINENO' ERR
+
+# ---------------- args ----------------
+WIPE_DATA=0
+PURGE=0
+YES=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --wipe-data) WIPE_DATA=1 ;;
+    --purge) PURGE=1; WIPE_DATA=1 ;;       # purge implies wipe
+    -y|--yes|--non-interactive) YES=1 ;;
+    -h|--help)
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) die "unknown flag: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+# CI / non-TTY → auto-yes (matches bin/install convention).
+[[ -n "${CI:-}" || ! -t 0 ]] && YES=1
+
+cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
+PROJECT_NAME="futureagi"  # pinned in docker-compose.yml `name:`
+
+# ---------------- log ----------------
+LOG_FILE="$ROOT/uninstall-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# ---------------- welcome ----------------
+if [[ -t 1 ]]; then
+  printf "\n"
+  printf "  ${BOLD}${YELLOW}╭───────────────────────────────────────────╮${RESET}\n"
+  printf "  ${BOLD}${YELLOW}│${RESET}   ${BOLD}Future AGI${RESET} ${DIM}·${RESET} ${DIM}uninstall / cleanup${RESET}        ${BOLD}${YELLOW}│${RESET}\n"
+  printf "  ${BOLD}${YELLOW}╰───────────────────────────────────────────╯${RESET}\n"
+  printf "\n"
+  printf "  ${DIM}plan:${RESET}\n"
+  printf "    ${GREEN}✓${RESET} stop and remove containers\n"
+  if (( WIPE_DATA == 1 )); then
+    printf "    ${RED}✗${RESET} ${BOLD}remove all ${PROJECT_NAME}_* volumes${RESET} ${DIM}(deletes data)${RESET}\n"
+  else
+    printf "    ${DIM}—${RESET} ${DIM}volumes preserved (data intact)${RESET}\n"
+  fi
+  if (( PURGE == 1 )); then
+    printf "    ${RED}✗${RESET} ${BOLD}remove .env, install-*.log, and project images${RESET}\n"
+  else
+    printf "    ${DIM}—${RESET} ${DIM}.env, logs, and images preserved${RESET}\n"
+  fi
+  printf "\n"
+fi
+
+# ---------------- compose detection ----------------
+if docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC="docker-compose"
+else
+  warn "Neither 'docker compose' nor 'docker-compose' available — skipping compose-down."
+  DC=""
+fi
+
+confirm() {
+  local msg="$1" default_no="${2:-}"
+  if (( YES == 1 )); then return 0; fi
+  if [[ "$default_no" == "yes-default" ]]; then
+    printf "  ${BOLD}? ${msg}${RESET} [Y/n] "
+  else
+    printf "  ${BOLD}? ${msg}${RESET} [y/N] "
+  fi
+  local answer
+  read -r answer || answer=""
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    "")
+      [[ "$default_no" == "yes-default" ]] && return 0
+      return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------- 1. stop containers ----------------
+step "Stop and remove containers"
+
+if [[ -z "$DC" ]]; then
+  warn "Compose unavailable; skipping."
+elif confirm "Run '$DC down --remove-orphans'?" "yes-default"; then
+  $DC down --remove-orphans 2>&1 | sed 's|^|  |'
+  ok "Containers removed"
+else
+  warn "Skipped — containers left running."
+fi
+
+# ---------------- 2. wipe volumes ----------------
+if (( WIPE_DATA == 1 )); then
+  step "Remove project volumes"
+  # List actual ${PROJECT_NAME}_* volumes that exist right now.
+  # Avoid `mapfile` for macOS bash 3.2 compatibility.
+  PROJECT_VOLS=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && PROJECT_VOLS+=("$line")
+  done < <(docker volume ls --format '{{.Name}}' 2>/dev/null \
+            | awk -v p="^${PROJECT_NAME}_" '$0 ~ p')
+  if (( ${#PROJECT_VOLS[@]} == 0 )); then
+    ok "No ${PROJECT_NAME}_* volumes found — nothing to remove."
+  else
+    say "  Will remove ${#PROJECT_VOLS[@]} volume(s):"
+    for v in "${PROJECT_VOLS[@]}"; do say "    • $v"; done
+    say ""
+    say "  ${RED}${BOLD}This deletes Postgres / ClickHouse / MinIO / Redis data permanently.${RESET}"
+    if confirm "Type-confirm by answering yes" ""; then
+      docker volume rm "${PROJECT_VOLS[@]}" 2>&1 | sed 's|^|  |' || true
+      ok "Volumes removed"
+    else
+      warn "Skipped — volumes preserved."
+    fi
+  fi
+fi
+
+# ---------------- 3. purge files + images ----------------
+if (( PURGE == 1 )); then
+  step "Remove .env and install-*.log"
+  declare -a FILES_TO_RM=()
+  [[ -f .env ]] && FILES_TO_RM+=(".env")
+  for f in install-*.log uninstall-*.log; do
+    [[ -f "$f" && "$f" != "$(basename "$LOG_FILE")" ]] && FILES_TO_RM+=("$f")
+  done
+  if (( ${#FILES_TO_RM[@]} == 0 )); then
+    ok "Nothing to remove."
+  else
+    say "  Will remove:"
+    for f in "${FILES_TO_RM[@]}"; do say "    • $f"; done
+    if confirm "Proceed?" ""; then
+      rm -f "${FILES_TO_RM[@]}"
+      ok "Files removed"
+    else
+      warn "Skipped — files preserved."
+    fi
+  fi
+
+  step "Remove project-built images"
+  # Compose-built images carry the label `com.docker.compose.project=futureagi`.
+  PROJECT_IMAGES=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && PROJECT_IMAGES+=("$line")
+  done < <(docker images \
+             --filter "label=com.docker.compose.project=${PROJECT_NAME}" \
+             --format '{{.Repository}}:{{.Tag}} ({{.ID}})' 2>/dev/null \
+            | awk 'NF')
+  if (( ${#PROJECT_IMAGES[@]} == 0 )); then
+    ok "No images labeled with this project — nothing to remove."
+  else
+    say "  Will remove ${#PROJECT_IMAGES[@]} image(s):"
+    for img in "${PROJECT_IMAGES[@]}"; do say "    • $img"; done
+    if confirm "Proceed?" ""; then
+      docker images \
+        --filter "label=com.docker.compose.project=${PROJECT_NAME}" \
+        --format '{{.ID}}' 2>/dev/null \
+        | xargs -r docker rmi -f 2>&1 | sed 's|^|  |' || true
+      ok "Images removed"
+    else
+      warn "Skipped — images preserved."
+    fi
+  fi
+fi
+
+# ---------------- done ----------------
+printf "\n"
+if [[ -t 1 ]]; then
+  printf "  ${BOLD}${GREEN}╭───────────────────────────────────────────╮${RESET}\n"
+  printf "  ${BOLD}${GREEN}│${RESET}   ${BOLD}Cleanup complete${RESET}                       ${BOLD}${GREEN}│${RESET}\n"
+  printf "  ${BOLD}${GREEN}╰───────────────────────────────────────────╯${RESET}\n"
+fi
+say ""
+if (( WIPE_DATA == 0 )); then
+  say "  ${DIM}Data is still in volumes. Bring the stack back up with:${RESET}"
+  say "    ${BOLD}./bin/install${RESET}     ${DIM}(or 'docker compose up -d')${RESET}"
+elif (( PURGE == 0 )); then
+  say "  ${DIM}.env preserved. Re-install with the same secrets:${RESET}"
+  say "    ${BOLD}./bin/install${RESET}"
+else
+  say "  ${DIM}Fully purged. Re-install from scratch:${RESET}"
+  say "    ${BOLD}./bin/install${RESET}"
+fi
+say ""
+say "  ${DIM}Uninstall log: $LOG_FILE${RESET}"
+say ""
