@@ -432,9 +432,12 @@ function SharedWidgetCard({ widget, globalDateRange }) {
   useEffect(() => {
     // We don't have the token here directly — it's in the parent's shared link
     // The parent fetches data and passes it down
+    if (widget._queryData === undefined) return; // still loading
+    setLoading(false);
     if (widget._queryData) {
       setData(widget._queryData);
-      setLoading(false);
+    } else {
+      setError(true); // null = fetch failed
     }
   }, [widget._queryData]);
 
@@ -477,9 +480,68 @@ function SharedWidgetCard({ widget, globalDateRange }) {
               {data.data.result.value ?? "—"}
             </Typography>
           </Box>
+        ) : data ? (
+          /* Non-metric widget with pre-fetched data — render a simple table */
+          <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+              Chart data (pre-fetched via shared link)
+            </Typography>
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 1,
+                overflow: "auto",
+                maxHeight: 300,
+              }}
+            >
+              <table style={{ width: "100%", fontSize: "0.75rem", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {data?.columns?.map((col, i) => (
+                      <th
+                        key={i}
+                        style={{
+                          padding: "4px 8px",
+                          textAlign: "left",
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                          position: "sticky",
+                          top: 0,
+                          background: "background.paper",
+                        }}
+                      >
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data?.rows?.slice(0, 50).map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cell, ci) => (
+                        <td
+                          key={ci}
+                          style={{
+                            padding: "4px 8px",
+                            borderBottom: "1px solid",
+                            borderColor: "divider",
+                          }}
+                        >
+                          {String(cell ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Box>
+          </Box>
         ) : (
-          <Box sx={{ flex: 1, minHeight: 0 }}>
-            <WidgetChart widget={widget} globalDateRange={globalDateRange} />
+          <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Typography variant="caption" color="text.secondary">
+              No data
+            </Typography>
           </Box>
         )}
       </CardContent>

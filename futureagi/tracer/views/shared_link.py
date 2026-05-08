@@ -221,7 +221,7 @@ def query_shared_widget(request, token):
     view = DashboardWidgetViewSet()
     view.request = request
     view.format_kwarg = None
-    view.kwargs = {}
+    view.kwargs = {"pk": widget_id}
     view._gm = GeneralMethods()
     view.permission_classes = []
 
