@@ -122,6 +122,109 @@ _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
 }
 
 
+def build_session_context(session) -> dict | None:
+    """Build the ``session_context`` payload that AgentEvaluator receives.
+
+    Same shape the playground produces (model_hub/views/separate_evals.py),
+    so the agent gets a consistent payload regardless of which surface
+    triggered the eval. Returns None on lookup/aggregation failure rather
+    than raising — the eval continues without the optional context.
+    """
+    if session is None:
+        return None
+    try:
+        from django.db.models import Count, Max, Min, Q, Sum
+
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+
+        trace_qs = Trace.objects.filter(session=session, deleted=False)
+        sess_agg = ObservationSpan.objects.filter(
+            trace__in=trace_qs, deleted=False
+        ).aggregate(
+            total_spans=Count("id"),
+            error_count=Count("id", filter=Q(status="ERROR")),
+            total_tokens=Sum("total_tokens"),
+            total_cost=Sum("cost"),
+            start_time=Min("start_time"),
+            end_time=Max("end_time"),
+        )
+
+        # Cap at 100 traces for the in-prompt summary; the agent uses
+        # explore_trace for deeper drill-down.
+        traces_page = list(trace_qs.order_by("created_at")[:100])
+        trace_ids = [t.id for t in traces_page]
+        per_trace = {
+            row["trace_id"]: row
+            for row in (
+                ObservationSpan.objects.filter(
+                    trace_id__in=trace_ids, deleted=False
+                )
+                .values("trace_id")
+                .annotate(
+                    span_count=Count("id"),
+                    error_count=Count("id", filter=Q(status="ERROR")),
+                    total_tokens=Sum("total_tokens"),
+                    total_latency=Sum("latency_ms"),
+                )
+            )
+        }
+        trace_summaries = []
+        for t in traces_page:
+            agg = per_trace.get(t.id, {})
+            err_count = agg.get("error_count") or 0
+            trace_summaries.append(
+                {
+                    "id": str(t.id),
+                    "name": t.name,
+                    "created_at": (
+                        t.created_at.isoformat() if t.created_at else None
+                    ),
+                    "span_count": agg.get("span_count") or 0,
+                    "error_count": err_count,
+                    "total_tokens": agg.get("total_tokens") or 0,
+                    "total_latency_ms": agg.get("total_latency") or 0,
+                    "has_error": bool(t.error or err_count > 0),
+                }
+            )
+
+        start = sess_agg["start_time"]
+        end = sess_agg["end_time"]
+        duration = (end - start).total_seconds() if start and end else None
+
+        return {
+            "id": str(session.id),
+            "name": session.name,
+            "project_id": (
+                str(session.project_id) if session.project_id else None
+            ),
+            "bookmarked": session.bookmarked,
+            "created_at": (
+                session.created_at.isoformat() if session.created_at else None
+            ),
+            "trace_count": trace_qs.count(),
+            "total_spans": sess_agg["total_spans"] or 0,
+            "error_count": sess_agg["error_count"] or 0,
+            "total_tokens": sess_agg["total_tokens"] or 0,
+            "total_cost": (
+                float(round(sess_agg["total_cost"], 6))
+                if sess_agg["total_cost"]
+                else 0
+            ),
+            "start_time": str(start) if start else None,
+            "end_time": str(end) if end else None,
+            "duration_seconds": duration,
+            "traces": trace_summaries,
+        }
+    except Exception as e:
+        logger.warning(
+            "build_session_context_failed",
+            session_id=str(getattr(session, "id", None)),
+            error=str(e),
+        )
+        return None
+
+
 def _process_mapping(
     mapping: dict | None, span: ObservationSpan, eval_template_id: int
 ) -> dict:
@@ -623,6 +726,15 @@ def _execute_evaluation(
             "id": str(observation_span.trace_id),
             "span_id": str(observation_span.id),
         }
+    if _di["session_context"]:
+        # Walk span → trace → session. Trace.session is nullable (orphan
+        # traces aren't bound to a session); skip the build in that case
+        # so the agent's `kwargs.get("session_context")` returns None and
+        # the auto-context renderer omits the section gracefully.
+        _session = getattr(getattr(observation_span, "trace", None), "session", None)
+        _session_ctx = build_session_context(_session) if _session else None
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
     try:
