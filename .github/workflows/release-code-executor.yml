@@ -1,13 +1,14 @@
-# Manual trigger only. Run from the Actions tab when ready to cut a release.
+# Manual trigger only. Run from the Actions tab when ready to cut a code-executor release.
+# Publishes futureagi/code-executor:<version>, :<minor>, :latest.
 # Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
 
-name: Release images
+name: Release code-executor
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to publish (e.g. v1.22.41)'
+        description: 'Version tag to publish (e.g. v1.0.0)'
         required: true
         type: string
       branch:
@@ -24,43 +25,15 @@ permissions:
 
 jobs:
   release:
-    name: Build & push ${{ matrix.service }}
+    name: Build & push code-executor
     runs-on: ubuntu-latest
     environment: production
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            repo: future-agi
-            context: ./futureagi
-            dockerfile: Dockerfile.oss
-          - service: frontend
-            repo: frontend
-            context: ./frontend
-            dockerfile: Dockerfile
-          - service: agentcc-gateway
-            repo: agentcc-gateway
-            context: ./agentcc-gateway
-            dockerfile: Dockerfile
-          - service: serving
-            repo: serving
-            context: ./futureagi/model_serving
-            dockerfile: Dockerfile.oss
-          - service: code-executor
-            repo: code-executor
-            context: ./futureagi/code-executor
-            dockerfile: Dockerfile
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
-          # Keep ee/ out of the public image build context.
           submodules: false
 
       - name: Resolve version & minor
@@ -92,15 +65,14 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+          context: ./futureagi/code-executor
+          file: ./futureagi/code-executor/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
           tags: |
-            futureagi/${{ matrix.repo }}:${{ steps.version.outputs.version }}
-            futureagi/${{ matrix.repo }}:${{ steps.version.outputs.minor }}
-            futureagi/${{ matrix.repo }}:latest
-          cache-from: type=registry,ref=futureagi/${{ matrix.repo }}:buildcache
-          cache-to: type=registry,ref=futureagi/${{ matrix.repo }}:buildcache,mode=max
-
+            futureagi/code-executor:${{ steps.version.outputs.version }}
+            futureagi/code-executor:${{ steps.version.outputs.minor }}
+            futureagi/code-executor:latest
+          cache-from: type=registry,ref=futureagi/code-executor:buildcache
+          cache-to: type=registry,ref=futureagi/code-executor:buildcache,mode=max
