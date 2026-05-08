@@ -1226,7 +1226,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @action(detail=True, methods=["post"], url_path="export-to-dataset")
     def export_to_dataset(self, request, pk=None):
-        """Export annotated items to a dataset with columns and cells."""
+        """Export annotated items to a dataset with columns and cells.
+
+        Column structure mirrors the CSV/XLSX export: source details,
+        system metrics, eval values, and per-(label, annotator) value +
+        notes columns — all flat, no merged headers.
+        """
         from model_hub.models.choices import (
             AnnotationTypeChoices,
             DataTypeChoices,
@@ -1271,15 +1276,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 user=request.user,
             )
 
-        # Filter items with select_related to avoid N+1 on source FK lookups
-        items_qs = QueueItem.objects.filter(queue=queue, deleted=False).select_related(
-            "trace",
-            "observation_span",
-            "dataset_row",
-            "prototype_run",
-            "call_execution",
-            "trace_session",
-        )
+        # Filter items
+        items_qs = QueueItem.objects.filter(queue=queue, deleted=False)
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
 
@@ -1301,17 +1299,50 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         for score in all_scores:
             scores_by_item.setdefault(score.queue_item_id, []).append(score)
 
-        # --- Collect unique annotation labels ---
-        label_map = {}  # label_name -> label_type
-        for scores in scores_by_item.values():
-            for score in scores:
-                label_name = score.label.name if score.label else str(score.label_id)
-                label_type = score.label.type if score.label else "text"
-                label_map[label_name] = label_type
+        # Build enriched export data — reuses all CSV/XLSX helpers
+        export_data = self._build_export_data(queue, items_qs, scores_by_item)
+        users = export_data["users"]
+        labels = export_data["labels"]
+        eval_names = export_data["eval_names"]
+        metric_columns = export_data["metric_columns"]
+        rows = export_data["rows"]
 
-        # --- Define and reuse/create columns ---
-        fixed_columns_def = [
+        # Slug maps: label_id -> slug, user_id -> slug  (mirrors CSV header logic)
+        label_slugs = {
+            label.id: self._slugify_for_header(label.name) for label in labels
+        }
+        user_slugs = {
+            u.id: self._slugify_for_header(
+                getattr(u, "name", None) or getattr(u, "email", None) or str(u.id)
+            )
+            for u in users
+        }
+
+        # --- Column definitions ---
+        # (col_name, data_type, source)
+        col_defs = [
+            # Source detail columns (parallel to CALL_DETAIL_COLUMNS)
+            ("source_id", "text", SourceChoices.OTHERS.value),
             ("source_type", "text", SourceChoices.OTHERS.value),
+            ("recording_link", "text", SourceChoices.OTHERS.value),
+            ("status", "text", SourceChoices.OTHERS.value),
+            ("created_at", "text", SourceChoices.OTHERS.value),
+            # System metric columns
+            *[(mc, "text", SourceChoices.OTHERS.value) for mc in metric_columns],
+            # Eval value columns
+            *[(f"eval_{self._slugify_for_header(name)}", "text", SourceChoices.OTHERS.value) for name in eval_names],
+            # Per-label per-annotator value + notes columns
+            *[
+                (f"{label_slugs[label.id]}_{user_slugs[u.id]}", "text", SourceChoices.ANNOTATION_LABEL.value)
+                for label in labels
+                for u in users
+            ],
+            *[
+                (f"{label_slugs[label.id]}_notes_{user_slugs[u.id]}", "text", SourceChoices.ANNOTATION_LABEL.value)
+                for label in labels
+                for u in users
+            ],
+            # Legacy input/output (preserved from original)
             ("input", "text", SourceChoices.OTHERS.value),
             ("output", "text", SourceChoices.OTHERS.value),
         ]
@@ -1323,8 +1354,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         columns = {}  # name -> Column instance
         new_columns = []
-
-        for col_name, data_type, source in fixed_columns_def:
+        for col_name, data_type, source in col_defs:
             if col_name in existing_columns:
                 columns[col_name] = existing_columns[col_name]
             else:
@@ -1337,21 +1367,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 )
                 new_columns.append(col)
                 columns[col_name] = col
-
-        for label_name, label_type in label_map.items():
-            data_type = LABEL_TYPE_TO_DATA_TYPE.get(label_type, "text")
-            if label_name in existing_columns:
-                columns[label_name] = existing_columns[label_name]
-            else:
-                col = Column(
-                    name=label_name,
-                    data_type=data_type,
-                    source=SourceChoices.ANNOTATION_LABEL.value,
-                    dataset=dataset,
-                    status=StatusType.COMPLETED.value,
-                )
-                new_columns.append(col)
-                columns[label_name] = col
 
         if new_columns:
             Column.objects.bulk_create(new_columns)
@@ -1370,18 +1385,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         # --- Create Rows (metadata preserved for auditability) ---
         items_list = list(items_qs.order_by("order"))
-        rows_to_create = []
-        for i, item in enumerate(items_list):
-            rows_to_create.append(
-                Row(
-                    dataset=dataset,
-                    order=max_order + i + 1,
-                    metadata={
-                        "queue_id": str(queue.id),
-                        "queue_item_id": str(item.id),
-                    },
-                )
+        rows_to_create = [
+            Row(
+                dataset=dataset,
+                order=max_order + i + 1,
+                metadata={
+                    "queue_id": str(queue.id),
+                    "queue_item_id": str(item.id),
+                },
             )
+            for i, item in enumerate(items_list)
+        ]
 
         if rows_to_create:
             Row.objects.bulk_create(rows_to_create, batch_size=500)
@@ -1394,73 +1408,83 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 return val
             return json.dumps(val, default=str)
 
-        def _extract_input_output(content):
+        def _extract_input_output(item):
+            content = resolve_source_content(item)
             source_type = content.get("type", "")
             if source_type == "dataset_row":
                 fields = content.get("fields", {})
-                return _to_cell_str(fields.get("input", "")), _to_cell_str(
-                    fields.get("output", "")
+                return (
+                    _to_cell_str(fields.get("input", "")),
+                    _to_cell_str(fields.get("output", "")),
                 )
             elif source_type == "prototype_run":
-                return _to_cell_str(content.get("prompt")), _to_cell_str(
-                    content.get("response")
+                return (
+                    _to_cell_str(content.get("prompt")),
+                    _to_cell_str(content.get("response")),
                 )
-            else:
-                return _to_cell_str(content.get("input")), _to_cell_str(
-                    content.get("output")
-                )
+            return (
+                _to_cell_str(content.get("input", "")),
+                _to_cell_str(content.get("output", "")),
+            )
 
         cells_to_create = []
-        for row, item in zip(rows_to_create, items_list):
-            # source_type cell
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["source_type"],
-                    value=item.source_type or "",
-                )
-            )
+        for row, item, row_data in zip(rows_to_create, items_list, rows):
+            # Source detail cells
+            cells_to_create.extend([
+                Cell(dataset=dataset, row=row, column=columns["source_id"],
+                     value=row_data.get("source_id", "")),
+                Cell(dataset=dataset, row=row, column=columns["source_type"],
+                     value=row_data.get("source_type", "")),
+                Cell(dataset=dataset, row=row, column=columns["recording_link"],
+                     value=row_data.get("recording_link", "")),
+                Cell(dataset=dataset, row=row, column=columns["status"],
+                     value=row_data.get("status", "")),
+                Cell(dataset=dataset, row=row, column=columns["created_at"],
+                     value=row_data.get("created_at", "")),
+            ])
 
-            # input/output cells
-            content = resolve_source_content(item)
-            input_val, output_val = _extract_input_output(content)
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["input"],
-                    value=input_val,
+            # System metric cells
+            for mc in metric_columns:
+                cells_to_create.append(
+                    Cell(dataset=dataset, row=row, column=columns[mc],
+                         value=row_data.get("system_metrics", {}).get(mc, ""))
                 )
-            )
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["output"],
-                    value=output_val,
+
+            # Eval value cells
+            for name in eval_names:
+                col_name = f"eval_{self._slugify_for_header(name)}"
+                cells_to_create.append(
+                    Cell(dataset=dataset, row=row, column=columns[col_name],
+                         value=row_data.get("eval_values", {}).get(name, ""))
                 )
-            )
 
-            # Label cells — use first annotator's value
-            item_scores = scores_by_item.get(item.id, [])
-            label_first_value = {}
-            for score in item_scores:
-                label_name = score.label.name if score.label else str(score.label_id)
-                if label_name not in label_first_value:
-                    label_first_value[label_name] = score.value
-
-            for label_name in label_map:
-                if label_name in columns:
-                    value = label_first_value.get(label_name, "")
-                    cells_to_create.append(
+            # Per-label per-annotator value + notes cells
+            for label in labels:
+                label_id = label.id
+                lslug = label_slugs[label_id]
+                lv = row_data.get("label_values", {}).get(label_id, {})
+                ln = row_data.get("label_notes", {}).get(label_id, {})
+                for u in users:
+                    uslug = user_slugs[u.id]
+                    cells_to_create.extend([
                         Cell(
-                            dataset=dataset,
-                            row=row,
-                            column=columns[label_name],
-                            value=_to_cell_str(value),
-                        )
-                    )
+                            dataset=dataset, row=row,
+                            column=columns[f"{lslug}_{uslug}"],
+                            value=lv.get(u.id, ""),
+                        ),
+                        Cell(
+                            dataset=dataset, row=row,
+                            column=columns[f"{lslug}_notes_{uslug}"],
+                            value=ln.get(u.id, ""),
+                        ),
+                    ])
+
+            # input/output (legacy, from resolve_source_content)
+            input_val, output_val = _extract_input_output(item)
+            cells_to_create.extend([
+                Cell(dataset=dataset, row=row, column=columns["input"], value=input_val),
+                Cell(dataset=dataset, row=row, column=columns["output"], value=output_val),
+            ])
 
         if cells_to_create:
             Cell.objects.bulk_create(cells_to_create, batch_size=500)
@@ -1470,12 +1494,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             pre_existing_rows = Row.objects.filter(
                 dataset=dataset, deleted=False
             ).exclude(id__in=[r.id for r in rows_to_create])
-            backfill_cells = []
-            for row in pre_existing_rows:
-                for col in new_columns:
-                    backfill_cells.append(
-                        Cell(dataset=dataset, row=row, column=col, value="")
-                    )
+            backfill_cells = [
+                Cell(dataset=dataset, row=row, column=col, value="")
+                for row in pre_existing_rows
+                for col in new_columns
+            ]
             if backfill_cells:
                 Cell.objects.bulk_create(backfill_cells, batch_size=500)
 
