@@ -342,6 +342,10 @@ async def a_register_schedules(
         schedules: List of schedule configs to register
         cleanup_orphans: If True, delete schedules not in the provided list (default: True)
     """
+    from tfc.temporal.common.registry import _import_temporal_activity_modules
+
+    _import_temporal_activity_modules()
+
     logger.info("registering_schedules", count=len(schedules))
 
     # Cleanup orphaned schedules first
