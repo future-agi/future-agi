@@ -2,6 +2,8 @@
 (*
  * TLA+ specification for the auto-eval-on-insert trigger (issue #74).
  *
+ * Architecture decision: docs/adr/ADR-032-dataset-auto-eval-config.md
+ *
  * Models the debounce → batch → Temporal workflow lifecycle for a single
  * DatasetEvalConfig.  The key safety properties:
  *
