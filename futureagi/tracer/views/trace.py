@@ -823,7 +823,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
               AND _peerdb_is_deleted = 0
             """
             eval_result = analytics.execute_ch_query(
-                eval_query, {"trace_id": str(trace_id)}, timeout_ms=5000
+                eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
             )
             # Collect unique config IDs for name lookup
             config_ids_set = set()
@@ -2135,7 +2135,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                     )
                     query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
                     ch_data = builder.format_result(result.data, result.columns or [])
                     # CH now returns all metric keys directly
                     metric_key = metric_id if metric_id in ch_data else "latency"
@@ -2182,7 +2182,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         choices=choices,
                     )
                     query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
                     graph_data = builder.format_result(
                         result.data, result.columns or []
                     )
@@ -3944,7 +3944,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "trace_id": str(trace_id),
                     "eval_config_ids": tuple(eval_config_ids),
                 },
-                timeout_ms=5000,
+                timeout_ms=30000,
             )
             eval_map = TraceListQueryBuilder.pivot_eval_results(
                 [(list(r.values())) for r in eval_result.data],
@@ -4089,7 +4089,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1
         """
         current_result = analytics.execute_ch_query(
-            current_query, params, timeout_ms=5000
+            current_query, params, timeout_ms=30000
         )
         if not current_result.data:
             return self._gm.bad_request("Trace not found")
@@ -4112,7 +4112,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1 BY trace_id
         LIMIT 1
         """
-        prev_result = analytics.execute_ch_query(prev_query, params, timeout_ms=5000)
+        prev_result = analytics.execute_ch_query(prev_query, params, timeout_ms=30000)
         previous_trace = prev_result.data[0]["trace_id"] if prev_result.data else None
 
         # Next trace (older by time)
@@ -4130,7 +4130,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1 BY trace_id
         LIMIT 1
         """
-        next_result = analytics.execute_ch_query(next_query, params, timeout_ms=5000)
+        next_result = analytics.execute_ch_query(next_query, params, timeout_ms=30000)
         next_trace = next_result.data[0]["trace_id"] if next_result.data else None
 
         response = {
@@ -4830,7 +4830,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -4863,7 +4863,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -4889,7 +4889,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 attr_query, attr_params = builder.build_span_attributes_query(trace_ids)
                 if attr_query:
                     attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=5000
+                        attr_query, attr_params, timeout_ms=30000
                     )
                     for attr_row in attr_result.data:
                         tid = str(attr_row.get("trace_id", ""))
@@ -5132,7 +5132,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -5144,7 +5144,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = TraceListQueryBuilder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -5393,7 +5393,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Get count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -5404,7 +5404,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -5694,7 +5694,7 @@ class UsersView(APIView):
                       )
                     """
                     attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=5000
+                        attr_query, attr_params, timeout_ms=30000
                     )
                     # Aggregate per user
                     user_attrs: dict = {}
