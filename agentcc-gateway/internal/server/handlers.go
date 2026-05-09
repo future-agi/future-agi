@@ -1148,8 +1148,11 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			if ok {
 				rc.Provider = action.Provider
 				rc.Metadata["routing_rule"] = action.Name
-				if action.ModelOverride != "" && rc.Request != nil {
-					rc.Request.Model = action.ModelOverride
+				if action.ModelOverride != "" {
+					rc.Model = action.ModelOverride
+					if rc.Request != nil {
+						rc.Request.Model = action.ModelOverride
+					}
 				}
 				return p, nil
 			}
@@ -1161,7 +1164,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Try primary model first.
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
 	// they should only use org-configured providers (resolved above) or be rejected.
-	if rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
 		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
 	}
 
@@ -1171,8 +1174,11 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 		if result.StrategyName != "" {
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
-		if result.ModelOverride != "" && rc.Request != nil {
-			rc.Request.Model = result.ModelOverride
+		if result.ModelOverride != "" {
+			rc.Model = result.ModelOverride // update for both chat and embedding callers
+			if rc.Request != nil {
+				rc.Request.Model = result.ModelOverride
+			}
 		}
 		return result.Provider, nil
 	}
@@ -1190,6 +1196,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
 			if fbErr == nil {
 				rc.Provider = fbResult.Provider.ID()
+				rc.Model = fbModel
 				if rc.Request != nil {
 					rc.Request.Model = fbModel
 				}
@@ -1199,8 +1206,11 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				if fbResult.StrategyName != "" {
 					rc.Metadata["routing_strategy"] = fbResult.StrategyName
 				}
-				if fbResult.ModelOverride != "" && rc.Request != nil {
-					rc.Request.Model = fbResult.ModelOverride
+				if fbResult.ModelOverride != "" {
+					rc.Model = fbResult.ModelOverride
+					if rc.Request != nil {
+						rc.Request.Model = fbResult.ModelOverride
+					}
 				}
 				return fbResult.Provider, nil
 			}

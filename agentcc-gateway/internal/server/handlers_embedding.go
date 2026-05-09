@@ -82,6 +82,11 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	} else if shouldApplyOrgProviderOverride(rc) {
 		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 	}
+	// Apply model override (e.g., strip "openai/" prefix) to the embedding request.
+	// resolveProvider updates rc.Model when the registry returns a ModelOverride.
+	if rc.Model != req.Model {
+		rc.EmbeddingRequest.Model = rc.Model
+	}
 	// Type-assert to EmbeddingProvider.
 	ep, ok := provider.(providers.EmbeddingProvider)
 	if !ok {
