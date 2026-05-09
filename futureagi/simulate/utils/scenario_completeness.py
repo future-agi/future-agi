@@ -5,11 +5,9 @@ endpoints — chat, voice / agent_definition, and prompt simulation — so direc
 API/SDK callers get the same 400 the UI button now blocks.
 """
 
-from rest_framework import status
-from rest_framework.response import Response
-
 from model_hub.models.choices import StatusType
 from simulate.models.scenarios import Scenarios
+from tfc.utils.general_methods import GeneralMethods
 
 
 def check_scenarios_incomplete(scenario_ids):
@@ -32,18 +30,16 @@ def check_scenarios_incomplete(scenario_ids):
     if not incomplete:
         return None
 
-    return Response(
+    return GeneralMethods().bad_request(
         {
             "error": "Scenarios incomplete",
             "detail": (
-                f"{len(incomplete)} scenario(s) are still being generated or "
-                "failed generation. Wait for them to complete before running "
-                "a simulation."
+                f"{len(incomplete)} scenario(s) are not completed. Wait for "
+                "them to finish or remove them from the selection."
             ),
             "scenarios": [
                 {"id": str(s["id"]), "name": s["name"], "status": s["status"]}
                 for s in incomplete
             ],
-        },
-        status=status.HTTP_400_BAD_REQUEST,
+        }
     )
