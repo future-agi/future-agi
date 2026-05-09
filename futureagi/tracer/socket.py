@@ -13,16 +13,15 @@ from tracer.utils.filters import FilterEngine
 
 # from tracer.models.observation_span import ObservationSpan
 
-_ISO_FORMATS = ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ")
-
-
 def _parse_iso_datetime(s: str) -> datetime:
-    for fmt in _ISO_FORMATS:
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            pass
-    raise ValueError(f"unrecognised datetime string: {s!r}")
+    # Normalise trailing Z so fromisoformat accepts all ISO 8601 variants
+    # (with or without fractional seconds, with or without timezone offset).
+    normalized = s.rstrip() if not s.endswith("Z") else s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(normalized)
+        return dt.replace(tzinfo=None)
+    except (ValueError, AttributeError):
+        raise ValueError(f"unrecognised datetime string: {s!r}")
 
 
 class GraphDataConsumer(DataConsumer):
