@@ -18,15 +18,20 @@ The five-phase Temporal workflow that drives simulation test runs:
 
 ### Properties proved
 
-**Safety invariants** (checked for all reachable states):
+**Safety invariants** (pure state predicates, checked for all reachable states):
+
+| Property | Meaning |
+|----------|---------|
+| `CountIntegrity` | Once creation is done, `total_calls` always equals the actual number of `CallExecution` records |
+| `FinalizationCorrect` | At `Done`: `tex_status = completed` iff at least one call completed; `failed` otherwise |
+
+**Temporal safety properties** (box-action formulas, checked under `PROPERTIES`):
 
 | Property | Meaning |
 |----------|---------|
 | `NoRollback` | `CallExecution` status is monotone — never goes backwards (e.g. completed → ongoing is impossible) |
 | `TexStatusMonotone` | `TestExecution` status is monotone |
-| `CountIntegrity` | Once creation is done, `total_calls` always equals the actual number of `CallExecution` records |
-| `FinalizationCorrect` | At `Done`: `tex_status = completed` iff at least one call completed; `failed` otherwise |
-| `FailedAtCreationNeverLaunched` | A call marked `FAILED` during creation (fix for issue #312 — unresolved template tokens) never transitions to `ongoing` |
+| `NoFailedToOngoing` | A call in any terminal state (including `failed` at creation — fix for issue #312) never transitions to `ongoing` |
 
 **Liveness properties** (checked under the `Fairness` assumption):
 
@@ -52,7 +57,7 @@ With `N_CALLS = 3`, TLC explores ~50,000 states in under a minute. Increase to 4
 Liveness properties require the `Fairness` conjunction in `Spec`:
 
 - **Weak fairness** on workflow phase transitions (`SetupSucceeds`, `AllLaunched`, etc.) — if a transition is continuously enabled, it eventually fires.
-- **Weak fairness** on `CreateCall(c)` and `LaunchCall(c)` — each call is eventually created and launched.
+- **Weak fairness** on `CreateCall(c)`, `LaunchCall(c)`, and `CallAnalyzing(c)` — each call is eventually created, launched, and transitions to the analyzing phase.
 - **Strong fairness** on `EvalCompletes(c)` and `EvalFails(c)` — the external agent eventually responds (infinitely often enabled → eventually fires).
 
 Without `Fairness`, liveness properties are unprovable (the model-checker can always find a stuttering run).

@@ -329,13 +329,14 @@ TexStatusMonotone ==
 CountIntegrity ==
   (total_calls > 0) => (total_calls = Cardinality(calls))
 
-\* A call marked FAILED at creation (pending -> failed without going through ongoing)
-\* never transitions to ongoing — the fix for issue #312
-FailedAtCreationNeverLaunched ==
-  \A c \in calls :
-    \* If a call went from pending to failed without being ongoing first, it stays failed
-    (call_status[c] = "failed") =>
-    [](call_status[c] \in TerminalCallStatuses)
+\* A call in a terminal state never transitions to ongoing.
+\* Expressed as a box-action formula (goes in PROPERTIES, not INVARIANTS).
+\* This is the key correctness property for issue #312: calls failed at
+\* creation due to unresolved tokens must never be launched.
+NoFailedToOngoing ==
+  [][\A c \in calls :
+    (call_status[c] \in TerminalCallStatuses) =>
+    (call_status'[c] \in TerminalCallStatuses)]_call_status
 
 \* Finalization is correct:
 \* COMPLETED iff at least one call completed; FAILED iff all calls failed/cancelled
@@ -357,10 +358,14 @@ NoDoubleTerminal ==
 \* Workflow eventually reaches a terminal phase
 EventuallyTerminates == <>(wf_phase \in TerminalPhases)
 
-\* Every created call eventually reaches a terminal status
+\* Every created call eventually reaches a terminal status.
+\* Uses ~> (leads-to) rather than => <> to avoid vacuous satisfaction
+\* at the initial state where calls = {} (no call is yet created).
+\* ~> means: in every state where the antecedent holds, the consequent
+\* holds in some future state — checked only over states where c \in calls.
 AllCallsEventuallyTerminal ==
   \A c \in 1..N_CALLS :
-    (c \in calls) => <>(call_status[c] \in TerminalCallStatuses)
+    (c \in calls) ~> (call_status[c] \in TerminalCallStatuses)
 
 \* Once all calls are terminal, finalization eventually fires
 TerminalCallsImplyFinalization ==
