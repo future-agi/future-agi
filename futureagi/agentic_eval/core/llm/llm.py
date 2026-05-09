@@ -414,6 +414,9 @@ class LLM:
         except (ImportError, Exception):
             pass
 
+    GATEWAY_MAX_ATTEMPTS = 3
+    GATEWAY_RETRY_BACKOFF = (0.5, 1.0, 2.0)
+
     def _try_gateway_completion(
         self, payload: dict, tools: Optional[list] = None
     ) -> Optional[Any]:
@@ -422,24 +425,31 @@ class LLM:
             return None
         if getattr(self, "api_key", None):
             return None
-        try:
-            extra_headers = {}
-            if getattr(self, "org_id", None):
-                extra_headers["X-Org-Id"] = self.org_id
-            kwargs = self._build_gateway_request_kwargs(
-                payload=payload,
-                extra_headers=extra_headers or None,
-            )
-            if tools:
-                kwargs["tools"] = tools
-            return self._gateway_client.chat.completions.create(**kwargs)
-        except Exception as gw_err:
-            logger.debug(
-                "gateway_call_failed_falling_back_to_litellm",
-                error=str(gw_err),
-                model=payload.get("model", self.model_name),
-            )
-            return None
+
+        extra_headers = {}
+        if getattr(self, "org_id", None):
+            extra_headers["X-Org-Id"] = self.org_id
+        kwargs = self._build_gateway_request_kwargs(
+            payload=payload,
+            extra_headers=extra_headers or None,
+        )
+        if tools:
+            kwargs["tools"] = tools
+
+        for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            try:
+                return self._gateway_client.chat.completions.create(**kwargs)
+            except Exception as gw_err:
+                logger.warning(
+                    "gateway_attempt_failed",
+                    error=str(gw_err),
+                    model=payload.get("model", self.model_name),
+                    attempt=attempt + 1,
+                    max_attempts=self.GATEWAY_MAX_ATTEMPTS,
+                )
+                if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
+                    time.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+        return None
 
     def _build_gateway_request_kwargs(
         self,
@@ -468,24 +478,31 @@ class LLM:
             return None
         if getattr(self, "api_key", None):
             return None
-        try:
-            extra_headers = {}
-            if getattr(self, "org_id", None):
-                extra_headers["X-Org-Id"] = self.org_id
-            kwargs = self._build_gateway_request_kwargs(
-                payload=payload,
-                extra_headers=extra_headers or None,
-            )
-            if tools:
-                kwargs["tools"] = tools
-            return await self._async_gateway_client.chat.completions.create(**kwargs)
-        except Exception as gw_err:
-            logger.debug(
-                "async_gateway_call_failed_falling_back_to_litellm",
-                error=str(gw_err),
-                model=payload.get("model", self.model_name),
-            )
-            return None
+
+        extra_headers = {}
+        if getattr(self, "org_id", None):
+            extra_headers["X-Org-Id"] = self.org_id
+        kwargs = self._build_gateway_request_kwargs(
+            payload=payload,
+            extra_headers=extra_headers or None,
+        )
+        if tools:
+            kwargs["tools"] = tools
+
+        for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            try:
+                return await self._async_gateway_client.chat.completions.create(**kwargs)
+            except Exception as gw_err:
+                logger.warning(
+                    "async_gateway_attempt_failed",
+                    error=str(gw_err),
+                    model=payload.get("model", self.model_name),
+                    attempt=attempt + 1,
+                    max_attempts=self.GATEWAY_MAX_ATTEMPTS,
+                )
+                if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+        return None
 
     def _update_token_usage(self, response: Any) -> None:
         """

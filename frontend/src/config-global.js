@@ -13,6 +13,10 @@ const API_HOST_MAP = {
 };
 
 function resolveApiHost() {
+  // Runtime > build-time > hostname map > dev default. See frontend/docker-entrypoint.sh.
+  const runtime =
+    (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
+  if (runtime.VITE_HOST_API) return runtime.VITE_HOST_API;
   if (import.meta.env.VITE_HOST_API) return import.meta.env.VITE_HOST_API;
   return API_HOST_MAP[window.location.hostname] || "http://localhost:8000";
 }
