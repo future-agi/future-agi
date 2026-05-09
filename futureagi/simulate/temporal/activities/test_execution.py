@@ -468,7 +468,8 @@ async def create_call_execution_records(
                             call_metadata=call_metadata,
                             agent_version=agent_version,
                         )
-                        call_ids.append(str(call_execution.id))
+                        # NOTE: call_ids.append is deferred until after validation
+                        # to ensure each call ID appears exactly once in the list.
 
                         # Generate system prompt using dynamic prompt builder
                         system_prompt = base_prompt
@@ -519,6 +520,9 @@ async def create_call_execution_records(
                             )
                             call_ids.append(str(call_execution.id))
                             continue
+
+                        # Validation passed — record this call for launching
+                        call_ids.append(str(call_execution.id))
 
                         # Determine phone_number_id for CreateCallExecution
                         # For outbound calls, this will be empty (acquired later)
