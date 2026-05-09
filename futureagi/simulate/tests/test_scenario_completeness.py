@@ -130,13 +130,17 @@ def test_failed_scenarios_also_block(
 
 
 def test_cross_org_scenarios_are_not_leaked(
-    db, run_test, organization, workspace, agent_definition, simulator_agent
+    db, run_test, user, organization, workspace, agent_definition, simulator_agent
 ):
     """A scenario belonging to another org must NOT appear in the gate's
     response, even if its UUID is passed in."""
     other_org = Organization.objects.create(name="Other Org")
     other_ws = Workspace.objects.create(
-        name="Other WS", organization=other_org, is_default=True, is_active=True,
+        name="Other WS",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=user,
     )
     other_agent = AgentDefinition.objects.create(
         agent_name="Other Agent",
