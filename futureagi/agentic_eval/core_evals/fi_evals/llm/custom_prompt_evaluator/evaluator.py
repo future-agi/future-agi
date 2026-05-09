@@ -109,6 +109,8 @@ class CustomPromptEvaluator(LLM):
         """
         if self._output_type in ("score", "numeric"):
             result_schema = {"type": "number"}
+        elif self._output_type == "Pass/Fail":
+            result_schema = {"type": "string", "enum": ["Pass", "Fail"]}
         elif self._output_type == "choices" and getattr(self, "_choices", None):
             result_schema = {"type": "string", "enum": self._choices}
         else:
