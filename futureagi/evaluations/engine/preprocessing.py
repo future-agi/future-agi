@@ -44,7 +44,7 @@ def preprocess_inputs(eval_name, inputs):
         return inputs
 
 
-@register_preprocessor("clip_score")
+@register_preprocessor("ClipScore")
 def _preprocess_clip(inputs):
     """
     Pre-compute CLIP embeddings for images and text.
@@ -137,7 +137,7 @@ def _preprocess_clip(inputs):
     return inputs
 
 
-@register_preprocessor("fid_score")
+@register_preprocessor("FidScore")
 def _preprocess_fid(inputs):
     """
     Pre-compute Inception features for FID.
