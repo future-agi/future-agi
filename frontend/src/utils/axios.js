@@ -46,7 +46,7 @@ function snakeToCamelKey(key) {
 // phantom aliases like `numOfWords` for a template variable the user named
 // `num_of_words`. The outer field itself still gets a camelCase alias — only
 // the inner keys of that object are left alone (TH-4375).
-const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders"]);
+const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders", "params", "headers"]);
 
 // Build a camelCase→snake_case lookup table for each object we alias.
 function buildAliasTable(obj) {
@@ -678,7 +678,7 @@ export const endpoints = {
       paymentMethodDefault: (pmId) =>
         `/usage/v2/payment-methods/${pmId}/default/`,
       paymentMethodDelete: (pmId) => `/usage/v2/payment-methods/${pmId}/`,
-      deploymentInfo: `/usage/v2/deployment-info/`,
+      deploymentInfo: `/api/deployment-info/`,
     },
   },
   tools: {

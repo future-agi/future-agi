@@ -54,3 +54,17 @@ class MonthlyInvoiceOutput:
     invoices_skipped: int = 0
     errors: int = 0
     status: str = "COMPLETED"
+
+
+@dataclass
+class MonthlyClosingInput:
+    period: str = ""  # YYYY-MM. Empty = previous month from now.
+
+
+@dataclass
+class MonthlyClosingOutput:
+    period: str = ""
+    invoices_created: int = 0
+    invoices_skipped: int = 0
+    errors: int = 0
+    status: str = "COMPLETED"

@@ -187,7 +187,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     {
       label: "Silence",
       value:
-        silenceTotal > 0 ? fmtMs(silenceTotal * 1000, { forceMs: false }) : "0ms",
+        silenceTotal > 0 ? fmtMs(silenceTotal * 1000, { forceMs: false }) : "-",
       hint: "Dead air (> 0.3s gaps)",
       tone: silenceTotal > 10 ? "warn" : "default",
     },

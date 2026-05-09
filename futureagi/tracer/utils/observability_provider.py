@@ -19,6 +19,10 @@ from tracer.services.clickhouse.span_attribute_lookups import (
     span_id_by_provider_log_id,
 )
 from tracer.services.observability_providers import ObservabilityService
+from tracer.tasks.recordings_rehost import (
+    RECORDING_KEYS_BY_PROVIDER,
+    rehost_external_recordings,
+)
 from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
 from tracer.utils.retell import normalize_retell_data
@@ -210,7 +214,7 @@ def _create_observation_span(project, provider, normalized_data, metadata):
 
     attributes = normalized_data.get("span_attributes", {})
 
-    ObservationSpan.objects.create(
+    return ObservationSpan.objects.create(
         id=uuid.uuid4(),
         project=project,
         trace=trace,
@@ -263,6 +267,7 @@ def _update_observation_span(existing_span, normalized_data):
             "latency_ms",
         ]
     )
+    return existing_span
 
 
 def process_and_store_logs(logs: list, provider: ObservabilityProvider):
@@ -330,16 +335,40 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
                     )
 
                 if existing_span:
-                    _update_observation_span(existing_span, normalized_data)
+                    span = _update_observation_span(existing_span, normalized_data)
                 else:
-                    _create_observation_span(
+                    span = _create_observation_span(
                         project, provider, normalized_data, metadata
                     )
+
+                _maybe_enqueue_recording_rehost(provider, span)
         except Exception as e:
             logger.exception(
                 f"Error updating or creating observation span for {provider.provider}: {e}"
             )
             continue
+
+
+def _maybe_enqueue_recording_rehost(
+    provider: ObservabilityProvider, span: ObservationSpan
+) -> None:
+    """Enqueue S3 rehost for recording URLs on this span, if applicable.
+
+    Scheduled via transaction.on_commit so the worker won't race the upsert.
+    Opt out per provider via metadata["rehost_recordings"] = False.
+    """
+    if (provider.metadata or {}).get("rehost_recordings", True) is False:
+        return
+
+    keys = RECORDING_KEYS_BY_PROVIDER.get(provider.provider) or []
+    attrs = span.span_attributes or {}
+    if not any(attrs.get(key) for key, _ in keys):
+        return
+
+    span_id = str(span.id)
+    transaction.on_commit(
+        lambda: rehost_external_recordings.delay(span_id=span_id)
+    )
 
 
 def create_observability_provider(

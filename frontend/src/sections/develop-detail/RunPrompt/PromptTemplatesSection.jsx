@@ -12,6 +12,7 @@ import {
 } from "./common";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
 
 const PromptTemplatesSection = ({
   control,
@@ -65,9 +66,19 @@ const PromptTemplatesSection = ({
     clearErrors(`config.messages[${index}].content`);
   };
 
+  const templateFormat = watch("config.template_format") || "mustache";
+
   const existingRoles = messages.map((p) => p?.role);
   return (
     <Box sx={{ gap: "16px", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <TemplateFormatSelector
+          value={templateFormat}
+          onChange={(v) =>
+            setValue("config.template_format", v, { shouldDirty: true })
+          }
+        />
+      </Box>
       {/* {fields.map(({ id }, index) => (
             <PromptSection
               key={id}
@@ -127,6 +138,7 @@ const PromptTemplatesSection = ({
               allowRoleChange: true,
             }}
             existingRoles={existingRoles}
+            jinjaMode={templateFormat === "jinja"}
           />
           {errors?.config?.messages?.[_idx]?.content?.message && (
             <Typography

@@ -55,6 +55,7 @@ const PromptCard = ({
   hideExpandedHeader,
   allVariablesValid = false,
   variableValidator,
+  jinjaMode = false,
 }) => {
   const {
     allowRoleChange,
@@ -153,6 +154,7 @@ const PromptCard = ({
           disabled={disabled}
           allVariablesValid={allVariablesValid}
           variableValidator={variableValidator}
+          jinjaMode={jinjaMode}
         />
         <ShowComponent condition={isRecorderActive}>
           <PromptRecorder
@@ -204,6 +206,7 @@ const PromptCard = ({
           openVariableEditor={openVariableEditor}
           allVariablesValid={allVariablesValid}
           variableValidator={variableValidator}
+          jinjaMode={jinjaMode}
         />
       )}
     </>
@@ -262,6 +265,7 @@ PromptCard.propTypes = {
   hideExpandedHeader: PropTypes.bool,
   allVariablesValid: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
 
 export default PromptCard;

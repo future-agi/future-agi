@@ -356,13 +356,14 @@ def process_eval_task(eval_task_id: str):
                 filters = filters & Q(created_at__gte=eval_task_logger.updated_at)
 
             if len(spanids_processed) > 0:
-                spans = ObservationSpan.objects.filter(filters).exclude(
+                spans = ObservationSpan.objects.filter(filters).only("id").exclude(
                     id__in=spanids_processed
                 )
             else:
-                spans = ObservationSpan.objects.filter(filters)
+                spans = ObservationSpan.objects.filter(filters).only("id")
 
-            filtered_spans = spans
+
+            filtered_spans = spans.values_list("id", flat=True)
 
             # Filter spans based on sampling rate
             if sampling_rate and sampling_rate > 0 and sampling_rate <= 100:
@@ -383,9 +384,9 @@ def process_eval_task(eval_task_id: str):
                     sampled_span_ids = list(
                         spans.order_by("?").values_list("id", flat=True)[:sample_count]
                     )
-                    filtered_spans = list(spans.filter(id__in=sampled_span_ids))
-            if cnt is not None and cnt < len(filtered_spans):
-                filtered_spans = filtered_spans[:cnt]
+                    filtered_spans = sampled_span_ids
+            if cnt is not None:
+                filtered_spans = list(filtered_spans[:cnt])
 
             # Cap ``spanids_processed`` so the JSONField doesn't grow unbounded
             # for long-running tasks. Record the dedup-set size in ``offset``
@@ -393,7 +394,7 @@ def process_eval_task(eval_task_id: str):
             # (the in-DB list only retains the most recent ids for future
             # dedup).
             MAX_STORED_IDS = 10000
-            new_ids = [span.id for span in filtered_spans]
+            new_ids = list(filtered_spans)
             updated_spanids_processed = list(set(spanids_processed + new_ids))
             eval_task_logger.offset = len(updated_spanids_processed)
             if len(updated_spanids_processed) > MAX_STORED_IDS:
@@ -407,10 +408,10 @@ def process_eval_task(eval_task_id: str):
 
         evals = eval_task.evals.all()
 
-        for span in filtered_spans:
+        for span_id in filtered_spans:
             for eval_config in evals:
                 evaluate_observation_span_observe.delay(
-                    str(span.id),
+                    str(span_id),
                     str(eval_config.id),
                     str(eval_task.id),
                 )

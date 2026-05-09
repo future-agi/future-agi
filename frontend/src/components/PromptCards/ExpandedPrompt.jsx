@@ -60,6 +60,7 @@ export default function ExpandedPrompt({
   hideExpandedHeader,
   allVariablesValid = false,
   variableValidator,
+  jinjaMode = false,
 }) {
   const theme = useTheme();
   const quillRef = useRef(null);
@@ -275,6 +276,7 @@ export default function ExpandedPrompt({
           showEditEmbed,
           allVariablesValid,
           variableValidator,
+          jinjaMode,
         );
       }
     }
@@ -384,6 +386,7 @@ export default function ExpandedPrompt({
             allowVariables={allowVariables}
             allVariablesValid={allVariablesValid}
             variableValidator={variableValidator}
+            jinjaMode={jinjaMode}
             label={hideExpandedHeader ? role : ""}
           />
           <ShowComponent condition={isRecorderActive}>
@@ -466,4 +469,5 @@ ExpandedPrompt.propTypes = {
   hideExpandedHeader: PropTypes.bool,
   allVariablesValid: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };

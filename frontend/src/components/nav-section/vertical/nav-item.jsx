@@ -7,6 +7,7 @@ import Link from "@mui/material/Link";
 import Tooltip from "@mui/material/Tooltip";
 import { alpha, styled } from "@mui/material/styles";
 import ListItemButton from "@mui/material/ListItemButton";
+import CustomTooltip from "src/components/tooltip";
 
 import { RouterLink } from "src/routes/components";
 
@@ -23,6 +24,7 @@ const NavItem = forwardRef(
       icon,
       info,
       disabled,
+      disabledTooltip,
       caption,
       roles,
       //
@@ -154,6 +156,14 @@ const NavItem = forwardRef(
       return renderContent;
     }
 
+    if (disabled) {
+      return (
+        <CustomTooltip title={disabledTooltip || title} show={!!disabledTooltip} placement="right" arrow>
+          {renderContent}
+        </CustomTooltip>
+      );
+    }
+
     if (externalLink)
       return (
         <Link
@@ -203,6 +213,7 @@ NavItem.propTypes = {
   info: PropTypes.element,
   title: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   disabled: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
   hasChild: PropTypes.bool,
   caption: PropTypes.string,
   externalLink: PropTypes.bool,

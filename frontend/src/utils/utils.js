@@ -911,23 +911,6 @@ export function formatMs(ms) {
   return `${(ms / 86_400_000).toFixed(1)}d`;
 }
 
-/**
- * Lightweight ms ↔ s formatter used by voice analytics surfaces.
- *
- * Differs from formatMs:
- *   - Tops out at seconds (no minutes/hours/days)
- *   - Optional forceMs flag to keep the unit in milliseconds at all
- *     magnitudes (so a 4060ms latency reads as "4060ms", not "4.06s")
- *   - Configurable empty placeholder so callers that want a dash, an
- *     em-dash, or null can all share the helper
- *
- * @param {number|null|undefined} ms
- * @param {Object}  [opts]
- * @param {boolean} [opts.forceMs=false]      Always render in milliseconds.
- * @param {number}  [opts.secondsDecimals=2]  Decimal places when switching to seconds.
- * @param {string|null} [opts.emptyText="—"]  Returned for null/NaN/Infinity input.
- * @returns {string|null}
- */
 export const fmtMs = (
   ms,
   { forceMs = false, secondsDecimals = 2, emptyText = "—" } = {},
@@ -1226,7 +1209,7 @@ export function isValidUrl(str) {
   if (typeof str !== "string" || !str) return false;
   try {
     const url = new URL(str);
-    return url.protocol === "https:";
+    return url.protocol === "https:" || url.protocol === "http:";
   } catch {
     return false;
   }

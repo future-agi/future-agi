@@ -134,6 +134,7 @@ def run_eval_func(
         runner.eval_template = template
         if "mapping" in data_config:
             data_config.pop("mapping")
+
         eval_instance = runner._create_eval_instance(
             config=data_config,
             eval_class=eval_class,

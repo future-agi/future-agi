@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models.workspace import Workspace
+from common.utils.data_injection import normalize as _di_normalize
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
@@ -600,12 +601,35 @@ def _execute_evaluation(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Build context for data_injection support ---
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["span_context"]:
+        _eval_inputs["span_context"] = {
+            "id": str(observation_span.id),
+            "name": observation_span.name,
+            "observation_type": observation_span.observation_type,
+            "status": observation_span.status,
+            "status_message": observation_span.status_message,
+            "model": observation_span.model,
+            "latency_ms": observation_span.latency_ms,
+            "total_tokens": observation_span.total_tokens,
+            "cost": float(observation_span.cost) if observation_span.cost else None,
+        }
+    if _di["trace_context"]:
+        _eval_inputs["trace_context"] = {
+            "id": str(observation_span.trace_id),
+            "span_id": str(observation_span.id),
+        }
+
     # --- Run eval via unified engine ---
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_model,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
@@ -1008,15 +1032,19 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # Cluster this project's unclustered eval results (idempotent —
-        # if another call already clustered everything, this is a no-op).
-        try:
-            from tracer.tasks.eval_clustering import cluster_eval_results_task
-
-            project_id = str(observation_span.project_id)
-            cluster_eval_results_task.delay(project_id)
-        except Exception:
-            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+        # DISABLED 2026-04-30 — per-row enqueue caused Aurora CPU saturation
+        # under load (incident: cron-driven historical EvalTask × N×M fan-out
+        # → 60+ cluster_eval_results_task/sec → embedding service connection
+        # resets → workflow pile-up). Re-enable only after per-project debounce
+        # is implemented (Temporal workflow ID dedup or Redis lock).
+        #
+        # try:
+        #     from tracer.tasks.eval_clustering import cluster_eval_results_task
+        #
+        #     project_id = str(observation_span.project_id)
+        #     cluster_eval_results_task.delay(project_id)
+        # except Exception:
+        #     logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
     except ValueError as e:

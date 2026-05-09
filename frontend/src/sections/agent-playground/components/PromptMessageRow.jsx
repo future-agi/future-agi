@@ -45,6 +45,7 @@ const SortablePromptCard = ({
   dropdownOptions,
   mentionEnabled,
   variableValidator,
+  jinjaMode = false,
 }) => {
   const {
     attributes,
@@ -110,6 +111,7 @@ const SortablePromptCard = ({
                 mentionEnabled={mentionEnabled}
                 variableValidator={variableValidator}
                 allVariablesValid={!variableValidator}
+                jinjaMode={jinjaMode}
               />
               {
                 // @ts-ignore
@@ -148,6 +150,7 @@ SortablePromptCard.propTypes = {
   dropdownOptions: PropTypes.array,
   mentionEnabled: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
 
 export default function PromptMessageRow({
@@ -158,6 +161,7 @@ export default function PromptMessageRow({
   dropdownOptions = [],
   mentionEnabled = false,
   variableValidator,
+  jinjaMode = false,
 }) {
   const theme = useTheme();
   const { formState } = useFormContext();
@@ -356,6 +360,7 @@ export default function PromptMessageRow({
               dropdownOptions={dropdownOptions}
               mentionEnabled={mentionEnabled}
               variableValidator={variableValidator}
+              jinjaMode={jinjaMode}
             />
           ))}
         </SortableContext>
@@ -494,4 +499,5 @@ PromptMessageRow.propTypes = {
   dropdownOptions: PropTypes.array,
   mentionEnabled: PropTypes.bool,
   variableValidator: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };

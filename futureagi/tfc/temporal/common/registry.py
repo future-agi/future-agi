@@ -298,6 +298,20 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_billing_workflows", error=str(e))
 
+    try:
+        from tfc.temporal.billing.workflows import MonthlyClosingWorkflow
+
+        register_for_queues(
+            queues=["tasks_s"],
+            workflows=[MonthlyClosingWorkflow],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_monthly_closing_workflow", error=str(e)
+        )
+
     _workflows_registered = True
 
 
@@ -656,7 +670,7 @@ def _ensure_activities_registered() -> None:
 
         billing_activities = get_billing_activities()
         register_for_queues(
-            queues=["default", "tasks_l"],
+            queues=["default", "tasks_l", "tasks_s"],
             activities=billing_activities,
         )
         log.info("registered_billing_activities", count=len(billing_activities))
@@ -724,6 +738,7 @@ def _import_temporal_activity_modules() -> None:
         # tracer tasks
         "tracer.tasks",
         "tracer.tasks.trace_scanner",
+        "tracer.tasks.recordings_rehost",
         "tracer.utils.span",
         "tracer.utils.eval",
         "tracer.utils.observability_provider",

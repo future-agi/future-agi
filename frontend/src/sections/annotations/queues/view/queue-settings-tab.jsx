@@ -34,6 +34,7 @@ import { RHFCheckbox } from "src/components/hook-form/rhf-checkbox";
 import LabelPicker from "../components/label-picker";
 import AnnotatorPicker from "../components/annotator-picker";
 
+/** @type {Record<string, { label: string; hint: string }>} */
 const ALL_STATUS_OPTIONS = {
   draft: { label: "Draft", hint: "Queue is being set up" },
   active: { label: "Active", hint: "Open for annotation and review" },
@@ -41,6 +42,7 @@ const ALL_STATUS_OPTIONS = {
   completed: { label: "Completed", hint: "All items annotated and reviewed" },
 };
 
+/** @type {Record<string, string[]>} */
 const VALID_TRANSITIONS = {
   draft: ["active"],
   active: ["paused", "completed"],
@@ -48,14 +50,23 @@ const VALID_TRANSITIONS = {
   completed: ["active", "paused"],
 };
 
-function getStatusOptions(currentStatus) {
+function getStatusOptions(currentStatus, { hasLabels = true } = {}) {
   const allowed = VALID_TRANSITIONS[currentStatus] || [];
-  const opt = (s) => ({
-    value: s,
-    label: ALL_STATUS_OPTIONS[s]?.label || s,
-    hint: ALL_STATUS_OPTIONS[s]?.hint || "",
-  });
-  return [opt(currentStatus), ...allowed.map(opt)];
+  const opt = (s, { isCurrent = false } = {}) => {
+    const disabled = !isCurrent && s === "active" && !hasLabels;
+    return {
+      value: s,
+      label: ALL_STATUS_OPTIONS[s]?.label || s,
+      hint: disabled
+        ? "Add at least one label to activate the queue"
+        : ALL_STATUS_OPTIONS[s]?.hint || "",
+      disabled,
+    };
+  };
+  return [
+    opt(currentStatus, { isCurrent: true }),
+    ...allowed.map(( s) => opt(s)),
+  ];
 }
 
 const RESERVATION_TIMEOUT_OPTIONS = [
@@ -206,26 +217,43 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                 <Controller
                   name="status"
                   control={control}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      size="small"
-                      select
-                      label="Status"
-                      fullWidth
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                      SelectProps={{
-                        renderValue: (v) => ALL_STATUS_OPTIONS[v]?.label || v,
-                        MenuProps: {
-                          PaperProps: {
-                            sx: { borderRadius: "4px !important" },
+                  render={({ field }) => {
+              
+                    const currentStatus = queue?.status || field.value;
+                    const labelGateBlocks =
+                      currentStatus !== "active" &&
+                      (labelIds || []).length === 0;
+                    return (
+                      <TextField
+                        {...field}
+                        size="small"
+                        select
+                        label="Status"
+                        fullWidth
+                      
+                        FormHelperTextProps={{
+                          sx: { ml: 0, color: "warning.main" },
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                        }}
+                        SelectProps={{
+                          renderValue: (v) => ALL_STATUS_OPTIONS[v]?.label || v,
+                          MenuProps: {
+                            PaperProps: {
+                              sx: { borderRadius: "4px !important" },
+                            },
                           },
-                        },
-                      }}
-                    >
-                      {getStatusOptions(queue?.status || field.value).map(
-                        (opt) => (
-                          <MenuItem key={opt.value} value={opt.value}>
+                        }}
+                      >
+                        {getStatusOptions(currentStatus, {
+                          hasLabels: (labelIds || []).length > 0,
+                        }).map((opt) => (
+                          <MenuItem
+                            key={opt.value}
+                            value={opt.value}
+                            disabled={opt.disabled}
+                          >
                             <Box>
                               <Typography variant="body2">
                                 {opt.label}
@@ -238,10 +266,10 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                               </Typography>
                             </Box>
                           </MenuItem>
-                        ),
-                      )}
-                    </TextField>
-                  )}
+                        ))}
+                      </TextField>
+                    );
+                  }}
                 />
               </Stack>
             </CardContent>

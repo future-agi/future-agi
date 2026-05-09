@@ -798,19 +798,24 @@ TraceList.propTypes = {
   onSelect: PropTypes.func.isRequired,
 };
 
-function PatternSummary({ summary }) {
+function PatternSummary({ summary, clusterId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const insights = summary?.insights ?? [];
 
   if (!insights.length) {
+    // Cluster ID prefix is canonical: E-* = eval-source, S-* = scanner-source.
+    const isEvalCluster = typeof clusterId === "string" && clusterId.startsWith("E-");
+    const message = isEvalCluster
+      ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
+      : "Not enough data yet — waiting for more scanner results.";
     return (
       <Typography
         fontSize="11px"
         color="text.disabled"
         sx={{ py: 2, textAlign: "center" }}
       >
-        Not enough data yet — waiting for more scanner results.
+        {message}
       </Typography>
     );
   }
@@ -874,6 +879,7 @@ PatternSummary.propTypes = {
       }),
     ),
   }),
+  clusterId: PropTypes.string,
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
@@ -1879,7 +1885,7 @@ export default function OverviewTab({ _error: currentError }) {
               icon="mdi:information-outline"
               collapsible
             >
-              <PatternSummary summary={patternSummary} />
+              <PatternSummary summary={patternSummary} clusterId={clusterId} />
             </SectionCard>
 
             {/* Agent Flow */}
