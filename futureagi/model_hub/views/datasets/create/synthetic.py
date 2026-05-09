@@ -43,25 +43,12 @@ class CreateSyntheticDataset(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None) or request.user.organization
+        check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
+
         try:
-            # Entitlement check: synthetic data feature
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(
-                    str(org.id), "has_synthetic_data"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
-
             call_log_row_entry = log_and_deduct_cost_for_resource_request(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,

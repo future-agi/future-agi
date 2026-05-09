@@ -1058,22 +1058,12 @@ class AddScenarioColumnsView(APIView):
             ]
         }
         """
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None) or request.user.organization
+        check_ee_feature(EEFeature.AGENTIC_EVAL, org_id=str(org.id))
+
         try:
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(str(org.id), "has_agentic_eval")
-                if not feat_check.allowed:
-                    return self.gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
-
             # Get the scenario
             scenario = get_object_or_404(
                 Scenarios,
