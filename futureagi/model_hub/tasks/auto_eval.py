@@ -78,14 +78,20 @@ def flush_auto_eval_batch(self, config_id: str):
     )
 
     try:
+        evaluation_ids = _create_evaluations_from_rows(config, row_ids)
+        if not evaluation_ids:
+            logger.warning(
+                "auto_eval_no_evaluations_created",
+                extra={"config_id": config_id, "row_count": len(row_ids)},
+            )
+            return
+
         from tfc.temporal.evaluations.client import start_evaluation_batch_workflow
 
         start_evaluation_batch_workflow(
-            eval_template_id=str(config.eval_template_id),
-            row_ids=row_ids,
-            column_mapping=config.column_mapping,
+            evaluation_ids=evaluation_ids,
             max_concurrent=config.max_concurrent,
-            source_config_id=config_id,
+            workflow_id_prefix=f"auto_eval_{config_id[:8]}",
         )
     except Exception as exc:
         logger.error(
@@ -127,3 +133,77 @@ def _requeue_rows(config_id: str, row_ids: list, debounce_seconds: int):
 def _clear_state(config_id: str):
     cache.delete(_PENDING_KEY.format(config_id=config_id))
     cache.delete(_LOCK_KEY.format(config_id=config_id))
+
+
+def _create_evaluations_from_rows(config, row_ids: list) -> list:
+    """
+    For each Row ID, build an Evaluation.input_data from the row's cells
+    using config.column_mapping, then bulk-create Evaluation objects in PENDING
+    state. Returns a list of evaluation ID strings for the Temporal batch workflow.
+
+    column_mapping maps dataset column names → eval template input field names.
+    Example: {"user_input": "input", "response": "output"}
+
+    Rows whose cells cannot be mapped are skipped with a warning (jitokim Q3:
+    permissive with per-row failure logging rather than strict validation).
+    """
+    from model_hub.models.develop_dataset import Cell, Row
+    from model_hub.models.evaluation import Evaluation, StatusChoices
+
+    rows = list(
+        Row.objects.filter(id__in=row_ids, deleted=False).prefetch_related(
+            "cell_set__column"
+        )
+    )
+    if not rows:
+        return []
+
+    mapping = config.column_mapping  # {"col_name": "input_field"}
+
+    evaluations = []
+    for row in rows:
+        cells_by_col = {
+            cell.column.name: cell.value
+            for cell in row.cell_set.all()
+            if hasattr(cell, "column") and cell.column
+        }
+
+        if not mapping:
+            # No explicit mapping: pass all cell values as-is.
+            input_data = cells_by_col
+        else:
+            input_data = {}
+            missing = []
+            for col_name, input_field in mapping.items():
+                if col_name in cells_by_col:
+                    input_data[input_field] = cells_by_col[col_name]
+                else:
+                    missing.append(col_name)
+            if missing:
+                logger.warning(
+                    "auto_eval_row_column_missing",
+                    extra={
+                        "config_id": str(config.id),
+                        "row_id": str(row.id),
+                        "missing_columns": missing,
+                    },
+                )
+
+        evaluations.append(
+            Evaluation(
+                eval_template=config.eval_template,
+                input_data=input_data,
+                organization=config.organization,
+                workspace=config.workspace,
+                status=StatusChoices.PENDING,
+                metadata={
+                    "source": "auto_eval",
+                    "source_config_id": str(config.id),
+                    "dataset_id": str(config.dataset_id),
+                    "row_id": str(row.id),
+                },
+            )
+        )
+
+    created = Evaluation.objects.bulk_create(evaluations)
+    return [str(e.id) for e in created]
