@@ -23,7 +23,18 @@ LOOKBACK = {
 }
 
 DEFAULT_LOOKBACK = timedelta(days=30)
-FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
+FMT_WITH_FRAC = "%Y-%m-%dT%H:%M:%S.%fZ"
+FMT_NO_FRAC   = "%Y-%m-%dT%H:%M:%SZ"
+_FORMATS = (FMT_WITH_FRAC, FMT_NO_FRAC)
+
+
+def _parse_dt(s):
+    for fmt in _FORMATS:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"unrecognised datetime format: {s!r}")
 
 
 def _get_time_window(filters, interval):
@@ -36,8 +47,8 @@ def _get_time_window(filters, interval):
             and len(cfg["filterValue"]) == 2
         ):
             try:
-                start = datetime.strptime(cfg["filterValue"][0], FMT)
-                end = datetime.strptime(cfg["filterValue"][1], FMT)
+                start = _parse_dt(cfg["filterValue"][0])
+                end = _parse_dt(cfg["filterValue"][1])
                 return start, end
             except (ValueError, TypeError):
                 pass
@@ -62,9 +73,16 @@ def _build_params(project_id, win_start, win_end):
 valid_intervals = st.sampled_from(["hour", "day", "week", "month"])
 any_interval = st.one_of(valid_intervals, st.text(min_size=1, max_size=20))
 
-valid_dt_str = st.datetimes(
+valid_dt_str_frac = st.datetimes(
     min_value=datetime(2000, 1, 1), max_value=datetime(2050, 1, 1)
-).map(lambda d: d.strftime(FMT))
+).map(lambda d: d.strftime(FMT_WITH_FRAC))
+
+valid_dt_str_no_frac = st.datetimes(
+    min_value=datetime(2000, 1, 1), max_value=datetime(2050, 1, 1)
+).map(lambda d: d.strftime(FMT_NO_FRAC))
+
+# Either format is valid.
+valid_dt_str = st.one_of(valid_dt_str_frac, valid_dt_str_no_frac)
 
 
 def datetime_filter(start_str, end_str):
@@ -119,14 +137,41 @@ def test_explicit_filter_passthrough(start_dt, end_dt, interval):
         if start_dt == end_dt:
             end_dt = end_dt + timedelta(seconds=1)
 
-    start_str = start_dt.strftime(FMT)
-    end_str = end_dt.strftime(FMT)
+    start_str = start_dt.strftime(FMT_WITH_FRAC)
+    end_str = end_dt.strftime(FMT_WITH_FRAC)
 
     filters = [datetime_filter(start_str, end_str)]
     returned_start, returned_end = _get_time_window(filters, interval)
 
-    assert returned_start == datetime.strptime(start_str, FMT)
-    assert returned_end == datetime.strptime(end_str, FMT)
+    assert returned_start == datetime.strptime(start_str, FMT_WITH_FRAC)
+    assert returned_end == datetime.strptime(end_str, FMT_WITH_FRAC)
+
+
+@given(
+    st.datetimes(min_value=datetime(2000, 1, 1), max_value=datetime(2049, 12, 31)),
+    st.datetimes(min_value=datetime(2000, 1, 1), max_value=datetime(2049, 12, 31)),
+    any_interval,
+)
+def test_explicit_filter_no_frac_seconds(start_dt, end_dt, interval):
+    """ISO 8601 timestamps without fractional seconds must be accepted (not silently dropped)."""
+    if start_dt >= end_dt:
+        start_dt, end_dt = min(start_dt, end_dt), max(start_dt, end_dt)
+        if start_dt == end_dt:
+            end_dt = end_dt + timedelta(seconds=1)
+
+    # Strip microseconds to produce "...T%H:%M:%SZ" format
+    start_dt = start_dt.replace(microsecond=0)
+    end_dt = end_dt.replace(microsecond=0)
+    start_str = start_dt.strftime(FMT_NO_FRAC)
+    end_str = end_dt.strftime(FMT_NO_FRAC)
+
+    filters = [datetime_filter(start_str, end_str)]
+    returned_start, returned_end = _get_time_window(filters, interval)
+
+    assert returned_start == datetime.strptime(start_str, FMT_NO_FRAC), (
+        "no-frac-seconds filter must be honoured, not silently discarded"
+    )
+    assert returned_end == datetime.strptime(end_str, FMT_NO_FRAC)
 
 
 @given(
