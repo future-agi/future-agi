@@ -1,0 +1,61 @@
+name: Formal Verification Tests
+
+on:
+  push:
+    branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*, hotfix/*]
+    paths:
+      - 'futureagi/**/formal_tests/**'
+      - 'futureagi/tfc/constants/**'
+      - 'futureagi/tfc/permissions/**'
+      - '.github/workflows/formal-tests.yml'
+  pull_request:
+    paths:
+      - 'futureagi/**/formal_tests/**'
+      - 'futureagi/tfc/constants/**'
+      - 'futureagi/tfc/permissions/**'
+      - '.github/workflows/formal-tests.yml'
+
+jobs:
+  formal-tests:
+    name: Z3 + Hypothesis formal tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install formal verification dependencies
+        run: pip install z3-solver hypothesis pytest
+
+      - name: Run accounts/ RBAC formal tests
+        working-directory: futureagi/accounts/formal_tests
+        run: pytest test_rbac_z3.py test_rbac_hypothesis.py -v --noconftest
+
+      - name: Run simulate/ formal tests
+        if: always()
+        working-directory: futureagi/simulate/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run tracer/ formal tests
+        if: always()
+        working-directory: futureagi/tracer/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run agentic_eval/ formal tests
+        if: always()
+        working-directory: futureagi/agentic_eval/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run model_hub/ formal tests
+        if: always()
+        working-directory: futureagi/model_hub/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
