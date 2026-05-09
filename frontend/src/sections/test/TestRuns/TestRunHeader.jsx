@@ -242,7 +242,7 @@ const TestRunHeader = () => {
                 ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
                 : selectedScenarios.length === 0
                   ? "Select atleast one scenario to run test"
-                  : "Some selected scenarios are still being generated. Wait for them to complete before running a simulation."
+                  : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
             }
             size="small"
             arrow
