@@ -26,6 +26,7 @@ from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from common.utils.data_injection import normalize as _di_normalize
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
@@ -2018,6 +2019,42 @@ class EvaluationRunner:
 
             _mapped = preprocess_inputs(self.eval_template.name, _mapped)
 
+        # Inject row_context when full_row data injection is enabled.
+        # data_injection lives in the user's eval metric config (run_config)
+        # or the eval template config — check both.
+        _di_raw = {}
+        if self.user_eval_metric and self.user_eval_metric.config:
+            _uem_cfg = self.user_eval_metric.config
+            _di_raw = (
+                _uem_cfg.get("run_config", {}).get("data_injection", {})
+                or _uem_cfg.get("data_injection", {})
+            )
+        if not _di_raw and self.eval_template:
+            _di_raw = self.eval_template.config.get("data_injection", {})
+        _di = _di_normalize(_di_raw)
+
+        if _di["full_row"] and "row_context" not in _mapped:
+            try:
+                row_dict = {}
+                cells = Cell.objects.filter(
+                    row=row, deleted=False
+                ).select_related("column")
+                for cell in cells:
+                    col_name = cell.column.name if cell.column else None
+                    if not col_name:
+                        continue
+                    val = cell.value
+                    if isinstance(val, str):
+                        try:
+                            val = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    row_dict[col_name] = val
+                if row_dict:
+                    _mapped["row_context"] = row_dict
+            except Exception as e:
+                logger.warning("eval_runner_row_context_build_failed", error=str(e))
+
         return (
             eval_instance.run(**_mapped),
             required_field_error,
@@ -2345,8 +2382,17 @@ class EvaluationRunner:
             config["knowledge_bases"] = self.eval_template.config.get(
                 "knowledge_bases", []
             )
-            config["data_injection"] = self.eval_template.config.get(
-                "data_injection", {}
+            # data_injection: prefer user's eval metric config (run_config),
+            # fall back to the base template config. Normalize to canonical
+            # snake_case flags so downstream code never has to re-handle aliases.
+            _uem_di = {}
+            if self.user_eval_metric and self.user_eval_metric.config:
+                _uem_di = (
+                    self.user_eval_metric.config.get("run_config", {}).get("data_injection", {})
+                    or self.user_eval_metric.config.get("data_injection", {})
+                )
+            config["data_injection"] = _di_normalize(
+                _uem_di or self.eval_template.config.get("data_injection", {})
             )
             config["summary"] = self.eval_template.config.get(
                 "summary", {"type": "concise"}

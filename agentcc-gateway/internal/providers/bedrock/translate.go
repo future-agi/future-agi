@@ -86,6 +86,25 @@ type bedrockMessage struct {
 	Content json.RawMessage `json:"content"`
 }
 
+// messageContentHasToolResult reports whether the Content RawMessage decodes
+// to a block array containing at least one tool_result block. Used to scope
+// same-role merging to tool-result sequences only.
+func messageContentHasToolResult(content json.RawMessage) bool {
+	if len(content) == 0 {
+		return false
+	}
+	var blocks []bedrockContentBlock
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
 type bedrockContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -176,7 +195,47 @@ func translateRequest(req *models.ChatCompletionRequest) (*bedrockRequest, strin
 		}
 
 		bm := translateMessage(msg)
-		br.Messages = append(br.Messages, bm)
+		// Bedrock requires alternating user/assistant roles. Merge consecutive
+		// same-role messages ONLY when BOTH sides are tool results — that's
+		// the only case the API forces us to collapse (multiple OpenAI "tool"
+		// messages all map to the same role with tool_result blocks). We
+		// deliberately don't bundle plain user/user or assistant/assistant
+		// turns, nor a real user follow-up into a prior tool result: those
+		// silently rewrite caller intent. Bedrock will surface a clear
+		// alternation error in those cases.
+		shouldMerge := len(br.Messages) > 0 &&
+			bm.Role == br.Messages[len(br.Messages)-1].Role &&
+			msg.Role == "tool" &&
+			messageContentHasToolResult(br.Messages[len(br.Messages)-1].Content)
+		if !shouldMerge {
+			br.Messages = append(br.Messages, bm)
+			continue
+		}
+		prev := &br.Messages[len(br.Messages)-1]
+		var existing, additional []bedrockContentBlock
+		errExisting := json.Unmarshal(prev.Content, &existing)
+		errAdditional := json.Unmarshal(bm.Content, &additional)
+		if errExisting != nil || errAdditional != nil {
+			// If either side's Content can't be parsed as a content-block
+			// array (e.g. legacy pass-through where Content is a JSON
+			// string), fall back to appending separately. A clear Bedrock
+			// alternation error beats silently dropping content via a
+			// botched merge.
+			slog.Warn("bedrock: same-role merge skipped — content not a block array",
+				"role", bm.Role,
+				"existing_err", errExisting,
+				"additional_err", errAdditional)
+			br.Messages = append(br.Messages, bm)
+			continue
+		}
+		merged, err := json.Marshal(append(existing, additional...))
+		if err != nil {
+			slog.Warn("bedrock: same-role merge failed to marshal — appending separately",
+				"role", bm.Role, "err", err)
+			br.Messages = append(br.Messages, bm)
+			continue
+		}
+		prev.Content = merged
 	}
 
 	if len(systemParts) > 0 {

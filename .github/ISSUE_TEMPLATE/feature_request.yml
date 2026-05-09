@@ -40,7 +40,7 @@ body:
         - Simulations
         - Datasets & experiments
         - Monitors & alerts
-        - Prism gateway
+        - agentcc gateway
         - Guardrails
         - SDKs (Python / TS / Go / Java)
         - Self-host / deployment

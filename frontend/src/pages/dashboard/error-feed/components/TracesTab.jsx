@@ -1,10 +1,14 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { Box, Skeleton, Stack, Typography } from "@mui/material";
+import { Box, Drawer, Skeleton, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
+import { useGetProjectDetails } from "src/api/project/project-detail";
+import { useVoiceCallDetail } from "src/sections/agents/helper";
+import { PROJECT_SOURCE } from "src/utils/constants";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
+import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 
 const EMPTY_AGG = {
   totalTraces: 0,
@@ -235,6 +239,15 @@ export default function TracesTab({ error }) {
   const { data, isLoading } = useErrorFeedTraces(clusterId, { limit: 200 });
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
+  // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
+  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
+  const isVoiceProject =
+    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
+  const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
+    drawerTraceId,
+    isVoiceProject && !!drawerTraceId,
+  );
+
   const agg = data?.aggregates ?? EMPTY_AGG;
   const rows = useMemo(() => data?.traces ?? [], [data]);
   const total = data?.total ?? 0;
@@ -289,16 +302,62 @@ export default function TracesTab({ error }) {
         </Typography>
       </Box>
 
-      <TraceDetailDrawerV2
-        traceId={drawerTraceId}
-        open={!!drawerTraceId}
-        onClose={() => setDrawerTraceId(null)}
-        projectId={projectId}
-        onPrev={handlePrev}
-        onNext={handleNext}
-        hasPrev={traceIndex > 0}
-        hasNext={traceIndex < rows.length - 1}
-      />
+      {isVoiceProject ? (
+        // Match TraceDetailDrawerV2's overlay shape so the two drawers feel
+        // identical: persistent variant (no backdrop, page stays interactive),
+        // fixed right-anchored, sized in vw.
+        <Drawer
+          anchor="right"
+          variant="persistent"
+          open={!!drawerTraceId}
+          onClose={() => setDrawerTraceId(null)}
+          PaperProps={{
+            sx: {
+              width: "60vw",
+              height: "100vh",
+              position: "fixed",
+              right: 0,
+              borderRadius: 0,
+              bgcolor: "background.paper",
+              display: "flex",
+              flexDirection: "column",
+              borderLeft: "1px solid",
+              borderColor: "divider",
+              transition: "none",
+            },
+          }}
+          ModalProps={{
+            BackdropProps: { style: { backgroundColor: "transparent" } },
+          }}
+        >
+          {drawerTraceId && (
+            <VoiceDetailDrawerV2
+              data={
+                voiceCallData
+                  ? { ...voiceCallData, project_id: projectId }
+                  : { trace_id: drawerTraceId, project_id: projectId }
+              }
+              onClose={() => setDrawerTraceId(null)}
+              onPrev={handlePrev}
+              onNext={handleNext}
+              hasPrev={traceIndex > 0}
+              hasNext={traceIndex < rows.length - 1}
+              isLoading={voiceLoading}
+            />
+          )}
+        </Drawer>
+      ) : (
+        <TraceDetailDrawerV2
+          traceId={drawerTraceId}
+          open={!!drawerTraceId}
+          onClose={() => setDrawerTraceId(null)}
+          projectId={projectId}
+          onPrev={handlePrev}
+          onNext={handleNext}
+          hasPrev={traceIndex > 0}
+          hasNext={traceIndex < rows.length - 1}
+        />
+      )}
     </Stack>
   );
 }

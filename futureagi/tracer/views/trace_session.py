@@ -5,6 +5,13 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Dict, List, Optional
 
+try:
+    import orjson
+
+    _json_loads = orjson.loads
+except ImportError:
+    _json_loads = json.loads
+
 import pandas as pd
 import structlog
 
@@ -1437,30 +1444,42 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
+        # Trim the +1 sentinel row used for has_more detection
+        has_more = len(result.data) > page_size
+        actual_data = result.data[:page_size]
+
         # Phase 1b: Fetch first/last messages for the page
-        session_ids_page = [str(row.get("session_id", "")) for row in result.data]
+        session_ids_page = [str(row.get("session_id", "")) for row in actual_data]
         content_map = {}
         if session_ids_page:
             cq, cp = builder.build_content_query(session_ids_page)
             if cq:
                 cr = analytics.execute_ch_query(cq, cp, timeout_ms=10000)
                 content_map = {str(r.get("session_id", "")): r for r in cr.data}
-        for row in result.data:
+        for row in actual_data:
             sid = str(row.get("session_id", ""))
             c = content_map.get(sid, {})
             row["first_message"] = c.get("first_message", "")
             row["last_message"] = c.get("last_message", "")
 
-        # Get total count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
-        )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
+        # Get total count — skip the expensive count query when we can infer
+        # the total from the Phase 1 result size.
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            count_query, count_params = builder.build_count_query()
+            count_result = analytics.execute_ch_query(
+                count_query, count_params, timeout_ms=5000
+            )
+            total_count = (
+                count_result.data[0].get("total", 0) if count_result.data else 0
+            )
 
         formatted = builder.format_sessions(
-            [(list(row.values())) for row in result.data],
-            list(result.data[0].keys()) if result.data else [],
+            [(list(row.values())) for row in actual_data],
+            list(actual_data[0].keys()) if actual_data else [],
         )
 
         # Inject user-defined session_name (from TraceSession.name) — spans'
@@ -1478,6 +1497,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 sid = entry.get("session_id", "")
                 try:
                     from uuid import UUID as _UUID
+
                     entry["session_name"] = _name_map.get(_UUID(sid))
                 except (ValueError, TypeError):
                     entry["session_name"] = None
@@ -1490,6 +1510,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             "input.value",
             "output.value",
         )
+        _MAX_ATTR_KEYS_PER_SESSION = 50
         if session_ids_page:
             try:
                 attr_query, attr_params = builder.build_span_attributes_query(
@@ -1503,13 +1524,21 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     aggregated_attrs: Dict[str, Dict] = {}
                     for attr_row in attr_result.data:
                         sid = str(attr_row.get("session_id", ""))
-                        # Primary: parse raw JSON blob
+                        # Skip if this session already has max keys
+                        if (
+                            sid in aggregated_attrs
+                            and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
+                        ):
+                            continue
+                        # Primary: parse raw JSON blob (using orjson if available)
                         raw = attr_row.get("span_attributes_raw", "{}")
                         try:
                             attrs = (
-                                json.loads(raw) if isinstance(raw, str) else (raw or {})
+                                _json_loads(raw)
+                                if isinstance(raw, str) and raw
+                                else (raw or {})
                             )
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
@@ -1524,6 +1553,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         if sid not in aggregated_attrs:
                             aggregated_attrs[sid] = {}
                         for key, value in attrs.items():
+                            if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
+                                break
                             if key.startswith(_SKIP_ATTR_PREFIXES):
                                 continue
                             if isinstance(value, str) and len(value) > 500:
