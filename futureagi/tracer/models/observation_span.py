@@ -48,8 +48,7 @@ class EndUser(BaseModel):
     user_id = models.CharField(max_length=255, null=False, blank=False)
     user_id_type = models.CharField(
         max_length=50,
-        null=True,
-        blank=True,
+        default=UserIdType.CUSTOM,
         choices=UserIdType.choices,
     )
     user_id_hash = models.CharField(max_length=255, null=True, blank=True)
