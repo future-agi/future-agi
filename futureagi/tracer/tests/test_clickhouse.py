@@ -1202,6 +1202,54 @@ class TestSessionListQueryBuilder:
         assert "GROUP BY trace_session_id" in query
         assert "HAVING" in query
 
+    def test_having_filter_normalizes_operator_alias(self):
+        """Session aggregate filters should accept saved UI operator aliases."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "equal_to",
+                        "filter_value": 60,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        query, params = builder.build()
+
+        assert "HAVING" in query
+        assert "duration = %(having_" in query
+        assert 60 in params.values()
+
+    def test_having_filter_unknown_operator_does_not_fall_back_to_equals(self):
+        """Unsupported session aggregate operators should match no rows."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "definitely_not_supported",
+                        "filter_value": 60,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        query, _params = builder.build()
+
+        assert "HAVING" in query
+        assert "0 = 1" in query
+        assert "duration = %(having_" not in query
+
     def test_build_with_user_id(self):
         """When user_id is provided, query should filter by end_user_id."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3920,6 +3968,167 @@ class TestFilterBuilderEdgeCases:
         # The column on model_hub_score is simply label_id (not annotation_label_id).
         assert "label_id" in where
         assert "_peerdb_is_deleted = 0" in where
+
+    def test_annotation_number_not_equal_to_alias(self):
+        """Frontend number op not_equal_to should translate to SQL !=."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "00000000-0000-0000-0000-000000000066",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "not_equal_to",
+                    "filter_value": 45,
+                    "col_type": "ANNOTATION",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+
+        assert "model_hub_score FINAL" in where
+        assert ") != %(ann_" in where
+        assert "45" not in where
+        assert 45 in params.values()
+
+    def test_annotation_number_not_between_alias(self):
+        """Frontend number op not_between should translate to SQL NOT BETWEEN."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "00000000-0000-0000-0000-000000000066",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "not_between",
+                    "filter_value": [10, 50],
+                    "col_type": "ANNOTATION",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+
+        assert "model_hub_score FINAL" in where
+        assert "NOT BETWEEN" in where
+        assert 10 in params.values()
+        assert 50 in params.values()
+
+    def test_annotation_positive_operator_aliases(self):
+        """Frontend positive op aliases should translate to canonical SQL."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        label_id = "00000000-0000-0000-0000-000000000066"
+        cases = [
+            ("number", "equal_to", 45, ") = %(ann_", {45}),
+            ("number", "inBetween", [10, 50], " BETWEEN ", {10, 50}),
+            ("text", "is", "good", ") = lower(%(ann_", {"good"}),
+            ("text", "is_not", "bad", ") != lower(%(ann_", {"bad"}),
+        ]
+
+        for filter_type, filter_op, value, sql_fragment, expected_values in cases:
+            builder = ClickHouseFilterBuilder()
+            where, params = builder.translate(
+                [
+                    {
+                        "column_id": label_id,
+                        "filter_config": {
+                            "filter_type": filter_type,
+                            "filter_op": filter_op,
+                            "filter_value": value,
+                            "col_type": "ANNOTATION",
+                        },
+                    }
+                ]
+            )
+
+            assert "model_hub_score FINAL" in where
+            assert sql_fragment in where
+            assert expected_values.issubset(set(params.values()))
+
+    def test_unknown_operator_does_not_fall_back_to_equals(self):
+        """Unsupported operators should match nothing instead of becoming =."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "definitely_not_supported",
+                    "filter_value": "gpt-4",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+
+        assert "0 = 1" in where
+        assert "definitely_not_supported" not in where
+        assert " = %(col_" not in where
+        assert params == {}
+
+    def test_empty_in_filters_do_not_emit_invalid_clickhouse_sql(self):
+        """Empty IN arrays should not serialize to invalid IN () syntax."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        for filter_op, expected in (("in", "0 = 1"), ("not_in", "1 = 1")):
+            builder = ClickHouseFilterBuilder()
+            where, params = builder.translate(
+                [
+                    {
+                        "column_id": "status",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": filter_op,
+                            "filter_value": [],
+                            "col_type": "SYSTEM_METRIC",
+                        },
+                    }
+                ]
+            )
+
+            assert expected in where
+            assert "IN %(" not in where
+            assert "IN ()" not in where
+            assert params == {}
+
+    def test_annotation_text_not_equals_requires_existing_annotation(self):
+        """Text not-equals should not include rows with no annotation."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "00000000-0000-0000-0000-000000000066",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "not_equals",
+                    "filter_value": "bad",
+                    "col_type": "ANNOTATION",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+
+        assert "trace_id IN (" in where
+        assert "trace_id NOT IN" not in where
+        assert "!= lower" in where
+        assert "bad" in params.values()
 
     def test_is_null_system_metric(self):
         """IS NULL on system metric column."""

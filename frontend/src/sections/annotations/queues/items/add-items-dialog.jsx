@@ -62,41 +62,20 @@ import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import {
+  apiFilterHasValue,
+  apiOpToPanel,
+  isNumberFilterOp,
+  isRangeFilterOp,
+  normalizeApiFilterOp,
+  panelOperatorAndValueToApi,
+} from "src/sections/annotations/queues/utils/filter-operators";
 
 // ---------------------------------------------------------------------------
 // TraceFilterPanel ↔ API filter converters (mirror ObserveToolbar's inline
 // logic). Moved here so the dialog's Trace and Span selectors can mount the
 // same popover the main tracing page uses.
 // ---------------------------------------------------------------------------
-const PANEL_OP_TO_API = {
-  is: "equals",
-  is_not: "not_equals",
-  contains: "contains",
-  not_contains: "not_contains",
-  equals: "equals",
-  equal_to: "equal_to",
-  not_equal_to: "not_equal_to",
-  greater_than: "greater_than",
-  greater_than_or_equal: "greater_than_or_equal",
-  less_than: "less_than",
-  less_than_or_equal: "less_than_or_equal",
-  between: "between",
-  not_between: "not_between",
-};
-const API_OP_TO_PANEL = {
-  equals: "is",
-  not_equals: "is_not",
-  contains: "contains",
-  not_contains: "not_contains",
-  starts_with: "starts_with",
-  // `in` / `not_in` are the multi-value promotion of equals / not_equals
-  // that panelFilterToApi emits. Reverse back to `is` / `is_not` so the
-  // panel's operator Select finds a matching option (STRING_OPS and
-  // CATEGORICAL_OPS don't include `in` — without the reverse mapping the
-  // Operator dropdown goes blank on re-open).
-  in: "is",
-  not_in: "is_not",
-};
 const PANEL_TYPE_TO_API = {
   string: "text",
   number: "number",
@@ -116,31 +95,12 @@ const COL_TYPE_TO_PANEL_CAT = {
   EVAL_METRIC: "eval",
   ANNOTATION: "annotation",
 };
-const NUMBER_OPS = new Set([
-  "equal_to",
-  "not_equal_to",
-  "greater_than",
-  "greater_than_or_equal",
-  "less_than",
-  "less_than_or_equal",
-  "between",
-  "not_between",
-]);
-const RANGE_OPS = new Set(["between", "not_between"]);
 
 function panelFilterToApi(panel) {
-  const baseOp = PANEL_OP_TO_API[panel.operator] || panel.operator;
-  let filterOp = baseOp;
-  let filterValue = panel.value;
-  if (Array.isArray(filterValue)) {
-    if (filterValue.length === 1) {
-      filterValue = filterValue[0];
-    } else if (filterValue.length > 1) {
-      if (baseOp === "equals") filterOp = "in";
-      else if (baseOp === "not_equals") filterOp = "not_in";
-      else filterValue = filterValue.join(",");
-    }
-  }
+  const { filterOp, filterValue } = panelOperatorAndValueToApi(
+    panel.operator,
+    panel.value,
+  );
   const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
   const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
   return {
@@ -163,8 +123,9 @@ function panelFilterToApi(panel) {
 
 function apiFilterToPanel(api) {
   const rawOp = api?.filterConfig?.filterOp || "equals";
-  const isNumberOp = NUMBER_OPS.has(rawOp);
-  const isRange = RANGE_OPS.has(rawOp);
+  const canonicalOp = normalizeApiFilterOp(rawOp);
+  const isNumberOp = isNumberFilterOp(canonicalOp);
+  const isRange = isRangeFilterOp(canonicalOp);
   const rawVal = api?.filterConfig?.filterValue;
   let value;
   if (isRange && rawVal) {
@@ -191,20 +152,21 @@ function apiFilterToPanel(api) {
     api?.colType ||
     "SYSTEM_METRIC";
   const filterType = api?.filterConfig?.filterType;
+  const fieldType = isNumberOp
+    ? "number"
+    : filterType === "number"
+      ? "number"
+      : filterType === "categorical"
+        ? "categorical"
+        : filterType === "text" && rawColType === "ANNOTATION"
+          ? "text"
+          : "string";
   return {
     field: api.columnId,
     fieldName: api.displayName,
     fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
-    fieldType: isNumberOp
-      ? "number"
-      : filterType === "number"
-        ? "number"
-        : filterType === "categorical"
-          ? "categorical"
-          : filterType === "text" && rawColType === "ANNOTATION"
-            ? "text"
-            : "string",
-    operator: isNumberOp ? rawOp : API_OP_TO_PANEL[rawOp] || rawOp,
+    fieldType,
+    operator: apiOpToPanel(canonicalOp, fieldType),
     value,
   };
 }
@@ -334,10 +296,13 @@ const SPAN_ROWS_LIMIT = 20;
 // selectAll enumeration path when the backend filter-mode resolver isn't
 // available for a source type.
 // ---------------------------------------------------------------------------
-async function fetchAllTraceIds(projectId, excludedIds, filters, projectVersionId) {
-  const serializedFilters = JSON.stringify(
-    objectCamelToSnake(filters || []),
-  );
+async function fetchAllTraceIds(
+  projectId,
+  excludedIds,
+  filters,
+  projectVersionId,
+) {
+  const serializedFilters = JSON.stringify(objectCamelToSnake(filters || []));
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -369,10 +334,13 @@ async function fetchAllTraceIds(projectId, excludedIds, filters, projectVersionI
   return allIds;
 }
 
-async function fetchAllSpanIds(projectId, excludedIds, filters, projectVersionId) {
-  const serializedFilters = JSON.stringify(
-    objectCamelToSnake(filters || []),
-  );
+async function fetchAllSpanIds(
+  projectId,
+  excludedIds,
+  filters,
+  projectVersionId,
+) {
+  const serializedFilters = JSON.stringify(objectCamelToSnake(filters || []));
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -546,7 +514,6 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               source_id: id,
             }));
           }
-
         } finally {
           setIsResolving(false);
         }
@@ -1735,8 +1702,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
-          const rowId =
-            node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
+          const rowId = node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
         onSetSelection(visibleRowIds);
@@ -1917,7 +1883,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             .filter((f) => f?.columnId)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
-            const apiNext = (newPanelFilters || []).map(panelFilterToApi);
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
             setFilters(
               apiNext.length
                 ? apiNext.map((f) => ({ ...f, id: getRandomId() }))
@@ -2482,7 +2450,9 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             .filter((f) => f?.columnId)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
-            const apiNext = (newPanelFilters || []).map(panelFilterToApi);
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
             setFilters(
               apiNext.length
                 ? apiNext.map((f) => ({ ...f, id: getRandomId() }))

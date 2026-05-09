@@ -10,6 +10,8 @@ Django ORM querysets.
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from tracer.utils.filter_operators import normalize_filter_op
+
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 
@@ -209,6 +211,13 @@ class ClickHouseFilterBuilder:
         self._param_counter += 1
         return f"{prefix}_{self._param_counter}"
 
+    @classmethod
+    def _sql_op(cls, filter_op: Optional[str]) -> Optional[str]:
+        """Return a SQL comparison operator for canonical filter ops only."""
+        if not filter_op:
+            return None
+        return cls.OP_MAP.get(filter_op)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -243,6 +252,7 @@ class ClickHouseFilterBuilder:
 
             filter_type = config.get("filter_type") or config.get("filterType")
             filter_op = config.get("filter_op") or config.get("filterOp")
+            filter_op = normalize_filter_op(filter_op)
             filter_value = config.get("filter_value", config.get("filterValue"))
 
             # Skip date filters (handled by BaseQueryBuilder.parse_time_range)
@@ -391,7 +401,7 @@ class ClickHouseFilterBuilder:
             # by them. Other ops (``contains``, ``starts_with``, …) fall
             # back to equals-style membership, which matches how the
             # frontend ``userScopeFilter`` always sends ``equals``.
-            negate = filter_op in ("not_equals", "not_in", "!=", "is_not")
+            negate = filter_op in ("not_equals", "not_in", "!=")
             outer_op = "NOT IN" if negate else "IN"
             param = self._next_param("uid_s")
             self._params[param] = tuple(values)
@@ -575,7 +585,7 @@ class ClickHouseFilterBuilder:
         elif filter_op == "ends_with":
             self._params[param] = f"%{filter_value}"
             inner = f"{exists} AND {map_col}['{key}'] LIKE %({param})s"
-        elif filter_op in ("between", "inBetween") and isinstance(filter_value, list):
+        elif filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -588,15 +598,27 @@ class ClickHouseFilterBuilder:
             self._params[p_hi] = filter_value[1]
             inner = f"({exists} AND {map_col}['{key}'] NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
         elif filter_op == "in" and isinstance(filter_value, list):
-            self._params[param] = tuple(filter_value)
-            inner = f"{exists} AND {map_col}['{key}'] IN %({param})s"
+            # ClickHouse rejects IN (). Keep empty-set semantics explicit:
+            # value IN [] matches nothing.
+            if not filter_value:
+                inner = "0 = 1"
+            else:
+                self._params[param] = tuple(filter_value)
+                inner = f"{exists} AND {map_col}['{key}'] IN %({param})s"
         elif filter_op == "not_in" and isinstance(filter_value, list):
-            self._params[param] = tuple(filter_value)
-            inner = f"(NOT {exists} OR {map_col}['{key}'] NOT IN %({param})s)"
+            # value NOT IN [] should not restrict results.
+            if not filter_value:
+                inner = "1 = 1"
+            else:
+                self._params[param] = tuple(filter_value)
+                inner = f"(NOT {exists} OR {map_col}['{key}'] NOT IN %({param})s)"
         else:
-            op = self.OP_MAP.get(filter_op, "=")
-            self._params[param] = filter_value
-            inner = f"{exists} AND {map_col}['{key}'] {op} %({param})s"
+            op = self._sql_op(filter_op)
+            if op is None:
+                inner = "0 = 1"
+            else:
+                self._params[param] = filter_value
+                inner = f"{exists} AND {map_col}['{key}'] {op} %({param})s"
 
         # In span-list mode the caller wants the filter to apply to
         # each span row directly — return the inner condition unwrapped.
@@ -646,7 +668,7 @@ class ClickHouseFilterBuilder:
         elif filter_op == "ends_with":
             self._params[param] = f"%{filter_value}"
             return f"{column} LIKE %({param})s"
-        elif filter_op in ("between", "inBetween") and isinstance(filter_value, list):
+        elif filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -662,6 +684,10 @@ class ClickHouseFilterBuilder:
             values = (
                 list(filter_value) if isinstance(filter_value, list) else [filter_value]
             )
+            # ClickHouse rejects IN (). Keep empty-set semantics explicit:
+            # value IN [] matches nothing.
+            if not values:
+                return "0 = 1"
             if ci:
                 values = [str(v).lower() for v in values]
                 self._params[param] = tuple(values)
@@ -672,6 +698,9 @@ class ClickHouseFilterBuilder:
             values = (
                 list(filter_value) if isinstance(filter_value, list) else [filter_value]
             )
+            # value NOT IN [] should not restrict results.
+            if not values:
+                return "1 = 1"
             if ci:
                 values = [str(v).lower() for v in values]
                 self._params[param] = tuple(values)
@@ -679,7 +708,9 @@ class ClickHouseFilterBuilder:
             self._params[param] = tuple(values)
             return f"{column} NOT IN %({param})s"
         else:
-            op = self.OP_MAP.get(filter_op, "=")
+            op = self._sql_op(filter_op)
+            if op is None:
+                return "0 = 1"
             if ci and op in ("=", "!=") and isinstance(filter_value, str):
                 self._params[param] = filter_value.lower()
                 return f"lower({column}) {op} %({param})s"
@@ -700,7 +731,7 @@ class ClickHouseFilterBuilder:
         """
         param = self._next_param("expr")
 
-        if filter_op in ("between", "inBetween") and isinstance(filter_value, list):
+        if filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -713,7 +744,9 @@ class ClickHouseFilterBuilder:
             self._params[p_hi] = filter_value[1]
             return f"({expr}) NOT BETWEEN %({p_lo})s AND %({p_hi})s"
         else:
-            op = self.OP_MAP.get(filter_op, "=")
+            op = self._sql_op(filter_op)
+            if op is None:
+                return "0 = 1"
             self._params[param] = filter_value
             return f"({expr}) {op} %({param})s"
 
@@ -771,7 +804,9 @@ class ClickHouseFilterBuilder:
         param_cfg = self._next_param("eval_cfg")
         self._params[param_cfg] = tuple(config_ids)
 
-        op = self.OP_MAP.get(filter_op, "=")
+        op = self._sql_op(filter_op)
+        if op is None:
+            return "0 = 1"
         _fv = filter_value
         if isinstance(_fv, (list, tuple)):
             _fv = _fv[0] if _fv and _fv[0] not in (None, "") else _fv
@@ -879,10 +914,9 @@ class ClickHouseFilterBuilder:
 
         if filter_type == "number":
             param = self._next_param("ann")
-            op = self.OP_MAP.get(filter_op, "=")
 
             if (
-                filter_op in ("between", "inBetween")
+                filter_op == "between"
                 and isinstance(filter_value, list)
                 and len(filter_value) == 2
             ):
@@ -912,6 +946,9 @@ class ClickHouseFilterBuilder:
                     f"JSONExtractFloat(value, 'value')) NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             else:
+                op = self._sql_op(filter_op)
+                if op is None:
+                    return "0 = 1"
                 self._params[param] = filter_value
                 return (
                     f"trace_id IN ({base_where} "
@@ -961,7 +998,7 @@ class ClickHouseFilterBuilder:
                 return None
             param = self._next_param("ann")
             self._params[param] = tuple(tokens)
-            negate = filter_op in ("not_in", "not_equals", "is_not")
+            negate = filter_op in ("not_in", "not_equals")
             sql_op = "NOT IN" if negate else "IN"
             return (
                 f"trace_id IN ({base_where} "
@@ -981,9 +1018,9 @@ class ClickHouseFilterBuilder:
             elif filter_op == "not_contains":
                 self._params[param] = f"%{filter_value}%"
                 return (
-                    f"trace_id NOT IN ({base_where} "
+                    f"trace_id IN ({base_where} "
                     f"AND {text_expr} != '' "
-                    f"AND {text_expr} ILIKE %({param})s)"
+                    f"AND {text_expr} NOT ILIKE %({param})s)"
                 )
             elif filter_op == "equals":
                 self._params[param] = filter_value
@@ -995,9 +1032,9 @@ class ClickHouseFilterBuilder:
             elif filter_op == "not_equals":
                 self._params[param] = filter_value
                 return (
-                    f"trace_id NOT IN ({base_where} "
+                    f"trace_id IN ({base_where} "
                     f"AND {text_expr} != '' "
-                    f"AND lower({text_expr}) = lower(%({param})s))"
+                    f"AND lower({text_expr}) != lower(%({param})s))"
                 )
             elif filter_op == "starts_with":
                 self._params[param] = f"{filter_value}%"
@@ -1014,8 +1051,10 @@ class ClickHouseFilterBuilder:
                     f"AND {text_expr} ILIKE %({param})s)"
                 )
             else:
+                op = self._sql_op(filter_op)
+                if op is None:
+                    return "0 = 1"
                 self._params[param] = filter_value
-                op = self.OP_MAP.get(filter_op, "=")
                 return (
                     f"trace_id IN ({base_where} " f"AND {text_expr} {op} %({param})s)"
                 )
@@ -1058,8 +1097,15 @@ class ClickHouseFilterBuilder:
                 return cond
 
             values = filter_value if isinstance(filter_value, list) else [filter_value]
+            # Empty categorical selections should not produce invalid IN () SQL.
+            if not values:
+                if filter_op in ("not_equals", "not_in", "not_contains"):
+                    return "1 = 1"
+                return "0 = 1"
             sub_conditions = [_build_one(v) for v in values]
             combined = " OR ".join(sub_conditions)
+            if filter_op in ("not_equals", "not_in", "not_contains"):
+                return f"trace_id IN ({base_where} AND NOT ({combined}))"
             return f"trace_id IN ({base_where} AND ({combined}))"
 
         elif filter_type == "annotator":

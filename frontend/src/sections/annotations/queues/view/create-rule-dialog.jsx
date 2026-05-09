@@ -42,6 +42,14 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { getRandomId, objectCamelToSnake } from "src/utils/utils";
+import {
+  apiFilterHasValue,
+  apiOpToPanel,
+  isNumberFilterOp,
+  isRangeFilterOp,
+  normalizeApiFilterOp,
+  panelOperatorAndValueToApi,
+} from "src/sections/annotations/queues/utils/filter-operators";
 
 export const SOURCE_OPTIONS = [
   { value: "dataset_row", label: "Dataset Row" },
@@ -153,48 +161,6 @@ const SESSION_RULE_FILTER_FIELDS = [
   { id: "end_time", name: "End Time", category: "system", type: "date" },
 ];
 
-const PANEL_OP_TO_API = {
-  is: "equals",
-  is_not: "not_equals",
-  contains: "contains",
-  not_contains: "not_contains",
-  starts_with: "starts_with",
-  equals: "equals",
-  equal_to: "equal_to",
-  not_equal_to: "not_equal_to",
-  greater_than: "greater_than",
-  greater_than_or_equal: "greater_than_or_equal",
-  less_than: "less_than",
-  less_than_or_equal: "less_than_or_equal",
-  between: "between",
-  not_between: "not_between",
-  is_empty: "is_null",
-  is_not_empty: "is_not_null",
-  before: "less_than",
-  after: "greater_than",
-  on: "equals",
-};
-
-const API_OP_TO_PANEL = {
-  equals: "is",
-  not_equals: "is_not",
-  contains: "contains",
-  not_contains: "not_contains",
-  starts_with: "starts_with",
-  in: "is",
-  not_in: "is_not",
-  is_null: "is_empty",
-  is_not_null: "is_not_empty",
-};
-
-const API_DATE_OP_TO_PANEL = {
-  equals: "on",
-  less_than: "before",
-  greater_than: "after",
-  between: "between",
-  not_between: "not_between",
-};
-
 const PANEL_TYPE_TO_API = {
   string: "text",
   number: "number",
@@ -219,18 +185,6 @@ const COL_TYPE_TO_PANEL_CAT = {
   ANNOTATION: "annotation",
 };
 
-const NUMBER_OPS = new Set([
-  "equal_to",
-  "not_equal_to",
-  "greater_than",
-  "greater_than_or_equal",
-  "less_than",
-  "less_than_or_equal",
-  "between",
-  "not_between",
-]);
-
-const RANGE_OPS = new Set(["between", "not_between", "not_in_between"]);
 const MULTI_VALUE_OPS = new Set(["is", "is_not", "in", "not_in"]);
 
 function formatDateInputValue(value) {
@@ -268,22 +222,10 @@ export function defaultFiltersForSource(sourceType) {
 }
 
 function panelFilterToApi(panel) {
-  const baseOp = PANEL_OP_TO_API[panel.operator] || panel.operator;
-  let filterOp = baseOp;
-  let filterValue = panel.value;
-  if (Array.isArray(filterValue)) {
-    if (baseOp === "equals") {
-      filterOp = "in";
-      filterValue = filterValue.map(String);
-    } else if (baseOp === "not_equals") {
-      filterOp = "not_in";
-      filterValue = filterValue.map(String);
-    } else if (filterValue.length === 1) {
-      filterValue = filterValue[0];
-    } else if (filterValue.length > 1) {
-      filterValue = filterValue.join(",");
-    }
-  }
+  const { filterOp, filterValue } = panelOperatorAndValueToApi(
+    panel.operator,
+    panel.value,
+  );
   const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
   const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
   return {
@@ -300,10 +242,11 @@ function panelFilterToApi(panel) {
 
 function apiFilterToPanel(api) {
   const rawOp = api?.filterConfig?.filterOp || "equals";
+  const canonicalOp = normalizeApiFilterOp(rawOp);
   const rawVal = api?.filterConfig?.filterValue;
   const filterType = api?.filterConfig?.filterType;
-  const isNumberOp = NUMBER_OPS.has(rawOp);
-  const isRange = RANGE_OPS.has(rawOp);
+  const isNumberOp = isNumberFilterOp(canonicalOp);
+  const isRange = isRangeFilterOp(canonicalOp);
   const isDateType = filterType === "datetime" || filterType === "date";
   let value;
   if (isRange && rawVal) {
@@ -345,29 +288,13 @@ function apiFilterToPanel(api) {
     fieldName: api.displayName,
     fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
     fieldType,
-    operator: isNumberOp
-      ? rawOp
-      : isDateType
-        ? API_DATE_OP_TO_PANEL[rawOp] || rawOp
-        : API_OP_TO_PANEL[rawOp] || rawOp,
+    operator: apiOpToPanel(canonicalOp, fieldType),
     value,
   };
 }
 
 function filterWithValue(filter) {
-  const op = filter?.filterConfig?.filterOp;
-  if (!filter?.columnId || !op) return false;
-  if (
-    op === "is_null" ||
-    op === "is_not_null" ||
-    op === "is_empty" ||
-    op === "is_not_empty"
-  ) {
-    return true;
-  }
-  const value = filter?.filterConfig?.filterValue;
-  if (Array.isArray(value)) return value.length > 0 && value.every(Boolean);
-  return value !== "" && value !== undefined && value !== null;
+  return apiFilterHasValue(filter);
 }
 
 function toRuleRows(filters) {
@@ -892,7 +819,9 @@ function TraceRuleFilters({
         currentFilters={toApiFilters(filters).map(apiFilterToPanel)}
         onApply={(newPanelFilters) => {
           onInteraction?.();
-          const nextFilters = (newPanelFilters || []).map(panelFilterToApi);
+          const nextFilters = (newPanelFilters || [])
+            .map(panelFilterToApi)
+            .filter(apiFilterHasValue);
           setFilters(
             nextFilters.length
               ? nextFilters.map((filter) => ({ ...filter, id: getRandomId() }))
@@ -983,7 +912,9 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
         currentFilters={panelCurrentFilters}
         onApply={(newPanelFilters) => {
           onInteraction?.();
-          const nextFilters = (newPanelFilters || []).map(panelFilterToApi);
+          const nextFilters = (newPanelFilters || [])
+            .map(panelFilterToApi)
+            .filter(apiFilterHasValue);
           setFilters(
             nextFilters.length
               ? nextFilters.map((filter) => ({ ...filter, id: getRandomId() }))

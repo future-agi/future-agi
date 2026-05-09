@@ -1,4 +1,5 @@
 import React from "react";
+import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,6 +12,8 @@ import {
   annotateKeys,
   automationRuleKeys,
   useCreateAutomationRule,
+  useCompleteItem,
+  useSubmitAnnotations,
 } from "../annotation-queues";
 
 vi.mock("src/utils/axios", () => ({
@@ -23,17 +26,29 @@ vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn(),
 }));
 
-function createQueryWrapper() {
-  const queryClient = new QueryClient({
+function createTestQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+}
 
-  return function QueryWrapper({ children }) {
-    return React.createElement(QueryClientProvider, { client: queryClient }, children);
+function createQueryWrapper(queryClient = createTestQueryClient()) {
+  function QueryWrapper({ children }) {
+    return React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
+  }
+
+  QueryWrapper.propTypes = {
+    children: PropTypes.node,
   };
+
+  return QueryWrapper;
 }
 
 describe("Annotation Queues API", () => {
@@ -145,6 +160,72 @@ describe("Annotation Queues API", () => {
         "q-1",
         "list",
       ]);
+    });
+  });
+
+  describe("useSubmitAnnotations", () => {
+    it("invalidates item annotation history after submit", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: { submitted: 3 } } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result } = renderHook(() => useSubmitAnnotations(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        annotations: [{ label_id: "label-1", value: 45 }],
+        notes: "checked",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/annotations/submit/",
+          {
+            annotations: [{ label_id: "label-1", value: 45 }],
+            notes: "checked",
+          },
+        );
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.detail("queue-1", "item-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.annotations("queue-1", "item-1"),
+        });
+      });
+    });
+  });
+
+  describe("useCompleteItem", () => {
+    it("invalidates annotate detail and annotation history after complete", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { next_item: null } },
+      });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result } = renderHook(() => useCompleteItem(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.detail("queue-1", "item-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.annotations("queue-1", "item-1"),
+        });
+      });
     });
   });
 

@@ -150,10 +150,9 @@ export const useHardDeleteAnnotationQueue = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
-      enqueueSnackbar(
-        extractErrorMessage(error, "Failed to delete queue"),
-        { variant: "error" },
-      );
+      enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -394,6 +393,16 @@ export const annotateKeys = {
   annotations: (queueId, itemId) => ["item-annotations", queueId, itemId],
 };
 
+const invalidateAnnotateItem = (queryClient, queueId, itemId) => {
+  if (!queueId || !itemId) return;
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.detail(queueId, itemId),
+  });
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.annotations(queueId, itemId),
+  });
+};
+
 export const useAnnotateDetail = (queueId, itemId, options = {}) => {
   return useQuery({
     queryKey: annotateKeys.detail(queueId, itemId),
@@ -428,9 +437,7 @@ export const useSubmitAnnotations = () => {
         { annotations, notes },
       ),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: annotateKeys.detail(variables.queueId, variables.itemId),
-      });
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
@@ -461,6 +468,7 @@ export const useCompleteItem = () => {
         exclude ? { exclude } : undefined,
       ),
     onSuccess: (_, variables) => {
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
