@@ -96,6 +96,7 @@ from simulate.utils.eval_summary import (
     _get_completed_call_executions,
     _get_eval_configs_with_template,
 )
+from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.sql_query import (
     get_combined_call_executions_and_snapshots_count_query,
     get_combined_call_executions_and_snapshots_query,
@@ -626,6 +627,10 @@ class RunTestExecutionView(APIView):
                     {"error": "At least one scenario is required to execute the test."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            incomplete = check_scenarios_incomplete(final_scenario_ids)
+            if incomplete is not None:
+                return incomplete
 
             # Check if Temporal test execution is enabled
             if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):

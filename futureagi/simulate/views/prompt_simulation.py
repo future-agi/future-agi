@@ -22,6 +22,7 @@ from simulate.serializers.run_test import (
     RunTestSerializer,
 )
 from simulate.services.test_executor import TestExecutor
+from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -493,6 +494,10 @@ class ExecutePromptSimulationView(APIView):
                     final_scenario_ids = [
                         str(scenario_id) for scenario_id in all_scenario_ids
                     ]
+
+            incomplete = check_scenarios_incomplete(final_scenario_ids)
+            if incomplete is not None:
+                return incomplete
 
             # Use the existing TestExecutor
             test_executor = TestExecutor()

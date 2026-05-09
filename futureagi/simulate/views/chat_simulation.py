@@ -19,6 +19,7 @@ from simulate.models import (
 from simulate.pydantic_schemas.chat import ChatSendMessageViewResponse, SendChatRequest
 from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.test_executor import TestExecutor
+from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from tfc.utils.general_methods import GeneralMethods
 
@@ -104,6 +105,10 @@ class RunTestChatExecutionView(APIView):
             scenarios = list(
                 run_test.scenarios.filter(deleted=False).values_list("id", flat=True)
             )
+
+            incomplete = check_scenarios_incomplete(scenarios)
+            if incomplete is not None:
+                return incomplete
 
             logger.info(f"Run test used here is.... {run_test_id}")
 

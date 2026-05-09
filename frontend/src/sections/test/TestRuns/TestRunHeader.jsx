@@ -232,11 +232,17 @@ const TestRunHeader = () => {
             </Box>
           </CustomTooltip>
           <CustomTooltip
-            show={isAgentDefinitionDeleted || selectedScenarios.length === 0}
+            show={
+              isAgentDefinitionDeleted ||
+              selectedScenarios.length === 0 ||
+              hasIncompleteScenario
+            }
             title={
               isAgentDefinitionDeleted
                 ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
-                : "Select atleast one scenario to run test"
+                : selectedScenarios.length === 0
+                  ? "Select atleast one scenario to run test"
+                  : "Some selected scenarios are still being generated. Wait for them to complete before running a simulation."
             }
             size="small"
             arrow
