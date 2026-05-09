@@ -218,6 +218,45 @@ class ClickHouseFilterBuilder:
             return None
         return cls.OP_MAP.get(filter_op)
 
+    @staticmethod
+    def _score_trace_id_expr() -> str:
+        """Resolve a Score row to the trace id rendered by the spans table."""
+        return (
+            "if(isNull(s.trace_id) "
+            "OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'), "
+            "sp.trace_id, toString(s.trace_id))"
+        )
+
+    def _score_trace_select(
+        self,
+        extra_where: str = "",
+        *,
+        alias: str = "trace_id",
+        distinct: bool = True,
+    ) -> str:
+        """Return a Score subquery that resolves span-backed annotations.
+
+        Unified Score rows created from inline/span annotations often leave
+        ``trace_id`` empty and only populate ``observation_span_id``. Resolve
+        through ``spans`` so trace filters match the same annotations the UI
+        renders in the trace row.
+        """
+        score_trace_expr = self._score_trace_id_expr()
+        select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
+        extra_clause = f" {extra_where}" if extra_where else ""
+        return (
+            f"{select_keyword} {score_trace_expr} AS {alias} "
+            f"FROM model_hub_score AS s FINAL "
+            f"LEFT JOIN spans AS sp "
+            f"ON sp.id = s.observation_span_id "
+            f"AND sp._peerdb_is_deleted = 0 "
+            f"WHERE s._peerdb_is_deleted = 0 "
+            f"AND s.deleted = false "
+            f"AND isNotNull({score_trace_expr}) "
+            f"AND {score_trace_expr} != ''"
+            f"{extra_clause}"
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -904,13 +943,11 @@ class ClickHouseFilterBuilder:
 
         param_label = self._next_param("ann_label")
         self._params[param_label] = annotation_label_id
-        base_where = (
-            f"SELECT trace_id "
-            f"FROM model_hub_score FINAL "
-            f"WHERE label_id = toUUID(%({param_label})s) "
-            f"AND _peerdb_is_deleted = 0 AND deleted = false "
-            f"AND trace_id != toUUID('00000000-0000-0000-0000-000000000000')"
+        base_where = self._score_trace_select(
+            f"AND s.label_id = toUUID(%({param_label})s)"
         )
+        score_value = "s.value"
+        score_annotator = "s.annotator_id"
 
         if filter_type == "number":
             param = self._next_param("ann")
@@ -926,9 +963,9 @@ class ClickHouseFilterBuilder:
                 self._params[p_hi] = filter_value[1]
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND if(JSONHas(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
+                    f"AND if(JSONHas({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             elif (
                 filter_op == "not_in_between"
@@ -941,9 +978,9 @@ class ClickHouseFilterBuilder:
                 self._params[p_hi] = filter_value[1]
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND if(JSONHas(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'value')) NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
+                    f"AND if(JSONHas({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'value')) NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             else:
                 op = self._sql_op(filter_op)
@@ -952,9 +989,9 @@ class ClickHouseFilterBuilder:
                 self._params[param] = filter_value
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND if(JSONHas(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'rating'), "
-                    f"JSONExtractFloat(value, 'value')) {op} %({param})s)"
+                    f"AND if(JSONHas({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'value')) {op} %({param})s)"
                 )
 
         elif filter_type == "boolean":
@@ -968,7 +1005,7 @@ class ClickHouseFilterBuilder:
                 return None
             return (
                 f"trace_id IN ({base_where} "
-                f"AND JSONExtractString(value, 'value') = {bool_match})"
+                f"AND JSONExtractString({score_value}, 'value') = {bool_match})"
             )
 
         elif filter_type == "thumbs":
@@ -1002,12 +1039,12 @@ class ClickHouseFilterBuilder:
             sql_op = "NOT IN" if negate else "IN"
             return (
                 f"trace_id IN ({base_where} "
-                f"AND JSONExtractString(value, 'value') {sql_op} %({param})s)"
+                f"AND JSONExtractString({score_value}, 'value') {sql_op} %({param})s)"
             )
 
         elif filter_type == "text":
             param = self._next_param("ann")
-            text_expr = "JSONExtractString(value, 'text')"
+            text_expr = f"JSONExtractString({score_value}, 'text')"
             if filter_op == "contains":
                 self._params[param] = f"%{filter_value}%"
                 return (
@@ -1072,8 +1109,8 @@ class ClickHouseFilterBuilder:
             # ({"value":"up"|"down"}) so the first page load still matches.
             # Mirrors _THUMBS_MAP in tracer/utils/filters.py and can be
             # removed once no in-flight payloads use this combination.
-            selected_expr = "JSONExtract(value, 'selected', 'Array(String)')"
-            value_expr = "JSONExtractString(value, 'value')"
+            selected_expr = f"JSONExtract({score_value}, 'selected', 'Array(String)')"
+            value_expr = f"JSONExtractString({score_value}, 'value')"
             _LEGACY_THUMBS = {
                 "thumbs up": "up",
                 "thumbs down": "down",
@@ -1114,13 +1151,16 @@ class ClickHouseFilterBuilder:
             if isinstance(filter_value, list):
                 param = self._next_param("ann")
                 self._params[param] = tuple(filter_value)
-                return f"trace_id IN ({base_where} " f"AND annotator_id IN %({param})s)"
+                return (
+                    f"trace_id IN ({base_where} "
+                    f"AND {score_annotator} IN %({param})s)"
+                )
             elif filter_value:
                 param = self._next_param("ann")
                 self._params[param] = str(filter_value)
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND annotator_id = toUUID(%({param})s))"
+                    f"AND {score_annotator} = toUUID(%({param})s))"
                 )
             return None
 
@@ -1171,25 +1211,16 @@ class ClickHouseFilterBuilder:
         "Non annotated" (filter_value=false) means the trace is missing at
         least one of the project's configured annotation labels.
 
-        Score.trace_id is often NULL — annotations are stored on spans,
-        not traces directly.  We resolve trace_id via the span:
-        ``model_hub_score.observation_span_id → tracer_observation_span.trace_id``.
-        We COALESCE with Score.trace_id in case some records DO have it set.
+        Score.trace_id is often empty because inline/span annotations are
+        stored against observation_span_id. Resolve through ``spans`` so this
+        filter sees the same annotations rendered in trace rows.
         """
         if isinstance(filter_value, str):
             filter_value = filter_value.lower() == "true"
 
-        # Common subquery: resolve trace_id from score records.
-        # Score.trace_id is often NULL; join via span to get the real trace_id.
-        score_trace_sq = (
-            "SELECT DISTINCT "
-            "  toString(coalesce(s.trace_id, toNullable(sp.trace_id))) AS tid "
-            "FROM model_hub_score AS s FINAL "
-            "LEFT JOIN tracer_observation_span AS sp "
-            "  ON sp.id = s.observation_span_id AND sp._peerdb_is_deleted = 0 "
-            "WHERE s._peerdb_is_deleted = 0 "
-            "AND coalesce(s.trace_id, toNullable(sp.trace_id)) IS NOT NULL"
-        )
+        # Common subquery: resolve trace_id from Score rows even when the
+        # annotation is attached to a span instead of directly to a trace.
+        score_trace_sq = self._score_trace_select(alias="tid")
 
         label_ids = self.annotation_label_ids
         if not label_ids:
@@ -1207,14 +1238,12 @@ class ClickHouseFilterBuilder:
         total = len(label_ids)
 
         fully_annotated_sq = (
-            f"SELECT toString(coalesce(s.trace_id, toNullable(sp.trace_id))) AS tid "
-            f"FROM model_hub_score AS s FINAL "
-            f"LEFT JOIN tracer_observation_span AS sp "
-            f"  ON sp.id = s.observation_span_id AND sp._peerdb_is_deleted = 0 "
-            f"WHERE s._peerdb_is_deleted = 0 "
-            f"AND coalesce(s.trace_id, toNullable(sp.trace_id)) IS NOT NULL "
-            f"AND s.label_id IN ({label_list}) "
-            f"GROUP BY tid HAVING uniq(s.label_id) >= {total}"
+            self._score_trace_select(
+                f"AND s.label_id IN ({label_list})",
+                alias="tid",
+                distinct=False,
+            )
+            + f" GROUP BY tid HAVING uniq(s.label_id) >= {total}"
         )
         op = "IN" if filter_value else "NOT IN"
         return f"trace_id {op} ({fully_annotated_sq})"
@@ -1240,12 +1269,8 @@ class ClickHouseFilterBuilder:
             return None
         param = self._next_param("uid")
         self._params[param] = str(user_id)
-        return (
-            f"trace_id IN ("
-            f"SELECT trace_id FROM model_hub_score FINAL "
-            f"WHERE _peerdb_is_deleted = 0 "
-            f"AND annotator_id = toUUID(%({param})s))"
-        )
+        user_clause = f"AND s.annotator_id = toUUID(%({param})s)"
+        return f"trace_id IN ({self._score_trace_select(user_clause)})"
 
     def _build_annotator_condition(
         self,
@@ -1258,18 +1283,10 @@ class ClickHouseFilterBuilder:
         if isinstance(filter_value, list):
             param = self._next_param("uid")
             self._params[param] = tuple(filter_value)
-            return (
-                f"trace_id IN ("
-                f"SELECT trace_id FROM model_hub_score FINAL "
-                f"WHERE _peerdb_is_deleted = 0 "
-                f"AND annotator_id IN %({param})s)"
-            )
+            user_clause = f"AND s.annotator_id IN %({param})s"
+            return f"trace_id IN ({self._score_trace_select(user_clause)})"
         else:
             param = self._next_param("uid")
             self._params[param] = str(filter_value)
-            return (
-                f"trace_id IN ("
-                f"SELECT trace_id FROM model_hub_score FINAL "
-                f"WHERE _peerdb_is_deleted = 0 "
-                f"AND annotator_id = toUUID(%({param})s))"
-            )
+            user_clause = f"AND s.annotator_id = toUUID(%({param})s)"
+            return f"trace_id IN ({self._score_trace_select(user_clause)})"

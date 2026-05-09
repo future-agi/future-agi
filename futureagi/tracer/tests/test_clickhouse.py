@@ -573,6 +573,35 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" in where
         assert "model_hub_score" in where
 
+    def test_translate_annotation_filter_resolves_span_scores_to_trace(self):
+        """Annotation filters should match Score rows stored on spans."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "00000000-0000-0000-0000-000000000044",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "good",
+                    "col_type": "ANNOTATION",
+                },
+            }
+        ]
+
+        where, params = builder.translate(filters)
+
+        assert "model_hub_score AS s FINAL" in where
+        assert "LEFT JOIN spans AS sp" in where
+        assert "sp.id = s.observation_span_id" in where
+        assert "sp.trace_id" in where
+        assert "toString(s.trace_id)" in where
+        assert "JSONExtractString(s.value, 'text')" in where
+        assert params["ann_label_1"] == "00000000-0000-0000-0000-000000000044"
+
     def test_translate_skips_empty_filter_config(self):
         """Filters with missing column_id or config should be skipped."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -756,6 +785,8 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
         assert "model_hub_score" in where
+        assert "LEFT JOIN spans AS sp" in where
+        assert "sp.id = s.observation_span_id" in where
         assert "_peerdb_is_deleted = 0" in where
         assert params == {}
 
@@ -3964,7 +3995,7 @@ class TestFilterBuilderEdgeCases:
         ]
         where, _ = builder.translate(filters)
         assert "trace_id IN (" in where
-        assert "model_hub_score FINAL" in where
+        assert "model_hub_score AS s FINAL" in where
         # The column on model_hub_score is simply label_id (not annotation_label_id).
         assert "label_id" in where
         assert "_peerdb_is_deleted = 0" in where
@@ -3989,7 +4020,7 @@ class TestFilterBuilderEdgeCases:
         ]
         where, params = builder.translate(filters)
 
-        assert "model_hub_score FINAL" in where
+        assert "model_hub_score AS s FINAL" in where
         assert ") != %(ann_" in where
         assert "45" not in where
         assert 45 in params.values()
@@ -4014,7 +4045,7 @@ class TestFilterBuilderEdgeCases:
         ]
         where, params = builder.translate(filters)
 
-        assert "model_hub_score FINAL" in where
+        assert "model_hub_score AS s FINAL" in where
         assert "NOT BETWEEN" in where
         assert 10 in params.values()
         assert 50 in params.values()
@@ -4049,7 +4080,7 @@ class TestFilterBuilderEdgeCases:
                 ]
             )
 
-            assert "model_hub_score FINAL" in where
+            assert "model_hub_score AS s FINAL" in where
             assert sql_fragment in where
             assert expected_values.issubset(set(params.values()))
 
