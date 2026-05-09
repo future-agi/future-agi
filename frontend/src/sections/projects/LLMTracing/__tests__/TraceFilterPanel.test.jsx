@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { getTraceFilterFields } from "../TraceFilterPanel";
+import {
+  getTraceFilterFields,
+  normalizeFilterRowOperator,
+} from "../TraceFilterPanel";
 
 describe("getTraceFilterFields (TH-4571)", () => {
   it("prepends Trace ID when tab is 'trace'", () => {
@@ -33,5 +36,58 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // are not required; structural equality is what consumers rely on).
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
+  });
+});
+
+describe("normalizeFilterRowOperator", () => {
+  it("maps API multi-value operators back to panel operators before apply", () => {
+    expect(
+      normalizeFilterRowOperator({
+        field: "status",
+        fieldType: "categorical",
+        operator: "in",
+        value: ["OK"],
+      }).operator,
+    ).toBe("is");
+
+    expect(
+      normalizeFilterRowOperator({
+        field: "status",
+        fieldType: "categorical",
+        operator: "not_in",
+        value: ["ERROR"],
+      }).operator,
+    ).toBe("is_not");
+  });
+
+  it("maps backend number/date operators to valid panel operators", () => {
+    expect(
+      normalizeFilterRowOperator({
+        field: "latency_ms",
+        fieldType: "number",
+        operator: "equals",
+        value: "100",
+      }).operator,
+    ).toBe("equal_to");
+
+    expect(
+      normalizeFilterRowOperator({
+        field: "created_at",
+        fieldType: "date",
+        operator: "less_than",
+        value: "2026-05-09T00:00",
+      }).operator,
+    ).toBe("before");
+  });
+
+  it("falls back to the first valid operator for restricted id fields", () => {
+    expect(
+      normalizeFilterRowOperator({
+        field: "trace_id",
+        fieldType: "string",
+        operator: "contains",
+        value: "abc",
+      }).operator,
+    ).toBe("is");
   });
 });

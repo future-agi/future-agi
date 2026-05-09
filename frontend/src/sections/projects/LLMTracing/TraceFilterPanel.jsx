@@ -240,6 +240,44 @@ const getOperatorsForFilter = (filter) => {
   return getOperators(filter?.fieldType);
 };
 
+const getDefaultOperatorForFilter = (filter, ops) => {
+  const defaultOp =
+    DEFAULT_OP_FOR_TYPE[filter?.fieldType] ||
+    DEFAULT_OP_FOR_TYPE[normalizeFieldType(filter?.fieldType)] ||
+    "is";
+  return ops.some((op) => op.value === defaultOp)
+    ? defaultOp
+    : ops[0]?.value || "is";
+};
+
+const getPanelOperatorAlias = (operator, filter) => {
+  const normalizedType = normalizeFieldType(filter?.fieldType);
+  if (operator === "in" || operator === "equals") {
+    if (normalizedType === "number") return "equal_to";
+    if (normalizedType === "date") return "on";
+    return "is";
+  }
+  if (operator === "not_in" || operator === "not_equals") {
+    if (normalizedType === "number") return "not_equal_to";
+    return "is_not";
+  }
+  if (operator === "not_in_between") return "not_between";
+  if (operator === "less_than" && normalizedType === "date") return "before";
+  if (operator === "greater_than" && normalizedType === "date") return "after";
+  return operator;
+};
+
+export const normalizeFilterRowOperator = (filter) => {
+  const ops = getOperatorsForFilter(filter);
+  if (ops.some((op) => op.value === filter?.operator)) return filter;
+
+  const alias = getPanelOperatorAlias(filter?.operator, filter);
+  const operator = ops.some((op) => op.value === alias)
+    ? alias
+    : getDefaultOperatorForFilter(filter, ops);
+  return { ...filter, operator };
+};
+
 const DEFAULT_OP_FOR_TYPE = {
   number: "equal_to",
   date: "on",
@@ -1036,7 +1074,17 @@ function FilterRow({
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
   const ops = getOperatorsForFilter(filter);
-  const currentOpDef = ops.find((o) => o.value === filter.operator);
+  const safeOperator = normalizeFilterRowOperator(filter).operator;
+  const currentOpDef = ops.find((o) => o.value === safeOperator);
+  const updateRow = useCallback(
+    (changes) =>
+      onChange(index, {
+        ...filter,
+        operator: safeOperator,
+        ...changes,
+      }),
+    [filter, index, onChange, safeOperator],
+  );
   const rowFreeSoloValues =
     typeof freeSoloValues === "function"
       ? freeSoloValues(filter)
@@ -1076,7 +1124,7 @@ function FilterRow({
       const newOp = e.target.value;
       const opList = getOperatorsForFilter(filter);
       const newDef = opList.find((o) => o.value === newOp);
-      const oldDef = opList.find((o) => o.value === filter.operator);
+      const oldDef = opList.find((o) => o.value === safeOperator);
       let newVal = filter.value;
       if (isNumber || isDate) {
         if (newDef?.range && !oldDef?.range) newVal = ["", ""];
@@ -1085,7 +1133,7 @@ function FilterRow({
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
       onChange(index, { ...filter, operator: newOp, value: newVal });
     },
-    [index, filter, isNumber, isDate, onChange],
+    [index, filter, safeOperator, isNumber, isDate, onChange],
   );
 
   const renderValueInput = () => {
@@ -1108,7 +1156,7 @@ function FilterRow({
       );
     }
 
-    if (NO_VALUE_OPS.has(filter.operator)) {
+    if (NO_VALUE_OPS.has(safeOperator)) {
       return <Box sx={{ flex: 1 }} />;
     }
 
@@ -1117,9 +1165,7 @@ function FilterRow({
         <Select
           size="small"
           value={filter.value ?? "true"}
-          onChange={(e) =>
-            onChange(index, { ...filter, value: e.target.value })
-          }
+          onChange={(e) => updateRow({ value: e.target.value })}
           sx={{
             flex: 1,
             minWidth: 80,
@@ -1156,7 +1202,7 @@ function FilterRow({
                   ? [...filter.value]
                   : ["", ""];
                 cur[0] = e.target.value;
-                onChange(index, { ...filter, value: cur });
+                updateRow({ value: cur });
               }}
               sx={{ flex: 1 }}
               inputProps={{
@@ -1175,7 +1221,7 @@ function FilterRow({
                   ? [...filter.value]
                   : ["", ""];
                 cur[1] = e.target.value;
-                onChange(index, { ...filter, value: cur });
+                updateRow({ value: cur });
               }}
               sx={{ flex: 1 }}
               inputProps={{
@@ -1190,9 +1236,7 @@ function FilterRow({
           size="small"
           type="datetime-local"
           value={typeof filter.value === "string" ? filter.value : ""}
-          onChange={(e) =>
-            onChange(index, { ...filter, value: e.target.value })
-          }
+          onChange={(e) => updateRow({ value: e.target.value })}
           sx={{ flex: 1, minWidth: 140, maxWidth: 200 }}
           inputProps={{
             style: { fontSize: 11, height: 12, padding: "6px 6px" },
@@ -1220,7 +1264,7 @@ function FilterRow({
                   ? [...filter.value]
                   : ["", ""];
                 cur[0] = e.target.value;
-                onChange(index, { ...filter, value: cur });
+                updateRow({ value: cur });
               }}
               sx={{ flex: 1 }}
               inputProps={{
@@ -1240,7 +1284,7 @@ function FilterRow({
                   ? [...filter.value]
                   : ["", ""];
                 cur[1] = e.target.value;
-                onChange(index, { ...filter, value: cur });
+                updateRow({ value: cur });
               }}
               sx={{ flex: 1 }}
               inputProps={{
@@ -1256,9 +1300,7 @@ function FilterRow({
           type="number"
           placeholder="Value"
           value={filter.value ?? ""}
-          onChange={(e) =>
-            onChange(index, { ...filter, value: e.target.value })
-          }
+          onChange={(e) => updateRow({ value: e.target.value })}
           sx={{ flex: 1, minWidth: 80, maxWidth: 140 }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
@@ -1273,9 +1315,7 @@ function FilterRow({
           size="small"
           placeholder="Enter text..."
           value={filter.value ?? ""}
-          onChange={(e) =>
-            onChange(index, { ...filter, value: e.target.value })
-          }
+          onChange={(e) => updateRow({ value: e.target.value })}
           sx={{ flex: 1, minWidth: 120, maxWidth: 200 }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
@@ -1296,7 +1336,7 @@ function FilterRow({
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
         singleSelect={ID_ONLY_FIELDS.has(filter.field)}
-        onChange={(newVal) => onChange(index, { ...filter, value: newVal })}
+        onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
   };
@@ -1351,16 +1391,7 @@ function FilterRow({
 
       <Select
         size="small"
-        // Guard against operators that aren't in the type-appropriate ops
-        // list (e.g. `in`/`not_in` leaking back from a partially-mapped
-        // round-trip) — without this, MUI Select silently renders blank.
-        value={
-          ops.some((o) => o.value === filter.operator)
-            ? filter.operator
-            : isNumber
-              ? "equal_to"
-              : "is"
-        }
+        value={safeOperator}
         onChange={handleOperatorChange}
         sx={{ minWidth: 70, fontSize: 12, height: 28 }}
       >
@@ -1432,7 +1463,12 @@ const TraceFilterPanel = ({
     const ID_FIELDS = new Set(["trace_id", "span_id"]);
     const staticProps = getTraceFilterFields(tab).map((f) => {
       if (isSpansView && f.value === "name") {
-        return { id: "name", name: "Span Name", category: "system", type: "string" };
+        return {
+          id: "name",
+          name: "Span Name",
+          category: "system",
+          type: "string",
+        };
       }
       return {
         id: f.value,
@@ -1534,12 +1570,12 @@ const TraceFilterPanel = ({
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
-          return {
+          return normalizeFilterRowOperator({
             ...f,
             fieldCategory: f.fieldCategory || prop?.category || "system",
             fieldName: f.fieldName || prop?.name,
             fieldType: f.fieldType || prop?.type || "string",
-          };
+          });
         });
         setRows(enriched);
       } else {
@@ -1585,7 +1621,7 @@ const TraceFilterPanel = ({
   );
 
   const handleApply = useCallback(() => {
-    const valid = rows.filter((r) => {
+    const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
       if (!r.field) return false;
       if (NO_VALUE_OPS.has(r.operator)) return true;
       const ops = getOperatorsForFilter(r);
@@ -1828,7 +1864,9 @@ const TraceFilterPanel = ({
                 )
                 .map((r) => ({
                   field: r.field,
-                  operator: BASIC_TO_QUERY_OP[r.operator] || r.operator,
+                  operator:
+                    BASIC_TO_QUERY_OP[normalizeFilterRowOperator(r).operator] ||
+                    normalizeFilterRowOperator(r).operator,
                   value: Array.isArray(r.value)
                     ? r.value.join(", ")
                     : r.value || "",
