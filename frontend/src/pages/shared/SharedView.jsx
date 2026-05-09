@@ -505,10 +505,10 @@ function SharedWidgetCard({ widget, globalDateRange }) {
                           padding: "4px 8px",
                           textAlign: "left",
                           borderBottom: "1px solid",
-                          borderColor: "divider",
+                          borderColor: "#e0e0e0",
                           position: "sticky",
                           top: 0,
-                          background: "background.paper",
+                          background: "#fff",
                         }}
                       >
                         {col}
@@ -525,7 +525,7 @@ function SharedWidgetCard({ widget, globalDateRange }) {
                           style={{
                             padding: "4px 8px",
                             borderBottom: "1px solid",
-                            borderColor: "divider",
+                            borderColor: "#e0e0e0",
                           }}
                         >
                           {String(cell ?? "")}
