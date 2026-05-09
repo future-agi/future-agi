@@ -13,6 +13,17 @@ from tracer.utils.filters import FilterEngine
 
 # from tracer.models.observation_span import ObservationSpan
 
+_ISO_FORMATS = ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_iso_datetime(s: str) -> datetime:
+    for fmt in _ISO_FORMATS:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"unrecognised datetime string: {s!r}")
+
 
 class GraphDataConsumer(DataConsumer):
     async def receive_json(self, content):
@@ -67,12 +78,8 @@ class GraphDataConsumer(DataConsumer):
         if not start_time or not end_time:
             return data
 
-        start_time = datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-            minute=0, second=0
-        )
-        end_time = datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-            minute=0, second=0
-        )
+        start_time = _parse_iso_datetime(start_time).replace(minute=0, second=0)
+        end_time = _parse_iso_datetime(end_time).replace(minute=0, second=0)
 
         if self.interval == "week":
             start_time -= timedelta(days=start_time.weekday())
@@ -237,16 +244,8 @@ class GraphDataConsumer(DataConsumer):
                 and len(cfg["filterValue"]) == 2
             ):
                 try:
-                    _formats = ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ")
-                    def _parse(s):
-                        for fmt in _formats:
-                            try:
-                                return datetime.strptime(s, fmt)
-                            except ValueError:
-                                pass
-                        raise ValueError(f"unrecognised datetime format: {s!r}")
-                    start = _parse(cfg["filterValue"][0])
-                    end = _parse(cfg["filterValue"][1])
+                    start = _parse_iso_datetime(cfg["filterValue"][0])
+                    end = _parse_iso_datetime(cfg["filterValue"][1])
                     return start, end
                 except (ValueError, TypeError):
                     pass
