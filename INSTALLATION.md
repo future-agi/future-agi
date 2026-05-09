@@ -106,8 +106,13 @@ docker compose up
 | Disk | 20 GB free | Image pulls are ~3 GB; data grows from there |
 | CPU | 4 cores | — |
 | Platform | `privileged: true` supported | `code-executor` needs it — won't run on Fargate, Cloud Run, or some PaaS |
+| Architecture | `linux/amd64` | Prebuilt images ship amd64 only; see Apple Silicon note below |
 
 On Docker Desktop for Mac, give Docker at least **8 GB RAM** and **64 GB disk** under Settings → Resources. The defaults are often too small.
+
+**Apple Silicon (M-series) Macs:** prebuilt images are `linux/amd64`, so Docker Desktop will pull with an arch warning and run them under **Rosetta 2** emulation (auto-enabled on Docker Desktop 4.16+). Functional for evaluation and most local development; expect a 20–50% performance hit vs. native. For native arm64, build locally with `docker compose build` instead of `docker compose pull`.
+
+**Linux arm64 hosts (e.g. Graviton):** install `qemu-user-static` (most distros include it) for amd64 emulation, or build locally.
 
 ---
 
