@@ -22,8 +22,8 @@
  *
  * To check with TLC (see GuardrailReflexion.cfg):
  *   1. Set MAX_ATTEMPTS to a small value (e.g., 3)
- *   2. INVARIANTS: TypeInvariant, AttemptBounded, FeedbackGrows
- *   3. PROPERTIES: EventuallyTerminates, SuccessOnFirstPass, AttemptMonotone
+ *   2. INVARIANTS: TypeInvariant, AttemptBounded
+ *   3. PROPERTIES: EventuallyTerminates, SuccessOnFirstPass, AttemptMonotone, FeedbackGrows
  *   4. SPECIFICATION Spec
  *)
 

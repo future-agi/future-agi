@@ -1344,11 +1344,14 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 // only by adding an engine-level retry hook.
 func (h *Handlers) runReflexion(ctx context.Context, rc *models.RequestContext, providerCall pipeline.ProviderFunc) error {
 	cfg := h.reflexionCfg
-	if !cfg.Enabled || cfg.MaxAttempts <= 0 {
+	if !cfg.Enabled {
 		return h.guardrailBlockError(rc)
 	}
 
 	maxAttempts := cfg.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3 // default when enabled:true without explicit max_attempts
+	}
 	if maxAttempts > 5 {
 		maxAttempts = 5
 	}
