@@ -369,10 +369,22 @@ def process_eval_task(eval_task_id: str):
             if sampling_rate and sampling_rate > 0 and sampling_rate <= 100:
                 sample_size = int((sampling_rate / 100) * total_spans_count)
                 runned_spans_count = eval_task_logger.offset or 0
-                if runned_spans_count >= sample_size:
+                # CONTINUOUS tasks have no sampling cap — they run forever
+                # on incoming spans. The historical-style "stop when offset
+                # >= sample_size" check would silently no-op once the
+                # cumulative offset crosses sample_size, even though new
+                # spans keep arriving
+                is_continuous = eval_task.run_type == RunType.CONTINUOUS
+                if not is_continuous and runned_spans_count >= sample_size:
                     filtered_spans = []
                 else:
-                    max_samples = sample_size - runned_spans_count
+                    if is_continuous:
+                        # For continuous, sampling applies to the CURRENT
+                        # batch of unprocessed spans, not against accumulated
+                        # offset.
+                        max_samples = max(int((sampling_rate / 100) * spans.count()), 1)
+                    else:
+                        max_samples = sample_size - runned_spans_count
                     if cnt is not None:
                         max_samples = min(max_samples, cnt)
                     # Sample at the DB level instead of materializing every
