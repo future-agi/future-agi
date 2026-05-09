@@ -11,12 +11,12 @@
  *   INVARIANTS (pure state predicates):
  *     TypeInvariant     — all variables have the expected types
  *     AttemptBounded    — attempt counter never exceeds MaxAttempts
- *     FeedbackGrows     — injected feedback messages only accumulate (never shrink)
  *
  *   PROPERTIES (temporal / box-action formulas):
  *     EventuallyTerminates   — the loop always reaches Done or Failed
  *     SuccessOnFirstPass     — if attempt 0 passes, state goes directly to Done
  *     AttemptMonotone        — attempts only increase
+ *     FeedbackGrows          — injected feedback only accumulates ([][...] box-action)
  *
  *   SPECIFICATION Spec (with fairness for liveness)
  *
@@ -62,8 +62,11 @@ AttemptBounded ==
 
 FeedbackGrows ==
     \* Once a feedback message is injected it is never removed.
-    \* Modelled by len(feedback) being non-decreasing (handled by only appending).
-    Len(feedback) <= attempt
+    \* This is a temporal action property (box-action formula): in every step
+    \* the feedback sequence length is non-decreasing.  A state invariant
+    \* Len(feedback) <= attempt would only bound the length from above and would
+    \* not catch a transition that shrinks or resets feedback.
+    [][Len(feedback') >= Len(feedback)]_feedback
 
 Init ==
     /\ state   = "idle"

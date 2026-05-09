@@ -883,10 +883,13 @@ func DefaultConfig() *Config {
 			MaxEntries: 10000,
 		},
 		Guardrails: GuardrailsConfig{
-			Enabled:        false,
+			Enabled:        false, // opt-in: set guardrails.enabled: true in YAML to activate
 			FailOpen:       true,
 			DefaultTimeout: 5 * time.Second,
 			Reflexion: ReflexionConfig{
+				// Enabled is false by default; MaxAttempts:3 is the default count used
+				// when a deployment sets reflexion.enabled: true without specifying
+				// max_attempts explicitly.
 				MaxAttempts: 3,
 			},
 		},
