@@ -189,7 +189,7 @@ class FormalConstraintEvaluator(BaseEvaluator):
         try:
             for c in constraints_spec:
                 built.append(self._build_z3_constraint(c, z3_vars))
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, IndexError) as e:
             return self._error_result(kwargs, start, f"Invalid constraint spec: {e}")
 
         # Sanity check: is the problem itself satisfiable?
