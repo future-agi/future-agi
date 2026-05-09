@@ -17,6 +17,7 @@ from agent_playground.serializers.node import (
     UpdateNodeSerializer,
 )
 from agent_playground.services.dataset_bridge import sync_dataset_columns
+from agent_playground.services.engine.node_runner import get_runner
 from agent_playground.services.node_crud import (
     cascade_soft_delete_node,
     create_node,
@@ -257,4 +258,48 @@ class NodeCrudViewSet(ModelViewSet):
             logger.exception("Error getting possible edge mappings", error=str(e))
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_GET_EDGE_MAPPINGS")
+            )
+
+    def test_execution(self, request, pk=None, version_id=None, node_id=None):
+        """POST /graphs/{pk}/versions/{version_id}/nodes/{node_id}/test-execution/"""
+        try:
+            _, version = get_graph_and_version(request, pk, version_id)
+            node = self.get_queryset().get(id=node_id, graph_version=version)
+
+            if not node.node_template or node.node_template.name != "code_execution":
+                return self._gm.bad_request("Only code_execution nodes can be tested.")
+
+            config = request.data.get("config") or node.config or {}
+            inputs = request.data.get("inputs") or {}
+            if not isinstance(inputs, dict):
+                return self._gm.bad_request("Code execution inputs must be an object.")
+            runner = get_runner("code_execution")
+            outputs = runner.run(
+                config,
+                inputs,
+                {
+                    "node_id": str(node.id),
+                    "organization_id": str(request.organization.id),
+                    "workspace_id": (
+                        str(request.workspace.id)
+                        if getattr(request, "workspace", None)
+                        else None
+                    ),
+                    "raise_on_error": False,
+                },
+            )
+            return self._gm.success_response(outputs)
+
+        except Graph.DoesNotExist:
+            return self._gm.not_found(get_error_message("GRAPH_NOT_FOUND"))
+        except GraphVersion.DoesNotExist:
+            return self._gm.not_found(get_error_message("VERSION_NOT_FOUND"))
+        except Node.DoesNotExist:
+            return self._gm.not_found(get_error_message("NODE_NOT_FOUND"))
+        except (ValidationError, IntegrityError, ValueError) as e:
+            return self._gm.bad_request(str(e))
+        except Exception as e:
+            logger.exception("Error testing code execution node", error=str(e))
+            return self._gm.internal_server_error_response(
+                "Failed to test code execution node"
             )

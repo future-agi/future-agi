@@ -22,6 +22,16 @@ const handleBaseStyle = {
   background: "var(--bg-paper)",
 };
 
+const resolveThemeColor = (theme, token, fallback) => {
+  if (typeof token !== "string" || token.length === 0) return fallback;
+  if (token.startsWith("#") || token.startsWith("rgb")) return token;
+
+  const [paletteKey, shade] = token.split(".");
+  const paletteValue = theme.palette[paletteKey];
+
+  return paletteValue?.[shade] ?? paletteValue?.main ?? fallback;
+};
+
 const BaseNode = ({
   id,
   type,
@@ -33,7 +43,6 @@ const BaseNode = ({
   const outputPort = ports?.find((p) => p.direction === PORT_DIRECTION.OUTPUT);
   const outputPortLabel = outputPort?.display_name;
   const typeConfig = NODE_TYPE_CONFIG[type] ?? {};
-  const iconColor = typeConfig.color ?? "orange.500";
 
   const state = useBaseNodeState({ id, data });
   const {
@@ -46,6 +55,11 @@ const BaseNode = ({
   } = state;
 
   const { boxSx, borderColor, theme } = useBaseNodeStyles(state);
+  const iconColor = resolveThemeColor(
+    theme,
+    typeConfig.color,
+    theme.palette.orange?.[500] ?? theme.palette.primary.main,
+  );
 
   const actions = useBaseNodeActions({ id, ...state });
   const {
@@ -132,7 +146,14 @@ const BaseNode = ({
               height: 20,
               borderRadius: 0.5,
               border: "1px solid",
-              borderColor: "divider",
+              borderColor: alpha(
+                iconColor,
+                theme.palette.mode === "dark" ? 0.42 : 0.28,
+              ),
+              backgroundColor: alpha(
+                iconColor,
+                theme.palette.mode === "dark" ? 0.18 : 0.08,
+              ),
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

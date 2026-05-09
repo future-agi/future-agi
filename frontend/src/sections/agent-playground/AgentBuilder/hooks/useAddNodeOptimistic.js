@@ -82,6 +82,9 @@ export default function useAddNodeOptimistic() {
           source_node_id: payload.sourceNodeId,
           ...(payload.sourceNodeId && edgeId && { edge_id: edgeId }),
           ports,
+          ...(payload.type === NODE_TYPES.CODE_EXECUTION && {
+            config,
+          }),
           ...(payload.type === NODE_TYPES.LLM_PROMPT && {
             prompt_template: {
               prompt_template_id: config?.prompt_template_id ?? null,

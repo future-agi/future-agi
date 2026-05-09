@@ -305,6 +305,15 @@ def _execute_node_sync(
             }
 
         except Exception as e:
+            failure_outputs = getattr(e, "outputs", {}) or {}
+            if failure_outputs:
+                route_node_outputs(
+                    node_id=UUID(node_id),
+                    node_execution=node_execution,
+                    topology=topology,
+                    outputs=failure_outputs,
+                )
+
             # Call output sinks on FAILED so they can record the failure
             _call_sinks_safe(
                 resolved_sinks,
@@ -312,7 +321,7 @@ def _execute_node_sync(
                 node_name=node.name,
                 template_name=template_name,
                 inputs=locals().get("inputs", {}),
-                outputs={},
+                outputs=failure_outputs,
                 status="FAILED",
                 metadata={"graph_execution_id": graph_execution_id, "error": str(e)},
             )
@@ -329,7 +338,7 @@ def _execute_node_sync(
             return {
                 "node_id": node_id,
                 "status": "FAILED",
-                "outputs": {},
+                "outputs": failure_outputs,
                 "error": str(e),
             }
 
@@ -655,9 +664,8 @@ def _setup_module_execution_sync(
             store_node_inputs,
         )
 
-        # Get parent topology and module node
+        # Get parent topology
         parent_topology = GraphTopology.from_dict(topology_data)
-        module_node = parent_topology.get_node(UUID(module_node_id))
 
         # Get child graph version ID
         child_graph_version_id = parent_topology.get_module_child_graph_version_id(
@@ -768,11 +776,8 @@ def _finalize_module_execution_sync(
     close_old_connections()
 
     try:
-        from agent_playground.models import GraphExecution, NodeExecution
-        from agent_playground.models.choices import (
-            GraphExecutionStatus,
-            NodeExecutionStatus,
-        )
+        from agent_playground.models import NodeExecution
+        from agent_playground.models.choices import NodeExecutionStatus
         from agent_playground.services.engine import (
             GraphAnalyzer,
             GraphTopology,

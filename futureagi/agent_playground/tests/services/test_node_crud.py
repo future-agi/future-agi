@@ -13,20 +13,18 @@ from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.node_template import NodeTemplate
 from agent_playground.models.port import Port
 from agent_playground.models.prompt_template_node import PromptTemplateNode
+from agent_playground.serializers.node import CreateNodeSerializer
 from agent_playground.services.node_crud import (
     _build_prompt_config_snapshot,
     _create_default_output_port_from_prompt,
-    _create_edges_from_input_mappings,
     _create_input_ports_from_prompt,
     _create_subgraph_input_ports,
-    _create_subgraph_input_ports_from_mappings,
     _create_subgraph_output_ports,
     _dedupe_name,
     _extract_variables,
     _get_next_template_version,
     _output_data_schema,
     _replace_output_ports,
-    _update_subgraph_input_mappings,
     _validate_subgraph_fe_ports,
     cascade_soft_delete_node,
     cascade_soft_delete_node_connection,
@@ -94,6 +92,96 @@ class TestCreateNode:
         assert node.type == NodeType.ATOMIC
         assert node.node_template == node_template
         assert nc is None
+
+    def test_create_atomic_node_validates_template_config(
+        self, db, graph_version, user, organization, workspace
+    ):
+        template = NodeTemplate.no_workspace_objects.create(
+            name="strict_code_config",
+            display_name="Strict Code Config",
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["language", "code"],
+                "properties": {
+                    "language": {"type": "string", "enum": ["python"]},
+                    "code": {"type": "string", "minLength": 1},
+                },
+            },
+        )
+
+        with pytest.raises(ValidationError, match="Invalid config"):
+            create_node(
+                graph_version,
+                {
+                    "id": uuid.uuid4(),
+                    "type": NodeType.ATOMIC,
+                    "name": "Code Node",
+                    "node_template_id": template.id,
+                    "config": {"language": "ruby", "code": "puts 1"},
+                },
+                user,
+                organization,
+                workspace,
+            )
+
+    def test_create_atomic_node_persists_template_config(
+        self, db, graph_version, user, organization, workspace
+    ):
+        template = NodeTemplate.no_workspace_objects.create(
+            name="code_execution",
+            display_name="Code Execution",
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["language", "code"],
+                "properties": {
+                    "language": {"type": "string", "enum": ["python"]},
+                    "code": {"type": "string", "minLength": 1},
+                    "timeout_ms": {"type": "integer"},
+                },
+            },
+        )
+        config = {
+            "language": "python",
+            "code": "result = inputs",
+            "timeout_ms": 1000,
+        }
+
+        node, _ = create_node(
+            graph_version,
+            {
+                "id": uuid.uuid4(),
+                "type": NodeType.ATOMIC,
+                "name": "Code Node",
+                "node_template_id": template.id,
+                "config": config,
+            },
+            user,
+            organization,
+            workspace,
+        )
+
+        assert node.config == config
+
+    def test_create_node_serializer_preserves_atomic_config(self):
+        config = {"language": "python", "code": "result = inputs"}
+        serializer = CreateNodeSerializer(
+            data={
+                "id": uuid.uuid4(),
+                "type": NodeType.ATOMIC,
+                "name": "Code Node",
+                "node_template_id": uuid.uuid4(),
+                "config": config,
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["config"] == config
 
     def test_create_llm_node_auto_creates_pt_pv(
         self, db, graph_version, llm_node_template, user, organization, workspace
@@ -686,6 +774,47 @@ class TestUpdateNode:
         )
         assert updated.position == {"x": 42, "y": 99}
 
+    def test_update_atomic_node_validates_template_config(
+        self, db, graph_version, user, organization, workspace
+    ):
+        template = NodeTemplate.no_workspace_objects.create(
+            name="strict_update_config",
+            display_name="Strict Update Config",
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["language", "code"],
+                "properties": {
+                    "language": {"type": "string", "enum": ["python"]},
+                    "code": {"type": "string", "minLength": 1},
+                },
+            },
+        )
+        node, _ = create_node(
+            graph_version,
+            {
+                "id": uuid.uuid4(),
+                "type": NodeType.ATOMIC,
+                "name": "Code Node",
+                "node_template_id": template.id,
+                "config": {"language": "python", "code": "result = 1"},
+            },
+            user,
+            organization,
+            workspace,
+        )
+
+        with pytest.raises(ValidationError, match="Invalid config"):
+            update_node(
+                node,
+                {"config": {"language": "javascript", "code": "result = 1"}},
+                user,
+                organization,
+                workspace,
+            )
+
     def test_update_prompt_template_updates_pv(
         self,
         db,
@@ -966,7 +1095,7 @@ class TestUpdateNode:
         initial_port.save(skip_validation=True)
 
         # Create NodeConnection
-        old_nc = NodeConnection.no_workspace_objects.create(
+        NodeConnection.no_workspace_objects.create(
             graph_version=graph_version,
             source_node=old_source,
             target_node=subgraph_node,
@@ -999,7 +1128,7 @@ class TestUpdateNode:
         new_port.save(skip_validation=True)
 
         # Create NodeConnection for new source
-        new_nc = NodeConnection.no_workspace_objects.create(
+        NodeConnection.no_workspace_objects.create(
             graph_version=graph_version,
             source_node=new_source,
             target_node=subgraph_node,
@@ -1581,7 +1710,7 @@ class TestCascadeSoftDeleteNodeConnection:
         node_connection,
     ):
         # Create a NodeConnection + edge from node → third_node (unrelated to node_connection)
-        nc_to_third = NodeConnection.no_workspace_objects.create(
+        NodeConnection.no_workspace_objects.create(
             graph_version=graph_version,
             source_node=node,
             target_node=third_node,
@@ -2424,7 +2553,7 @@ class TestUpdateNodeRefGraphVersion:
         old_output.save(skip_validation=True)
 
         # Update with new output ports only
-        updated = update_node(
+        update_node(
             node,
             {
                 "ports": [
@@ -3618,7 +3747,7 @@ class TestAutoCreateEdgesForNode:
         )
 
         # Create second NodeConnection manually
-        nc2 = NodeConnection.no_workspace_objects.create(
+        NodeConnection.no_workspace_objects.create(
             graph_version=graph_version,
             source_node=source_node_2,
             target_node=target_node,

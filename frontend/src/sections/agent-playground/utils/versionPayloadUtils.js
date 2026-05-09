@@ -101,7 +101,11 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
       const effectiveConfig = node.data?._initialConfig
         ? { ...node.data?.config, ...node.data._initialConfig }
         : node.data?.config;
-      apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
+      if (node.type === NODE_TYPES.CODE_EXECUTION) {
+        apiNode.config = effectiveConfig || {};
+      } else {
+        apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
+      }
 
       const atomicOutputPorts = (node.data?.ports || []).filter(
         (p) => p.direction === "output",
@@ -239,12 +243,15 @@ export function parseVersionResponse(apiData) {
   const xyNodes = apiData.nodes.map((node) => {
     const nodeType = mapApiTypeToNodeType(node);
     const isSubgraph = nodeType === NODE_TYPES.AGENT;
+    const isCodeExecution = nodeType === NODE_TYPES.CODE_EXECUTION;
+    const promptTemplate = node.promptTemplate ?? node.prompt_template;
 
     // For atomic nodes, read LLM config from promptTemplate (not config)
-    const formConfig =
-      isSubgraph || !node.promptTemplate
+    const formConfig = isCodeExecution
+      ? node.config || {}
+      : isSubgraph || !promptTemplate
         ? null
-        : transformConfigFromApi(node.promptTemplate);
+        : transformConfigFromApi(promptTemplate);
 
     return {
       id: node.id,
@@ -273,48 +280,69 @@ export function parseVersionResponse(apiData) {
                 required: p.required,
                 ...(p.refPortId && { ref_port_id: p.refPortId }),
               })),
-              versionId: node.refGraphVersionId || "",
-              graphId: node.refGraphId || "",
+              versionId:
+                node.refGraphVersionId || node.ref_graph_version_id || "",
+              graphId: node.refGraphId || node.ref_graph_id || "",
               config: {
-                graphId: node.refGraphId || "",
-                versionId: node.refGraphVersionId || "",
+                graphId: node.refGraphId || node.ref_graph_id || "",
+                versionId:
+                  node.refGraphVersionId || node.ref_graph_version_id || "",
                 payload: {
-                  inputMappings: node.inputMappings || [],
+                  inputMappings: node.inputMappings || node.input_mappings || [],
                 },
               },
-              ref_graph_version_id: node.refGraphVersionId || "",
+              ref_graph_version_id:
+                node.refGraphVersionId || node.ref_graph_version_id || "",
             }
           : {
-              node_template_id: node.nodeTemplateId || null,
-              prompt_template_id: node.promptTemplate?.promptTemplateId || null,
-              prompt_version_id: node.promptTemplate?.promptVersionId || null,
-              config: {
-                ...formConfig,
-                prompt_template_id:
-                  node.promptTemplate?.promptTemplateId || null,
-                prompt_version_id: node.promptTemplate?.promptVersionId || null,
-                payload: {
-                  ...formConfig?.payload,
-                  promptConfig: [
-                    {
-                      configuration: {
-                        ...(node.promptTemplate || {}),
-                        responseFormat: node.prompt_template?.response_format,
+              node_template_id:
+                node.nodeTemplateId || node.node_template_id || null,
+              ...(isCodeExecution
+                ? { config: node.config || {} }
+                : {
+                    prompt_template_id:
+                      promptTemplate?.promptTemplateId ||
+                      promptTemplate?.prompt_template_id ||
+                      null,
+                    prompt_version_id:
+                      promptTemplate?.promptVersionId ||
+                      promptTemplate?.prompt_version_id ||
+                      null,
+                    config: {
+                      ...formConfig,
+                      prompt_template_id:
+                        promptTemplate?.promptTemplateId ||
+                        promptTemplate?.prompt_template_id ||
+                        null,
+                      prompt_version_id:
+                        promptTemplate?.promptVersionId ||
+                        promptTemplate?.prompt_version_id ||
+                        null,
+                      payload: {
+                        ...formConfig?.payload,
+                        promptConfig: [
+                          {
+                            configuration: {
+                              ...(promptTemplate || {}),
+                              responseFormat:
+                                promptTemplate?.responseFormat ||
+                                promptTemplate?.response_format,
+                            },
+                          },
+                        ],
                       },
                     },
-                  ],
-                },
-              },
+                  }),
             }),
       },
     };
   });
 
   // Node connections → React Flow edges (id, source, target)
-  const xyEdges = (apiData.nodeConnections || [])
+  const xyEdges = (apiData.nodeConnections || apiData.node_connections || [])
     .map((nc) => {
-      const sourceNodeId = nc.sourceNodeId;
-      const targetNodeId = nc.targetNodeId;
+      const sourceNodeId = nc.sourceNodeId || nc.source_node_id;
+      const targetNodeId = nc.targetNodeId || nc.target_node_id;
       if (!sourceNodeId || !targetNodeId) return null;
       return {
         id: nc.id || `${sourceNodeId}-${targetNodeId}`,
@@ -332,6 +360,12 @@ export function parseVersionResponse(apiData) {
  */
 function mapApiTypeToNodeType(apiNode) {
   if (apiNode.type === API_NODE_TYPES.ATOMIC) {
+    if (
+      apiNode.nodeTemplateName === NODE_TYPES.CODE_EXECUTION ||
+      apiNode.node_template_name === NODE_TYPES.CODE_EXECUTION
+    ) {
+      return NODE_TYPES.CODE_EXECUTION;
+    }
     return NODE_TYPES.LLM_PROMPT;
   }
   if (apiNode.type === API_NODE_TYPES.SUBGRAPH) {
