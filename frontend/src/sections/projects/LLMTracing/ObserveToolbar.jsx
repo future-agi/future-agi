@@ -237,20 +237,35 @@ const ObserveToolbar = ({
       };
       const rawColType =
         gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      const rawFilterType = gf.filter_config?.filter_type;
+      // Auto-migrate legacy saved views: thumbs annotations used to be
+      // stored as filter_type=categorical with values like ["Thumbs Up",
+      // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
+      // so the BE thumbs branch handles them and the panel renders the
+      // right operators/picker.
+      const looksLikeThumbsValues = (() => {
+        if (rawColType !== "ANNOTATION") return false;
+        if (rawFilterType !== "categorical") return false;
+        const vals = Array.isArray(value) ? value : value ? [value] : [];
+        if (vals.length === 0) return false;
+        const tokens = new Set(["thumbs up", "thumbs down", "up", "down"]);
+        return vals.every((v) => tokens.has(String(v).trim().toLowerCase()));
+      })();
       return {
         field: gf.column_id,
         fieldName: gf.display_name,
         fieldCategory: colTypeReverseMap[rawColType] || "system",
         fieldType: isNumberOp
           ? "number"
-          : gf.filter_config?.filter_type === "number"
+          : rawFilterType === "number"
             ? "number"
-            : gf.filter_config?.filter_type === "categorical"
-              ? "categorical"
-              : gf.filter_config?.filter_type === "text" &&
-                  rawColType === "ANNOTATION"
-                ? "text"
-                : "string",
+            : rawFilterType === "thumbs" || looksLikeThumbsValues
+              ? "thumbs"
+              : rawFilterType === "categorical"
+                ? "categorical"
+                : rawFilterType === "text" && rawColType === "ANNOTATION"
+                  ? "text"
+                  : "string",
         operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
         value,
       };
@@ -430,6 +445,7 @@ const ObserveToolbar = ({
                 number: "number",
                 boolean: "boolean",
                 categorical: "categorical",
+                thumbs: "thumbs",
                 text: "text",
               };
               const colTypeMap = {

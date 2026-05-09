@@ -66,6 +66,19 @@ type converseMessage struct {
 	Content []converseContentPart `json:"content"`
 }
 
+// messageHasToolResult reports whether any content part in the message is a
+// tool_result. Used to scope same-role merging to tool-result sequences only,
+// so we don't silently bundle independent user/user or assistant/assistant
+// turns.
+func messageHasToolResult(m converseMessage) bool {
+	for _, p := range m.Content {
+		if p.ToolResult != nil {
+			return true
+		}
+	}
+	return false
+}
+
 type converseContentPart struct {
 	Text       *string             `json:"text,omitempty"`
 	Image      *converseImagePart  `json:"image,omitempty"`
@@ -160,7 +173,28 @@ func buildConverseRequest(req *models.ChatCompletionRequest) (*converseRequest, 
 			}
 			continue
 		}
-		cr.Messages = append(cr.Messages, buildConverseMessage(msg))
+		cm := buildConverseMessage(msg)
+
+		// Bedrock Converse API requires alternating user/assistant roles.
+		// We merge consecutive same-role messages ONLY when BOTH sides are
+		// tool results — that's the only case the API forces us to collapse
+		// (multiple OpenAI "tool" messages all become role:"user" with
+		// ToolResult blocks). Don't bundle independent user/user or
+		// assistant/assistant turns, and don't bundle a real user follow-up
+		// into a prior tool result: those silently rewrite caller intent.
+		// If those occur the request goes through as-is and Bedrock returns
+		// a clear alternation error.
+		shouldMerge := len(cr.Messages) > 0 &&
+			cm.Role == cr.Messages[len(cr.Messages)-1].Role &&
+			msg.Role == "tool" &&
+			messageHasToolResult(cr.Messages[len(cr.Messages)-1])
+		if shouldMerge {
+			cr.Messages[len(cr.Messages)-1].Content = append(
+				cr.Messages[len(cr.Messages)-1].Content, cm.Content...,
+			)
+		} else {
+			cr.Messages = append(cr.Messages, cm)
+		}
 	}
 
 	if len(req.Tools) > 0 {
@@ -421,6 +455,7 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 	if err != nil {
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: reading response: %v", err))
 	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, parseBedrockError(resp.StatusCode, respBody)
 	}
