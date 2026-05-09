@@ -27,9 +27,10 @@
 # Open http://localhost:3000 once the frontend logs "ready".
 # First boot pulls images from Docker Hub (~30s). No source builds.
 #
-# Pin a specific release (recommended for production): set FUTURE_AGI_VERSION
-# in .env (defaults to whatever this file's defaults pin to — currently
-# v1.22.41).
+# Each image is independently versioned. Defaults to `:latest`. Pin per
+# service in .env for production: FUTURE_AGI_VERSION (backend + worker),
+# FRONTEND_VERSION, AGENTCC_GATEWAY_VERSION, SERVING_VERSION,
+# CODE_EXECUTOR_VERSION.
 #
 # For hot-reload development (build from source, volume mounts, per-queue
 # workers, exposed DB ports, Temporal UI), layer the dev overlay:
@@ -150,7 +151,7 @@ services:
   # ==========================================================================
 
   frontend:
-    image: futureagi/frontend:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/frontend:${FRONTEND_VERSION:-latest}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     environment:
@@ -163,7 +164,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
     ports:
       - "${BACKEND_PORT:-8000}:80"
     env_file:
@@ -192,7 +193,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
     env_file:
       - path: .env
         required: false
@@ -216,7 +217,7 @@ services:
   # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
   # the shipped example via AGENTCC_CONFIG_PATH).
   agentcc-gateway:
-    image: futureagi/agentcc-gateway:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:-latest}
     ports:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     env_file:
@@ -235,7 +236,7 @@ services:
     restart: unless-stopped
 
   serving:
-    image: futureagi/serving:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/serving:${SERVING_VERSION:-latest}
     ports:
       - "${SERVING_PORT:-8080}:8080"
     env_file:
@@ -250,7 +251,7 @@ services:
   # Requires privileged: true for nsjail namespaces — won't run on Fargate /
   # managed platforms that disallow privileged containers.
   code-executor:
-    image: futureagi/code-executor:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     ports:
       - "${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true

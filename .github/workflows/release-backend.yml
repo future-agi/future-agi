@@ -1,5 +1,5 @@
 # Manual trigger only. Run from the Actions tab when ready to cut a backend release.
-# Publishes futureagi/future-agi:<version>, :<minor>, :latest.
+# Publishes futureagi/future-agi:<version>, :<minor>, :latest (linux/amd64).
 # Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
 
 name: Release backend
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to publish (e.g. v1.22.41)'
+        description: 'Version tag to publish (e.g. v1.22.43)'
         required: true
         type: string
       branch:
@@ -22,6 +22,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  IMAGE: futureagi/future-agi
+  CONTEXT: ./futureagi
+  DOCKERFILE: ./futureagi/Dockerfile.oss
 
 jobs:
   release:
@@ -50,9 +55,6 @@ jobs:
           { echo "version=$v"; echo "minor=$minor"; } >> "$GITHUB_OUTPUT"
           echo "Resolved: version=$v, minor=$minor"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -65,14 +67,14 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./futureagi
-          file: ./futureagi/Dockerfile.oss
-          platforms: linux/amd64,linux/arm64
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          platforms: linux/amd64
           push: true
           provenance: false
           tags: |
-            futureagi/future-agi:${{ steps.version.outputs.version }}
-            futureagi/future-agi:${{ steps.version.outputs.minor }}
-            futureagi/future-agi:latest
-          cache-from: type=registry,ref=futureagi/future-agi:buildcache
-          cache-to: type=registry,ref=futureagi/future-agi:buildcache,mode=max
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.minor }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
