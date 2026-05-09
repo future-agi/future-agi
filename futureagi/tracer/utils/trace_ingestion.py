@@ -17,12 +17,13 @@ from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
 from tfc.temporal import temporal_activity
 from tfc.utils.payload_storage import payload_storage
-from tracer.models.observation_span import EndUser, ObservationSpan, Trace, UserIdType
-
-
-def _norm_uid_type(raw: str | None) -> str:
-    """Normalise a caller-supplied user_id_type: None or empty → "custom"."""
-    return raw if raw else UserIdType.CUSTOM
+from tracer.models.observation_span import (
+    EndUser,
+    ObservationSpan,
+    Trace,
+    UserIdType,
+    normalize_user_id_type as _norm_uid_type,
+)
 from tracer.models.project import Project
 from tracer.models.trace_session import TraceSession
 from tracer.tasks.trace_scanner import scan_traces_task

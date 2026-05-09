@@ -6,8 +6,12 @@ from django.db import IntegrityError, transaction
 logger = structlog.get_logger(__name__)
 from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
-from tracer.models.observation_span import EndUser, ObservationSpan, UserIdType
-from tracer.utils.trace_ingestion import _norm_uid_type
+from tracer.models.observation_span import (
+    EndUser,
+    ObservationSpan,
+    UserIdType,
+    normalize_user_id_type as _norm_uid_type,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession

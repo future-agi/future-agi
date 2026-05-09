@@ -30,6 +30,11 @@ class UserIdType(models.TextChoices):
     CUSTOM = "custom", "Custom"
 
 
+def normalize_user_id_type(raw: str | None) -> str:
+    """Return raw user_id_type unchanged, or UserIdType.CUSTOM if None/empty."""
+    return raw if raw else UserIdType.CUSTOM
+
+
 class EndUser(BaseModel):
     """ """
 
