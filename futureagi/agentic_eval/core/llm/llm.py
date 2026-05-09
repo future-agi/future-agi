@@ -2006,7 +2006,7 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str) -> str:
+    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -2015,6 +2015,8 @@ class LLM:
 
         Args:
             prompt: List of message dictionaries.
+            provider: Provider name.
+            response_format: Optional response format spec (e.g. {"type": "json_object"}).
 
         Returns:
             The LLM response text.
@@ -2041,12 +2043,15 @@ class LLM:
                 gateway = get_gateway_client()
                 if gateway is not None:
                     logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
-                    response = gateway.chat.completions.create(
-                        model=self.model_name,
-                        messages=prompt,
-                        temperature=self.temperature,
-                        max_tokens=self.max_tokens,
-                    )
+                    gateway_kwargs = {
+                        "model": self.model_name,
+                        "messages": prompt,
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    }
+                    if response_format:
+                        gateway_kwargs["response_format"] = response_format
+                    response = gateway.chat.completions.create(**gateway_kwargs)
                     self._update_token_usage(response)
                     self._update_cost(response)
                     content = response.choices[0].message.content
@@ -2074,6 +2079,8 @@ class LLM:
             }
             if not getattr(self, "api_key", None):
                 payload["max_tokens"] = self.max_tokens
+            if response_format:
+                payload["response_format"] = response_format
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
