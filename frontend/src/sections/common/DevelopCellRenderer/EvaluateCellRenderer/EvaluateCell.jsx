@@ -145,26 +145,27 @@ const EvaluateCell = ({
   }
   if (output === OutputTypes.SCORE) {
     const result = parsedValueInfos?.data?.result;
-    if (!hasRenderableValue(result)) return null;
-    return (
-      <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
-        <Chip
-          label={result}
-          size="small"
-          variant="outlined"
-          sx={{
-            borderColor: "purple.500",
-            color: "purple.500",
-            fontWeight: 500,
-            maxWidth: 240,
-            "& .MuiChip-label": {
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            },
-          }}
-        />
-      </Box>
-    );
+    if (hasRenderableValue(result)) {
+      return (
+        <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
+          <Chip
+            label={result}
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: "purple.500",
+              color: "purple.500",
+              fontWeight: 500,
+              maxWidth: 240,
+              "& .MuiChip-label": {
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              },
+            }}
+          />
+        </Box>
+      );
+    }
   }
   if (dataType === "boolean") {
     const bgColor = value

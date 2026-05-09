@@ -97,8 +97,13 @@ const TestDetailConfigureEval = () => {
         name: evalConfig.name,
         model: evalConfig.model,
         mapping: evalConfig.mapping || {},
-        config: evalConfig.config || {},
-        error_localizer: false,
+        config: {
+          ...(evalConfig.config || {}),
+          ...(evalConfig.data_injection
+            ? { run_config: { data_injection: evalConfig.data_injection } }
+            : {}),
+        },
+        error_localizer: evalConfig.error_localizer_enabled || false,
         filters: {},
       };
       try {
@@ -130,6 +135,8 @@ const TestDetailConfigureEval = () => {
       template_id: templateId,
       name: editingEvalItem.name,
       mapping: editingEvalItem.mapping || {},
+      config: editingEvalItem.config || {},
+      run_config: editingEvalItem.config?.run_config || {},
     };
   }, [editingEvalItem]);
 

@@ -280,19 +280,16 @@ curl http://localhost:8080/v1/chat/completions \
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
-cd future-agi/futureagi/agentcc-gateway
+cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
 go run ./cmd/server
 ```
 
 </details>
 
-<details><summary><b>Deploy to Kubernetes</b></summary>
+<details><summary><b>Kubernetes / Helm</b></summary>
 
-```bash
-helm repo add futureagi https://charts.futureagi.com
-helm install acc futureagi/agent-command-center
-```
+Official Kubernetes manifests and Helm charts are coming soon. For now, run AgentCC Gateway with Docker or as part of the Future AGI Docker Compose stack.
 
 </details>
 
