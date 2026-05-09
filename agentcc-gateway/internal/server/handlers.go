@@ -47,6 +47,7 @@ type Handlers struct {
 	guardrailEngine    *guardrails.Engine
 	policyStore        *policy.Store
 	streamGuardrailCfg config.StreamingGuardrailConfig
+	reflexionCfg       config.ReflexionConfig
 
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
@@ -202,7 +203,7 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 }
 
 // NewHandlers creates a Handlers instance.
-func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
+func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, reflexionCfg config.ReflexionConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
 	h := &Handlers{
 		registry:           registry,
 		engine:             engine,
@@ -212,6 +213,7 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 		guardrailEngine:    guardrailEngine,
 		policyStore:        policyStore,
 		streamGuardrailCfg: streamGuardrailCfg,
+		reflexionCfg:       reflexionCfg,
 		modelDB:            mdbPtr,
 		tenantStore:        tenantStore,
 		orgProviderCache:   orgProviderCache,
@@ -1161,7 +1163,8 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Try primary model first.
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
 	// they should only use org-configured providers (resolved above) or be rejected.
-	if rc.Metadata["key_type"] != "internal" {
+	// Guard on keyStore != nil so that unauthenticated test/dev deployments still work.
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
 		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
 	}
 
@@ -1312,6 +1315,15 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
+	// Post-stage guardrail block: rc.Response is nil but engine.Process succeeded
+	// (pre-stage blocks return non-nil error above). Attempt reflexion if configured.
+	if rc.Response == nil && rc.Flags.GuardrailTriggered {
+		if err := h.runReflexion(ctx, rc, providerCall); err != nil {
+			models.WriteErrorFromError(w, err)
+			return
+		}
+	}
+
 	if rc.Response == nil {
 		models.WriteError(w, models.ErrInternal("no response from provider"))
 		return
@@ -1321,6 +1333,84 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
+}
+
+// runReflexion retries the request after a post-stage guardrail block by injecting
+// the block reason as a user-turn feedback message and re-calling the full pipeline.
+// It is a no-op (returns the block error) when reflexion is disabled or exhausted.
+//
+// V1 tradeoff: each attempt re-runs all pre-plugins (auth, rate-limit). This keeps
+// the implementation simple; a future version can scope retries to provider+post-guardrail
+// only by adding an engine-level retry hook.
+func (h *Handlers) runReflexion(ctx context.Context, rc *models.RequestContext, providerCall pipeline.ProviderFunc) error {
+	cfg := h.reflexionCfg
+	if !cfg.Enabled || cfg.MaxAttempts <= 0 {
+		return h.guardrailBlockError(rc)
+	}
+
+	maxAttempts := cfg.MaxAttempts
+	if maxAttempts > 5 {
+		maxAttempts = 5
+	}
+
+	feedbackTmpl := cfg.FeedbackTemplate
+	if feedbackTmpl == "" {
+		feedbackTmpl = "Your previous response was blocked by a content policy guardrail. Please revise your response to comply. Reason: %s"
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		blockMsg := h.extractGuardrailBlockMsg(rc)
+		feedback := fmt.Sprintf(feedbackTmpl, blockMsg)
+		fbJSON, _ := json.Marshal(feedback)
+		rc.Request.Messages = append(rc.Request.Messages, models.Message{
+			Role:    "user",
+			Content: fbJSON,
+		})
+
+		// Reset state for retry attempt.
+		rc.Response = nil
+		rc.Flags.GuardrailTriggered = false
+		rc.GuardrailResults = rc.GuardrailResults[:0]
+		rc.Errors = rc.Errors[:0]
+		rc.SetMetadata("reflexion_attempt", strconv.Itoa(attempt))
+
+		if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+			return err
+		}
+
+		if rc.Response != nil {
+			rc.SetMetadata("reflexion_success", "true")
+			return nil
+		}
+
+		if !rc.Flags.GuardrailTriggered {
+			break
+		}
+	}
+
+	if rc.Response != nil {
+		return nil
+	}
+	return h.guardrailBlockError(rc)
+}
+
+func (h *Handlers) extractGuardrailBlockMsg(rc *models.RequestContext) string {
+	if len(rc.GuardrailResults) > 0 {
+		return rc.GuardrailResults[0].Message
+	}
+	if name := rc.Metadata["guardrail_name"]; name != "" {
+		return fmt.Sprintf("blocked by %s", name)
+	}
+	return "content policy violation"
+}
+
+func (h *Handlers) guardrailBlockError(rc *models.RequestContext) *models.APIError {
+	msg := h.extractGuardrailBlockMsg(rc)
+	if rc.Metadata["reflexion_attempt"] != "" {
+		msg = fmt.Sprintf("response blocked after %s reflexion attempt(s): %s",
+			rc.Metadata["reflexion_attempt"], msg)
+	}
+	return models.ErrGuardrailBlocked("content_blocked", msg)
 }
 
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {

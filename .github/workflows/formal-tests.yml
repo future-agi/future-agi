@@ -7,12 +7,14 @@ on:
       - 'futureagi/**/formal_tests/**'
       - 'futureagi/tfc/constants/**'
       - 'futureagi/tfc/permissions/**'
+      - 'agentcc-gateway/formal_tests/**'
       - '.github/workflows/formal-tests.yml'
   pull_request:
     paths:
       - 'futureagi/**/formal_tests/**'
       - 'futureagi/tfc/constants/**'
       - 'futureagi/tfc/permissions/**'
+      - 'agentcc-gateway/formal_tests/**'
       - '.github/workflows/formal-tests.yml'
 
 jobs:
@@ -58,4 +60,10 @@ jobs:
         if: always()
         working-directory: futureagi/model_hub/formal_tests
         run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run agentcc-gateway/ reflexion formal tests
+        if: always()
+        working-directory: agentcc-gateway/formal_tests
+        run: pytest test_reflexion_z3.py test_reflexion_hypothesis.py -v
         continue-on-error: true

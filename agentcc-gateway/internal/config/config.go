@@ -484,6 +484,16 @@ type GuardrailsConfig struct {
 	DefaultTimeout time.Duration            `yaml:"default_timeout" json:"default_timeout"`
 	Rules          []GuardrailRuleConfig    `yaml:"rules" json:"rules"`
 	Streaming      StreamingGuardrailConfig `yaml:"streaming" json:"streaming"`
+	Reflexion      ReflexionConfig          `yaml:"reflexion" json:"reflexion"`
+}
+
+// ReflexionConfig enables guardrail reflexion: when a post-stage guardrail blocks
+// the model's response, the block reason is injected back into the conversation and
+// the model is re-called (bounded by MaxAttempts). Disabled by default.
+type ReflexionConfig struct {
+	Enabled          bool   `yaml:"enabled" json:"enabled"`
+	MaxAttempts      int    `yaml:"max_attempts" json:"max_attempts"` // default 3; hard cap 5
+	FeedbackTemplate string `yaml:"feedback_template" json:"feedback_template"`
 }
 
 // StreamingGuardrailConfig controls guardrails on streaming responses.
