@@ -7003,6 +7003,7 @@ class GetEvalStructureView(APIView):
             "template_id": str(template.id),
             "name": eval.name,
             "eval_type_id": eval_type_id,
+            "eval_type": template.eval_type,
             "reason_column": eval.config.get("reason_column", False),
             "eval_tags": template.eval_tags,
             "description": template.description,
@@ -7024,6 +7025,7 @@ class GetEvalStructureView(APIView):
             "config_params_option": strip_turing_from_config_options(
                     template.config.get("config_params_option", {})
                 ),
+            "run_config": eval.config.get("run_config", {}),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7280,14 +7282,10 @@ class DeleteEvalsView(APIView):
                             ]
                             dataset.save()
 
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True)
-
-                        # Update metrics for all affected columns
+                        # Update metrics BEFORE deleting columns — the
+                        # lookup scopes by dataset via the Column row, which
+                        # must still be visible (deleted=False) for
+                        # BaseModelManager to find it.
                         metrics = UserEvalMetric.get_metrics_using_column(
                             getattr(request, "organization", None)
                             or request.user.organization.id,
@@ -7296,6 +7294,13 @@ class DeleteEvalsView(APIView):
                         for metric in metrics:
                             metric.column_deleted = True
                             metric.save()
+
+                        # Delete all related columns
+                        Column.objects.filter(
+                            Q(id=column.id)
+                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                            deleted=False,
+                        ).update(deleted=True)
 
                 # Delete the eval_metric itself when delete_column is True
                 eval_metric.deleted = True
@@ -7512,19 +7517,27 @@ class EditAndRunUserEvalView(APIView):
                             "Failed to rebuild column_order after edit-eval"
                         )
                 else:
-                    column = Column.objects.get(source_id=eval_metric.id)
-                    reason_column, created = Column.objects.get_or_create(
-                        name=f"{eval_metric.name}-reason",
-                        data_type=DataTypeChoices.TEXT.value,
-                        source=SourceChoices.EVALUATION_REASON.value,
-                        dataset=eval_metric.dataset,
-                        source_id=f"{column.id}-sourceid-{eval_metric.id}",
-                    )
-                    if created:
-                        column_order = eval_metric.dataset.column_order
-                        column_order.append(str(reason_column.id))
-                        eval_metric.dataset.column_order = column_order
-                        eval_metric.dataset.save()
+                    column = Column.objects.filter(
+                        source_id=eval_metric.id, deleted=False
+                    ).first()
+                    if not column:
+                        # Column doesn't exist yet (eval was added with run=false
+                        # and never run). Skip reason-column creation — it will
+                        # be created when the eval actually runs for the first time.
+                        pass
+                    else:
+                        reason_column, created = Column.objects.get_or_create(
+                            name=f"{eval_metric.name}-reason",
+                            data_type=DataTypeChoices.TEXT.value,
+                            source=SourceChoices.EVALUATION_REASON.value,
+                            dataset=eval_metric.dataset,
+                            source_id=f"{column.id}-sourceid-{eval_metric.id}",
+                        )
+                        if created:
+                            column_order = eval_metric.dataset.column_order
+                            column_order.append(str(reason_column.id))
+                            eval_metric.dataset.column_order = column_order
+                            eval_metric.dataset.save()
 
             # Eval columns live under different source types depending on scope:
             # dataset evals → SourceChoices.EVALUATION

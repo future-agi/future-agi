@@ -29,7 +29,7 @@ x-dev-backend-env: &dev-backend-env
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
 
-  AGENTCC_INTERNAL_URL: http://gateway:8090
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
@@ -85,12 +85,13 @@ x-dev-worker-base: &dev-worker-base
   build:
     context: ./futureagi
     dockerfile: Dockerfile.oss
-  image: futureagi/backend:local
+  image: futureagi/future-agi:dev
   working_dir: /app/backend
   volumes:
     - ./futureagi:/app/backend
   env_file:
-    - .env
+    - path: .env
+      required: false
   depends_on:
     temporal:
       condition: service_healthy
@@ -108,31 +109,46 @@ services:
 
   frontend:
     build:
-      # Use the dev stage from frontend/Dockerfile (node + deps, no nginx).
+      context: ./frontend
       target: dev
-    # Bind-mount source for HMR; anonymous volume preserves the image's
-    # node_modules so we don't need a host-side `yarn install`. If you change
-    # package.json, rebuild: `docker compose build frontend`.
+    image: futureagi/frontend:dev
     volumes:
       - ./frontend:/app
       - /app/node_modules
     ports: !override
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
-      # Required on macOS/Windows: Docker bind mounts don't propagate FS
-      # events into the container, so Vite's chokidar watcher needs polling
-      # to see edits. Costs a bit of CPU; remove if you're on Linux.
+      # macOS/Windows bind mounts don't propagate FS events; chokidar needs polling.
       VITE_USE_POLLING: "true"
-      # Vite reads VITE_* from process.env at startup in dev mode.
       VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
       VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
       VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
 
   backend:
+    build:
+      context: ./futureagi
+      dockerfile: Dockerfile.oss
+    image: futureagi/future-agi:dev
     volumes:
       - ./futureagi:/app/backend
     environment:
       FAST_STARTUP: "true"
+
+  agentcc-gateway:
+    build:
+      context: ./agentcc-gateway
+    image: futureagi/agentcc-gateway:dev
+
+  serving:
+    build:
+      context: ./futureagi/model_serving
+      dockerfile: Dockerfile.oss
+    image: futureagi/serving:dev
+
+  code-executor:
+    build:
+      context: ./futureagi/code-executor
+    image: futureagi/code-executor:dev
 
   # --------------------------------------------------------------------------
   # Single all-queue worker from the OSS compose is disabled; use per-queue

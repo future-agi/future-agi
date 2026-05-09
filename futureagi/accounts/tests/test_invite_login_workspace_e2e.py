@@ -340,6 +340,97 @@ class TestSingleWorkspaceInvite:
 
 
 # ===========================================================================
+# Existing Active Member Re-invite
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestExistingActiveMemberReinvite:
+    def test_existing_active_member_gets_email_when_workspace_access_is_added(
+        self, monkeypatch, owner_client, org, owner, ws_default, ws_second
+    ):
+        existing_user = _create_invited_user(
+            org,
+            "existing-active@futureagi.com",
+            Level.MEMBER,
+            [{"workspace": ws_default, "level": Level.WORKSPACE_MEMBER}],
+            owner,
+        )
+        sent_emails = []
+
+        def fake_send_invite_email(email, organization, invited_by):
+            sent_emails.append((email, organization.id, invited_by.id))
+
+        monkeypatch.setattr(
+            "accounts.views.rbac_views.send_invite_email", fake_send_invite_email
+        )
+
+        response = owner_client.post(
+            INVITE_URL,
+            {
+                "emails": [existing_user.email],
+                "org_level": Level.MEMBER,
+                "workspace_access": [
+                    {
+                        "workspace_id": str(ws_second.id),
+                        "level": Level.WORKSPACE_MEMBER,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["result"] == {
+            "invited": [],
+            "already_members": [existing_user.email],
+        }
+        assert sent_emails == [(existing_user.email, org.id, owner.id)]
+        assert WorkspaceMembership.no_workspace_objects.filter(
+            user=existing_user,
+            workspace=ws_second,
+            is_active=True,
+            level=Level.WORKSPACE_MEMBER,
+        ).exists()
+
+    def test_existing_active_member_does_not_get_email_when_access_is_unchanged(
+        self, monkeypatch, owner_client, org, owner, ws_default
+    ):
+        existing_user = _create_invited_user(
+            org,
+            "existing-unchanged@futureagi.com",
+            Level.MEMBER,
+            [{"workspace": ws_default, "level": Level.WORKSPACE_MEMBER}],
+            owner,
+        )
+        sent_emails = []
+
+        monkeypatch.setattr(
+            "accounts.views.rbac_views.send_invite_email",
+            lambda email, organization, invited_by: sent_emails.append(email),
+        )
+
+        response = owner_client.post(
+            INVITE_URL,
+            {
+                "emails": [existing_user.email],
+                "org_level": Level.MEMBER,
+                "workspace_access": [
+                    {
+                        "workspace_id": str(ws_default.id),
+                        "level": Level.WORKSPACE_MEMBER,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["result"]["already_members"] == [existing_user.email]
+        assert sent_emails == []
+
+
+# ===========================================================================
 # B. Multiple Workspace Invite
 # ===========================================================================
 
