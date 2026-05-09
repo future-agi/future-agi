@@ -473,6 +473,7 @@ class QueueLabelDetailSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="label.name", read_only=True)
     type = serializers.CharField(source="label.type", read_only=True)
     settings = serializers.JSONField(source="label.settings", read_only=True)
+    allow_notes = serializers.BooleanField(source="label.allow_notes", read_only=True)
     description = serializers.CharField(
         source="label.description", read_only=True, default=None
     )
@@ -486,6 +487,7 @@ class QueueLabelDetailSerializer(serializers.ModelSerializer):
             "type",
             "settings",
             "description",
+            "allow_notes",
             "required",
             "order",
         ]

@@ -14,8 +14,9 @@ import {
   Collapse,
   Divider,
   IconButton,
+  MenuItem,
+  Select,
   Stack,
-  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -155,11 +156,16 @@ const LabelPanel = forwardRef(function LabelPanel(
     onDirtyChange,
     readOnly = false,
     readOnlyReason = null,
+    annotators = null,
+    viewingAnnotatorId = null,
+    currentUserId = null,
+    onViewingAnnotatorChange,
+    isAnnotatorSwitchPending = false,
   },
   ref,
 ) {
   const [values, setValues] = useState({});
-  const [notes, setNotes] = useState("");
+  const [labelNotes, setLabelNotes] = useState({});
   const [showInstructions, setShowInstructions] = useState(!!instructions);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -175,28 +181,31 @@ const LabelPanel = forwardRef(function LabelPanel(
   // this, navigating to a new un-annotated item can leave the previous
   // item's values pre-filled while the new item's annotations are still
   // fetching, and the user can accidentally re-submit those values onto
-  // the wrong trace.
+  // the wrong trace or annotator.
   useEffect(() => {
     setValues({});
-    setNotes("");
+    setLabelNotes({});
     setErrorLabels(new Set());
     onDirtyChange?.(false);
-  }, [itemId, onDirtyChange]);
+  }, [itemId, viewingAnnotatorId, onDirtyChange]);
 
   // Initialize values from existing annotations once they arrive (or
   // re-arrive after a refetch). Runs after the itemId-change reset above,
   // so values land on the correct item's prior annotations.
   useEffect(() => {
     const initial = {};
+    const initialNotes = {};
     for (const ann of annotations) {
       const labelId = ann.label_id;
       if (labelId) {
         initial[labelId] = ann.value;
+        if (Object.prototype.hasOwnProperty.call(ann, "notes")) {
+          initialNotes[labelId] = ann.notes || "";
+        }
       }
     }
     setValues(initial);
-    const withNotes = annotations.find((a) => a.notes);
-    setNotes(withNotes?.notes || "");
+    setLabelNotes(initialNotes);
     setErrorLabels(new Set());
     onDirtyChange?.(false);
   }, [annotations, onDirtyChange]);
@@ -215,6 +224,15 @@ const LabelPanel = forwardRef(function LabelPanel(
         next.delete(labelId);
         return next;
       });
+      onDirtyChange?.(true);
+    },
+    [onDirtyChange, readOnly],
+  );
+
+  const handleLabelNotesChange = useCallback(
+    (labelId, value) => {
+      if (readOnly) return;
+      setLabelNotes((prev) => ({ ...prev, [labelId]: value }));
       onDirtyChange?.(true);
     },
     [onDirtyChange, readOnly],
@@ -255,17 +273,24 @@ const LabelPanel = forwardRef(function LabelPanel(
       return;
     }
 
+    const labelsById = new Map(labels.map((label) => [label.label_id, label]));
     const annotationsList = Object.entries(currentValues)
       .filter(([_, v]) => v !== null && v !== undefined)
-      .map(([labelId, value]) => ({
-        label_id: labelId,
-        value,
-      }));
+      .map(([labelId, value]) => {
+        const annotation = {
+          label_id: labelId,
+          value,
+        };
+        if (labelsById.get(labelId)?.allow_notes) {
+          annotation.notes = labelNotes[labelId] ?? "";
+        }
+        return annotation;
+      });
     if (annotationsList.length > 0) {
       onDirtyChange?.(false);
-      onSubmit({ annotations: annotationsList, notes });
+      onSubmit({ annotations: annotationsList });
     }
-  }, [notes, onSubmit, labels, onDirtyChange, readOnly]);
+  }, [labelNotes, onSubmit, labels, onDirtyChange, readOnly]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
@@ -484,14 +509,82 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Box>
       )}
 
+      {Array.isArray(annotators) && annotators.length > 1 && (
+        <Box sx={{ mb: 2 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+            <Iconify
+              icon="solar:user-id-bold"
+              width={16}
+              sx={{ color: "text.secondary" }}
+            />
+            <Typography variant="subtitle2" color="text.secondary">
+              Viewing annotator
+            </Typography>
+            {isAnnotatorSwitchPending && (
+              <CircularProgress size={12} thickness={5} sx={{ ml: 0.5 }} />
+            )}
+          </Stack>
+          <Select
+            fullWidth
+            size="small"
+            value={viewingAnnotatorId || ""}
+            onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
+            sx={{
+              borderRadius: 0.5,
+              "& .MuiSelect-select": { py: 1 },
+            }}
+          >
+            {annotators.map((annotator) => {
+              const isSelf =
+                currentUserId &&
+                String(annotator.user_id) === String(currentUserId);
+              return (
+                <MenuItem
+                  key={String(annotator.user_id)}
+                  value={String(annotator.user_id)}
+                >
+                  {annotator.name || annotator.email || "Unknown"}
+                  {isSelf ? " (you)" : ""}
+                </MenuItem>
+              );
+            })}
+          </Select>
+          {viewingAnnotatorId &&
+            (() => {
+              const selected = annotators.find(
+                (annotator) =>
+                  String(annotator.user_id) === String(viewingAnnotatorId),
+              );
+              const isSelf =
+                currentUserId &&
+                String(viewingAnnotatorId) === String(currentUserId);
+              const name =
+                selected?.name || selected?.email || "this annotator";
+              return (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.75 }}
+                >
+                  {isSelf
+                    ? "You are viewing your own annotations"
+                    : `You are viewing annotations of ${name}`}
+                </Typography>
+              );
+            })()}
+          <Divider sx={{ mt: 2 }} />
+        </Box>
+      )}
+
       {/* Label inputs */}
       <Stack
         spacing={2}
         sx={{
           flex: 1,
-          ...(readOnly && {
+          ...((readOnly || isAnnotatorSwitchPending) && {
             pointerEvents: "none",
-            opacity: 0.7,
+            opacity: isAnnotatorSwitchPending ? 0.4 : 0.7,
+            transition: "opacity 120ms ease-out",
           }),
         }}
       >
@@ -510,12 +603,17 @@ const LabelPanel = forwardRef(function LabelPanel(
                   settings: ql.settings || {},
                   description: ql.description,
                   required: ql.required,
+                  allow_notes: ql.allow_notes ?? false,
                 }}
                 value={values[labelId] ?? null}
                 onChange={(val) => handleChange(labelId, val)}
                 index={i}
                 focused={focusedIndex === i}
                 hasError={errorLabels.has(labelId)}
+                labelNotes={labelNotes[labelId] ?? ""}
+                onLabelNotesChange={(val) =>
+                  handleLabelNotesChange(labelId, val)
+                }
                 textFlushRef={
                   ql.type === "text"
                     ? (el) => {
@@ -528,26 +626,6 @@ const LabelPanel = forwardRef(function LabelPanel(
           );
         })}
       </Stack>
-
-      {/* Notes */}
-      <Box sx={{ mt: 2 }}>
-        <TextField
-          fullWidth
-          size="small"
-          multiline
-          minRows={2}
-          maxRows={4}
-          placeholder="Notes (optional)"
-          value={notes}
-          onChange={(e) => {
-            if (readOnly) return;
-            setNotes(e.target.value);
-            onDirtyChange?.(true);
-          }}
-          InputProps={{ readOnly }}
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-        />
-      </Box>
 
       {/* Annotation History */}
       <AnnotationHistory queueId={queueId} itemId={itemId} />
@@ -589,6 +667,11 @@ LabelPanel.propTypes = {
   onDirtyChange: PropTypes.func,
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,
+  annotators: PropTypes.array,
+  viewingAnnotatorId: PropTypes.string,
+  currentUserId: PropTypes.string,
+  onViewingAnnotatorChange: PropTypes.func,
+  isAnnotatorSwitchPending: PropTypes.bool,
 };
 
 export default LabelPanel;

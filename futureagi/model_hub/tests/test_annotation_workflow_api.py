@@ -34,6 +34,7 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
+    AnnotatorRole,
     QueueItemStatus,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
@@ -290,6 +291,94 @@ class TestSubmitAnnotations:
         ann = Score.objects.get(queue_item_id=item_ids[0], label=label, deleted=False)
         assert ann.value == "negative"
 
+    def test_submit_stores_notes_per_label(self, auth_client, queue_with_items, label_b):
+        """Labels with allow_notes keep their own notes instead of sharing one field."""
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        label.allow_notes = True
+        label.save(update_fields=["allow_notes", "updated_at"])
+        label_b.allow_notes = True
+        label_b.save(update_fields=["allow_notes", "updated_at"])
+        AnnotationQueueLabel.objects.create(
+            queue=queue,
+            label=label_b,
+            order=1,
+            required=False,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(label.id),
+                        "value": "positive",
+                        "notes": "sentiment note",
+                    },
+                    {
+                        "label_id": str(label_b.id),
+                        "value": {"rating": 4},
+                        "notes": "quality note",
+                    },
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        notes_by_label = dict(
+            Score.objects.filter(queue_item_id=item_ids[0], deleted=False).values_list(
+                "label_id", "notes"
+            )
+        )
+        assert notes_by_label[label.id] == "sentiment note"
+        assert notes_by_label[label_b.id] == "quality note"
+
+    def test_submit_only_stores_notes_for_note_enabled_labels(
+        self, auth_client, queue_with_items, label_b
+    ):
+        """Legacy top-level notes are ignored for labels without allow_notes."""
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        label.allow_notes = True
+        label.save(update_fields=["allow_notes", "updated_at"])
+        label_b.allow_notes = False
+        label_b.save(update_fields=["allow_notes", "updated_at"])
+        AnnotationQueueLabel.objects.create(
+            queue=queue,
+            label=label_b,
+            order=1,
+            required=False,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "notes": "legacy shared note",
+                "annotations": [
+                    {
+                        "label_id": str(label.id),
+                        "value": "positive",
+                    },
+                    {
+                        "label_id": str(label_b.id),
+                        "value": {"rating": 4},
+                        "notes": "should be ignored",
+                    },
+                ],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        notes_by_label = dict(
+            Score.objects.filter(queue_item_id=item_ids[0], deleted=False).values_list(
+                "label_id", "notes"
+            )
+        )
+        assert notes_by_label[label.id] == "legacy shared note"
+        assert notes_by_label[label_b.id] == ""
+
     def test_submit_sets_in_progress(self, auth_client, queue_with_items):
         """Item status changes from pending to in_progress on first submit."""
         queue_id, item_ids, label = queue_with_items
@@ -481,6 +570,75 @@ class TestAnnotateDetail:
         assert "annotations" in result
         assert "progress" in result
         assert result["progress"]["total"] == 3
+
+    def test_annotate_detail_includes_label_allow_notes(
+        self, auth_client, queue_with_items
+    ):
+        """Workspace labels expose allow_notes so the UI can render per-label notes."""
+        queue_id, item_ids, label = queue_with_items
+        label.allow_notes = True
+        label.save(update_fields=["allow_notes", "updated_at"])
+
+        resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = _result(resp)
+        assert result["labels"][0]["allow_notes"] is True
+
+    def test_reviewer_can_scope_annotate_detail_to_selected_annotator(
+        self, auth_client, queue_with_items, user, second_user, organization
+    ):
+        """Managers can request one annotator's answers instead of merged answers."""
+        queue_id, item_ids, label = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        Score.objects.create(
+            source_type="dataset_row",
+            dataset_row=item.dataset_row,
+            label=label,
+            annotator=user,
+            value="positive",
+            score_source="human",
+            queue_item=item,
+            organization=organization,
+        )
+        Score.objects.create(
+            source_type="dataset_row",
+            dataset_row=item.dataset_row,
+            label=label,
+            annotator=second_user,
+            value="negative",
+            score_source="human",
+            queue_item=item,
+            organization=organization,
+        )
+
+        resp = auth_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"annotator_id": str(second_user.id)},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        annotations = _result(resp)["annotations"]
+        assert len(annotations) == 1
+        assert annotations[0]["value"] == "negative"
+        assert str(annotations[0]["annotator"]) == str(second_user.id)
+
+    def test_reviewer_annotate_detail_rejects_invalid_annotator_selection(
+        self, auth_client, queue_with_items
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"annotator_id": "not-a-uuid"},
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_annotate_detail_progress_counts(self, auth_client, queue_with_items):
         """Progress counts reflect current state."""

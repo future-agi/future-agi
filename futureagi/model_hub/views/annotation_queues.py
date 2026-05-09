@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import timedelta
 
 import structlog
@@ -1951,7 +1952,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         annotations_data = serializer.validated_data["annotations"]
-        notes = serializer.validated_data.get("notes", "")
+        fallback_notes = serializer.validated_data.get("notes", "")
         submitted = 0
 
         # Resolve source FK for Score creation
@@ -1978,6 +1979,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if label.pk not in queue_label_ids:
                 continue
 
+            per_label_notes = (
+                ann_data.get("notes", fallback_notes) if label.allow_notes else ""
+            )
+
             # Upsert Score (unified annotation primitive)
             # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
@@ -1992,7 +1997,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         "source_type": item.source_type,
                         "value": value,
                         "score_source": "human",
-                        "notes": notes,
+                        "notes": per_label_notes,
                         "queue_item": item,
                         "organization": request.organization,
                     },
@@ -2268,7 +2273,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_item=item,
             deleted=False,
         ).select_related("label")
-        if not is_reviewer:
+        raw_annotator_id = request.query_params.get("annotator_id") or None
+        viewing_annotator_id = None
+        if raw_annotator_id and is_reviewer:
+            try:
+                viewing_annotator_id = uuid.UUID(raw_annotator_id)
+            except (ValueError, TypeError):
+                return self._gm.bad_request("Invalid annotator selection.")
+
+        if viewing_annotator_id:
+            annotations_qs = annotations_qs.filter(annotator_id=viewing_annotator_id)
+        elif not is_reviewer:
             annotations_qs = annotations_qs.filter(annotator=request.user)
         annotations = annotations_qs
 

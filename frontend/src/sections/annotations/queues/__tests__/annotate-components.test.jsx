@@ -2,9 +2,11 @@
  * Phase 2B-3C – Annotation workspace component tests.
  * Tests: LabelInput, AnnotateHeader, AnnotateFooter, AnnotationHistory
  */
+/* eslint-disable react/prop-types */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import LabelInput from "../annotate/label-input";
+import LabelPanel from "../annotate/label-panel";
 import AnnotateHeader from "../annotate/annotate-header";
 import AnnotateFooter from "../annotate/annotate-footer";
 import AnnotationHistory from "../annotate/annotation-history";
@@ -17,6 +19,10 @@ vi.mock("src/components/iconify", () => ({
 
 vi.mock("src/utils/format-time", () => ({
   fDateTime: () => "Jan 1, 2025 12:00",
+}));
+
+vi.mock("src/sections/common/CellMarkdown", () => ({
+  default: ({ text }) => <div>{text}</div>,
 }));
 
 // Mock API hook for annotation history
@@ -191,6 +197,150 @@ describe("LabelInput", () => {
       await user.click(screen.getByText("Yes"));
       expect(onChange).toHaveBeenCalledWith({ value: "up" });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LabelPanel
+// ---------------------------------------------------------------------------
+describe("LabelPanel", () => {
+  it("submits separate notes for each note-enabled label", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(
+      <LabelPanel
+        labels={[
+          {
+            id: "ql-1",
+            label_id: "label-1",
+            name: "Content",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: true,
+          },
+          {
+            id: "ql-2",
+            label_id: "label-2",
+            name: "Latency",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: true,
+          },
+        ]}
+        annotations={[]}
+        onSubmit={onSubmit}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    await user.click(screen.getAllByText("Yes")[0]);
+    await user.click(screen.getAllByText("No")[1]);
+    const noteFields = screen.getAllByPlaceholderText(
+      "Add notes for this label...",
+    );
+    await user.type(noteFields[0], "content note");
+    await user.type(noteFields[1], "latency note");
+    await user.click(screen.getByRole("button", { name: /submit & next/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      annotations: [
+        {
+          label_id: "label-1",
+          value: { value: "up" },
+          notes: "content note",
+        },
+        {
+          label_id: "label-2",
+          value: { value: "down" },
+          notes: "latency note",
+        },
+      ],
+    });
+  });
+
+  it("clears stale label notes when the selected annotator changes", async () => {
+    const label = {
+      id: "ql-1",
+      label_id: "label-1",
+      name: "Content",
+      type: "thumbs_up_down",
+      settings: {},
+      allow_notes: true,
+    };
+    const annotations = [
+      {
+        label_id: "label-1",
+        value: { value: "up" },
+        notes: "previous annotator note",
+      },
+    ];
+
+    const { rerender } = render(
+      <LabelPanel
+        labels={[label]}
+        annotations={annotations}
+        onSubmit={() => {}}
+        queueId="queue-1"
+        itemId="item-1"
+        viewingAnnotatorId="user-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Add notes for this label..."),
+      ).toHaveValue("previous annotator note");
+    });
+
+    rerender(
+      <LabelPanel
+        labels={[label]}
+        annotations={annotations}
+        onSubmit={() => {}}
+        queueId="queue-1"
+        itemId="item-1"
+        viewingAnnotatorId="user-2"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Add notes for this label..."),
+      ).toHaveValue("");
+    });
+  });
+
+  it("shows selected annotator context and emits annotator changes", async () => {
+    const user = userEvent.setup();
+    const onViewingAnnotatorChange = vi.fn();
+
+    render(
+      <LabelPanel
+        labels={[]}
+        annotations={[]}
+        onSubmit={() => {}}
+        queueId="queue-1"
+        itemId="item-1"
+        annotators={[
+          { user_id: "user-1", name: "Kartik" },
+          { user_id: "user-2", name: "Narda" },
+        ]}
+        currentUserId="user-1"
+        viewingAnnotatorId="user-2"
+        onViewingAnnotatorChange={onViewingAnnotatorChange}
+      />,
+    );
+
+    expect(
+      screen.getByText("You are viewing annotations of Narda"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "Kartik (you)" }));
+
+    expect(onViewingAnnotatorChange).toHaveBeenCalledWith("user-1");
   });
 });
 

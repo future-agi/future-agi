@@ -106,53 +106,99 @@ export default function AnnotateWorkspaceView() {
     }
   }, [nextItemData, currentItemId]);
 
-  // Fetch annotate detail for current item
-  const {
-    data: detail,
-    isLoading: detailLoading,
-    error: detailError,
-  } = useAnnotateDetail(queueId, currentItemId);
-
   const { data: progress } = useQueueProgress(queueId);
   const { data: queueDetail } = useAnnotationQueueDetail(queueId);
+  const currentUserId = String(user?.id || user?.pk || "");
 
   const myQueueRole = useMemo(() => {
     if (!queueDetail?.annotators || !user) return null;
     const currentUser = queueDetail.annotators.find(
-      (a) => a.user_id === (user.id || user.pk),
+      (a) => String(a.user_id) === currentUserId,
     );
     return currentUser?.role || null;
-  }, [queueDetail, user]);
+  }, [queueDetail, user, currentUserId]);
 
   const canReview =
     myQueueRole === QUEUE_ROLES.REVIEWER || myQueueRole === QUEUE_ROLES.MANAGER;
+
+  const [viewingAnnotatorId, setViewingAnnotatorId] = useState(null);
+
+  useEffect(() => {
+    if (!queueDetail) return;
+    if (canReview && currentUserId && !viewingAnnotatorId) {
+      setViewingAnnotatorId(currentUserId);
+    } else if (!canReview && viewingAnnotatorId !== null) {
+      setViewingAnnotatorId(null);
+    }
+  }, [canReview, currentUserId, queueDetail, viewingAnnotatorId]);
+
+  const scopedAnnotatorId = canReview ? viewingAnnotatorId : undefined;
+  const isViewingOtherAnnotator =
+    canReview &&
+    !!viewingAnnotatorId &&
+    String(viewingAnnotatorId) !== currentUserId;
+  const detailEnabled =
+    !!queueId &&
+    !!currentItemId &&
+    !!queueDetail &&
+    (!canReview || !!viewingAnnotatorId);
+
+  // Reviewers/managers request one annotator at a time so values from
+  // multiple annotators never merge into a single editable form.
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    isFetching: detailFetching,
+    error: detailError,
+  } = useAnnotateDetail(queueId, currentItemId, {
+    annotatorId: scopedAnnotatorId,
+    enabled: detailEnabled,
+  });
+
+  const lastLoadedAnnotatorIdRef = useRef(null);
+  useEffect(() => {
+    if (detail && !detailFetching) {
+      lastLoadedAnnotatorIdRef.current = scopedAnnotatorId || null;
+    }
+  }, [detail, detailFetching, scopedAnnotatorId]);
+
+  const isAnnotatorSwitchPending =
+    detailFetching &&
+    !!scopedAnnotatorId &&
+    !!lastLoadedAnnotatorIdRef.current &&
+    String(lastLoadedAnnotatorIdRef.current) !== String(scopedAnnotatorId);
 
   // Prefetch adjacent items for instant navigation
   useEffect(() => {
     if (!detail || !queueId) return;
     const nextId = detail.next_item_id;
     const prevId = detail.prev_item_id;
+    const requestOptions = scopedAnnotatorId
+      ? { params: { annotator_id: scopedAnnotatorId } }
+      : undefined;
     if (nextId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, nextId),
+        queryKey: annotateKeys.detail(queueId, nextId, scopedAnnotatorId),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${nextId}/annotate-detail/`,
+            requestOptions,
           ),
         staleTime: 1000 * 60 * 2,
       });
     }
     if (prevId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, prevId),
+        queryKey: annotateKeys.detail(queueId, prevId, scopedAnnotatorId),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${prevId}/annotate-detail/`,
+            requestOptions,
           ),
         staleTime: 1000 * 60 * 2,
       });
     }
-  }, [detail, queueId, queryClient]);
+  }, [detail, queueId, queryClient, scopedAnnotatorId]);
 
   const labelPanelRef = useRef(null);
   const isDirtyRef = useRef(false);
@@ -172,7 +218,6 @@ export default function AnnotateWorkspaceView() {
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
-  const currentUserId = String(user?.id || user?.pk || "");
   const hasAssignments = assignedUsers.length > 0;
   const isAssignedToMe = assignedUsers.some(
     (a) => String(a.id) === currentUserId,
@@ -192,8 +237,39 @@ export default function AnnotateWorkspaceView() {
   const isBlockedAssignedToOther = !canReview && cannotAnnotate;
   // Backwards-compatible flag passed to header for disabling Skip.
   const isAssignedToOther = cannotAnnotate && !isReviewMode;
+  const labelPanelReadOnly =
+    isViewOnlyForReviewer ||
+    isViewingOtherAnnotator ||
+    isAnnotatorSwitchPending;
+  const labelPanelReadOnlyReason = isAnnotatorSwitchPending
+    ? "Loading selected annotator..."
+    : isViewingOtherAnnotator
+      ? "Viewing another annotator's submissions (read only)"
+      : isViewOnlyForReviewer
+        ? `Assigned to ${assignedToName || "another annotator"} — view only`
+        : null;
 
   const isSubmittingRef = useRef(false);
+
+  const handleViewingAnnotatorChange = useCallback(
+    (id) => {
+      const nextAnnotatorId = id || currentUserId;
+      if (String(nextAnnotatorId) === String(viewingAnnotatorId || "")) {
+        return;
+      }
+      if (
+        !isViewingOtherAnnotator &&
+        isDirtyRef.current &&
+        !window.confirm(
+          "You have unsaved annotations. Switch annotator anyway?",
+        )
+      ) {
+        return;
+      }
+      setViewingAnnotatorId(nextAnnotatorId);
+    },
+    [currentUserId, isViewingOtherAnnotator, viewingAnnotatorId],
+  );
 
   const handleSubmitAndNext = useCallback(
     ({ annotations, notes }) => {
@@ -379,12 +455,30 @@ export default function AnnotateWorkspaceView() {
     } finally {
       setIsFetchingNext(false);
     }
-  }, [historyIndex, itemHistory, queueId, isFetchingNext, enqueueSnackbar, detail]);
+  }, [
+    historyIndex,
+    itemHistory,
+    queueId,
+    isFetchingNext,
+    enqueueSnackbar,
+    detail,
+  ]);
 
   const handleKeyboardSubmit = useCallback(() => {
-    if (isViewOnlyForReviewer || isBlockedAssignedToOther) return;
+    if (
+      isViewOnlyForReviewer ||
+      isBlockedAssignedToOther ||
+      isViewingOtherAnnotator ||
+      isAnnotatorSwitchPending
+    )
+      return;
     labelPanelRef.current?.submit();
-  }, [isViewOnlyForReviewer, isBlockedAssignedToOther]);
+  }, [
+    isViewOnlyForReviewer,
+    isBlockedAssignedToOther,
+    isViewingOtherAnnotator,
+    isAnnotatorSwitchPending,
+  ]);
 
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
@@ -394,8 +488,18 @@ export default function AnnotateWorkspaceView() {
     onEscape: handleBack,
   });
 
+  const isInitialDetailLoading =
+    detailEnabled && !detail && (detailLoading || detailFetching);
+  const isWaitingForAnnotatorSelection =
+    !!queueDetail && canReview && !viewingAnnotatorId;
+
   // Loading state
-  if (nextLoading || (detailLoading && !detail)) {
+  if (
+    nextLoading ||
+    !queueDetail ||
+    isWaitingForAnnotatorSelection ||
+    isInitialDetailLoading
+  ) {
     return (
       <Box
         sx={{
@@ -604,12 +708,13 @@ export default function AnnotateWorkspaceView() {
               queueId={queueId}
               itemId={currentItemId}
               onDirtyChange={handleDirtyChange}
-              readOnly={isViewOnlyForReviewer}
-              readOnlyReason={
-                isViewOnlyForReviewer
-                  ? `Assigned to ${assignedToName || "another annotator"} — view only`
-                  : null
-              }
+              readOnly={labelPanelReadOnly}
+              readOnlyReason={labelPanelReadOnlyReason}
+              annotators={canReview ? queueDetail?.annotators || [] : null}
+              viewingAnnotatorId={viewingAnnotatorId}
+              currentUserId={currentUserId}
+              isAnnotatorSwitchPending={isAnnotatorSwitchPending}
+              onViewingAnnotatorChange={handleViewingAnnotatorChange}
             />
           )}
         </Box>

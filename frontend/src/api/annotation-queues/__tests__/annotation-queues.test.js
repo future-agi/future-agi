@@ -12,12 +12,14 @@ import {
   annotateKeys,
   automationRuleKeys,
   useCreateAutomationRule,
+  useAnnotateDetail,
   useCompleteItem,
   useSubmitAnnotations,
 } from "../annotation-queues";
 
 vi.mock("src/utils/axios", () => ({
   default: {
+    get: vi.fn(),
     post: vi.fn(),
   },
 }));
@@ -130,6 +132,15 @@ describe("Annotation Queues API", () => {
       ]);
     });
 
+    it("generates annotator-scoped detail key", () => {
+      expect(annotateKeys.detail("q-1", "item-1", "user-1")).toEqual([
+        "annotate-detail",
+        "q-1",
+        "item-1",
+        "user-1",
+      ]);
+    });
+
     it("generates nextItem key", () => {
       expect(annotateKeys.nextItem("q-1")).toEqual([
         "annotate-next-item",
@@ -160,6 +171,33 @@ describe("Annotation Queues API", () => {
         "q-1",
         "list",
       ]);
+    });
+  });
+
+  describe("useAnnotateDetail", () => {
+    it("passes annotator_id when an annotator is selected", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { annotations: [] } },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useAnnotateDetail("queue-1", "item-1", {
+            annotatorId: "user-2",
+          }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
+        { params: { annotator_id: "user-2" } },
+      );
     });
   });
 
