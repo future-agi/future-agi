@@ -28,6 +28,7 @@ import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { Box, Button, CircularProgress } from "@mui/material";
 import axiosInstance, { endpoints } from "src/utils/axios";
+import { LOGIN_ERROR_CODES } from "src/utils/constants";
 import { useSnackbar } from "src/components/snackbar";
 import { useMutation } from "@tanstack/react-query";
 import { useParams } from "src/routes/hooks";
@@ -236,38 +237,94 @@ export default function JwtLoginView() {
         }
       }
     } catch (error) {
-      const raw = error;
-      const message =
-        typeof raw === "object" && raw?.[0] === "I"
-          ? Object.keys(raw)
-              .filter((key) => !isNaN(key)) // only numeric keys
-              .sort((a, b) => a - b) // sort keys in order
-              .map((key) => raw[key])
-              .join("")
-          : error?.detail || error?.result?.error || "Login failed";
-      if (message.includes("IP address temporarily blocked")) {
-        enqueueSnackbar(message, { variant: "error" });
-        return;
-      }
-      if (error?.detail === "User not found") {
-        setErrorMsg(
-          "No account found with this email. Please sign up to create one",
-        );
-      } else if (error?.result?.error === "Account deactivated") {
-        setErrorMsg(
-          error?.result?.message ||
-            "Your account has been deactivated. Please contact your organization admin.",
-        );
-      } else if (error?.result?.error === "Invalid credentials") {
-        setErrorMsg("Enter a valid Email and password combination");
-      } else {
-        setErrorMsg(
-          typeof error === "string"
-            ? error
-            : error?.detail ||
+      const errorCode =
+        error?.result?.error_code ||
+        error?.result?.errorCode ||
+        error?.error_code ||
+        error?.errorCode;
+
+      if (errorCode) {
+        switch (errorCode) {
+          case LOGIN_ERROR_CODES.IP_BLOCKED:
+          case LOGIN_ERROR_CODES.IP_RATE_LIMITED:
+            enqueueSnackbar(
+              error?.result?.error ||
+                "Your IP has been temporarily blocked. Please try again later.",
+              { variant: "error" },
+            );
+            break;
+
+          case LOGIN_ERROR_CODES.ACCOUNT_BLOCKED:
+          case LOGIN_ERROR_CODES.TOO_MANY_ATTEMPTS: {
+            const remaining =
+              error?.result?.block_time_remaining ||
+              error?.result?.blockTimeRemaining;
+            const minutes = remaining ? Math.ceil(remaining / 60) : null;
+            setErrorMsg(
+              minutes
+                ? `Account temporarily blocked. Please try again in ${minutes} minutes.`
+                : "Account temporarily blocked due to too many failed attempts.",
+            );
+            break;
+          }
+
+          case LOGIN_ERROR_CODES.RECAPTCHA_FAILED:
+            setErrorMsg("reCAPTCHA verification failed. Please try again.");
+            break;
+
+          case LOGIN_ERROR_CODES.INVALID_CREDENTIALS:
+            setErrorMsg("Enter a valid Email and password combination");
+            break;
+
+          case LOGIN_ERROR_CODES.ACCOUNT_DEACTIVATED:
+            setErrorMsg(
+              error?.result?.message ||
+                "Your account has been deactivated. Please contact your organization admin.",
+            );
+            break;
+
+          case LOGIN_ERROR_CODES.UNEXPECTED_ERROR:
+          default:
+            setErrorMsg(
+              error?.result?.message ||
                 error?.result?.error ||
                 "An unexpected error occurred",
-        );
+            );
+            break;
+        }
+      } else {
+        // Backward compatibility fallback for responses without error_code
+        const raw = error;
+        const message =
+          typeof raw === "object" && raw?.[0] === "I"
+            ? Object.keys(raw)
+                .filter((key) => !isNaN(key))
+                .sort((a, b) => a - b)
+                .map((key) => raw[key])
+                .join("")
+            : error?.detail || error?.result?.error || "Login failed";
+        if (message.includes("IP address temporarily blocked")) {
+          enqueueSnackbar(message, { variant: "error" });
+        } else if (error?.detail === "User not found") {
+          setErrorMsg(
+            "No account found with this email. Please sign up to create one",
+          );
+        } else if (error?.result?.error === "Account deactivated") {
+          setErrorMsg(
+            error?.result?.message ||
+              "Your account has been deactivated. Please contact your organization admin.",
+          );
+        } else if (error?.result?.error === "Invalid credentials") {
+          setErrorMsg("Enter a valid Email and password combination");
+        } else {
+          setErrorMsg(
+            typeof error === "string"
+              ? error
+              : error?.detail ||
+                  error?.result?.error ||
+                  "An unexpected error occurred",
+          );
+        }
       }
       logger.error("Login attempt failed", error);
     }
