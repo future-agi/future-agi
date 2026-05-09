@@ -1345,6 +1345,10 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 func (h *Handlers) runReflexion(ctx context.Context, rc *models.RequestContext, providerCall pipeline.ProviderFunc) error {
 	cfg := h.reflexionCfg
 	if !cfg.Enabled {
+		// Reflexion is opt-in. Enable it by setting guardrails.reflexion.enabled: true
+		// in the gateway YAML config. Without it, guardrail blocks return 403 immediately.
+		slog.DebugContext(ctx, "reflexion disabled; returning guardrail block without retry",
+			"hint", "set guardrails.reflexion.enabled: true to enable bounded retry")
 		return h.guardrailBlockError(rc)
 	}
 
