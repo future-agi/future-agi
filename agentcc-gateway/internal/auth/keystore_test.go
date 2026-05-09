@@ -365,10 +365,10 @@ func TestKeyPrefix(t *testing.T) {
 		t.Errorf("expected exact12 prefix '123456...', got '%s'", exact12)
 	}
 
-	// Long key: len > 12, prefix is first 12 + "..."
+	// Long key: len > 12, prefix is first 12 chars + "..."
 	long := keyPrefix("sk-agentcc-abcdef1234567890")
-	if long != "sk-agentcc-abc..." {
-		t.Errorf("expected long key prefix 'sk-agentcc-abc...', got '%s'", long)
+	if long != "sk-agentcc-a..." {
+		t.Errorf("expected long key prefix 'sk-agentcc-a...', got '%s'", long)
 	}
 }
 

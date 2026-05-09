@@ -82,7 +82,6 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	} else if shouldApplyOrgProviderOverride(rc) {
 		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 	}
-
 	// Type-assert to EmbeddingProvider.
 	ep, ok := provider.(providers.EmbeddingProvider)
 	if !ok {

@@ -41,11 +41,11 @@ func makeOutputInput(content string) *guardrails.CheckInput {
 
 func TestFutureAGI_Passed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-key" {
-			t.Error("missing or wrong Authorization header")
+		if r.Header.Get("X-Api-Key") != "test-key" {
+			t.Error("missing or wrong X-Api-Key header")
 		}
-		if r.Header.Get("x-fi-secret-key") != "test-secret" {
-			t.Error("missing or wrong secret key header")
+		if r.Header.Get("X-Secret-Key") != "test-secret" {
+			t.Error("missing or wrong X-Secret-Key header")
 		}
 		w.WriteHeader(200)
 		json.NewEncoder(w).Encode(map[string]interface{}{
