@@ -22,19 +22,27 @@ Each ADR captures the context, options considered, the decision taken, and its c
 Each ADR follows the [Nygard template](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions):
 `Status` / `Context` / `Decision` / `Consequences` / `Formal verification`
 
-## Formal verification convention
+## Five-step verification methodology
 
-Executable proofs live next to the code they verify:
+Every non-trivial feature follows this sequence — each step targets a different kind of error:
 
-| Tool | Location pattern | Execution |
-|------|-----------------|-----------|
-| Z3 (SMT) | `*/formal_tests/test_*_z3.py` | `make test-unit` (no Docker) |
-| Hypothesis | `*/formal_tests/test_*_hypothesis.py` | `make test-unit` (no Docker) |
-| TLA+ specs | `docs/tla/*.tla` / `*.cfg` | Manual — see note below |
+| Step | Artifact | What it proves | Execution |
+|------|----------|---------------|-----------|
+| 1 | **TLA+ spec** (`docs/tla/*.tla`) | The *model* is coherent: all reachable states satisfy invariants | Manual — `tlc docs/tla/<Name>.tla -config docs/tla/<Name>.cfg` |
+| 2 | **ADR** (`docs/adr/*.md`) | The design decision is documented with context, alternatives, and consequences | — (living doc) |
+| 3 | **Z3 proofs** (`*/formal_tests/test_*_z3.py`) | The *model's invariants* are internally consistent (UNSAT checks) | `make test-unit` |
+| 4 | **Hypothesis tests** (`*/formal_tests/test_*_hypothesis.py`) | Individual methods satisfy properties under arbitrary inputs | `make test-unit` |
+| 5 | **Integration probes** (`*/formal_tests/test_*_integration.py`) | The *full state machine* end-to-end satisfies all TLA+ invariants simultaneously | `make test-unit` |
+
+Steps 3–5 all gate CI. The gap between steps 4 and 5 is significant:
+Hypothesis tests exercise individual methods in isolation; integration probes run the
+real implementation end-to-end with a scripted fake backend and check every invariant
+on the final state. This catches emergent bugs where individually-correct methods
+interact incorrectly — wrong phase ordering, execution IDs set too late, summaries
+fetched before terminal status, etc.
 
 > **TLA+/TLC note**: The `.tla` specs are correctness arguments and living documentation.
 > TLC (the Java model checker) is not wired into CI. Run it manually:
 > ```
-> tlc docs/tla/SimulateCLI.tla -config docs/tla/SimulateCLI.cfg
+> tlc docs/tla/<Name>.tla -config docs/tla/<Name>.cfg
 > ```
-> The Z3 and Hypothesis suites are what gate CI.
