@@ -329,14 +329,14 @@ docker compose up
 
 ## Upgrading
 
-Bump `FUTURE_AGI_VERSION` in `.env` to a newer release tag, then:
+Each image is independently versioned. Bump the relevant variable(s) in `.env` (`FUTURE_AGI_VERSION` for backend + worker, `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`, `SERVING_VERSION`, `CODE_EXECUTOR_VERSION`), then:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Backend migrations run automatically on startup. Downtime is ~30 seconds for the backend restart. Workers restart independently. To roll back, set `FUTURE_AGI_VERSION` to the previous tag and re-run the same two commands.
+Backend migrations run automatically on startup. Downtime is ~30 seconds for the backend restart. Workers restart independently. To roll back, set the bumped variable(s) to the previous tag and re-run the same two commands.
 
 ## Backups
 
