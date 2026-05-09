@@ -1,0 +1,88 @@
+name: fi-simulate
+description: >
+  Run a Future AGI simulation suite and gate CI on the pass-rate threshold.
+  Wraps the fi-simulate CLI (futureagi/sdk/cli/main.py) in headless mode.
+
+inputs:
+  api_key:
+    description: Future AGI API key (use a GitHub secret)
+    required: true
+  run_test_id:
+    description: UUID of the RunTest (simulation suite) to execute
+    required: true
+  threshold:
+    description: Pass-rate percentage threshold; step fails when pass_rate < threshold
+    required: false
+    default: "80"
+  timeout:
+    description: Total timeout in seconds
+    required: false
+    default: "300"
+  poll_interval:
+    description: Seconds between status polls
+    required: false
+    default: "5"
+  base_url:
+    description: Future AGI API base URL
+    required: false
+    default: "https://app.futureagi.com"
+  python_version:
+    description: Python version to use (must match backend requirements)
+    required: false
+    default: "3.11"
+
+outputs:
+  pass_rate:
+    description: Final pass rate as a decimal percentage (e.g. "92.5")
+    value: ${{ steps.run.outputs.pass_rate }}
+  execution_id:
+    description: UUID of the TestExecution that was created
+    value: ${{ steps.run.outputs.execution_id }}
+  status:
+    description: Final execution status (completed, failed, cancelled, timed_out)
+    value: ${{ steps.run.outputs.status }}
+  result_json:
+    description: Full JSON result from the CLI
+    value: ${{ steps.run.outputs.result_json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install fi-simulate dependencies
+      shell: bash
+      run: |
+        pip install requests rich --quiet
+
+    - name: Run simulation
+      id: run
+      shell: bash
+      env:
+        FI_API_KEY: ${{ inputs.api_key }}
+        FI_BASE_URL: ${{ inputs.base_url }}
+      run: |
+        set +e
+        RESULT=$(python -m sdk.cli.main \
+          --run-test-id "${{ inputs.run_test_id }}" \
+          --threshold "${{ inputs.threshold }}" \
+          --timeout "${{ inputs.timeout }}" \
+          --poll-interval "${{ inputs.poll_interval }}" \
+          --json)
+        EXIT_CODE=$?
+        set -e
+
+        echo "result_json=$RESULT" >> "$GITHUB_OUTPUT"
+        echo "pass_rate=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("pass_rate",""))')" >> "$GITHUB_OUTPUT"
+        echo "execution_id=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("execution_id",""))')" >> "$GITHUB_OUTPUT"
+        echo "status=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",""))')" >> "$GITHUB_OUTPUT"
+
+        echo "## fi-simulate result" >> "$GITHUB_STEP_SUMMARY"
+        echo '```json' >> "$GITHUB_STEP_SUMMARY"
+        echo "$RESULT" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+        exit $EXIT_CODE
