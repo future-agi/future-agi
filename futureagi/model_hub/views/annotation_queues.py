@@ -112,9 +112,7 @@ def _finalize_bulk_add(queue, items_to_create):
                 for item in created
                 for uid in member_ids
             ]
-            QueueItemAssignment.objects.bulk_create(
-                assignments, ignore_conflicts=True
-            )
+            QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
 
     # Re-activate the queue if it was completed and new items were added
     new_status = queue.status
@@ -247,9 +245,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 serializer.validated_data.get("requires_review", False)
             )
             if requires_review:
-                check_ee_feature(
-                    EEFeature.REVIEW_WORKFLOW, org_id=str(org.id)
-                )
+                check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
         except serializers.ValidationError as exc:
             msg = _flatten_validation_errors(exc.detail)
             return self._gm.custom_error_response(status_code=400, result=msg)
@@ -1867,6 +1863,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if label.pk not in queue_label_ids:
                 continue
 
+            # Per-annotation notes: prefer notes from annotation dict,
+            # fall back to global notes for backward compatibility.
+            # Only persist notes if the label has allow_notes enabled.
+            per_ann_notes = ann_data.get("notes", notes) if label.allow_notes else ""
+
             # Upsert Score (unified annotation primitive)
             # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
@@ -1881,7 +1882,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         "source_type": item.source_type,
                         "value": value,
                         "score_source": "human",
-                        "notes": notes,
+                        "notes": per_ann_notes,
                         "queue_item": item,
                         "organization": request.organization,
                     },
@@ -2196,9 +2197,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # items assigned to others, so they can navigate the full queue
         # in view-only mode.
         if is_reviewer:
-            annotatable_qs = QueueItem.objects.filter(
-                queue_id=queue_id, deleted=False
-            )
+            annotatable_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
         else:
             annotatable_qs = QueueItem.objects.filter(
                 queue_id=queue_id, deleted=False

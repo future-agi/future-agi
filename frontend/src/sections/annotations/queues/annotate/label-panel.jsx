@@ -15,7 +15,6 @@ import {
   Divider,
   IconButton,
   Stack,
-  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -159,7 +158,7 @@ const LabelPanel = forwardRef(function LabelPanel(
   ref,
 ) {
   const [values, setValues] = useState({});
-  const [notes, setNotes] = useState("");
+  const [labelNotes, setLabelNotes] = useState({});
   const [showInstructions, setShowInstructions] = useState(!!instructions);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -174,15 +173,18 @@ const LabelPanel = forwardRef(function LabelPanel(
   // Initialize values from existing annotations
   useEffect(() => {
     const initial = {};
+    const initialLabelNotes = {};
     for (const ann of annotations) {
       const labelId = ann.label_id;
       if (labelId) {
         initial[labelId] = ann.value;
+        if (ann.notes) {
+          initialLabelNotes[labelId] = ann.notes;
+        }
       }
     }
     setValues(initial);
-    const withNotes = annotations.find((a) => a.notes);
-    setNotes(withNotes?.notes || "");
+    setLabelNotes(initialLabelNotes);
     setErrorLabels(new Set()); // Clear errors when annotations change
     onDirtyChange?.(false);
   }, [annotations, onDirtyChange]);
@@ -201,6 +203,15 @@ const LabelPanel = forwardRef(function LabelPanel(
         next.delete(labelId);
         return next;
       });
+      onDirtyChange?.(true);
+    },
+    [onDirtyChange, readOnly],
+  );
+
+  const handleLabelNotesChange = useCallback(
+    (labelId, val) => {
+      if (readOnly) return;
+      setLabelNotes((prev) => ({ ...prev, [labelId]: val }));
       onDirtyChange?.(true);
     },
     [onDirtyChange, readOnly],
@@ -246,12 +257,13 @@ const LabelPanel = forwardRef(function LabelPanel(
       .map(([labelId, value]) => ({
         label_id: labelId,
         value,
+        notes: labelNotes[labelId] || "",
       }));
     if (annotationsList.length > 0) {
       onDirtyChange?.(false);
-      onSubmit({ annotations: annotationsList, notes });
+      onSubmit({ annotations: annotationsList, notes: "" });
     }
-  }, [notes, onSubmit, labels, onDirtyChange, readOnly]);
+  }, [labelNotes, onSubmit, labels, onDirtyChange, readOnly]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
@@ -496,6 +508,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                   settings: ql.settings || {},
                   description: ql.description,
                   required: ql.required,
+                  allow_notes: ql.allow_notes ?? false,
                 }}
                 value={values[labelId] ?? null}
                 onChange={(val) => handleChange(labelId, val)}
@@ -509,31 +522,15 @@ const LabelPanel = forwardRef(function LabelPanel(
                       }
                     : undefined
                 }
+                labelNotes={labelNotes[labelId] || ""}
+                onLabelNotesChange={(val) =>
+                  handleLabelNotesChange(labelId, val)
+                }
               />
             </Box>
           );
         })}
       </Stack>
-
-      {/* Notes */}
-      <Box sx={{ mt: 2 }}>
-        <TextField
-          fullWidth
-          size="small"
-          multiline
-          minRows={2}
-          maxRows={4}
-          placeholder="Notes (optional)"
-          value={notes}
-          onChange={(e) => {
-            if (readOnly) return;
-            setNotes(e.target.value);
-            onDirtyChange?.(true);
-          }}
-          InputProps={{ readOnly }}
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-        />
-      </Box>
 
       {/* Annotation History */}
       <AnnotationHistory queueId={queueId} itemId={itemId} />

@@ -476,6 +476,7 @@ class QueueLabelDetailSerializer(serializers.ModelSerializer):
     description = serializers.CharField(
         source="label.description", read_only=True, default=None
     )
+    allow_notes = serializers.BooleanField(source="label.allow_notes", read_only=True)
 
     class Meta:
         model = AnnotationQueueLabel
@@ -488,6 +489,7 @@ class QueueLabelDetailSerializer(serializers.ModelSerializer):
             "description",
             "required",
             "order",
+            "allow_notes",
         ]
 
 
