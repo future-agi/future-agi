@@ -489,6 +489,8 @@ class CustomPromptEvaluator(BaseEvaluator, LLM):
             "model": self._model,
             "metrics": [{"id": "custom_eval_score", "value": chat_completion_response_json.get("result", 0.0)}],
             "datapoint_field_annotations": None,
+            "cost": dict(self.cost),
+            "token_usage": dict(self.token_usage),
         }
 
         logger.info(
