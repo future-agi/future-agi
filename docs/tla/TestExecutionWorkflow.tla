@@ -10,12 +10,15 @@
  *   futureagi/simulate/temporal/activities/test_execution.py
  *   futureagi/simulate/models/test_execution.py  (status enums)
  *
- * To check with TLC:
+ * To check with TLC (see TestExecutionWorkflow.cfg for the full configuration):
  *   1. Set N_CALLS <- 3 in the model configuration
- *   2. Check TypeInvariant, NoRollback, CountIntegrity, FinalizationCorrect
- *      as invariants
- *   3. Check EventuallyTerminates, AllCallsEventuallyTerminal as properties
- *   4. Add Fairness to the Spec formula
+ *   2. INVARIANTS (pure state predicates):
+ *        TypeInvariant, CountIntegrity, FinalizationCorrect
+ *   3. PROPERTIES (temporal/box-action formulas):
+ *        NoRollback, TexStatusMonotone, NoFailedToOngoing,
+ *        EventuallyTerminates, AllCallsEventuallyTerminal,
+ *        TerminalCallsImplyFinalization
+ *   4. SPECIFICATION Spec  (includes Fairness for liveness)
  *)
 
 EXTENDS Integers, FiniteSets, TLC
