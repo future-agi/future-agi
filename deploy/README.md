@@ -44,7 +44,17 @@ Paste each into `deploy/.env.production`.
 
 ## 2. Pin a release
 
-Set `FUTURE_AGI_VERSION` in `.env.production` to a specific tag (e.g. `v1.22.41`). Mutable tags (`v1.22`, `latest`) are discouraged in production — they shift under you on the next release.
+Each image is independently versioned. Pin all five in `.env.production`:
+
+| Variable | Image |
+|---|---|
+| `FUTURE_AGI_VERSION` | `futureagi/future-agi` (backend + worker) |
+| `FRONTEND_VERSION` | `futureagi/frontend` |
+| `AGENTCC_GATEWAY_VERSION` | `futureagi/agentcc-gateway` |
+| `SERVING_VERSION` | `futureagi/serving` |
+| `CODE_EXECUTOR_VERSION` | `futureagi/code-executor` |
+
+Use immutable `vX.Y.Z` tags. Mutable tags (`vX.Y`, `latest`) are discouraged in production — they shift under you on the next release.
 
 ## 3. Boot
 
@@ -155,14 +165,16 @@ For internal MinIO, configure `mc mirror` to an off-host bucket, or replace the 
 ## Upgrades
 
 ```bash
-# bump FUTURE_AGI_VERSION in deploy/.env.production
+# bump the relevant version variable(s) in deploy/.env.production
+# (FUTURE_AGI_VERSION / FRONTEND_VERSION / AGENTCC_GATEWAY_VERSION /
+#  SERVING_VERSION / CODE_EXECUTOR_VERSION)
 docker compose --env-file deploy/.env.production \
   -f docker-compose.yml -f deploy/docker-compose.production.yml pull
 docker compose --env-file deploy/.env.production \
   -f docker-compose.yml -f deploy/docker-compose.production.yml up -d
 ```
 
-Roll back by setting `FUTURE_AGI_VERSION` to the previous tag and re-running the same two commands.
+Roll back by setting the bumped variable(s) to the previous tag and re-running the same two commands.
 
 ## Resource sizing
 
@@ -184,7 +196,7 @@ Roll back by setting `FUTURE_AGI_VERSION` to the previous tag and re-running the
 
 - [ ] `SECRET_KEY`, `AGENTCC_INTERNAL_API_KEY`, `AGENTCC_ADMIN_TOKEN` are 32+ random bytes
 - [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD`, `RABBITMQ_PASSWORD` set to non-default values
-- [ ] `FUTURE_AGI_VERSION` pinned to an immutable `vX.Y.Z` tag (not `latest` / `vX.Y`)
+- [ ] `FUTURE_AGI_VERSION`, `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`, `SERVING_VERSION`, `CODE_EXECUTOR_VERSION` all pinned to immutable `vX.Y.Z` tags (not `latest` / `vX.Y`)
 - [ ] `FRONTEND_URL` matches the public URL behind your reverse proxy
 - [ ] `VITE_HOST_API` matches the public backend URL (or `/api` if route-split at the proxy)
 - [ ] Backend CORS allows the frontend origin (split-domain only)

@@ -81,9 +81,13 @@ if [[ ! -f "$ENV_FILE" || "${ans:-}" == "y" || "${ans:-}" == "Y" || "${ans:-}" =
   VITE_HOST_API=$(prompt_required "Backend URL (e.g. https://api.example.com)")
 
   say ""
-  say "${BOLD}== Release pin ==${RESET}"
-  default_version=$(grep -E '^FUTURE_AGI_VERSION=' "$EXAMPLE_FILE" | cut -d= -f2- || echo "")
-  FUTURE_AGI_VERSION=$(prompt "Image version tag" "${default_version:-v1.22.41}")
+  say "${BOLD}== Release pins (one per image) ==${RESET}"
+  read_default() { grep -E "^$1=" "$EXAMPLE_FILE" | cut -d= -f2- || echo ""; }
+  FUTURE_AGI_VERSION=$(prompt        "Backend tag (futureagi/future-agi)"        "$(read_default FUTURE_AGI_VERSION)")
+  FRONTEND_VERSION=$(prompt          "Frontend tag (futureagi/frontend)"         "$(read_default FRONTEND_VERSION)")
+  AGENTCC_GATEWAY_VERSION=$(prompt   "Gateway tag (futureagi/agentcc-gateway)"   "$(read_default AGENTCC_GATEWAY_VERSION)")
+  SERVING_VERSION=$(prompt           "Serving tag (futureagi/serving)"           "$(read_default SERVING_VERSION)")
+  CODE_EXECUTOR_VERSION=$(prompt     "Code-executor tag (futureagi/code-executor)" "$(read_default CODE_EXECUTOR_VERSION)")
 
   say ""
   say "${BOLD}== Generating secrets ==${RESET}"
@@ -118,6 +122,10 @@ RABBITMQ_USER=futureagi
 RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 
 FUTURE_AGI_VERSION=${FUTURE_AGI_VERSION}
+FRONTEND_VERSION=${FRONTEND_VERSION}
+AGENTCC_GATEWAY_VERSION=${AGENTCC_GATEWAY_VERSION}
+SERVING_VERSION=${SERVING_VERSION}
+CODE_EXECUTOR_VERSION=${CODE_EXECUTOR_VERSION}
 
 FRONTEND_URL=${FRONTEND_URL}
 VITE_HOST_API=${VITE_HOST_API}
