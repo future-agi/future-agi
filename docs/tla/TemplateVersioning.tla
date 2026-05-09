@@ -2,6 +2,8 @@
 (*
   Formal specification for the template publish protocol in the agent playground.
 
+  Architecture decision: docs/adr/ADR-033-agent-template-composition.md
+
   A template graph has versions in states: draft → active → inactive.
   At most one version per template may be ACTIVE at a time.
 
