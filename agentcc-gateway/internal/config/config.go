@@ -886,6 +886,9 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			FailOpen:       true,
 			DefaultTimeout: 5 * time.Second,
+			Reflexion: ReflexionConfig{
+				MaxAttempts: 3,
+			},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

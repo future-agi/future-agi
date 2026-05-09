@@ -1533,6 +1533,13 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return
 	}
 
+	if rc.Response == nil && rc.Flags.GuardrailTriggered {
+		if err := h.runReflexion(ctx, rc, providerCall); err != nil {
+			models.WriteErrorFromError(w, err)
+			return
+		}
+	}
+
 	if rc.Response == nil {
 		models.WriteError(w, models.ErrInternal("no response from provider"))
 		return

@@ -93,12 +93,6 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return &APIError{Status: http.StatusForbidden, Type: ErrTypeGuardrail, Code: code, Message: message}
 }
 
-// IsGuardrailBlocked reports whether err is a guardrail block error.
-func IsGuardrailBlocked(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Type == ErrTypeGuardrail
-}
-
 // WriteError writes an OpenAI-compatible error JSON response.
 func WriteError(w http.ResponseWriter, err *APIError) {
 	resp := ErrorResponse{
