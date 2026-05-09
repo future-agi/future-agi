@@ -286,7 +286,6 @@ const TraceDetailDrawerV2 = ({
     }
   });
   const [leftPanelWidth, setLeftPanelWidth] = useState(40); // percentage
-  const [searchQuery, setSearchQuery] = useState("");
   const [actionsAnchorEl, setActionsAnchorEl] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
   const [drawerWidth, setDrawerWidth] = useState(60); // percentage of viewport
@@ -1116,50 +1115,6 @@ const TraceDetailDrawerV2 = ({
             >
               Save
             </Typography>
-          </Box>
-        </Box>
-      )}
-
-      {/* Search bar — hidden on Imagine tab */}
-      {!isImagineActive && (
-        <Box
-          sx={{
-            px: 2,
-            py: 0.75,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            flexShrink: 0,
-          }}
-        >
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              px: 1.5,
-              py: 0.5,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
-            }}
-          >
-            <Iconify icon="mdi:magnify" width={16} color="text.disabled" />
-            <Box
-              component="input"
-              placeholder="Search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              sx={{
-                border: "none",
-                outline: "none",
-                flex: 1,
-                fontSize: 13,
-                color: "text.primary",
-                bgcolor: "transparent",
-                fontFamily: "inherit",
-                "&::placeholder": { color: "text.disabled" },
-              }}
-            />
           </Box>
         </Box>
       )}

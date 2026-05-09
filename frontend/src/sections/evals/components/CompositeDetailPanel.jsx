@@ -62,11 +62,16 @@ const CompositeDetailPanel = ({
   // overrides without exposing the full composite edit surface
   // (add/remove children, switch axis, rename, etc.).
   weightEditable = false,
-  // Forward dataset context to the inner child picker so the EvalPicker
+  // Forward source context to the inner child picker so the EvalPicker
   // can show its mapping screen for each child. When omitted (e.g. when
-  // editing a composite from /evals/create with no dataset bound), the
+  // editing a composite from /evals/create with no source bound), the
   // child picker falls back to the original direct-add behaviour.
+  // pickerSource carries the parent's source type ("dataset", "task",
+  // "tracing", ...) so children re-use the same test mode instead of
+  // getting forced into DatasetTestMode.
+  pickerSource = "",
   pickerSourceId = "",
+  pickerSourceRowType = null,
   pickerSourceColumns = [],
   onNameChange,
   onDescriptionChange,
@@ -463,8 +468,9 @@ const CompositeDetailPanel = ({
           // skipConfig=true bypassed all of that and added the child
           // straight to the list with template defaults.
           skipConfig={false}
-          source={pickerSourceId ? "dataset" : "composite"}
+          source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
+          sourceRowType={pickerSourceRowType}
           sourceColumns={pickerSourceColumns || []}
           lockedFilters={axisToLockedFilters(compositeChildAxis)}
         />
@@ -520,7 +526,9 @@ CompositeDetailPanel.propTypes = {
   editable: PropTypes.bool,
   disabled: PropTypes.bool,
   weightEditable: PropTypes.bool,
+  pickerSource: PropTypes.string,
   pickerSourceId: PropTypes.string,
+  pickerSourceRowType: PropTypes.string,
   pickerSourceColumns: PropTypes.array,
   onNameChange: PropTypes.func,
   onDescriptionChange: PropTypes.func,

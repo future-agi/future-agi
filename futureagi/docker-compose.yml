@@ -89,24 +89,27 @@ services:
       - ./model_serving:/app/embedding
 
   # ===========================================
-  # Prism Gateway (LLM Proxy)
+  # agentcc Gateway (LLM Proxy)
   # ===========================================
 
   agentcc-gateway:
     container_name: agentcc-gateway
     build:
-      context: ./agentcc-gateway
+      context: ../agentcc-gateway
       dockerfile: Dockerfile
     ports:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
     volumes:
-      - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
-      - ./Vertex_AI_Creds.json:/app/Vertex_AI_Creds.json:ro
+      - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
     env_file:
       - .env
     environment:
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/Vertex_AI_Creds.json
+      # Provider creds for the gateway live in agentcc-gateway/config.yaml,
+      # which interpolates ${ENV_VAR}s from .env at start. Anything in .env is
+      # already passed through via env_file above — no per-provider entries
+      # needed here. See INSTALLATION.md → "Vertex AI" for the bearer-token
+      # pattern and the warning about mounting Vertex_AI_Creds.json.
     restart: unless-stopped
 
   # Sandboxed code executor — nsjail-based isolation for eval code
