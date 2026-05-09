@@ -495,9 +495,9 @@ class ExecutePromptSimulationView(APIView):
                         str(scenario_id) for scenario_id in all_scenario_ids
                     ]
 
-            incomplete = check_scenarios_incomplete(final_scenario_ids)
-            if incomplete is not None:
-                return incomplete
+            gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
+            if gate_response is not None:
+                return gate_response
 
             # Use the existing TestExecutor
             test_executor = TestExecutor()

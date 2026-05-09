@@ -628,9 +628,9 @@ class RunTestExecutionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            incomplete = check_scenarios_incomplete(final_scenario_ids)
-            if incomplete is not None:
-                return incomplete
+            gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
+            if gate_response is not None:
+                return gate_response
 
             # Check if Temporal test execution is enabled
             if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):

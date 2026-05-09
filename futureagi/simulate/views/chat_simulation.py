@@ -106,9 +106,9 @@ class RunTestChatExecutionView(APIView):
                 run_test.scenarios.filter(deleted=False).values_list("id", flat=True)
             )
 
-            incomplete = check_scenarios_incomplete(scenarios)
-            if incomplete is not None:
-                return incomplete
+            gate_response = check_scenarios_incomplete(scenarios, run_test)
+            if gate_response is not None:
+                return gate_response
 
             logger.info(f"Run test used here is.... {run_test_id}")
 
