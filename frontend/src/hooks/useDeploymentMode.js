@@ -15,10 +15,18 @@ import { paths } from "src/routes/paths";
 export function useDeploymentMode() {
   const { data, isLoading } = useQuery({
     queryKey: ["deployment-info"],
-    queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),
+    queryFn: async () => {
+      try {
+        return await axios.get(endpoints.settings.v2.deploymentInfo);
+      } catch (err) {
+        // OSS deployments don't expose this endpoint — treat 404 as "oss" mode.
+        if (err?.response?.status === 404) return { data: { result: { mode: "oss" } } };
+        throw err;
+      }
+    },
     select: (res) => res.data?.result?.mode || "oss",
     staleTime: Infinity,
-    retry: 1,
+    retry: false,
   });
 
   const mode = data || "oss";
