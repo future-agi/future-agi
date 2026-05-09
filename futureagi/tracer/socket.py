@@ -237,8 +237,16 @@ class GraphDataConsumer(DataConsumer):
                 and len(cfg["filterValue"]) == 2
             ):
                 try:
-                    start = datetime.strptime(cfg["filterValue"][0], "%Y-%m-%dT%H:%M:%S.%fZ")
-                    end = datetime.strptime(cfg["filterValue"][1], "%Y-%m-%dT%H:%M:%S.%fZ")
+                    _formats = ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ")
+                    def _parse(s):
+                        for fmt in _formats:
+                            try:
+                                return datetime.strptime(s, fmt)
+                            except ValueError:
+                                pass
+                        raise ValueError(f"unrecognised datetime format: {s!r}")
+                    start = _parse(cfg["filterValue"][0])
+                    end = _parse(cfg["filterValue"][1])
                     return start, end
                 except (ValueError, TypeError):
                     pass
