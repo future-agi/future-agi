@@ -1190,6 +1190,8 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 					rc.Model = action.ModelOverride
 					if rc.Request != nil {
 						rc.Request.Model = action.ModelOverride
+					} else if rc.EmbeddingRequest != nil {
+						rc.EmbeddingRequest.Model = action.ModelOverride
 					}
 				}
 				return p, nil
@@ -1216,6 +1218,8 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			rc.Model = result.ModelOverride // update for both chat and embedding callers
 			if rc.Request != nil {
 				rc.Request.Model = result.ModelOverride
+			} else if rc.EmbeddingRequest != nil {
+				rc.EmbeddingRequest.Model = result.ModelOverride
 			}
 		}
 		return result.Provider, nil
@@ -1248,6 +1252,8 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 					rc.Model = fbResult.ModelOverride
 					if rc.Request != nil {
 						rc.Request.Model = fbResult.ModelOverride
+					} else if rc.EmbeddingRequest != nil {
+						rc.EmbeddingRequest.Model = fbResult.ModelOverride
 					}
 				}
 				return fbResult.Provider, nil
