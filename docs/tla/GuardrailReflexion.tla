@@ -2,6 +2,8 @@
 (*
  * TLA+ specification for the guardrail reflexion loop in agentcc-gateway.
  *
+ * Architecture decision: docs/adr/028-guardrail-reflexion-bounded-retry.md
+ *
  * Models the bounded retry loop that fires when a post-stage guardrail blocks
  * the model's response.  The loop injects the failure reason and re-calls the
  * model up to MaxAttempts times.
