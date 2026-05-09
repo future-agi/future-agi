@@ -125,3 +125,54 @@ def test_future_agi_category_last_resort():
         z3.Or(in_llm, in_fn, in_grnd),
     ))
     assert s.check() == z3.unsat, "FutureAGI must not win when a higher-priority category matches"
+
+
+# ── Bridge: connect Z3 model to real production enum data ────────────────────
+# These tests verify the ACTUAL enums satisfy the partition invariants the
+# Z3 model assumes, binding the symbolic proof to production code.
+
+import importlib.util as _ilu
+import pathlib as _pl
+
+_eval_type_path = (
+    _pl.Path(__file__).parent.parent
+    / "core_evals" / "fi_evals" / "eval_type.py"
+)
+_etmod = _ilu.module_from_spec(s := _ilu.spec_from_file_location("_et", _eval_type_path))
+s.loader.exec_module(_etmod)
+
+_ALL_LLM      = {m.value for m in _etmod.LlmEvalTypeId}
+_ALL_FUNCTION = {m.value for m in _etmod.FunctionEvalTypeId}
+_ALL_GROUNDED = {m.value for m in _etmod.GroundedEvalTypeId}
+_ALL_FUTURE   = {m.value for m in _etmod.FutureAgiEvalTypeId}
+
+
+def test_real_enums_are_mutually_disjoint():
+    """Production enum values do not overlap — the Z3 partition assumption holds."""
+    assert _ALL_LLM.isdisjoint(_ALL_FUNCTION), "LLM and Function enums share values"
+    assert _ALL_LLM.isdisjoint(_ALL_GROUNDED), "LLM and Grounded enums share values"
+    assert _ALL_LLM.isdisjoint(_ALL_FUTURE),   "LLM and FutureAGI enums share values"
+    assert _ALL_FUNCTION.isdisjoint(_ALL_GROUNDED), "Function and Grounded enums share values"
+    assert _ALL_FUNCTION.isdisjoint(_ALL_FUTURE),   "Function and FutureAGI enums share values"
+    assert _ALL_GROUNDED.isdisjoint(_ALL_FUTURE),   "Grounded and FutureAGI enums share values"
+
+
+def test_real_is_llm_eval_covers_exactly_llm_members():
+    """is_llm_eval returns True for every LlmEvalTypeId value and nothing else in the known set."""
+    for v in _ALL_LLM:
+        assert _etmod.is_llm_eval(v), f"is_llm_eval returned False for known LLM type {v!r}"
+    for v in _ALL_FUNCTION | _ALL_GROUNDED | _ALL_FUTURE:
+        assert not _etmod.is_llm_eval(v), f"is_llm_eval returned True for non-LLM type {v!r}"
+
+
+def test_real_classifiers_partition_all_known_types():
+    """Every known type is covered by exactly one classifier — no gaps or overlaps."""
+    all_known = _ALL_LLM | _ALL_FUNCTION | _ALL_GROUNDED | _ALL_FUTURE
+    for v in all_known:
+        matches = sum([
+            _etmod.is_llm_eval(v),
+            _etmod.is_function_eval(v),
+            _etmod.is_grounded_eval(v),
+            _etmod.is_future_agi_eval(v),
+        ])
+        assert matches == 1, f"Type {v!r} matched {matches} classifiers (expected exactly 1)"

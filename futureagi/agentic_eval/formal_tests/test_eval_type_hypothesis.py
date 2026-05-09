@@ -40,14 +40,17 @@ is_grounded_eval = _mod.is_grounded_eval
 is_llm_eval = _mod.is_llm_eval
 
 
-# ── Inlined format_concise_error (error_handler.py has litellm deps) ─────────
+# ── Import real format_concise_error via direct file load ────────────────────
+# conftest.py stubs litellm and tfc so error_handler.py loads without a venv
 
-def format_concise_error(parsed_error: dict[str, Any]) -> str:
-    message = parsed_error["message"]
-    max_message_length = 200
-    if len(message) > max_message_length:
-        message = message[:max_message_length] + "..."
-    return message
+_error_handler_path = (
+    pathlib.Path(__file__).parent.parent
+    / "core_evals" / "run_prompt" / "error_handler.py"
+)
+_eh_spec = importlib.util.spec_from_file_location("error_handler", _error_handler_path)
+_eh_mod = importlib.util.module_from_spec(_eh_spec)
+_eh_spec.loader.exec_module(_eh_mod)
+format_concise_error = _eh_mod.format_concise_error
 
 
 # ── Helpers: collect all known evaluator type values ─────────────────────────
