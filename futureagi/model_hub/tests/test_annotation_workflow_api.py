@@ -163,6 +163,19 @@ def label(organization, workspace):
 
 
 @pytest.fixture
+def label_with_notes(organization, workspace):
+    """Create a label with allow_notes=True."""
+    return AnnotationsLabels.objects.create(
+        name="Feedback",
+        type="star",
+        settings={"no_of_stars": 5},
+        allow_notes=True,
+        organization=organization,
+        workspace=workspace,
+    )
+
+
+@pytest.fixture
 def label_b(organization, workspace):
     """Create a second label."""
     return AnnotationsLabels.objects.create(
@@ -314,6 +327,131 @@ class TestSubmitAnnotations:
             format="json",
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_submit_per_label_notes(
+        self, auth_client, queue_with_items, label_with_notes, organization
+    ):
+        """Per-annotation notes are stored on the Score when label has allow_notes."""
+        queue_id, item_ids, label = queue_with_items
+        # Attach label_with_notes to the queue
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        AnnotationQueueLabel.objects.create(
+            queue=queue, label=label_with_notes, order=1
+        )
+        payload = {
+            "annotations": [
+                {
+                    "label_id": str(label.id),
+                    "value": "positive",
+                    "notes": "should be ignored",
+                },
+                {
+                    "label_id": str(label_with_notes.id),
+                    "value": {"rating": 4},
+                    "notes": "great quality",
+                },
+            ],
+        }
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            payload,
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["submitted"] == 2
+
+        # Label without allow_notes should have empty notes
+        score_no_notes = Score.objects.get(
+            queue_item_id=item_ids[0], label=label, deleted=False
+        )
+        assert score_no_notes.notes == ""
+
+        # Label with allow_notes should have per-annotation notes
+        score_with_notes = Score.objects.get(
+            queue_item_id=item_ids[0], label=label_with_notes, deleted=False
+        )
+        assert score_with_notes.notes == "great quality"
+
+    def test_submit_per_label_notes_fallback_to_global(
+        self, auth_client, queue_with_items, label_with_notes, organization
+    ):
+        """When annotation dict has no notes key, falls back to global notes for allow_notes labels."""
+        queue_id, item_ids, _ = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        AnnotationQueueLabel.objects.create(
+            queue=queue, label=label_with_notes, order=1
+        )
+        payload = {
+            "annotations": [
+                {"label_id": str(label_with_notes.id), "value": {"rating": 3}},
+            ],
+            "notes": "global fallback note",
+        }
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            payload,
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+        score = Score.objects.get(
+            queue_item_id=item_ids[0], label=label_with_notes, deleted=False
+        )
+        assert score.notes == "global fallback note"
+
+
+@pytest.mark.django_db
+class TestAnnotateDetailLabels:
+
+    def test_annotate_detail_labels_include_allow_notes(
+        self, auth_client, queue_with_items, label_with_notes, organization
+    ):
+        """Annotate detail returns allow_notes field for each label."""
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        AnnotationQueueLabel.objects.create(
+            queue=queue, label=label_with_notes, order=1
+        )
+        resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        assert resp.status_code == status.HTTP_200_OK
+        result = _result(resp)
+        labels_data = result["labels"]
+        assert len(labels_data) == 2
+
+        # Find both labels in the response
+        label_map = {l["name"]: l for l in labels_data}
+        assert label_map["Sentiment"]["allow_notes"] is False
+        assert label_map["Feedback"]["allow_notes"] is True
+
+    def test_annotate_detail_existing_per_label_notes(
+        self, auth_client, queue_with_items, label_with_notes, organization
+    ):
+        """Existing per-label notes are returned in annotations."""
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        AnnotationQueueLabel.objects.create(
+            queue=queue, label=label_with_notes, order=1
+        )
+        # Submit with per-label notes
+        auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(label_with_notes.id),
+                        "value": {"rating": 5},
+                        "notes": "excellent work",
+                    },
+                ],
+            },
+            format="json",
+        )
+        # Fetch annotate detail and check annotations include notes
+        resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        result = _result(resp)
+        annotations = result["annotations"]
+        assert len(annotations) == 1
+        assert annotations[0]["notes"] == "excellent work"
 
 
 @pytest.mark.django_db
