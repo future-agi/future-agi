@@ -90,12 +90,9 @@ const TestRunHeader = () => {
     !isPromptSimulation &&
     !(testData?.agent_definition ?? testData?.agentDefinition);
 
-  const selectedScenarioIds = new Set(
-    (selectedScenarios || []).map((s) => (typeof s === "string" ? s : s?.id)),
-  );
-  const scenarioDetails =
-    testData?.scenarios_detail ?? testData?.scenariosDetail ?? [];
-  const hasUnreadyScenario = scenarioDetails.some(
+  const selectedScenarioIds = new Set(selectedScenarios || []);
+  const scenarioDetails = testData?.scenarios_detail ?? [];
+  const hasIncompleteScenario = scenarioDetails.some(
     (s) =>
       selectedScenarioIds.has(s.id) && s.status !== SCENARIO_STATUS.COMPLETED,
   );
@@ -273,7 +270,7 @@ const TestRunHeader = () => {
                   ][role] ||
                   selectedScenarios.length === 0 ||
                   isAgentDefinitionDeleted ||
-                  hasUnreadyScenario
+                  hasIncompleteScenario
                 }
               >
                 Run New Simulation
