@@ -1695,3 +1695,209 @@ func TestExtractTextContent(t *testing.T) {
 		})
 	}
 }
+
+// ===========================================================================
+// Same-role merge tests — Bedrock requires alternating user/assistant.
+// Multiple OpenAI "tool" messages all become role:"user" (tool_result blocks)
+// and must be merged into a single message; otherwise Bedrock returns empty.
+// ===========================================================================
+
+func TestTranslateRequest_MergesConsecutiveToolMessages(t *testing.T) {
+	// translate.go merges by role only; it does not rewrite "tool" to "user"
+	// (that's a separate concern owned by the Messages API path, which is
+	// defensive — Converse is the primary). What we assert here is that the
+	// two consecutive same-role messages collapse into one, with both
+	// tool_result blocks preserved.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+			{Role: "assistant", ToolCalls: []models.ToolCall{
+				{ID: "call_1", Type: "function", Function: models.FunctionCall{Name: "f1", Arguments: `{}`}},
+				{ID: "call_2", Type: "function", Function: models.FunctionCall{Name: "f2", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: json.RawMessage(`"result1"`)},
+			{Role: "tool", ToolCallID: "call_2", Content: json.RawMessage(`"result2"`)},
+		},
+	}
+
+	br, _ := translateRequest(req)
+
+	// Expect: user, assistant, tool (merged) — 3 messages.
+	if len(br.Messages) != 3 {
+		t.Fatalf("expected 3 messages after merge, got %d", len(br.Messages))
+	}
+
+	var blocks []bedrockContentBlock
+	if err := json.Unmarshal(br.Messages[2].Content, &blocks); err != nil {
+		t.Fatalf("merged content not a block array: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 tool_result blocks in merged message, got %d", len(blocks))
+	}
+	for i, b := range blocks {
+		if b.Type != "tool_result" {
+			t.Errorf("block[%d] type = %q, want tool_result", i, b.Type)
+		}
+	}
+	if blocks[0].ToolUseID != "call_1" || blocks[1].ToolUseID != "call_2" {
+		t.Errorf("merged tool_use_ids = %q,%q; want call_1,call_2",
+			blocks[0].ToolUseID, blocks[1].ToolUseID)
+	}
+}
+
+func TestTranslateRequest_MergeDoesNotDropContentOnPassThrough(t *testing.T) {
+	// Simulate the pass-through path: a message whose Content can't be parsed
+	// as a content-block array. The previous implementation would silently
+	// drop the existing content and produce a malformed merged body. The fix
+	// is to log and append separately rather than corrupt the merge.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			// Content here is a JSON string ("foo"); translateMessage will
+			// take the text path and produce a proper block array.
+			{Role: "user", Content: json.RawMessage(`"foo"`)},
+			// Content here is a JSON null — neither vision, text, nor block
+			// array. translateMessage falls through and bm.Content = `null`.
+			{Role: "user", Content: json.RawMessage(`null`)},
+		},
+	}
+
+	br, _ := translateRequest(req)
+
+	// Either the merge succeeds and content is preserved, or the function
+	// falls back to two separate messages — in neither case should the
+	// first message's content be silently replaced with `null`.
+	if len(br.Messages) == 0 {
+		t.Fatalf("expected at least one message")
+	}
+	first := br.Messages[0]
+	if string(first.Content) == "null" {
+		t.Fatalf("first message content was overwritten with null — original content dropped")
+	}
+}
+
+func TestTranslateRequest_DoesNotMergePlainSameRoleMessages(t *testing.T) {
+	// Two consecutive "user" messages with no tool_result on either side
+	// should be left as separate messages. The merge is scoped to tool
+	// result sequences so we don't silently bundle independent user turns.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"first"`)},
+			{Role: "user", Content: json.RawMessage(`"second"`)},
+		},
+	}
+
+	br, _ := translateRequest(req)
+
+	if len(br.Messages) != 2 {
+		t.Fatalf("expected 2 separate user messages, got %d (merge over-eagerly bundled plain user turns)", len(br.Messages))
+	}
+}
+
+func TestTranslateRequest_DoesNotMergeUserFollowingToolResult(t *testing.T) {
+	// tool result followed by a real user message must NOT be bundled —
+	// they are semantically distinct turns even though both end up as
+	// role:"tool"/role:"user" in this provider's representation.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"do X"`)},
+			{Role: "assistant", ToolCalls: []models.ToolCall{
+				{ID: "call_1", Type: "function", Function: models.FunctionCall{Name: "f", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: json.RawMessage(`"result"`)},
+			{Role: "user", Content: json.RawMessage(`"and now Y"`)},
+		},
+	}
+
+	br, _ := translateRequest(req)
+
+	// Expect: user(do X), assistant(tool_use), tool(tool_result), user(and now Y)
+	// Note: translate.go does not rewrite "tool" to "user", so tool stays
+	// distinct. The key invariant is that the trailing user turn is NOT
+	// merged into the tool message.
+	if len(br.Messages) != 4 {
+		t.Fatalf("expected 4 messages (no bundling of trailing user turn), got %d", len(br.Messages))
+	}
+	if br.Messages[3].Role != "user" {
+		t.Errorf("last message role = %q, want user (separate turn)", br.Messages[3].Role)
+	}
+}
+
+func TestBuildConverseRequest_DoesNotMergePlainSameRoleMessages(t *testing.T) {
+	// Same scoping check on the Converse path.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"first"`)},
+			{Role: "user", Content: json.RawMessage(`"second"`)},
+		},
+	}
+
+	cr, _ := buildConverseRequest(req)
+
+	if len(cr.Messages) != 2 {
+		t.Fatalf("expected 2 separate user messages, got %d", len(cr.Messages))
+	}
+}
+
+func TestBuildConverseRequest_DoesNotMergeUserFollowingToolResult(t *testing.T) {
+	// In the Converse path, tool messages are rewritten to role:"user".
+	// A subsequent real user message must NOT be merged into the tool
+	// result's user message — they are separate turns.
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"do X"`)},
+			{Role: "assistant", ToolCalls: []models.ToolCall{
+				{ID: "call_1", Type: "function", Function: models.FunctionCall{Name: "f", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: json.RawMessage(`"result"`)},
+			{Role: "user", Content: json.RawMessage(`"and now Y"`)},
+		},
+	}
+
+	cr, _ := buildConverseRequest(req)
+
+	// Expect: user(do X), assistant(tool_use), user(tool_result), user(and now Y)
+	// — 4 messages, with the last two NOT merged.
+	if len(cr.Messages) != 4 {
+		t.Fatalf("expected 4 messages (no bundling of trailing user turn), got %d", len(cr.Messages))
+	}
+	// Sanity: the third message must contain a ToolResult, the fourth must not.
+	if !messageHasToolResult(cr.Messages[2]) {
+		t.Errorf("message[2] should be the tool_result message")
+	}
+	if messageHasToolResult(cr.Messages[3]) {
+		t.Errorf("message[3] (real user follow-up) should not contain tool_result blocks")
+	}
+}
+
+func TestBuildConverseRequest_MergesConsecutiveToolMessages(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+			{Role: "assistant", ToolCalls: []models.ToolCall{
+				{ID: "call_1", Type: "function", Function: models.FunctionCall{Name: "f1", Arguments: `{}`}},
+				{ID: "call_2", Type: "function", Function: models.FunctionCall{Name: "f2", Arguments: `{}`}},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: json.RawMessage(`"r1"`)},
+			{Role: "tool", ToolCallID: "call_2", Content: json.RawMessage(`"r2"`)},
+		},
+	}
+
+	cr, _ := buildConverseRequest(req)
+
+	if len(cr.Messages) != 3 {
+		t.Fatalf("expected 3 converse messages after merge, got %d", len(cr.Messages))
+	}
+	if cr.Messages[2].Role != "user" {
+		t.Errorf("merged message role = %q, want user", cr.Messages[2].Role)
+	}
+	if len(cr.Messages[2].Content) != 2 {
+		t.Errorf("merged content blocks = %d, want 2", len(cr.Messages[2].Content))
+	}
+}

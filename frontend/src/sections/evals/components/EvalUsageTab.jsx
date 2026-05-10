@@ -22,6 +22,7 @@ import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
 
 // ── Inline stat ──
@@ -384,6 +385,8 @@ const EvalUsageTab = ({
   React.useEffect(() => {
     if (detailIndex === null) return;
     const handler = (e) => {
+      if (e.repeat) return;
+      if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));

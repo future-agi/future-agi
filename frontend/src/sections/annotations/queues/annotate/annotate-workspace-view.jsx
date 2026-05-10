@@ -175,6 +175,7 @@ export default function AnnotateWorkspaceView() {
   const isAssignedToMe = assignedUsers.some(
     (a) => String(a.id) === currentUserId,
   );
+  const isManualAssignment = queueDetail?.auto_assign === false;
   const assignedToName =
     hasAssignments && !isAssignedToMe
       ? assignedUsers
@@ -182,8 +183,9 @@ export default function AnnotateWorkspaceView() {
           .filter(Boolean)
           .join(", ") || "other annotators"
       : null;
-  // User cannot edit annotations when the item is assigned to someone else.
-  const cannotAnnotate = hasAssignments && !isAssignedToMe;
+  // In manual-assignment queues, only explicitly assigned users may annotate.
+  // Auto-assign queues implicitly assign everyone, so they never block.
+  const cannotAnnotate = isManualAssignment && !isAssignedToMe;
   // Reviewers/managers see assigned-to-other items in read-only mode (when
   // not actively reviewing). Other members are fully blocked.
   const isViewOnlyForReviewer = canReview && cannotAnnotate && !isReviewMode;

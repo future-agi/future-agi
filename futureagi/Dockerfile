@@ -1,4 +1,4 @@
-FROM 375763256607.dkr.ecr.us-east-2.amazonaws.com/core-backend:v1.8.19_base
+FROM futureagi/future-agi:v1.8.19_base
 
 COPY . .
 

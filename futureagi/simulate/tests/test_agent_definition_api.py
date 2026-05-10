@@ -554,6 +554,30 @@ class TestFetchAssistantFromProvider:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_voice_sim_feature_unavailable_returns_402(self, auth_client):
+        """Regression: voice_sim entitlement denial must surface as HTTP 402,
+        not the generic 400 'recheck API key' that the bare except previously
+        emitted — that message sent users to debug credentials when the real
+        cause was plan entitlement.
+        """
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.VOICE_SIM),
+        ):
+            response = auth_client.post(
+                self.URL,
+                {
+                    "assistantId": "asst_123",
+                    "apiKey": "key_123",
+                    "provider": "vapi",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+
     def test_missing_fields(self, auth_client):
         response = auth_client.post(
             self.URL,

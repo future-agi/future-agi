@@ -25,6 +25,7 @@ class TaskRunnerInput:
     time_limit: Optional[int] = None  # Override default timeout
     max_retries: Optional[int] = None
     retry_delay: Optional[int] = None
+    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 6h
 
 
 @dataclass

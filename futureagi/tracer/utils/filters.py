@@ -1488,7 +1488,16 @@ class FilterEngine:
                 "filter_config": {
                     "filter_type": "boolean",
                     "filter_op": "equals",
-                    "filter_value": "up"   // or "down"
+                    "filter_value": "up"   // or "down" — single-value form
+                }
+            },
+            {
+                "column_id": "<annotation_label_uuid>",
+                "col_type": "ANNOTATION",
+                "filter_config": {
+                    "filter_type": "thumbs",                   // multi-value form
+                    "filter_op": "in",                          // or "not_in"
+                    "filter_value": ["Thumbs Up", "Thumbs Down"]  // or ["up","down"]
                 }
             },
             {
@@ -1708,6 +1717,40 @@ class FilterEngine:
                     q_conditions &= Q(**{f"{annotation_field}__thumbs_up__gt": 0})
                 elif filter_value is False:
                     q_conditions &= Q(**{f"{annotation_field}__thumbs_down__gt": 0})
+
+            elif filter_type == "thumbs":
+                # Dedicated filter type for thumbs_up_down labels — distinct
+                # from `categorical` which is reserved for choice annotations.
+                # Aggregated annotation field stores {"thumbs_up": N, "thumbs_down": M};
+                # match if the count for any selected token is > 0.
+                _TOKENS = {
+                    "thumbs up": "thumbs_up",
+                    "thumbs down": "thumbs_down",
+                    "thumbs_up": "thumbs_up",
+                    "thumbs_down": "thumbs_down",
+                    "up": "thumbs_up",
+                    "down": "thumbs_down",
+                }
+                raw_values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
+                tokens = []
+                for v in raw_values:
+                    if v is None:
+                        continue
+                    t = _TOKENS.get(str(v).strip().lower())
+                    if t is not None and t not in tokens:
+                        tokens.append(t)
+                if tokens:
+                    negate = filter_op in ("not_in", "not_equals", "is_not")
+                    if negate:
+                        for t in tokens:
+                            q_conditions &= ~Q(**{f"{annotation_field}__{t}__gt": 0})
+                    else:
+                        choice_q = Q()
+                        for t in tokens:
+                            choice_q |= Q(**{f"{annotation_field}__{t}__gt": 0})
+                        q_conditions &= choice_q
 
             elif filter_type == "categorical":
                 # Categorical annotations: the pre-annotated JSON has
