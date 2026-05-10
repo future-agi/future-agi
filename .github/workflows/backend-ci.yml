@@ -148,6 +148,9 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Install system dependencies
+        run: sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev pkg-config --quiet
+
       - name: Install dependencies
         run: pip install -r requirements-test.txt --quiet
 
