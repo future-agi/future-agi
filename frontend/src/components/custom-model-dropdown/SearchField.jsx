@@ -233,4 +233,5 @@ SearchField.propTypes = {
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,
+  shrink: PropTypes.bool,
 };

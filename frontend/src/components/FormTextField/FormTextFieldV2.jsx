@@ -158,4 +158,5 @@ FormTextFieldV2.propTypes = {
   fieldType: PropTypes.string,
   onChange: PropTypes.func,
   ref: PropTypes.object,
+  shrink: PropTypes.bool,
 };

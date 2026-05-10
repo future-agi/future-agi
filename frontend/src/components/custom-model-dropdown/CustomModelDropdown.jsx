@@ -322,4 +322,5 @@ CustomModelDropdown.propTypes = {
   customTrigger: PropTypes.oneOfType([PropTypes.node, PropTypes.func]),
   onModelTypeChange: PropTypes.func,
   modelType: PropTypes.string,
+  shrink: PropTypes.bool,
 };

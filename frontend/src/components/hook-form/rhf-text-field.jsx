@@ -176,6 +176,7 @@ RHFTextField.propTypes = {
   InputLabelProps: PropTypes.object,
   InputProps: PropTypes.object,
   name: PropTypes.string,
+  shrink: PropTypes.bool,
   sx: PropTypes.object,
   type: PropTypes.string,
 };

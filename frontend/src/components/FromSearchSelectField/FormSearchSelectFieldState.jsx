@@ -304,4 +304,5 @@ FormSearchSelectFieldState.propTypes = {
   createLabel: PropTypes.string,
   multiple: PropTypes.bool,
   placeholder: PropTypes.string,
+  shrink: PropTypes.bool,
 };
