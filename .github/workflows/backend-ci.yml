@@ -10,6 +10,8 @@ on:
     branches: [main, dev, feat/*, fix/*, chore/*, refactor/*, test/*, perf/*, hotfix/*]
     paths:
       - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/actions/fi-simulate/**"
 
 jobs:
   test:
