@@ -58,7 +58,9 @@ from model_hub.utils.annotation_queue_helpers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.models.span_notes import SpanNotes
 
 logger = structlog.get_logger(__name__)
 
@@ -66,6 +68,46 @@ logger = structlog.get_logger(__name__)
 # path for selections exceeding this; until then, the endpoint errors with
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
 MAX_SELECTION_CAP = 10_000
+
+
+def _scores_for_queue_item(item):
+    """Return queue-item scores plus source-level scores for this item's labels."""
+    base_q = Q(queue_item=item)
+    fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
+    source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
+    if fk_field and source_id:
+        # Score is source-scoped; queue_item is provenance, not the only way a
+        # saved annotation belongs to this item. Inline annotations from the
+        # trace/call UI must still prefill queue detail and history.
+        label_ids = item.queue.queue_labels.filter(deleted=False).values_list(
+            "label_id", flat=True
+        )
+        base_q |= Q(
+            source_type=item.source_type,
+            label_id__in=label_ids,
+            **{f"{fk_field}_id": source_id},
+        )
+    return Score.objects.filter(base_q, deleted=False)
+
+
+def _span_notes_target_for_queue_item(item):
+    """Return the span that stores whole-item notes for queue annotation."""
+    if item.source_type == "observation_span" and item.observation_span_id:
+        return item.observation_span
+    if item.source_type != "trace" or not item.trace_id:
+        return None
+
+    root_spans = ObservationSpan.objects.filter(
+        trace_id=item.trace_id,
+        deleted=False,
+    ).filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
+    return (
+        root_spans.filter(observation_type="conversation")
+        .order_by("start_time", "created_at")
+        .first()
+        or root_spans.order_by("start_time", "created_at").first()
+    )
+
 
 # Dispatch table for filter-mode resolvers. Later phases (6, 8) extend this
 # with ``trace_session`` / ``call_execution`` entries alongside their own
@@ -1279,14 +1321,28 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             sources = [{"source_type": source_type, "source_id": source_id}]
 
         # Validate all sources
+        span_notes_source_ids = {}
         for src in sources:
             st = src.get("source_type")
-            if not st or not src.get("source_id"):
+            sid = src.get("source_id")
+            if not st or not sid:
                 return self._gm.bad_request(
                     "Each source must have source_type and source_id."
                 )
             if st not in SOURCE_TYPE_FK_MAP:
                 return self._gm.bad_request(f"Invalid source_type: {st}")
+            span_notes_source_id = src.get("span_notes_source_id")
+            if span_notes_source_id:
+                span_notes_source = resolve_source_object(
+                    "observation_span",
+                    span_notes_source_id,
+                    organization=request.organization,
+                )
+                if not span_notes_source:
+                    return self._gm.not_found(
+                        f"Span notes source not found: {span_notes_source_id}"
+                    )
+                span_notes_source_ids[(st, str(sid))] = span_notes_source_id
 
         # Get all queue IDs where the current user is an annotator
         user_queue_ids = set(
@@ -1346,7 +1402,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         # Helper to build labels list and existing scores for a queue
         def _build_queue_entry(
-            queue, item, source_type_for_scores, source_id_for_scores
+            queue,
+            item,
+            source_type_for_scores,
+            source_id_for_scores,
+            span_notes_source_id=None,
         ):
             queue_labels = (
                 queue.queue_labels.filter(deleted=False)
@@ -1386,13 +1446,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     if sc.notes:
                         existing_label_notes[str(sc.label_id)] = sc.notes
 
-            # Include span_notes for observation_span sources
+            # Include SpanNotes from the scoring source when it is a span, or
+            # from the linked root span when a voice call saves labels on trace.
             span_notes = []
-            if source_type_for_scores == "observation_span" and source_id_for_scores:
+            span_notes_lookup_id = (
+                source_id_for_scores
+                if source_type_for_scores == "observation_span"
+                else span_notes_source_id
+            )
+            if span_notes_lookup_id:
                 from tracer.models.span_notes import SpanNotes
 
                 db_notes = list(
-                    SpanNotes.objects.filter(span_id=source_id_for_scores)
+                    SpanNotes.objects.filter(span_id=span_notes_lookup_id)
                     .select_related("created_by_user")
                     .order_by("-created_at")
                 )
@@ -1430,6 +1496,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "id": str(item.id),
                         "status": item.status,
                         "source_type": item.source_type,
+                        "source_id": str(source_id_for_scores)
+                        if source_id_for_scores
+                        else None,
                     }
                     if item
                     else None
@@ -1439,6 +1508,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "existing_notes": existing_notes,
                 "existing_label_notes": existing_label_notes,
                 "span_notes": span_notes,
+                "span_notes_source_id": span_notes_lookup_id,
             }
 
         # Group by queue and include labels + source info
@@ -1454,7 +1524,15 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 item, f"{SOURCE_TYPE_FK_MAP[item.source_type]}_id", None
             )
             results.append(
-                _build_queue_entry(queue, item, item.source_type, source_fk_id)
+                _build_queue_entry(
+                    queue,
+                    item,
+                    item.source_type,
+                    source_fk_id,
+                    span_notes_source_id=span_notes_source_ids.get(
+                        (item.source_type, str(source_fk_id))
+                    ),
+                )
             )
 
         # For default queues that DON'T have queue items for these sources,
@@ -1576,6 +1654,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             None,
                             matched_source["source_type"],
                             matched_source["source_id"],
+                            span_notes_source_id=matched_source.get(
+                                "span_notes_source_id"
+                            ),
                         )
                     )
 
@@ -1953,11 +2034,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         annotations_data = serializer.validated_data["annotations"]
         fallback_notes = serializer.validated_data.get("notes", "")
+        item_notes = serializer.validated_data.get("item_notes")
         submitted = 0
 
         # Resolve source FK for Score creation
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
         source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        span_notes_target = (
+            _span_notes_target_for_queue_item(item)
+            if item_notes is not None
+            else None
+        )
 
         # Pre-fetch valid label IDs for this queue
         queue_label_ids = set(
@@ -2003,6 +2090,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     },
                 )
                 submitted += 1
+
+        if span_notes_target is not None:
+            if item_notes:
+                SpanNotes.objects.update_or_create(
+                    span=span_notes_target,
+                    created_by_user=request.user,
+                    defaults={
+                        "notes": item_notes,
+                        "created_by_annotator": request.user.email,
+                    },
+                )
+            else:
+                SpanNotes.objects.filter(
+                    span=span_notes_target,
+                    created_by_user=request.user,
+                ).delete()
 
         # Update item status to in_progress if pending
         if item.status == QueueItemStatus.PENDING.value:
@@ -2062,22 +2165,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         queue = item.queue
 
-        # Verify the requesting user has actually annotated this item
-        user_has_annotated = Score.objects.filter(
-            queue_item=item, annotator=request.user, deleted=False
-        ).exists()
+        # Verify the requesting user has actually annotated this item.
+        item_scores = _scores_for_queue_item(item)
+        user_has_annotated = item_scores.filter(annotator=request.user).exists()
         if not user_has_annotated:
             return self._gm.bad_request(
                 "You must submit annotations before completing."
             )
 
         # Multi-annotator: check if enough annotators have submitted
-        annotation_count = (
-            Score.objects.filter(queue_item=item, deleted=False)
-            .values("annotator")
-            .distinct()
-            .count()
-        )
+        annotation_count = item_scores.values("annotator").distinct().count()
         if annotation_count >= queue.annotations_required:
             if queue.requires_review:
                 item.status = QueueItemStatus.IN_PROGRESS.value
@@ -2269,10 +2366,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
             deleted=False,
         ).exists()
-        annotations_qs = Score.objects.filter(
-            queue_item=item,
-            deleted=False,
-        ).select_related("label")
+        annotations_qs = _scores_for_queue_item(item).select_related("label")
         raw_annotator_id = request.query_params.get("annotator_id") or None
         viewing_annotator_id = None
         if raw_annotator_id and is_reviewer:
@@ -2286,6 +2380,39 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         elif not is_reviewer:
             annotations_qs = annotations_qs.filter(annotator=request.user)
         annotations = annotations_qs
+
+        existing_notes = ""
+        span_notes = []
+        span_notes_source_id = None
+        span_notes_target = _span_notes_target_for_queue_item(item)
+        if span_notes_target is not None:
+            span_notes_source_id = span_notes_target.id
+            note_rows = list(
+                SpanNotes.objects.filter(span=span_notes_target)
+                .select_related("created_by_user")
+                .order_by("-created_at")
+            )
+            span_notes = [
+                {
+                    "id": str(note.id),
+                    "notes": note.notes,
+                    "annotator": note.created_by_annotator
+                    or (
+                        note.created_by_user.name
+                        if note.created_by_user_id
+                        else None
+                    ),
+                    "created_at": note.created_at.isoformat(),
+                }
+                for note in note_rows
+            ]
+            notes_user_id = viewing_annotator_id or request.user.pk
+            user_span_note = next(
+                (n for n in note_rows if n.created_by_user_id == notes_user_id),
+                None,
+            )
+            if user_span_note:
+                existing_notes = user_span_note.notes
 
         # Compute overall progress (all items in queue, unfiltered).
         progress_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
@@ -2350,6 +2477,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             "queue": queue,
             "labels": labels,
             "annotations": annotations,
+            "existing_notes": existing_notes,
+            "span_notes": span_notes,
+            "span_notes_source_id": span_notes_source_id,
             "progress": {
                 "total": total,
                 "completed": completed,
@@ -2524,7 +2654,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.not_found("Queue item not found.")
 
         annotations = (
-            Score.objects.filter(queue_item=item, deleted=False)
+            _scores_for_queue_item(item)
             .select_related("annotator", "label")
             .order_by("-created_at")
         )

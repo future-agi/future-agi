@@ -14,6 +14,7 @@ import {
   useCreateAutomationRule,
   useAnnotateDetail,
   useCompleteItem,
+  useQueueItemsForSource,
   useSubmitAnnotations,
 } from "../annotation-queues";
 
@@ -197,6 +198,45 @@ describe("Annotation Queues API", () => {
       expect(axios.get).toHaveBeenCalledWith(
         "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
         { params: { annotator_id: "user-2" } },
+      );
+    });
+  });
+
+  describe("useQueueItemsForSource", () => {
+    it("passes span_notes_source_id for trace call annotation notes", async () => {
+      axios.get.mockResolvedValueOnce({ data: { result: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useQueueItemsForSource([
+            {
+              sourceType: "trace",
+              sourceId: "trace-1",
+              spanNotesSourceId: "span-1",
+            },
+          ]),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/for-source/",
+        {
+          params: {
+            sources: JSON.stringify([
+              {
+                source_type: "trace",
+                source_id: "trace-1",
+                span_notes_source_id: "span-1",
+              },
+            ]),
+          },
+        },
       );
     });
   });

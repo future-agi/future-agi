@@ -456,6 +456,9 @@ class SubmitAnnotationsSerializer(serializers.Serializer):
         min_length=1,
     )
     notes = serializers.CharField(required=False, allow_blank=True, default="")
+    item_notes = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, default=None
+    )
 
     def validate_annotations(self, value):
         for ann in value:
@@ -526,6 +529,11 @@ class AnnotateDetailSerializer(serializers.Serializer):
                 ],
                 "source_content": resolve_source_content(item),
                 "source_preview": resolve_source_preview(item),
+                "review_notes": item.review_notes,
+                "reviewed_by_name": (
+                    item.reviewed_by.name if item.reviewed_by else None
+                ),
+                "reviewed_at": item.reviewed_at,
             },
             "queue": {
                 "id": str(queue.id),
@@ -535,6 +543,9 @@ class AnnotateDetailSerializer(serializers.Serializer):
             },
             "labels": QueueLabelDetailSerializer(labels, many=True).data,
             "annotations": ScoreSerializer(annotations, many=True).data,
+            "existing_notes": instance.get("existing_notes", ""),
+            "span_notes": instance.get("span_notes", []),
+            "span_notes_source_id": instance.get("span_notes_source_id"),
             "progress": progress,
             "next_item_id": instance.get("next_item_id"),
             "prev_item_id": instance.get("prev_item_id"),

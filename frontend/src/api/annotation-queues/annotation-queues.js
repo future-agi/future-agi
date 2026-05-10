@@ -439,9 +439,10 @@ export const useNextItem = (queueId, options = {}) => {
 export const useSubmitAnnotations = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, annotations, notes }) => {
+    mutationFn: ({ queueId, itemId, annotations, notes, itemNotes }) => {
       const payload = { annotations };
       if (notes !== undefined) payload.notes = notes;
+      if (itemNotes !== undefined) payload.item_notes = itemNotes;
       return axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotations/submit/`,
         payload,
@@ -760,7 +761,7 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
 // ---------------------------------------------------------------------------
 /**
  * Fetch annotation queue items for one or more sources.
- * @param {Array<{sourceType: string, sourceId: string}>} sources
+ * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} sources
  */
 export const useQueueItemsForSource = (sources = [], options = {}) => {
   // Filter out entries with missing values
@@ -775,6 +776,7 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
             validSources.map((s) => ({
               source_type: s.sourceType,
               source_id: s.sourceId,
+              span_notes_source_id: s.spanNotesSourceId,
             })),
           ),
         },

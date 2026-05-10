@@ -35,7 +35,8 @@ import AnnotateHeader from "./annotate-header";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
-import ReviewPanel from "./review-panel";
+import AnnotationComparisonPanel from "./annotation-comparison-panel";
+import { ALL_ANNOTATORS } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES } from "../constants";
 
@@ -126,16 +127,20 @@ export default function AnnotateWorkspaceView() {
   useEffect(() => {
     if (!queueDetail) return;
     if (canReview && currentUserId && !viewingAnnotatorId) {
-      setViewingAnnotatorId(currentUserId);
+      setViewingAnnotatorId(ALL_ANNOTATORS);
     } else if (!canReview && viewingAnnotatorId !== null) {
       setViewingAnnotatorId(null);
     }
   }, [canReview, currentUserId, queueDetail, viewingAnnotatorId]);
 
-  const scopedAnnotatorId = canReview ? viewingAnnotatorId : undefined;
+  const isViewingAllAnnotators =
+    canReview && viewingAnnotatorId === ALL_ANNOTATORS;
+  const scopedAnnotatorId =
+    canReview && !isViewingAllAnnotators ? viewingAnnotatorId : undefined;
   const isViewingOtherAnnotator =
     canReview &&
     !!viewingAnnotatorId &&
+    !isViewingAllAnnotators &&
     String(viewingAnnotatorId) !== currentUserId;
   const detailEnabled =
     !!queueId &&
@@ -143,8 +148,9 @@ export default function AnnotateWorkspaceView() {
     !!queueDetail &&
     (!canReview || !!viewingAnnotatorId);
 
-  // Reviewers/managers request one annotator at a time so values from
-  // multiple annotators never merge into a single editable form.
+  // Reviewers/managers default to a comparison view. When a single annotator
+  // is selected, request that annotator only so values never merge into one
+  // editable form.
   const {
     data: detail,
     isLoading: detailLoading,
@@ -253,7 +259,7 @@ export default function AnnotateWorkspaceView() {
 
   const handleViewingAnnotatorChange = useCallback(
     (id) => {
-      const nextAnnotatorId = id || currentUserId;
+      const nextAnnotatorId = id || ALL_ANNOTATORS;
       if (String(nextAnnotatorId) === String(viewingAnnotatorId || "")) {
         return;
       }
@@ -268,17 +274,17 @@ export default function AnnotateWorkspaceView() {
       }
       setViewingAnnotatorId(nextAnnotatorId);
     },
-    [currentUserId, isViewingOtherAnnotator, viewingAnnotatorId],
+    [isViewingOtherAnnotator, viewingAnnotatorId],
   );
 
   const handleSubmitAndNext = useCallback(
-    ({ annotations, notes }) => {
+    ({ annotations, notes, itemNotes }) => {
       if (!currentItemId || isSubmittingRef.current) return;
       isSubmittingRef.current = true;
 
       // First submit, then complete
       submitAnnotations(
-        { queueId, itemId: currentItemId, annotations, notes },
+        { queueId, itemId: currentItemId, annotations, notes, itemNotes },
         {
           onSuccess: () => {
             completeItem(
@@ -468,6 +474,7 @@ export default function AnnotateWorkspaceView() {
     if (
       isViewOnlyForReviewer ||
       isBlockedAssignedToOther ||
+      isViewingAllAnnotators ||
       isViewingOtherAnnotator ||
       isAnnotatorSwitchPending
     )
@@ -476,6 +483,7 @@ export default function AnnotateWorkspaceView() {
   }, [
     isViewOnlyForReviewer,
     isBlockedAssignedToOther,
+    isViewingAllAnnotators,
     isViewingOtherAnnotator,
     isAnnotatorSwitchPending,
   ]);
@@ -660,14 +668,22 @@ export default function AnnotateWorkspaceView() {
         {/* Right: Labels or Review */}
         <Box sx={{ width: 400, minWidth: 360, overflow: "auto" }}>
           {isReviewMode ? (
-            <ReviewPanel
+            <AnnotationComparisonPanel
               annotations={detail?.annotations || []}
               labels={detail?.labels || []}
+              spanNotes={detail?.span_notes || []}
+              annotators={queueDetail?.annotators || []}
+              currentUserId={currentUserId}
+              viewingAnnotatorId={viewingAnnotatorId}
+              onViewingAnnotatorChange={handleViewingAnnotatorChange}
               onApprove={handleApprove}
               onReject={handleReject}
               isPending={isReviewing}
               reviewStatus={detail?.item?.review_status}
+              reviewNotes={detail?.item?.review_notes || ""}
+              queueId={queueId}
               itemId={currentItemId}
+              showReviewActions
             />
           ) : isBlockedAssignedToOther ? (
             <Stack
@@ -697,11 +713,27 @@ export default function AnnotateWorkspaceView() {
                 Skip to Next Item
               </Button>
             </Stack>
+          ) : isViewingAllAnnotators ? (
+            <AnnotationComparisonPanel
+              labels={detail?.labels || []}
+              annotations={detail?.annotations || []}
+              spanNotes={detail?.span_notes || []}
+              annotators={queueDetail?.annotators || []}
+              currentUserId={currentUserId}
+              viewingAnnotatorId={viewingAnnotatorId}
+              onViewingAnnotatorChange={handleViewingAnnotatorChange}
+              reviewStatus={detail?.item?.review_status}
+              reviewNotes={detail?.item?.review_notes || ""}
+              queueId={queueId}
+              itemId={currentItemId}
+            />
           ) : (
             <LabelPanel
               ref={labelPanelRef}
               labels={detail?.labels || []}
               annotations={detail?.annotations || []}
+              initialItemNotes={detail?.existing_notes || ""}
+              reviewFeedback={detail?.item?.review_notes || ""}
               instructions={detail?.queue?.instructions}
               onSubmit={handleSubmitAndNext}
               isPending={isSubmitting || isCompleting}

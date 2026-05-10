@@ -7,6 +7,8 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import LabelInput from "../annotate/label-input";
 import LabelPanel from "../annotate/label-panel";
+import AnnotationComparisonPanel from "../annotate/annotation-comparison-panel";
+import { ALL_ANNOTATORS } from "../annotate/annotation-view-mode";
 import AnnotateHeader from "../annotate/annotate-header";
 import AnnotateFooter from "../annotate/annotate-footer";
 import AnnotationHistory from "../annotate/annotation-history";
@@ -257,7 +259,69 @@ describe("LabelPanel", () => {
           notes: "latency note",
         },
       ],
+      itemNotes: "",
     });
+  });
+
+  it("prefills and submits whole-item notes", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(
+      <LabelPanel
+        labels={[
+          {
+            id: "ql-1",
+            label_id: "label-1",
+            name: "Content",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: false,
+          },
+        ]}
+        annotations={[]}
+        initialItemNotes="existing whole item note"
+        onSubmit={onSubmit}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    const itemNotes = screen.getByPlaceholderText("Add notes for this item...");
+    expect(itemNotes).toHaveValue("existing whole item note");
+
+    await user.clear(itemNotes);
+    await user.type(itemNotes, "updated whole item note");
+    await user.click(screen.getByText("Yes"));
+    await user.click(screen.getByRole("button", { name: /submit & next/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      annotations: [
+        {
+          label_id: "label-1",
+          value: { value: "up" },
+        },
+      ],
+      itemNotes: "updated whole item note",
+    });
+  });
+
+  it("shows reviewer feedback on returned items", () => {
+    render(
+      <LabelPanel
+        labels={[]}
+        annotations={[]}
+        reviewFeedback="Please re-check the sentiment label."
+        onSubmit={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    expect(screen.getByText("Reviewer feedback")).toBeInTheDocument();
+    expect(
+      screen.getByText("Please re-check the sentiment label."),
+    ).toBeInTheDocument();
   });
 
   it("clears stale label notes when the selected annotator changes", async () => {
@@ -341,6 +405,142 @@ describe("LabelPanel", () => {
     await user.click(screen.getByRole("option", { name: "Kartik (you)" }));
 
     expect(onViewingAnnotatorChange).toHaveBeenCalledWith("user-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AnnotationComparisonPanel
+// ---------------------------------------------------------------------------
+describe("AnnotationComparisonPanel", () => {
+  const labels = [
+    {
+      id: "ql-1",
+      label_id: "label-1",
+      name: "thumbs",
+      type: "thumbs_up_down",
+      settings: {},
+    },
+    {
+      id: "ql-2",
+      label_id: "label-2",
+      name: "cat",
+      type: "categorical",
+      settings: { multi_choice: true, options: ["1", "2"] },
+    },
+  ];
+
+  const annotators = [
+    {
+      user_id: "user-1",
+      name: "Kartik",
+      email: "kartik.nvj@futureagi.com",
+    },
+    {
+      user_id: "user-2",
+      name: "Narda",
+      email: "narda@example.com",
+    },
+  ];
+
+  it("shows all annotators side by side with disagreement and notes", () => {
+    render(
+      <AnnotationComparisonPanel
+        labels={labels}
+        annotators={annotators}
+        currentUserId="user-1"
+        viewingAnnotatorId={ALL_ANNOTATORS}
+        queueId="queue-1"
+        itemId="item-1"
+        annotations={[
+          {
+            id: "ann-1",
+            annotator: "user-1",
+            annotator_name: "Kartik",
+            annotator_email: "kartik.nvj@futureagi.com",
+            label_id: "label-1",
+            label_type: "thumbs_up_down",
+            value: { value: "up" },
+            notes: "kartik note",
+          },
+          {
+            id: "ann-2",
+            annotator: "user-2",
+            annotator_name: "Narda",
+            annotator_email: "narda@example.com",
+            label_id: "label-1",
+            label_type: "thumbs_up_down",
+            value: { value: "down" },
+            notes: "narda note",
+          },
+        ]}
+        spanNotes={[
+          {
+            id: "note-1",
+            annotator: "narda@example.com",
+            notes: "whole item note",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("All annotators")).toBeInTheDocument();
+    expect(screen.getAllByText("Kartik (you)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Narda").length).toBeGreaterThan(0);
+    expect(screen.getByText("Disagreement")).toBeInTheDocument();
+    expect(screen.getByText("Note: kartik note")).toBeInTheDocument();
+    expect(screen.getByText("Note: narda note")).toBeInTheDocument();
+    expect(screen.getByText("whole item note")).toBeInTheDocument();
+  });
+
+  it("emits single annotator selection from the comparison dropdown", async () => {
+    const user = userEvent.setup();
+    const onViewingAnnotatorChange = vi.fn();
+
+    render(
+      <AnnotationComparisonPanel
+        labels={labels}
+        annotators={annotators}
+        currentUserId="user-1"
+        viewingAnnotatorId={ALL_ANNOTATORS}
+        onViewingAnnotatorChange={onViewingAnnotatorChange}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "Narda" }));
+
+    expect(onViewingAnnotatorChange).toHaveBeenCalledWith("user-2");
+  });
+
+  it("submits reviewer feedback through approve and reject actions", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+
+    render(
+      <AnnotationComparisonPanel
+        labels={labels}
+        annotators={annotators}
+        currentUserId="user-1"
+        viewingAnnotatorId={ALL_ANNOTATORS}
+        queueId="queue-1"
+        itemId="item-1"
+        showReviewActions
+        onApprove={onApprove}
+        onReject={onReject}
+      />,
+    );
+
+    await user.type(
+      screen.getByLabelText("Reviewer feedback"),
+      "needs a clearer label note",
+    );
+    await user.click(screen.getByRole("button", { name: /reject/i }));
+
+    expect(onReject).toHaveBeenCalledWith("needs a clearer label note");
+    expect(onApprove).not.toHaveBeenCalled();
   });
 });
 

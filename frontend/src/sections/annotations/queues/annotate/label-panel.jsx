@@ -8,6 +8,7 @@ import React, {
   useRef,
 } from "react";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -17,6 +18,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -148,6 +150,7 @@ const LabelPanel = forwardRef(function LabelPanel(
   {
     labels = [],
     annotations = [],
+    initialItemNotes = "",
     instructions,
     onSubmit,
     isPending,
@@ -156,6 +159,7 @@ const LabelPanel = forwardRef(function LabelPanel(
     onDirtyChange,
     readOnly = false,
     readOnlyReason = null,
+    reviewFeedback = "",
     annotators = null,
     viewingAnnotatorId = null,
     currentUserId = null,
@@ -166,6 +170,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 ) {
   const [values, setValues] = useState({});
   const [labelNotes, setLabelNotes] = useState({});
+  const [itemNotes, setItemNotes] = useState(initialItemNotes || "");
   const [showInstructions, setShowInstructions] = useState(!!instructions);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -185,6 +190,7 @@ const LabelPanel = forwardRef(function LabelPanel(
   useEffect(() => {
     setValues({});
     setLabelNotes({});
+    setItemNotes("");
     setErrorLabels(new Set());
     onDirtyChange?.(false);
   }, [itemId, viewingAnnotatorId, onDirtyChange]);
@@ -210,6 +216,11 @@ const LabelPanel = forwardRef(function LabelPanel(
     onDirtyChange?.(false);
   }, [annotations, onDirtyChange]);
 
+  useEffect(() => {
+    setItemNotes(initialItemNotes || "");
+    onDirtyChange?.(false);
+  }, [initialItemNotes, onDirtyChange]);
+
   const handleChange = useCallback(
     (labelId, value) => {
       if (readOnly) return;
@@ -233,6 +244,15 @@ const LabelPanel = forwardRef(function LabelPanel(
     (labelId, value) => {
       if (readOnly) return;
       setLabelNotes((prev) => ({ ...prev, [labelId]: value }));
+      onDirtyChange?.(true);
+    },
+    [onDirtyChange, readOnly],
+  );
+
+  const handleItemNotesChange = useCallback(
+    (value) => {
+      if (readOnly) return;
+      setItemNotes(value);
       onDirtyChange?.(true);
     },
     [onDirtyChange, readOnly],
@@ -288,9 +308,9 @@ const LabelPanel = forwardRef(function LabelPanel(
       });
     if (annotationsList.length > 0) {
       onDirtyChange?.(false);
-      onSubmit({ annotations: annotationsList });
+      onSubmit({ annotations: annotationsList, itemNotes });
     }
-  }, [labelNotes, onSubmit, labels, onDirtyChange, readOnly]);
+  }, [itemNotes, labelNotes, onSubmit, labels, onDirtyChange, readOnly]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
@@ -427,6 +447,15 @@ const LabelPanel = forwardRef(function LabelPanel(
             {readOnlyReason}
           </Typography>
         </Box>
+      )}
+
+      {reviewFeedback && (
+        <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+          <Typography variant="caption" fontWeight={700} display="block">
+            Reviewer feedback
+          </Typography>
+          <Typography variant="body2">{reviewFeedback}</Typography>
+        </Alert>
       )}
 
       {/* Shortcuts toggle + Instructions row */}
@@ -625,6 +654,27 @@ const LabelPanel = forwardRef(function LabelPanel(
             </Box>
           );
         })}
+
+        <Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mb: 0.75 }}
+          >
+            Notes (optional)
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            minRows={3}
+            maxRows={6}
+            placeholder="Add notes for this item..."
+            value={itemNotes}
+            onChange={(e) => handleItemNotesChange(e.target.value)}
+            disabled={readOnly}
+          />
+        </Box>
       </Stack>
 
       {/* Annotation History */}
@@ -659,6 +709,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 LabelPanel.propTypes = {
   labels: PropTypes.array,
   annotations: PropTypes.array,
+  initialItemNotes: PropTypes.string,
   instructions: PropTypes.string,
   onSubmit: PropTypes.func.isRequired,
   isPending: PropTypes.bool,
@@ -667,6 +718,7 @@ LabelPanel.propTypes = {
   onDirtyChange: PropTypes.func,
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,
+  reviewFeedback: PropTypes.string,
   annotators: PropTypes.array,
   viewingAnnotatorId: PropTypes.string,
   currentUserId: PropTypes.string,

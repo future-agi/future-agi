@@ -334,6 +334,55 @@ class TestSubmitAnnotations:
         assert notes_by_label[label.id] == "sentiment note"
         assert notes_by_label[label_b.id] == "quality note"
 
+    @pytest.mark.api
+    def test_submit_label_notes_reload_through_annotate_detail(
+        self, auth_client, queue_with_items, label_b
+    ):
+        """Saved label notes come back when the annotation workspace reopens."""
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        label.allow_notes = True
+        label.save(update_fields=["allow_notes", "updated_at"])
+        label_b.allow_notes = True
+        label_b.save(update_fields=["allow_notes", "updated_at"])
+        AnnotationQueueLabel.objects.create(
+            queue=queue,
+            label=label_b,
+            order=1,
+            required=False,
+        )
+
+        submit_resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(label.id),
+                        "value": "positive",
+                        "notes": "sentiment reload note",
+                    },
+                    {
+                        "label_id": str(label_b.id),
+                        "value": {"rating": 4},
+                        "notes": "quality reload note",
+                    },
+                ]
+            },
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK
+
+        detail_resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+
+        assert detail_resp.status_code == status.HTTP_200_OK
+        annotations = _result(detail_resp)["annotations"]
+        notes_by_label = {
+            str(annotation["label_id"]): annotation["notes"]
+            for annotation in annotations
+        }
+        assert notes_by_label[str(label.id)] == "sentiment reload note"
+        assert notes_by_label[str(label_b.id)] == "quality reload note"
+
     def test_submit_only_stores_notes_for_note_enabled_labels(
         self, auth_client, queue_with_items, label_b
     ):
@@ -584,6 +633,38 @@ class TestAnnotateDetail:
         assert resp.status_code == status.HTTP_200_OK
         result = _result(resp)
         assert result["labels"][0]["allow_notes"] is True
+
+    def test_annotate_detail_includes_review_feedback(
+        self, auth_client, queue_with_items, user
+    ):
+        """Rejected items expose reviewer feedback when annotators reopen them."""
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.review_status = "rejected"
+        item.review_notes = "Please re-check the sentiment label."
+        item.reviewed_by = user
+        item.reviewed_at = timezone.now()
+        item.save(
+            update_fields=[
+                "review_status",
+                "review_notes",
+                "reviewed_by",
+                "reviewed_at",
+                "updated_at",
+            ],
+        )
+
+        resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+
+        assert resp.status_code == status.HTTP_200_OK
+        item_payload = _result(resp)["item"]
+        assert item_payload["review_status"] == "rejected"
+        assert (
+            item_payload["review_notes"]
+            == "Please re-check the sentiment label."
+        )
+        assert item_payload["reviewed_by_name"] == user.name
+        assert item_payload["reviewed_at"] is not None
 
     def test_reviewer_can_scope_annotate_detail_to_selected_annotator(
         self, auth_client, queue_with_items, user, second_user, organization
