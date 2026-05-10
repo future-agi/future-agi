@@ -766,14 +766,17 @@ def _execute_evaluation(
             ).get(pk=eval_log.pk)
 
         if custom_eval_config.error_localizer:
-            trigger_error_localization_for_span(
-                eval_template=eval_model,
-                eval_logger=eval_log,
-                mapping=raw_mapping,
-                eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                value=value,
-                log_id=str(log_id),
-            )
+            from model_hub.tasks.user_evaluation import _eval_passed
+
+            if not _eval_passed(value):
+                trigger_error_localization_for_span(
+                    eval_template=eval_model,
+                    eval_logger=eval_log,
+                    mapping=raw_mapping,
+                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                    value=value,
+                    log_id=str(log_id),
+                )
 
         if type == EXPERIMENT:
             # updating project version config

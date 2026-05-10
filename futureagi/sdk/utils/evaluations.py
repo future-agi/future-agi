@@ -121,6 +121,31 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         raise ValueError(
             f"eval_type_id not found in EvalTemplate config for {eval_template.name}"
         )
+    # The SDK wraps user eval_config in {"params": {...}} (see
+    # ConfigureEvaluationsSerializer / normalize_eval_runtime_config), so look
+    # in both the top level (legacy/internal callers) and inside ``params``
+    # (SDK callers).
+    _params = (eval_config or {}).get("params") or {}
+    kb_id = (
+        (eval_config or {}).get("kb_id")
+        or (eval_config or {}).get("knowledge_base_id")
+        or _params.get("kb_id")
+        or _params.get("knowledge_base_id")
+    )
+
+    # Build the runtime_config that is forwarded to the engine. Downstream
+    # consumers (``create_eval_instance``) look at top-level keys like
+    # ``run_config`` for AgentEvaluator overrides, but the SDK wraps user
+    # input in ``params``. Lift any non-schema keys from ``params`` to the
+    # top level so multi-KB (``knowledge_bases``) and other runtime overrides
+    # work over the SDK as well.
+    if isinstance(_params, dict) and _params:
+        _engine_runtime_config = {
+            **(eval_config or {}),
+            **{k: v for k, v in _params.items() if k not in ("params",)},
+        }
+    else:
+        _engine_runtime_config = eval_config
 
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -168,6 +193,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         futureagi_eval,
         gt_inputs,
         model=model,
+        kb_id=kb_id,
         workspace=workspace,
     )
 
@@ -178,7 +204,8 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                 eval_template=eval_template,
                 inputs=gt_inputs,
                 model=model,
-                runtime_config=eval_config,
+                kb_id=kb_id,
+                runtime_config=_engine_runtime_config,
                 organization_id=str(user.organization.id),
                 workspace_id=str(workspace.id) if workspace else None,
             )
