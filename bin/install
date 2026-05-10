@@ -47,6 +47,14 @@ on_err() {
 }
 trap 'on_err $LINENO' ERR
 
+# ---------------- log file (gitignored as /install-*.log) ----------------
+# Opened before arg parsing so helpers (esp. die) can append from any point.
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
+exec 3>>"$LOG_FILE"
+printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname 2>/dev/null || echo ?)" "$(uname -a)" >&3
+
 # ---------------- args ----------------
 FULL=0
 SKIP_USER=${SKIP_USER_CREATION:-0}
@@ -73,14 +81,7 @@ done
 # CI / non-TTY runs always behave as non-interactive.
 [[ -n "${CI:-}" || ! -t 0 ]] && NON_INTERACTIVE=1
 
-cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
-
-# ---------------- log file (gitignored as /install-*.log) ----------------
-LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
-exec 3>>"$LOG_FILE"
-printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname 2>/dev/null || echo ?)" "$(uname -a)" >&3
+cd "$ROOT"
 
 # ---------------- welcome banner ----------------
 if [[ -t 1 ]]; then
