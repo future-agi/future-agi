@@ -7,7 +7,7 @@ on:
       - ".github/workflows/backend-ci.yml"
       - ".github/actions/fi-simulate/**"
   push:
-    branches: [main, dev]
+    branches: [main, dev, feat/*, fix/*, chore/*, refactor/*, test/*, perf/*, hotfix/*]
     paths:
       - "futureagi/**"
 
