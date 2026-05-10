@@ -15,7 +15,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
 import { isVoiceCall } from "./sharedViewHelpers";
-import WidgetChart from "src/sections/dashboards/WidgetChart";
+import SharedWidgetChart from "src/sections/dashboards/SharedWidgetChart";
 import axios from "src/utils/axios";
 
 function getSpan(entry) {
@@ -424,31 +424,11 @@ function computeRows(widgets) {
   return rows;
 }
 
-function SharedWidgetCard({ widget, globalDateRange }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    // We don't have the token here directly — it's in the parent's shared link
-    // The parent fetches data and passes it down
-    if (widget._queryData === undefined) return; // still loading
-    setLoading(false);
-    if (widget._queryData) {
-      setData(widget._queryData);
-    } else {
-      setError(true); // null = fetch failed
-    }
-  }, [widget._queryData]);
-
-  const chartConfig = widget.chart_config || {};
-  const chartType = chartConfig.chart_type || "line";
-  const isPie = chartType === "pie";
-  const isTable = chartType === "table";
-  const isMetricCard = chartType === "metric";
-
+// SharedWidgetChart wrapper — uses the actual chart rendering logic from
+// the dashboards library with pre-fetched data instead of authenticated queries.
+function SharedWidgetWithChart({ widget, queryData }) {
   return (
-    <Card
+    <Box
       sx={{
         width: `${(widget.width || 12) / 12 * 100}%`,
         height: widget.height ? `${widget.height * 80}px` : DEFAULT_WIDGET_HEIGHT,
@@ -464,88 +444,12 @@ function SharedWidgetCard({ widget, globalDateRange }) {
         >
           {widget.name}
         </Typography>
-        {loading ? (
-          <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <CircularProgress size={24} />
-          </Box>
-        ) : error ? (
-          <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Typography variant="caption" color="error">
-              Failed to load data
-            </Typography>
-          </Box>
-        ) : isMetricCard && data?.data?.result ? (
-          <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Typography variant="h3" fontWeight={700}>
-              {data.data.result.value ?? "—"}
-            </Typography>
-          </Box>
-        ) : data ? (
-          /* Non-metric widget with pre-fetched data — render a simple table */
-          <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-              Chart data (pre-fetched via shared link)
-            </Typography>
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 1,
-                overflow: "auto",
-                maxHeight: 300,
-              }}
-            >
-              <table style={{ width: "100%", fontSize: "0.75rem", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    {data?.columns?.map((col, i) => (
-                      <th
-                        key={i}
-                        style={{
-                          padding: "4px 8px",
-                          textAlign: "left",
-                          borderBottom: "1px solid",
-                          borderColor: "#e0e0e0",
-                          position: "sticky",
-                          top: 0,
-                          background: "#fff",
-                        }}
-                      >
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data?.rows?.slice(0, 50).map((row, ri) => (
-                    <tr key={ri}>
-                      {row.map((cell, ci) => (
-                        <td
-                          key={ci}
-                          style={{
-                            padding: "4px 8px",
-                            borderBottom: "1px solid",
-                            borderColor: "#e0e0e0",
-                          }}
-                        >
-                          {String(cell ?? "")}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Box>
-          </Box>
-        ) : (
-          <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Typography variant="caption" color="text.secondary">
-              No data
-            </Typography>
-          </Box>
-        )}
+        <SharedWidgetChart
+          widget={widget}
+          preFetchedData={queryData}
+        />
       </CardContent>
-    </Card>
+    </Box>
   );
 }
 
@@ -631,13 +535,16 @@ function SharedDashboardView({ sharedData, token }) {
                 height: rowHeight ? `${rowHeight * 80}px` : undefined,
               }}
             >
-              {row.map((widget) => (
-                <SharedWidgetCard
-                  key={widget.id}
-                  widget={widgetsWithData.find((w) => w.id === widget.id)}
-                  globalDateRange={null}
-                />
-              ))}
+              {row.map((widget) => {
+                const queryData = widgetData[widget.id];
+                return (
+                  <SharedWidgetWithChart
+                    key={widget.id}
+                    widget={widget}
+                    queryData={queryData}
+                  />
+                );
+              })}
             </Box>
           );
         })}
