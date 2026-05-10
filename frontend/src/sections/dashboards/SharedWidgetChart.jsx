@@ -479,7 +479,7 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
             options={pieOptions}
             series={pieValues}
             type="donut"
-            height={chartHeightFallback - pieLegendH}
+            height={CHART_HEIGHT_FALLBACK - pieLegendH}
           />
         </Box>
       </Box>
@@ -621,7 +621,7 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDark
+                      bgcolor: isDarkPie
                         ? "rgba(255,255,255,0.04)"
                         : "rgba(0,0,0,0.02)",
                       borderRadius: "3px",
