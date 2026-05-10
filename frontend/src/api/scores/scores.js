@@ -95,19 +95,28 @@ export const useCreateScore = () => {
 export const useBulkCreateScores = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ sourceType, sourceId, scores, notes, spanNotes, scoreSource }) => {
+    mutationFn: ({
+      sourceType,
+      sourceId,
+      scores,
+      notes,
+      spanNotes,
+      includeSpanNotes = false,
+      spanNotesSourceId,
+      scoreSource,
+    }) => {
       const payload = {
         source_type: sourceType,
         source_id: sourceId,
         scores,
-        notes,
+        notes: notes || "",
         score_source: scoreSource || "human",
       };
-      // Only include span_notes when the user has actually typed something.
-      // Omitting it entirely prevents the backend from treating an empty
-      // submission as an intentional delete of an existing SpanNote.
-      if (spanNotes) {
-        payload.span_notes = spanNotes;
+      if (includeSpanNotes || spanNotes) {
+        payload.span_notes = spanNotes || "";
+        if (spanNotesSourceId) {
+          payload.span_notes_source_id = spanNotesSourceId;
+        }
       }
       return axios.post("/model-hub/scores/bulk/", payload);
     },
@@ -136,9 +145,16 @@ export const useBulkCreateScores = () => {
       queryClient.invalidateQueries({
         queryKey: scoreKeys.forSource(variables.sourceType, variables.sourceId),
       });
-      queryClient.invalidateQueries({
-        queryKey: ["span-notes", variables.sourceId],
-      });
+      const spanNotesSourceId =
+        variables.spanNotesSourceId ||
+        (variables.sourceType === "observation_span"
+          ? variables.sourceId
+          : null);
+      if (spanNotesSourceId) {
+        queryClient.invalidateQueries({
+          queryKey: ["span-notes", spanNotesSourceId],
+        });
+      }
       // Invalidate queue items for this specific source in case queue items got auto-completed
       queryClient.invalidateQueries({
         queryKey: ["annotation-queues", "for-source"],

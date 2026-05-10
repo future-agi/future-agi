@@ -51,17 +51,16 @@ import useImagineStore from "src/components/imagine/useImagineStore";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import CallStatus from "src/sections/test/CallLogs/CallStatus";
 import { format, isValid } from "date-fns";
-import TestDetailDrawerScenarioTable from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerScenarioTable";
 import AudioPlayerCustom from "src/sections/test-detail/TestDetailDrawer/AudioPlayerCustom";
 import LeftSection from "src/components/CallLogsDetailDrawer/LeftSection";
 import TestDetailDrawerRightSection from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerRightSection";
-import RightSection from "src/components/CallLogsDetailDrawer/RightSection";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { formatDurationSafe } from "src/components/CallLogsDrawer/CustomCallLogHeader";
 import { getCsatScoreColor } from "src/components/CallLogsDrawer/common";
 import SvgColor from "src/components/svg-color";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import ScenarioView from "src/components/VoiceDetailDrawerV2/ScenarioView";
 
 const CustomJsonViewer = lazy(
   () => import("src/components/custom-json-viewer/CustomJsonViewer"),
@@ -646,7 +645,7 @@ function VoiceCallContent({ traceId }) {
     evalMetrics: callData.eval_outputs || {},
     evalOutputs: callData.eval_outputs || {},
     overallStatus: callData.overall_status || callData.status,
-     turn_count: callData.turn_count,
+    turn_count: callData.turn_count,
     talk_ratio: callData.talk_ratio,
     agent_talk_percentage: callData.agent_talk_percentage,
     avg_agent_latency_ms: callData.avg_agent_latency_ms,
@@ -1190,7 +1189,7 @@ PrototypeContent.propTypes = {
 // ---------------------------------------------------------------------------
 // Simulation Content — reuses the same components as the Call Log Details drawer
 // ---------------------------------------------------------------------------
-function SimulationContent({ content, hideAnnotationTab=false }) {
+function SimulationContent({ content, hideAnnotationTab = false }) {
   const callId = content?.call_id;
 
   const { data: callData, isLoading } = useQuery({
@@ -1243,6 +1242,7 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
     duration: callData.duration || callData.duration_seconds,
     scenario: callData.scenario || callData.scenario_name,
     scenarioId: callData.scenario_id,
+    scenario_columns: callData.scenario_columns || {},
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name,
     phoneNumber: callData.phone_number,
@@ -1411,17 +1411,7 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
         )}
       </Box>
 
-      {/* Scenario Details */}
-      <Box
-        sx={{
-          "& .MuiBox-root": {
-            width: "100% !important",
-            flexShrink: "1 !important",
-          },
-        }}
-      >
-        <TestDetailDrawerScenarioTable data={drawerData} />
-      </Box>
+      <ScenarioView data={drawerData} />
 
       {/* Recording — only for voice */}
       {isVoice && (
@@ -1489,7 +1479,7 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
 
 SimulationContent.propTypes = {
   content: PropTypes.object,
-    hideAnnotationTab: PropTypes.bool,
+  hideAnnotationTab: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------

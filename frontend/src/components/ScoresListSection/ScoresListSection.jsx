@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -16,7 +16,9 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useScoresForSource, useSpanNotes } from "src/api/scores/scores";
+import { paths } from "src/routes/paths";
 import { fDateTime } from "src/utils/format-time";
 
 function formatScoreValue(labelType, value) {
@@ -58,12 +60,35 @@ export default function ScoresListSection({
   secondarySourceId,
   title = "Annotations",
   renderActions,
+  openQueueItemOnRowClick = false,
 }) {
   const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId);
   const { data: secondaryScores, isLoading: secondaryLoading } =
     useScoresForSource(secondarySourceType, secondarySourceId);
   const { data: spanNotes = [] } = useSpanNotes(
     sourceType === "observation_span" ? sourceId : null,
+  );
+  const queueTargetSources = useMemo(
+    () =>
+      openQueueItemOnRowClick
+        ? [
+            { sourceType, sourceId },
+            { sourceType: secondarySourceType, sourceId: secondarySourceId },
+          ].filter((source) => source.sourceType && source.sourceId)
+        : [],
+    [
+      openQueueItemOnRowClick,
+      secondarySourceId,
+      secondarySourceType,
+      sourceId,
+      sourceType,
+    ],
+  );
+  const { data: queueEntries = [] } = useQueueItemsForSource(
+    queueTargetSources,
+    {
+      enabled: openQueueItemOnRowClick && queueTargetSources.length > 0,
+    },
   );
 
   const rows = useMemo(() => {
@@ -76,6 +101,9 @@ export default function ScoresListSection({
         seen.add(s.id);
         merged.push({
           id: s.id,
+          labelId: s.labelId || s.label_id,
+          sourceType: s.sourceType || s.source_type,
+          sourceId: s.sourceId || s.source_id,
           labelName: s.labelName,
           labelType: s.labelType,
           value: s.value,
@@ -83,11 +111,71 @@ export default function ScoresListSection({
           scoreSource: s.scoreSource,
           notes: s.notes,
           updatedAt: s.updated_at,
+          queueId: s.queueId || s.queue_id,
+          queueItemId: s.queueItem || s.queue_item,
         });
       }
     }
     return merged;
   }, [scores, secondaryScores]);
+
+  const fallbackQueueTargetsByLabel = useMemo(() => {
+    const byLabel = new Map();
+    const bySourceAndLabel = new Map();
+    for (const entry of Array.isArray(queueEntries) ? queueEntries : []) {
+      const queueId = entry?.queue?.id;
+      const queueItemId = entry?.item?.id;
+      if (!queueId || !queueItemId) continue;
+      const itemSourceType = entry.item.sourceType || entry.item.source_type;
+      const itemSourceId = entry.item.sourceId || entry.item.source_id;
+      for (const label of entry.labels || []) {
+        const target = { queueId, queueItemId };
+        if (itemSourceType && itemSourceId) {
+          bySourceAndLabel.set(
+            `${itemSourceType}:${itemSourceId}:${label.id}`,
+            target,
+          );
+        }
+        if (!byLabel.has(label.id)) {
+          byLabel.set(label.id, target);
+        }
+      }
+    }
+    return { byLabel, bySourceAndLabel };
+  }, [queueEntries]);
+
+  const getQueueTarget = useCallback(
+    (row) => {
+      if (!openQueueItemOnRowClick) return null;
+      if (row.queueId && row.queueItemId) {
+        return { queueId: row.queueId, queueItemId: row.queueItemId };
+      }
+      const sourceKey =
+        row.sourceType && row.sourceId && row.labelId
+          ? `${row.sourceType}:${row.sourceId}:${row.labelId}`
+          : null;
+      if (sourceKey) {
+        const sourceTarget =
+          fallbackQueueTargetsByLabel.bySourceAndLabel.get(sourceKey);
+        if (sourceTarget) return sourceTarget;
+      }
+      return fallbackQueueTargetsByLabel.byLabel.get(row.labelId) || null;
+    },
+    [fallbackQueueTargetsByLabel, openQueueItemOnRowClick],
+  );
+
+  const handleOpenQueueItem = useCallback(
+    (row) => {
+      const target = getQueueTarget(row);
+      if (!target) return;
+      window.open(
+        `${paths.dashboard.annotations.annotate(target.queueId)}?itemId=${target.queueItemId}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    },
+    [getQueueTarget],
+  );
 
   if (!sourceId) return null;
 
@@ -221,9 +309,11 @@ export default function ScoresListSection({
               {rows.map((row) => (
                 <TableRow
                   key={row.id}
+                  onClick={() => handleOpenQueueItem(row)}
                   sx={{
                     "&:hover": { bgcolor: "action.hover" },
                     "&:last-child td": { borderBottom: 0 },
+                    cursor: getQueueTarget(row) ? "pointer" : "default",
                   }}
                 >
                   <TableCell sx={{ py: 1 }}>
@@ -361,7 +451,11 @@ export default function ScoresListSection({
                   >
                     <TableCell sx={{ py: 1.5, maxWidth: 480 }}>
                       <Typography
-                        sx={{ fontSize: 13, color: "text.primary", whiteSpace: "pre-wrap" }}
+                        sx={{
+                          fontSize: 13,
+                          color: "text.primary",
+                          whiteSpace: "pre-wrap",
+                        }}
                       >
                         {note.notes}
                       </Typography>
@@ -380,9 +474,16 @@ export default function ScoresListSection({
                             flexShrink: 0,
                           }}
                         >
-                          <Iconify icon="mdi:account" width={12} color="text.secondary" />
+                          <Iconify
+                            icon="mdi:account"
+                            width={12}
+                            color="text.secondary"
+                          />
                         </Box>
-                        <Typography sx={{ fontSize: 12, color: "text.secondary" }} noWrap>
+                        <Typography
+                          sx={{ fontSize: 12, color: "text.secondary" }}
+                          noWrap
+                        >
                           {note.annotator || "—"}
                         </Typography>
                       </Stack>
@@ -405,4 +506,5 @@ ScoresListSection.propTypes = {
   secondarySourceId: PropTypes.string,
   title: PropTypes.string,
   renderActions: PropTypes.node,
+  openQueueItemOnRowClick: PropTypes.bool,
 };

@@ -319,6 +319,224 @@ class TestBulkCreateScores:
         assert len(result["scores"]) == 1
         assert len(result["errors"]) == 1
 
+    def test_trace_bulk_create_can_save_notes_on_root_span(
+        self, auth_client, trace, observation_span, thumbs_label, user
+    ):
+        """Call drawer labels save on trace while item notes stay on root span."""
+        from tracer.models.span_notes import SpanNotes
+
+        payload = {
+            "source_type": "trace",
+            "source_id": str(trace.id),
+            "scores": [
+                {"label_id": str(thumbs_label.id), "value": {"value": "up"}},
+            ],
+            "span_notes": "whole call note",
+            "span_notes_source_id": observation_span.id,
+        }
+        resp = auth_client.post(f"{SCORE_URL}bulk/", payload, format="json")
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert Score.objects.filter(
+            trace=trace,
+            label=thumbs_label,
+            annotator=user,
+            deleted=False,
+        ).exists()
+        assert SpanNotes.objects.get(
+            span=observation_span,
+            created_by_user=user,
+        ).notes == "whole call note"
+
+        clear_resp = auth_client.post(
+            f"{SCORE_URL}bulk/",
+            {**payload, "span_notes": ""},
+            format="json",
+        )
+
+        assert clear_resp.status_code == status.HTTP_200_OK, clear_resp.data
+        assert not SpanNotes.objects.filter(
+            span=observation_span,
+            created_by_user=user,
+        ).exists()
+
+    def test_for_source_prefills_span_notes_for_trace_queue_item(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        observation_span,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """Reopening trace call annotation should prefill notes from root span."""
+        import json
+
+        from tracer.models.span_notes import SpanNotes
+
+        queue = AnnotationQueue.objects.create(
+            name="Trace call queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        SpanNotes.objects.create(
+            span=observation_span,
+            notes="whole call note",
+            created_by_user=user,
+            created_by_annotator=user.email,
+        )
+
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": str(trace.id),
+                            "span_notes_source_id": observation_span.id,
+                        }
+                    ]
+                )
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert len(result) == 1
+        assert result[0]["item"]["source_id"] == str(trace.id)
+        assert result[0]["existing_notes"] == "whole call note"
+        assert result[0]["span_notes_source_id"] == observation_span.id
+
+    def test_queue_annotate_detail_prefills_and_saves_item_notes(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        observation_span,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """Queue workspace whole-item notes use the trace root span."""
+        from tracer.models.span_notes import SpanNotes
+
+        queue = AnnotationQueue.objects.create(
+            name="Trace workspace queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        SpanNotes.objects.create(
+            span=observation_span,
+            notes="existing whole item note",
+            created_by_user=user,
+            created_by_annotator=user.email,
+        )
+
+        detail_resp = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotate-detail/",
+        )
+
+        assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
+        detail = detail_resp.data["result"]
+        assert detail["existing_notes"] == "existing whole item note"
+        assert detail["span_notes_source_id"] == observation_span.id
+
+        submit_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/",
+            {
+                "annotations": [
+                    {
+                        "label_id": str(thumbs_label.id),
+                        "value": {"value": "up"},
+                    }
+                ],
+                "item_notes": "updated whole item note",
+            },
+            format="json",
+        )
+
+        assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
+        assert SpanNotes.objects.get(
+            span=observation_span,
+            created_by_user=user,
+        ).notes == "updated whole item note"
+
+    def test_for_source_scores_include_queue_target(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """Read-only annotation tables can deep-link back to the queue item."""
+        queue = AnnotationQueue.objects.create(
+            name="Trace linked score queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+
+        submit_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/",
+            {
+                "annotations": [
+                    {
+                        "label_id": str(thumbs_label.id),
+                        "value": {"value": "up"},
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {"source_type": "trace", "source_id": str(trace.id)},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert len(result) == 1
+        assert str(result[0]["queue_item"]) == str(item.id)
+        assert result[0]["queue_id"] == str(queue.id)
+
 
 @pytest.mark.django_db
 class TestListScores:
