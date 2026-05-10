@@ -143,8 +143,8 @@ class RunSimulationTool(BaseTool):
         if summary:
             rows = "\n".join(
                 f"- **{item.get('name', '—')}**: "
-                f"pass_rate={item.get('pass_rate', '—')}, "
-                f"score={item.get('score') or item.get('avg_score', '—')}"
+                f"pass_rate={item.get('total_pass_rate', '—')}, "
+                f"score={item.get('total_avg', '—')}"
                 for item in summary
                 if isinstance(item, dict)
             )
@@ -326,7 +326,9 @@ class SimulateResultsTool(BaseTool):
         content = section("Evaluation Results", info)
         if summary:
             rows = "\n".join(
-                f"- **{item.get('name', '—')}**: pass_rate={item.get('pass_rate', '—')}"
+                f"- **{item.get('name', '—')}**: "
+                f"pass_rate={item.get('total_pass_rate', '—')}, "
+                f"score={item.get('total_avg', '—')}"
                 for item in summary
                 if isinstance(item, dict)
             )
@@ -470,7 +472,7 @@ def _fetch_summary(run_test, execution_id: str) -> tuple[list, Optional[float], 
             return [], None, None
 
         scores = [
-            item.get("pass_rate") or item.get("score") or 0
+            item.get("total_pass_rate") or item.get("total_avg") or 0
             for item in summary
             if isinstance(item, dict)
         ]
