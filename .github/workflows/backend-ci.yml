@@ -206,6 +206,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/futureagi
         run: |
+          set -o pipefail
           cd futureagi/sdk/cli/formal_tests
           pytest -m integration --no-header -q 2>&1 | tee /tmp/integration_result.txt
           # Fail loudly if no tests actually ran (e.g. all skipped due to import errors)

@@ -52,6 +52,7 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: future-agi/future-agi
+        ref: main
         sparse-checkout: futureagi/sdk
         sparse-checkout-cone-mode: false
         path: _fi_simulate
