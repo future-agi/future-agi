@@ -98,7 +98,7 @@ Composite action wrapping the CLI in headless mode. Inputs:
 | Input | Description |
 |-------|-------------|
 | `api_key` | Future AGI API key (required, secret) |
-| `suite_id` | Simulation suite to run (required) |
+| `run_test_id` | Simulation suite to run (required) |
 | `threshold` | Pass rate threshold 0–100 (default: 80) |
 | `timeout` | Total timeout in seconds (default: 300) |
 | `base_url` | API base URL (default: production) |

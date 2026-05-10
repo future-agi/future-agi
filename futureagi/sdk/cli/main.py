@@ -119,8 +119,11 @@ def _run_headed(poller: SimulatePoller, run_test_id: str) -> PollState:
         from rich.table import Table
         from rich.text import Text
     except ImportError:
-        # Fall back to headless if rich is not installed
-        return poller.run(run_test_id)
+        # Fall back to headless if rich is not installed.
+        # Emit JSON output so the caller sees results even on a TTY.
+        state = poller.run(run_test_id)
+        _headless_output(state)
+        return state
 
     console = Console()
     _last_state: list[Optional[PollState]] = [None]

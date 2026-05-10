@@ -48,9 +48,15 @@ def user(db, org):
 
 
 @pytest.fixture()
-def context(org, user):
+def workspace(db, org):
+    from accounts.models.workspace import Workspace
+    return Workspace.objects.create(name="test-ws", organization=org)
+
+
+@pytest.fixture()
+def context(org, user, workspace):
     from ai_tools.base import ToolContext
-    return ToolContext(user=user, organization=org)
+    return ToolContext(user=user, organization=org, workspace=workspace)
 
 
 @pytest.fixture()
@@ -187,24 +193,27 @@ class TestRunSimulationTool:
 # ---------------------------------------------------------------------------
 
 class TestSimulateStatusTool:
-    def test_returns_status_for_known_execution(self, pending_execution, context, org):
+    def test_returns_status_for_known_execution(self, pending_execution, run_test, context, org):
         """NeverPollBeforeStart: status lookup by valid execution_id returns data."""
         from ai_tools.tools.simulation.run_to_completion import SimulateStatusTool, SimulateStatusInput
 
         tool = SimulateStatusTool()
-        params = SimulateStatusInput(execution_id=pending_execution.id)
+        params = SimulateStatusInput(
+            run_test_id=run_test.id,
+            execution_id=pending_execution.id,
+        )
         result = tool.execute(params, context)
 
         assert result.data is not None
         assert result.data["status"] == "pending"
         assert str(result.data["execution_id"]) == str(pending_execution.id)
 
-    def test_not_found_for_unknown_execution(self, context):
+    def test_not_found_for_unknown_execution(self, run_test, context):
         """NeverPollBeforeStart: unknown execution_id → NOT_FOUND, no crash."""
         from ai_tools.tools.simulation.run_to_completion import SimulateStatusTool, SimulateStatusInput
 
         tool = SimulateStatusTool()
-        params = SimulateStatusInput(execution_id=uuid.uuid4())
+        params = SimulateStatusInput(run_test_id=run_test.id, execution_id=uuid.uuid4())
         result = tool.execute(params, context)
 
         assert result.data is None or result.data.get("error")
@@ -215,12 +224,15 @@ class TestSimulateStatusTool:
 # ---------------------------------------------------------------------------
 
 class TestSimulateResultsTool:
-    def test_non_terminal_execution_returns_error(self, pending_execution, context):
+    def test_non_terminal_execution_returns_error(self, pending_execution, run_test, context):
         """SummaryOnlyAfterTerminal: results for pending execution must not return summary."""
         from ai_tools.tools.simulation.run_to_completion import SimulateResultsTool, SimulateResultsInput
 
         tool = SimulateResultsTool()
-        params = SimulateResultsInput(execution_id=pending_execution.id)
+        params = SimulateResultsInput(
+            run_test_id=run_test.id,
+            execution_id=pending_execution.id,
+        )
         result = tool.execute(params, context)
 
         # Should either be an error or have no summary data
@@ -229,12 +241,15 @@ class TestSimulateResultsTool:
                 "SummaryOnlyAfterTerminal violated: summary returned for pending execution"
             )
 
-    def test_completed_execution_returns_summary(self, completed_execution, context):
+    def test_completed_execution_returns_summary(self, completed_execution, run_test, context):
         """SummaryOnlyAfterTerminal: results for completed execution proceeds normally."""
         from ai_tools.tools.simulation.run_to_completion import SimulateResultsTool, SimulateResultsInput
 
         tool = SimulateResultsTool()
-        params = SimulateResultsInput(execution_id=completed_execution.id)
+        params = SimulateResultsInput(
+            run_test_id=run_test.id,
+            execution_id=completed_execution.id,
+        )
 
         with patch("simulate.utils.eval_summary._get_completed_call_executions", return_value=[]), \
              patch("simulate.utils.eval_summary._get_configs_with_template", return_value=[]):
@@ -263,7 +278,7 @@ class TestSimulateListTool:
         result = tool.execute(params, context)
 
         assert result.data is not None
-        ids = [str(r["id"]) for r in result.data.get("run_tests", [])]
+        ids = [str(r["id"]) for r in result.data.get("runs", [])]
         assert str(run_test.id) in ids
         assert all(
             RunTest.objects.get(id=i).organization_id == org.id
