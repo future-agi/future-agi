@@ -36,7 +36,7 @@ jobs:
 
       - name: Run accounts/ RBAC formal tests
         id: rbac
-        if: hashFiles('futureagi/accounts/formal_tests/*.py') != ''
+        if: always() && hashFiles('futureagi/accounts/formal_tests/*.py') != ''
         working-directory: futureagi/accounts/formal_tests
         run: pytest test_rbac_z3.py test_rbac_hypothesis.py -v --noconftest
         continue-on-error: true
