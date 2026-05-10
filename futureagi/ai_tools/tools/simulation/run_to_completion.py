@@ -418,15 +418,23 @@ def _start_execution(run_test, context) -> tuple[Optional[str], Optional[str]]:
     from simulate.temporal.client import start_test_execution_workflow
     import uuid
 
+    scenario_ids = list(scenarios.values_list("id", flat=True).order_by("id"))
+    scenario_ids = [str(s) for s in scenario_ids]
+
     execution_id = str(uuid.uuid4())
     try:
         te = TestExecution.objects.create(
             id=execution_id,
             run_test=run_test,
             status="pending",
-            total_scenarios=scenarios.count(),
+            total_scenarios=len(scenario_ids),
         )
-        start_test_execution_workflow(str(run_test.id), execution_id)
+        start_test_execution_workflow(
+            test_execution_id=execution_id,
+            run_test_id=str(run_test.id),
+            org_id=str(run_test.organization_id),
+            scenario_ids=scenario_ids,
+        )
         return str(te.id), None
     except Exception as exc:
         logger.exception("fi_simulate_run_start_failed", error=str(exc))
