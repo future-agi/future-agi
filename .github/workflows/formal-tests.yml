@@ -35,46 +35,70 @@ jobs:
         run: pip install z3-solver hypothesis pytest
 
       - name: Run accounts/ RBAC formal tests
+        id: rbac
         if: hashFiles('futureagi/accounts/formal_tests/*.py') != ''
         working-directory: futureagi/accounts/formal_tests
         run: pytest test_rbac_z3.py test_rbac_hypothesis.py -v --noconftest
         continue-on-error: true
 
       - name: Run simulate/ formal tests
+        id: simulate
         if: always() && hashFiles('futureagi/simulate/formal_tests/*.py') != ''
         working-directory: futureagi/simulate/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run tracer/ formal tests
+        id: tracer
         if: always() && hashFiles('futureagi/tracer/formal_tests/*.py') != ''
         working-directory: futureagi/tracer/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run agentic_eval/ formal tests
+        id: agentic_eval
         if: always() && hashFiles('futureagi/agentic_eval/formal_tests/*.py') != ''
         working-directory: futureagi/agentic_eval/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run model_hub/ formal tests
+        id: model_hub
         if: always() && hashFiles('futureagi/model_hub/formal_tests/*.py') != ''
         working-directory: futureagi/model_hub/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run sdk/cli formal tests
+        id: sdk_cli
         if: always() && hashFiles('futureagi/sdk/cli/formal_tests/*.py') != ''
         working-directory: futureagi/sdk/cli/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run agentcc-gateway/ reflexion formal tests
+        id: gateway
         if: always() && hashFiles('agentcc-gateway/formal_tests/*.py') != ''
         working-directory: agentcc-gateway/formal_tests
         run: pytest test_reflexion_z3.py test_reflexion_hypothesis.py -v
         continue-on-error: true
+
+      - name: Fail if any formal test suite failed
+        if: always()
+        run: |
+          failed=""
+          [ "${{ steps.rbac.outcome }}"        = "failure" ] && failed="$failed accounts/RBAC"
+          [ "${{ steps.simulate.outcome }}"    = "failure" ] && failed="$failed simulate/"
+          [ "${{ steps.tracer.outcome }}"      = "failure" ] && failed="$failed tracer/"
+          [ "${{ steps.agentic_eval.outcome }}" = "failure" ] && failed="$failed agentic_eval/"
+          [ "${{ steps.model_hub.outcome }}"   = "failure" ] && failed="$failed model_hub/"
+          [ "${{ steps.sdk_cli.outcome }}"     = "failure" ] && failed="$failed sdk/cli"
+          [ "${{ steps.gateway.outcome }}"     = "failure" ] && failed="$failed agentcc-gateway/"
+          if [ -n "$failed" ]; then
+            echo "Formal test suites failed:$failed"
+            exit 1
+          fi
+          echo "All formal test suites passed."
 
   integration-probes:
     name: Integration probes (no DB)

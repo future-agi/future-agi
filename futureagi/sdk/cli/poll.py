@@ -230,7 +230,7 @@ class SimulatePoller:
         if state.summary:
             scores = [
                 item.get("pass_rate") if item.get("pass_rate") is not None
-                else item.get("score", 0)
+                else (item.get("score") or 0)  # or-0 handles explicit None values
                 for item in state.summary
                 if isinstance(item, dict)
             ]
@@ -346,7 +346,12 @@ def resolve_name(suites: list[dict], query: str) -> str:
             f"ambiguous: {len(matches)} suites match {query!r}: {names}\n"
             "Use a more specific query or the UUID directly."
         )
-    return matches[0]["id"]
+    suite_id = matches[0].get("id")
+    if not suite_id:
+        raise ValueError(
+            f"suite {matches[0].get('name', '?')!r} has no 'id' field in API response"
+        )
+    return suite_id
 
 
 def format_suite_row(suite: dict, index: int) -> str:
