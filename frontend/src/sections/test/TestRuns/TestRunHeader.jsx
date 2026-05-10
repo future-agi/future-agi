@@ -98,8 +98,9 @@ const TestRunHeader = () => {
   );
   const agentType = isPromptSimulation
     ? AGENT_TYPES.CHAT
-    : testData?.agent_version?.configuration_snapshot?.agent_type ??
-      testData?.agentVersion?.configurationSnapshot?.agentType;
+    : (testData?.agent_definition_detail?.agent_type ??
+      testData?.agent_version?.configuration_snapshot?.agent_type ??
+      testData?.agentVersion?.configurationSnapshot?.agentType);
 
   return (
     <Box
