@@ -123,3 +123,23 @@ jobs:
         run: |
           cd futureagi
           python -m sdk.cli.main --help
+
+  integration:
+    name: integration probes (no DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install probe dependencies
+        run: pip install requests rich pytest hypothesis --quiet
+
+      - name: Run integration probes
+        env:
+          PYTHONPATH: ${{ github.workspace }}/futureagi
+        run: |
+          cd futureagi/sdk/cli/formal_tests
+          pytest -m integration --no-header -q

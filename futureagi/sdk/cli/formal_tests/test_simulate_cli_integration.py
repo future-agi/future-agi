@@ -25,6 +25,8 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 import requests
 
+pytestmark = pytest.mark.integration
+
 try:
     from sdk.cli.poll import (
         Phase,
@@ -36,7 +38,7 @@ try:
     from sdk.cli.main import _headless_output
 except ImportError:
     pytest.skip(
-        "sdk.cli.poll not importable outside Django context", allow_module_level=True
+        "sdk.cli.poll not importable — run with PYTHONPATH=futureagi", allow_module_level=True
     )
 
 
