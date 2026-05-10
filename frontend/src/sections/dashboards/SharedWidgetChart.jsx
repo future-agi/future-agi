@@ -60,7 +60,8 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
   // WidgetChart reads: queryMutation.data?.data?.result
   // For shared links, preFetchedData already wraps it as { result: {...} }
   const queryResult = preFetchedData?.result || preFetchedData || null;
-  const hasError = preFetchedData === null || preFetchedData === undefined;
+  const hasError = preFetchedData === null;
+  const isLoading = preFetchedData === undefined;
 
   const chartConfig = widget.chart_config || {};
   const chartType = chartConfig.chart_type || "line";
@@ -173,6 +174,24 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
         <Typography variant="body2" color="error">
           Failed to load chart data
         </Typography>
+      </Box>
+    );
+  }
+
+  // Loading state — show spinner while data is being fetched
+  if (isLoading) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
+        <CircularProgress size={24} />
       </Box>
     );
   }
