@@ -64,15 +64,21 @@ runs:
       env:
         FI_API_KEY: ${{ inputs.api_key }}
         FI_BASE_URL: ${{ inputs.base_url }}
+        FI_RUN_TEST_ID: ${{ inputs.run_test_id }}
+        FI_THRESHOLD: ${{ inputs.threshold }}
+        FI_TIMEOUT: ${{ inputs.timeout }}
+        FI_POLL_INTERVAL: ${{ inputs.poll_interval }}
       run: |
         set +e
+        cd futureagi
         RESULT=$(python -m sdk.cli.main \
-          --run-test-id "${{ inputs.run_test_id }}" \
-          --threshold "${{ inputs.threshold }}" \
-          --timeout "${{ inputs.timeout }}" \
-          --poll-interval "${{ inputs.poll_interval }}" \
+          --run-test-id "$FI_RUN_TEST_ID" \
+          --threshold "$FI_THRESHOLD" \
+          --timeout "$FI_TIMEOUT" \
+          --poll-interval "$FI_POLL_INTERVAL" \
           --json)
         EXIT_CODE=$?
+        cd ..
         set -e
 
         echo "result_json=$RESULT" >> "$GITHUB_OUTPUT"

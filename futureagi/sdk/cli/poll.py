@@ -131,7 +131,6 @@ class SimulatePoller:
         """POST to the execute endpoint; record the execution_id."""
         assert state.phase == Phase.STARTING
         assert state.execution_id is None, "NeverPollBeforeStart: id already set"
-        t0 = time.monotonic()
         try:
             resp = self._session.post(
                 f"{self.base_url}/api/simulate/run-tests/{run_test_id}/execute/",
@@ -150,14 +149,21 @@ class SimulatePoller:
             state.exit_code = 1
             state.error = f"Failed to start execution: {exc}"
             return
-        state.execution_id = data.get("execution_id")
+        execution_id = data.get("execution_id")
+        if not execution_id:
+            state.phase = Phase.FAILED
+            state.exit_code = 1
+            state.error = "Backend returned no execution_id — cannot poll"
+            return
+        state.execution_id = execution_id
         state.run_status = "pending"
-        state.elapsed_s += time.monotonic() - t0
         state.phase = Phase.POLLING
 
-    def _poll(self, state: PollState, run_test_id: str) -> None:
+    def _poll(self, state: PollState, run_test_id: str, wall_start: float) -> None:
         """Poll status once; advance phase if terminal."""
-        # TimeoutBounded invariant
+        state.elapsed_s = time.monotonic() - wall_start
+
+        # TimeoutBounded invariant — check before sleeping
         if state.elapsed_s + self.poll_interval_s > self.timeout_s:
             state.phase = Phase.TIMED_OUT
             state.exit_code = 1
@@ -169,7 +175,8 @@ class SimulatePoller:
             return
 
         time.sleep(self.poll_interval_s)
-        t0 = time.monotonic()
+        state.elapsed_s = time.monotonic() - wall_start
+
         try:
             resp = self._session.get(
                 f"{self.base_url}/api/simulate/run-tests/{run_test_id}/status/",
@@ -180,12 +187,11 @@ class SimulatePoller:
         except requests.RequestException as exc:
             # Transient error — count the poll, stay in polling phase
             state.polls_done += 1
-            state.elapsed_s += time.monotonic() - t0
             state.error = f"Poll error (attempt {state.polls_done}): {exc}"
             return
 
         state.polls_done += 1
-        state.elapsed_s += time.monotonic() - t0
+        state.elapsed_s = time.monotonic() - wall_start
         state.run_status = data.get("status", state.run_status)
 
         if self.progress_cb:
@@ -240,6 +246,7 @@ class SimulatePoller:
     def run(self, run_test_id: str) -> PollState:
         """Drive the state machine to a terminal phase. Returns the final state."""
         state = PollState()
+        wall_start = time.monotonic()
 
         # Phase: init → authenticating → starting
         self._authenticate(state)
@@ -253,11 +260,13 @@ class SimulatePoller:
 
         # Phase: polling (loop)
         while state.phase == Phase.POLLING:
-            self._poll(state, run_test_id)
+            self._poll(state, run_test_id, wall_start)
 
         # Phase: summarizing → done/failed
         if state.phase == Phase.SUMMARIZING:
             self._fetch_summary(state, run_test_id)
+
+        state.elapsed_s = time.monotonic() - wall_start
 
         # TerminalIsStable: assert we are now in a terminal phase
         assert state.is_terminal, f"Expected terminal phase, got {state.phase}"
