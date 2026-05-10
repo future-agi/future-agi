@@ -24,7 +24,7 @@ import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
-import { canonicalKeys } from "src/utils/utils";
+import { canonicalEntries } from "src/utils/utils";
 
 import {
   useDevelopDatasetList,
@@ -1351,7 +1351,7 @@ const TestRetrieval = ({ gtId }) => {
                   sx={{ fontSize: "10px", height: 18 }}
                 />
               </Box>
-              {Object.entries(r.row_data || r.rowData || {})
+              {canonicalEntries(r.row_data || r.rowData || {})
                 .slice(0, 4)
                 .map(([k, v]) => (
                   <Typography
