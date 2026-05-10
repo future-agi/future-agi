@@ -422,13 +422,13 @@ def _start_execution(run_test, context) -> tuple[Optional[str], Optional[str]]:
     scenario_ids = [str(s) for s in scenario_ids]
 
     execution_id = str(uuid.uuid4())
+    te = TestExecution.objects.create(
+        id=execution_id,
+        run_test=run_test,
+        status="pending",
+        total_scenarios=len(scenario_ids),
+    )
     try:
-        te = TestExecution.objects.create(
-            id=execution_id,
-            run_test=run_test,
-            status="pending",
-            total_scenarios=len(scenario_ids),
-        )
         start_test_execution_workflow(
             test_execution_id=execution_id,
             run_test_id=str(run_test.id),
@@ -438,6 +438,8 @@ def _start_execution(run_test, context) -> tuple[Optional[str], Optional[str]]:
         return str(te.id), None
     except Exception as exc:
         logger.exception("fi_simulate_run_start_failed", error=str(exc))
+        te.status = TestExecution.ExecutionStatus.FAILED
+        te.save(update_fields=["status", "updated_at"])
         return None, f"Failed to start execution: {exc}"
 
 

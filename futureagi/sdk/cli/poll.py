@@ -180,6 +180,7 @@ class SimulatePoller:
         try:
             resp = self._session.get(
                 f"{self.base_url}/api/simulate/run-tests/{run_test_id}/status/",
+                params={"execution_id": state.execution_id},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -228,7 +229,8 @@ class SimulatePoller:
         state.summary = data if isinstance(data, list) else []
         if state.summary:
             scores = [
-                item.get("pass_rate") or item.get("score") or 0
+                item.get("pass_rate") if item.get("pass_rate") is not None
+                else item.get("score", 0)
                 for item in state.summary
                 if isinstance(item, dict)
             ]
