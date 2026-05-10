@@ -106,6 +106,67 @@ jobs:
           SECRET_KEY: ci-secret-key-not-for-production
         run: pytest -m unit --no-header -q
 
+  django-integration:
+    name: django integration probes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi
+
+    services:
+      test-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-test.txt -e . --quiet
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: python manage.py migrate --no-input
+
+      - name: Run Django integration probes
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: |
+          pytest -m django_integration --no-header -q \
+            ai_tools/tools/simulation/django_tests/
+
   smoke:
     name: smoke (cli import + --help)
     runs-on: ubuntu-latest
