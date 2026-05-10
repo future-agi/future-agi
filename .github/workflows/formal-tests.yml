@@ -35,35 +35,36 @@ jobs:
         run: pip install z3-solver hypothesis pytest
 
       - name: Run accounts/ RBAC formal tests
+        if: hashFiles('futureagi/accounts/formal_tests/*.py') != ''
         working-directory: futureagi/accounts/formal_tests
         run: pytest test_rbac_z3.py test_rbac_hypothesis.py -v --noconftest
 
       - name: Run simulate/ formal tests
-        if: always()
+        if: always() && hashFiles('futureagi/simulate/formal_tests/*.py') != ''
         working-directory: futureagi/simulate/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run tracer/ formal tests
-        if: always()
+        if: always() && hashFiles('futureagi/tracer/formal_tests/*.py') != ''
         working-directory: futureagi/tracer/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run agentic_eval/ formal tests
-        if: always()
+        if: always() && hashFiles('futureagi/agentic_eval/formal_tests/*.py') != ''
         working-directory: futureagi/agentic_eval/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run model_hub/ formal tests
-        if: always()
+        if: always() && hashFiles('futureagi/model_hub/formal_tests/*.py') != ''
         working-directory: futureagi/model_hub/formal_tests
         run: pytest . -v --noconftest
         continue-on-error: true
 
       - name: Run agentcc-gateway/ reflexion formal tests
-        if: always()
+        if: always() && hashFiles('agentcc-gateway/formal_tests/*.py') != ''
         working-directory: agentcc-gateway/formal_tests
         run: pytest test_reflexion_z3.py test_reflexion_hypothesis.py -v
         continue-on-error: true
