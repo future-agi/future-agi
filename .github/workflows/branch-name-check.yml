@@ -9,9 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check branch name
+        env:
+          # Pass the (attacker-influenceable on fork PRs) head_ref via env so
+          # bash never sees the raw value during template expansion. Without
+          # this indirection, a branch named e.g. `";id;"` would inject shell
+          # commands into the runner.
+          BRANCH: ${{ github.head_ref }}
         run: |
-          BRANCH="${{ github.head_ref }}"
-
           # Skip validation for release branches and dependabot
           if [[ "$BRANCH" =~ ^(main|dev|release/.+|dependabot/.+)$ ]]; then
             echo "✅ Skipping validation for $BRANCH"
