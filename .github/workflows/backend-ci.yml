@@ -5,6 +5,7 @@ on:
     paths:
       - "futureagi/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/actions/fi-simulate/**"
   push:
     branches: [main, dev]
     paths:
@@ -104,3 +105,21 @@ jobs:
           DJANGO_SETTINGS_MODULE: tfc.settings.settings
           SECRET_KEY: ci-secret-key-not-for-production
         run: pytest -m unit --no-header -q
+
+  smoke:
+    name: smoke (cli import + --help)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CLI dependencies
+        run: pip install requests rich --quiet
+
+      - name: Verify fi-simulate CLI resolves and exits cleanly
+        run: |
+          cd futureagi
+          python -m sdk.cli.main --help
