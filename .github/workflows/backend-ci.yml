@@ -149,7 +149,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements-test.txt -e . --quiet
+        run: pip install -r requirements-test.txt --quiet
 
       - name: Run migrations
         env:
