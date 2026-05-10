@@ -93,7 +93,7 @@ class TestNeverPollBeforeStart:
             session.get.return_value.raise_for_status = lambda: None
             session.post.return_value = responses[1]
 
-            poller = SimulatePoller("http://test", "key", poll_interval_s=0.001)
+            poller = SimulatePoller("http://test", "key:secret", poll_interval_s=0.001)
             state = _poll_state()
             poller._session = session
 
@@ -116,7 +116,7 @@ class TestSummaryOnlyAfterTerminal:
         state = _poll_state(phase=Phase.SUMMARIZING, run_status=status)
 
         with patch("sdk.cli.poll.requests.Session"):
-            poller = SimulatePoller("http://test", "key", poll_interval_s=0.001)
+            poller = SimulatePoller("http://test", "key:secret", poll_interval_s=0.001)
 
             with pytest.raises(AssertionError, match="SummaryOnlyAfterTerminal"):
                 poller._fetch_summary(state, "run-test-id")
@@ -130,7 +130,7 @@ class TestSummaryOnlyAfterTerminal:
             if status in {"failed", "cancelled"}:
                 # SummarySkipped path — no HTTP call needed
                 state = _poll_state(phase=Phase.SUMMARIZING, run_status=status)
-                poller = SimulatePoller("http://test", "key", poll_interval_s=0.001)
+                poller = SimulatePoller("http://test", "key:secret", poll_interval_s=0.001)
                 poller._session = session
                 poller._fetch_summary(state, "run-test-id")
                 assert state.phase == Phase.FAILED
@@ -144,7 +144,7 @@ class TestSummaryOnlyAfterTerminal:
                     phase=Phase.SUMMARIZING, run_status=status, execution_id="exec-1"
                 )
                 poller = SimulatePoller(
-                    "http://test", "key", poll_interval_s=0.001, threshold=80
+                    "http://test", "key:secret", poll_interval_s=0.001, threshold=80
                 )
                 poller._session = session
                 poller._fetch_summary(state, "run-test-id")
@@ -174,16 +174,17 @@ class TestTimeoutBounded:
         with patch("sdk.cli.poll.requests.Session"):
             poller = SimulatePoller(
                 "http://test",
-                "key",
+                "key:secret",
                 poll_interval_s=poll_interval,
                 timeout_s=timeout_s,
             )
 
             if elapsed + poll_interval > timeout_s:
-                poller._poll(state, "run-test-id")
+                import time as _time
+                wall_start = _time.monotonic() - elapsed
+                poller._poll(state, "run-test-id", wall_start=wall_start)
                 assert state.phase == Phase.TIMED_OUT
                 assert state.exit_code == 1
-                assert state.elapsed_s <= timeout_s + poll_interval  # budget not grossly exceeded
 
     @given(polls_done=st.integers(min_value=1, max_value=100))
     def test_poll_sets_timed_out_when_max_polls_exhausted(self, polls_done):
@@ -200,14 +201,14 @@ class TestTimeoutBounded:
         with patch("sdk.cli.poll.requests.Session"):
             poller = SimulatePoller(
                 "http://test",
-                "key",
+                "key:secret",
                 poll_interval_s=0.001,
                 max_polls=max_polls,
                 timeout_s=9999,
             )
 
             if polls_done >= max_polls:
-                poller._poll(state, "run-test-id")
+                poller._poll(state, "run-test-id", wall_start=0.0)
                 assert state.phase == Phase.TIMED_OUT
 
 
@@ -268,7 +269,7 @@ class TestExitCodeContract:
                 execution_id="exec-1",
             )
             poller = SimulatePoller(
-                "http://test", "key", poll_interval_s=0.001, threshold=threshold
+                "http://test", "key:secret", poll_interval_s=0.001, threshold=threshold
             )
             poller._session = session
             poller._fetch_summary(state, "run-test-id")

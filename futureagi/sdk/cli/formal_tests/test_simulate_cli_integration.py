@@ -62,7 +62,7 @@ def _resp(status_code=200, data=None, error=False):
 def _poller(poll_interval_s=0.001, max_polls=10, timeout_s=999, threshold=80):
     return SimulatePoller(
         base_url="http://stub",
-        api_key="test-key",
+        api_key="test-key:test-secret",
         poll_interval_s=poll_interval_s,
         max_polls=max_polls,
         timeout_s=timeout_s,

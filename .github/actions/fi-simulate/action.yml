@@ -5,7 +5,9 @@ description: >
 
 inputs:
   api_key:
-    description: Future AGI API key (use a GitHub secret)
+    description: >
+      Future AGI credentials as "<api_key>:<secret_key>" (copy both from
+      Settings → API Keys in the platform, store as a single GitHub secret).
     required: true
   run_test_id:
     description: UUID of the RunTest (simulation suite) to execute

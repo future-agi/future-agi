@@ -91,14 +91,21 @@ class SimulatePoller:
         progress_cb: Optional[Callable[[PollState], None]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.poll_interval_s = poll_interval_s
         self.max_polls = max_polls
         self.timeout_s = timeout_s
         self.threshold = threshold
         self.progress_cb = progress_cb
         self._session = requests.Session()
-        self._session.headers.update({"Authorization": f"Api-Key {api_key}"})
+        # api_key is "<X-Api-Key>:<X-Secret-Key>" — the two tokens the backend
+        # OrgApiKey model requires; split on first colon only.
+        if ":" not in api_key:
+            raise ValueError(
+                "FI_API_KEY must be '<api_key>:<secret_key>' "
+                "(copy both values from Settings → API Keys in the platform)"
+            )
+        _ak, _sk = api_key.split(":", 1)
+        self._session.headers.update({"X-Api-Key": _ak, "X-Secret-Key": _sk})
 
     # ------------------------------------------------------------------
     # Individual actions (mirror TLA+ action names)
