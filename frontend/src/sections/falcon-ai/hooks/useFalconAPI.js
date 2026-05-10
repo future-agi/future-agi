@@ -62,6 +62,11 @@ export async function fetchConnectors() {
   return data;
 }
 
+export async function fetchConnector(id) {
+  const { data } = await axiosInstance.get(endpoints.falconAI.connector(id));
+  return data;
+}
+
 export async function createConnector(payload) {
   const { data } = await axiosInstance.post(
     endpoints.falconAI.connectors,
@@ -104,10 +109,10 @@ export async function authenticateConnector(id) {
   return data;
 }
 
-export async function updateConnectorTools(id, tools) {
+export async function updateConnectorTools(id, enabledToolNames) {
   const { data } = await axiosInstance.patch(
     endpoints.falconAI.connectorTools(id),
-    { tools },
+    { enabled_tool_names: enabledToolNames },
   );
   return data;
 }
