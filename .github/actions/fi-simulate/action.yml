@@ -74,8 +74,7 @@ runs:
       run: |
         set +e
         cd futureagi
-        RESULT=$(python -m sdk.cli.main \
-          --run-test-id "$FI_RUN_TEST_ID" \
+        RESULT=$(python -m sdk.cli.main run "$FI_RUN_TEST_ID" \
           --threshold "$FI_THRESHOLD" \
           --timeout "$FI_TIMEOUT" \
           --poll-interval "$FI_POLL_INTERVAL" \

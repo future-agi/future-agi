@@ -273,3 +273,99 @@ class SimulatePoller:
         # TerminalIsStable: assert we are now in a terminal phase
         assert state.is_terminal, f"Expected terminal phase, got {state.phase}"
         return state
+
+    def list_suites(self, search: str = "", limit: int = 20) -> list[dict]:
+        """
+        Return simulation suites visible to this API key.
+        GET /api/simulate/run-tests/?search=<search>&limit=<limit>
+        """
+        resp = self._session.get(
+            f"{self.base_url}/api/simulate/run-tests/",
+            params={"search": search, "limit": limit},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        return data.get("results", data.get("run_tests", []))
+
+    def fetch_status(self, run_test_id: str, execution_id: str) -> dict:
+        """
+        Fetch the current status of a specific execution (read-only).
+        GET /api/simulate/run-tests/<id>/status/?execution_id=<eid>
+        """
+        resp = self._session.get(
+            f"{self.base_url}/api/simulate/run-tests/{run_test_id}/status/",
+            params={"execution_id": execution_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Pure helper functions (testable without HTTP)
+# ---------------------------------------------------------------------------
+
+def parse_run_arg(arg: str) -> tuple[bool, str]:
+    """
+    Detect whether the CLI argument is a UUID or a name query.
+    Returns (is_uuid, original_value).
+    """
+    import re
+    UUID_RE = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        re.IGNORECASE,
+    )
+    return bool(UUID_RE.match(arg.strip())), arg
+
+
+def resolve_name(suites: list[dict], query: str) -> str:
+    """
+    Resolve a name query to a single run_test_id UUID.
+
+    NameResolutionBeforeStart invariant: raises ValueError (not returns None)
+    so the caller can never silently proceed with an unresolved UUID.
+
+    Rules (from SimulateCLIHuman.tla):
+      0 matches → ValueError("no suites match …")
+      1 match   → return UUID
+      >1 matches → ValueError("ambiguous: N suites match …")
+    """
+    q = query.lower().strip()
+    matches = [s for s in suites if q in s.get("name", "").lower()]
+
+    if len(matches) == 0:
+        raise ValueError(
+            f"no suites match {query!r} — run `fi-simulate list` to browse available suites"
+        )
+    if len(matches) > 1:
+        names = ", ".join(repr(s["name"]) for s in matches)
+        raise ValueError(
+            f"ambiguous: {len(matches)} suites match {query!r}: {names}\n"
+            "Use a more specific query or the UUID directly."
+        )
+    return matches[0]["id"]
+
+
+def format_suite_row(suite: dict, index: int) -> str:
+    """Format a suite dict as a human-readable numbered list row."""
+    name = suite.get("name", "—")
+    n_scenarios = suite.get("scenario_count", "?")
+    last_run = suite.get("last_run_at") or "never"
+    last_pass = suite.get("last_pass_rate")
+    pass_str = f"{last_pass:.0f}%" if last_pass is not None else "—"
+    return f"  {index}. {name:<35} ({n_scenarios} scenarios, last: {last_run}, pass: {pass_str})"
+
+
+def format_failures(metrics: list[dict], threshold: float) -> list[dict]:
+    """
+    Return only the metrics whose pass_rate is below the threshold.
+    Used for the post-run failure drill-down.
+    """
+    return [
+        m for m in metrics
+        if isinstance(m, dict) and m.get("pass_rate") is not None
+        and m["pass_rate"] < threshold
+    ]
