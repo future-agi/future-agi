@@ -28,13 +28,7 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          # Exclude generated, vendored, and test-only directories
-          paths-ignore: |
-            frontend/node_modules
-            frontend/dist
-            agentcc-gateway/vendor
-            **/*_test.go
-            futureagi/**/migrations/**
+          config-file: .github/codeql/codeql-config.yml
 
       - uses: github/codeql-action/autobuild@v3
 

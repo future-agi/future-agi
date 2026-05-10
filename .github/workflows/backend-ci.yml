@@ -207,4 +207,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/futureagi
         run: |
           cd futureagi/sdk/cli/formal_tests
-          pytest -m integration --no-header -q
+          pytest -m integration --no-header -q 2>&1 | tee /tmp/integration_result.txt
+          # Fail loudly if no tests actually ran (e.g. all skipped due to import errors)
+          grep -E "^[0-9]+ passed|[0-9]+ failed" /tmp/integration_result.txt || \
+            { echo "ERROR: no integration tests ran — check PYTHONPATH and imports"; exit 1; }

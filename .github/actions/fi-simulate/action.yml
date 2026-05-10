@@ -48,8 +48,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Checkout repository
+    - name: Checkout fi-simulate source
       uses: actions/checkout@v4
+      with:
+        repository: future-agi/future-agi
+        sparse-checkout: futureagi/sdk
+        sparse-checkout-cone-mode: false
+        path: _fi_simulate
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -73,15 +78,13 @@ runs:
         FI_POLL_INTERVAL: ${{ inputs.poll_interval }}
       run: |
         set +e
-        cd futureagi
-        RESULT=$(python -m sdk.cli.main \
+        RESULT=$(cd _fi_simulate/futureagi && python -m sdk.cli.main \
           --run-test-id "$FI_RUN_TEST_ID" \
           --threshold "$FI_THRESHOLD" \
           --timeout "$FI_TIMEOUT" \
           --poll-interval "$FI_POLL_INTERVAL" \
           --json)
         EXIT_CODE=$?
-        cd ..
         set -e
 
         echo "result_json=$RESULT" >> "$GITHUB_OUTPUT"
