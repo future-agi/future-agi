@@ -12,7 +12,6 @@ from model_hub.models.annotation_queues import QueueItem
 from model_hub.models.choices import QueueItemStatus
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
-from tracer.models.span_notes import SpanNotes
 from model_hub.serializers.scores import (
     BulkCreateScoresSerializer,
     CreateScoreSerializer,
@@ -22,6 +21,7 @@ from model_hub.utils.annotation_queue_helpers import resolve_source_object
 from tfc.constants.roles import OrganizationRoles
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.models.span_notes import SpanNotes
 
 logger = structlog.get_logger(__name__)
 
@@ -111,7 +111,6 @@ def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_i
     from model_hub.models.annotation_queues import (
         SOURCE_TYPE_FK_MAP,
         AnnotationQueue,
-        AnnotationQueueLabel,
     )
     from model_hub.models.choices import AnnotationQueueStatusChoices
 
@@ -174,7 +173,7 @@ def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_i
     ).distinct()
 
     for queue in default_queues:
-        QueueItem.objects.get_or_create(
+        item, _ = QueueItem.objects.get_or_create(
             queue=queue,
             source_type=source_type,
             **{f"{fk_field}_id": source_obj.pk},
@@ -185,6 +184,16 @@ def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_i
                 "status": QueueItemStatus.PENDING.value,
             },
         )
+        Score.no_workspace_objects.filter(
+            source_type=source_type,
+            **{f"{fk_field}_id": source_obj.pk},
+            label_id__in=queue.queue_labels.filter(deleted=False).values_list(
+                "label_id", flat=True
+            ),
+            organization=queue.organization,
+            queue_item__isnull=True,
+            deleted=False,
+        ).update(queue_item=item)
 
 
 class ScoreViewSet(viewsets.ModelViewSet):
@@ -206,7 +215,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         qs = Score.objects.filter(
             organization=self.request.organization,
             deleted=False,
-        ).select_related("label", "annotator")
+        ).select_related("label", "annotator", "queue_item__queue")
 
         # Filter by source
         source_type = self.request.query_params.get("source_type")
@@ -313,6 +322,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         source_type = data["source_type"]
         source_id = data["source_id"]
         span_notes = data.get("span_notes")  # None when field was not sent
+        span_notes_source_id = data.get("span_notes_source_id")
 
         fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
         if not fk_field:
@@ -323,6 +333,21 @@ class ScoreViewSet(viewsets.ModelViewSet):
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
+
+        span_notes_target = None
+        if span_notes is not None:
+            if source_type == "observation_span":
+                span_notes_target = source_obj
+            elif span_notes_source_id:
+                span_notes_target = resolve_source_object(
+                    "observation_span",
+                    span_notes_source_id,
+                    organization=request.organization,
+                )
+                if not span_notes_target:
+                    return self._gm.not_found(
+                        f"Span notes source not found: {span_notes_source_id}"
+                    )
 
         created_scores = []
         errors = []
@@ -359,13 +384,13 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 )
                 created_scores.append(score)
 
-            # span_notes is None when the field was omitted from the request
-            # (user did not interact with the notes field at all).
-            # Only touch SpanNotes when the field was explicitly sent.
-            if source_type == "observation_span" and span_notes is not None:
+            # span_notes is None when the field was omitted from the request.
+            # For call annotations, labels save on the trace while item notes
+            # still belong to the root observation span.
+            if span_notes_target is not None:
                 if span_notes:
                     SpanNotes.objects.update_or_create(
-                        span=source_obj,
+                        span=span_notes_target,
                         created_by_user=request.user,
                         defaults={
                             "notes": span_notes,
@@ -375,7 +400,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 else:
                     # User explicitly cleared the notes field — delete the SpanNote
                     SpanNotes.objects.filter(
-                        span=source_obj,
+                        span=span_notes_target,
                         created_by_user=request.user,
                     ).delete()
 
@@ -431,7 +456,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 organization=request.organization,
                 deleted=False,
             )
-            .select_related("label", "annotator")
+            .select_related("label", "annotator", "queue_item__queue")
             .order_by("label__name", "-created_at")
         )
 

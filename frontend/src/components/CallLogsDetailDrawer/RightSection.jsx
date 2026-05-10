@@ -14,6 +14,7 @@ import TestDetailCallAnalytics from "src/sections/test-detail/TestDetailDrawer/T
 import LoadingStateComponent from "./LoadingStateComponent";
 import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/common";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
+import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import { getSpanAttributes } from "../traceDetailDrawer/DrawerRightRenderer/getSpanData";
 
 const TABS = [
@@ -58,10 +59,12 @@ const RightSection = ({ data, hideAnnotations = false }) => {
     getLoadingStateWithRespectiveStatus(data?.status, data?.simulationCallType);
   // Determine source type and ID for scores — fetch both levels
   const traceId = data?.trace_id || data?.id;
-  const sourceType = observationSpan?.id ? "observation_span" : "trace";
-  const sourceId = observationSpan?.id || traceId;
-  const secondarySourceType = observationSpan?.id ? "trace" : undefined;
-  const secondarySourceId = observationSpan?.id ? traceId : undefined;
+  const { sourceType, sourceId, secondarySourceType, secondarySourceId } =
+    buildVoiceCallScoreSource({
+      traceId,
+      rootSpanId: observationSpan?.id,
+      isSimulate: false,
+    });
 
   return (
     <Stack gap={2} minHeight={300}>
