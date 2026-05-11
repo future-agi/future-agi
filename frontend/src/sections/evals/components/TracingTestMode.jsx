@@ -409,14 +409,13 @@ const TracingTestMode = React.forwardRef(
       const fetchData = async () => {
         setRows([]);
         try {
-          // Voice calls use the dedicated list_voice_calls endpoint which
-          // has a different request/response shape (no filter array).
           if (rowType === "VoiceCall") {
             const { data } = await axios.get(endpoints.project.getCallLogs, {
               params: {
                 project_id: selectedProjectId,
                 page: 1,
                 page_size: 50,
+                filters: JSON.stringify(localFilters || []),
               },
             });
             const result = data?.result || data || {};

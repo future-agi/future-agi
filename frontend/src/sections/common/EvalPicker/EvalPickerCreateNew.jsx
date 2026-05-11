@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -19,11 +20,12 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -85,6 +87,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     sourceColumns,
     setSelectedEval,
     setStep,
+    onFiltersChange,
+    filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
@@ -111,8 +115,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
 
-  // Local-only preview filter; not persisted (TH-4770).
-  const localFilterForm = useForm({ defaultValues: { filters: [] } });
   const localFormFilters = useWatch({
     control: localFilterForm.control,
     name: "filters",
@@ -436,6 +438,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         tags,
         publish: true,
       });
+      if (source === "task" && onFiltersChange) {
+        onFiltersChange(localFilterForm.getValues("filters") || []);
+      }
       // Now add to the current context
       onSave({
         templateId: draftId,
@@ -468,6 +473,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     instructions,
     enqueueSnackbar,
     isOSS,
+    source,
+    onFiltersChange,
+    localFilterForm,
   ]);
 
   // Save & Add — composite branch. Composite templates are created via
@@ -748,6 +756,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   pickerSourceId={sourceId}
                   pickerSourceRowType={sourceRowType}
                   pickerSourceColumns={sourceColumns}
+                  pickerSourceFilters={localFormFilters}
+                  pickerOnFiltersChange={(f) =>
+                    localFilterForm.setValue("filters", f || [])
+                  }
                   onNameChange={setName}
                   onDescriptionChange={setDescription}
                   onAggregationEnabledChange={setAggregationEnabled}
@@ -967,40 +979,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 </Box>
               )}
 
-              {source === "task" &&
-                sourceId &&
-                // VoiceCall list endpoint doesn't accept a filters param; hide
-                // the UI so users don't think they're applying one.
-                !String(sourceRowType || "")
-                  .toLowerCase()
-                  .startsWith("voice") && (
-                  <Box
-                    sx={{
-                      mt: 1,
-                      pt: 2,
-                      pb: 3,
-                      borderTop: 1,
-                      borderColor: "divider",
-                    }}
-                  >
-                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                      Filter preview rows
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 1.25 }}
-                    >
-                      Narrow down which row appears in the live preview.
-                      Doesn't affect the task's saved filters.
-                    </Typography>
-                    <TaskFilterBar
-                      control={localFilterForm.control}
-                      setValue={localFilterForm.setValue}
-                      projectId={sourceId}
-                    />
-                  </Box>
-                )}
             </Box>
           }
           rightPanel={
@@ -1012,13 +990,54 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 flexDirection: "column",
               }}
             >
-              <Typography
-                variant="body2"
-                fontWeight={600}
-                sx={{ mb: 1.5, fontSize: "13px" }}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  mb: 1.5,
+                }}
               >
-                {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
-              </Typography>
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ fontSize: "13px" }}
+                >
+                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+                </Typography>
+                {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
+                  <Chip
+                    label={ROW_TYPE_LABELS[sourceRowType]}
+                    size="small"
+                    sx={{
+                      height: 18,
+                      fontSize: "10px",
+                      bgcolor: "background.neutral",
+                      color: "text.secondary",
+                      "& .MuiChip-label": { px: 0.75 },
+                    }}
+                  />
+                )}
+              </Box>
+
+              {source === "task" && sourceId && (
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
+                  >
+                    Narrow down which{" "}
+                    {(ROW_TYPE_LABELS[sourceRowType] || "rows").toLowerCase()}{" "}
+                    this task runs on
+                  </Typography>
+                  <TaskFilterBar
+                    control={localFilterForm.control}
+                    setValue={localFilterForm.setValue}
+                    projectId={sourceId}
+                  />
+                </Box>
+              )}
               <Box sx={{ flex: 1, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||

@@ -284,6 +284,7 @@ const TaskConfigPanel = ({
 
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
+  const taskFilters = useWatch({ control, name: "filters" });
   const isProjectSelected = !!project;
 
   // Fetch project details to detect voice projects (simulator source)
@@ -757,6 +758,10 @@ const TaskConfigPanel = ({
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
+        sourceFilters={taskFilters}
+        onFiltersChange={(f) =>
+          setValue("filters", f || [], { shouldDirty: true })
+        }
       />
     </>
   );
