@@ -124,11 +124,11 @@ _OPTIONAL_SOURCES = frozenset(
         "last",
         "get_or_none",
         "filter().first",
-        "get",
         "environ.get",
         "os.environ.get",
     }
 )
+_DICT_ANNOTATIONS = frozenset({"dict", "Dict", "Mapping", "MutableMapping"})
 
 
 _OPTIONAL_RETURNING = frozenset({"first", "last", "get_or_none", "one_or_none"})
@@ -157,16 +157,20 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
         def __init__(self):
             # var_name -> line where it was assigned from optional source
             self.optional_vars: dict[str, int] = {}
+            self.dict_vars: set[str] = set()
             self.guarded: set[str] = set()
 
         def _visit_scope(self, node):
             outer_optional = self.optional_vars
+            outer_dict_vars = self.dict_vars
             outer_guarded = self.guarded
             self.optional_vars = {}
+            self.dict_vars = self._dict_args(node)
             self.guarded = set()
             for child in node.body:
                 self.visit(child)
             self.optional_vars = outer_optional
+            self.dict_vars = outer_dict_vars
             self.guarded = outer_guarded
 
         def visit_FunctionDef(self, node):
@@ -180,9 +184,26 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             for target in targets:
                 self.guarded.discard(target.id)
                 self.optional_vars.pop(target.id, None)
+                self.dict_vars.discard(target.id)
+                if self._is_dict_value(node.value):
+                    self.dict_vars.add(target.id)
                 if isinstance(node.value, _ast.Call) and self._is_optional_source(node.value):
                     self.optional_vars[target.id] = node.lineno
             self.generic_visit(node)
+
+        def _dict_args(self, node) -> set[str]:
+            args = [*node.args.args, *node.args.kwonlyargs]
+            return {
+                arg.arg
+                for arg in args
+                if arg.annotation is not None
+                and self._call_name(arg.annotation) in _DICT_ANNOTATIONS
+            }
+
+        def _is_dict_value(self, node) -> bool:
+            if isinstance(node, _ast.Dict):
+                return True
+            return isinstance(node, _ast.Call) and self._call_name(node.func) == "dict"
 
         def _call_name(self, node) -> str | None:
             if isinstance(node, _ast.Name):
@@ -198,10 +219,12 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             if not isinstance(node.func, _ast.Attribute):
                 return False
             name = self._call_name(node.func)
+            if node.func.attr in _OPTIONAL_RETURNING or name in _OPTIONAL_SOURCES:
+                return True
             return (
-                node.func.attr in _OPTIONAL_RETURNING
-                or node.func.attr in _OPTIONAL_SOURCES
-                or name in _OPTIONAL_SOURCES
+                node.func.attr == "get"
+                and isinstance(node.func.value, _ast.Name)
+                and node.func.value.id in self.dict_vars
             )
 
         def visit_If(self, node):

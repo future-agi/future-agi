@@ -736,7 +736,7 @@ def test_optional_deref_dict_get_is_flagged(tmp_path):
         tmp_path,
         "views.py",
         """
-        def run(data):
+        def run(data: dict):
             value = data.get("name")
             return value.strip()
     """,
@@ -780,7 +780,7 @@ def test_optional_deref_dict_get_guard_suppresses_flag(tmp_path):
         tmp_path,
         "views.py",
         """
-        def run(data):
+        def run(data: dict):
             value = data.get("name")
             if value is not None:
                 return value.strip()
@@ -793,6 +793,46 @@ def test_optional_deref_dict_get_guard_suppresses_flag(tmp_path):
     assert not [
         v for v in violations if v.context == "optional_dereference"
     ], "None guard must dominate dereference inside its branch"
+
+
+def test_optional_deref_plain_get_receiver_is_not_optional_source(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(queryset):
+            user = queryset.get(pk=1)
+            return user.email
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v for v in violations if v.context == "optional_dereference"
+    ], "ambiguous .get() receivers must not be treated as Optional-returning dict sources"
+
+
+def test_optional_deref_dict_literal_get_is_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run():
+            data = {}
+            value = data.get("name")
+            return value.strip()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "value.strip"
+    ]
+    assert optional_v, "local dict literal .get() may return None and must be guarded"
 
 
 # ---------------------------------------------------------------------------
