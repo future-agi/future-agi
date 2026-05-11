@@ -8,6 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import { canonicalEntries } from "src/utils/utils";
 
 /**
  * Unified error-localization section for an eval row. Supports two
@@ -197,7 +198,7 @@ const EvalErrorLocalization = ({
   if (analysis) {
     const entries =
       analysis && typeof analysis === "object" && !Array.isArray(analysis)
-        ? Object.entries(analysis).filter(
+        ? canonicalEntries(analysis).filter(
             ([, v]) => Array.isArray(v) && v.length > 0,
           )
         : null;

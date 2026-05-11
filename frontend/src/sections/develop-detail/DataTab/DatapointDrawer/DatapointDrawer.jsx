@@ -30,6 +30,7 @@ import { ShowComponent } from "src/components/show";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { canonicalEntries } from "src/utils/utils";
 
 const SkeletonLoader = () => (
   <Box
@@ -707,9 +708,11 @@ const DatapointDrawerChild = ({
                     typeof runEval?.valueInfos === "object" &&
                     runEval?.valueInfos?.errorAnalysis &&
                     (() => {
-                      const hasOrgSegment = Object.values(
+                      const errorAnalysisEntries = canonicalEntries(
                         runEval?.valueInfos?.errorAnalysis,
-                      )
+                      );
+                      const hasOrgSegment = errorAnalysisEntries
+                        .map(([, value]) => value)
                         .flat()
                         .some((entry) => entry?.orgSegment);
 
@@ -722,7 +725,7 @@ const DatapointDrawerChild = ({
                         );
                       }
 
-                      return Object.entries(runEval?.valueInfos?.errorAnalysis)
+                      return errorAnalysisEntries
                         .filter(([_, value]) => value?.length)
                         .map(([key, value]) => (
                           <ErrorLocalizeCard

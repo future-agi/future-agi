@@ -20,7 +20,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import {
   fetchConnectors,
-  fetchConnector,
+  useConnector,
   createConnector,
   updateConnector,
   deleteConnector,
@@ -76,6 +76,10 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
+  const { data: selectedConnector, refetch: refetchSelectedConnector } =
+    useConnector(selectedId, {
+      enabled: Boolean(selectedId) && !isNew,
+    });
 
   const loadConnectors = useCallback(async ({ showSpinner = true } = {}) => {
     try {
@@ -102,16 +106,21 @@ export default function ConnectorSettingsPage() {
         return;
       }
       try {
-        const data = await fetchConnector(id);
-        const detail = data.result || data;
-        setConnectors((prev) =>
-          prev.map((c) => (c.id === detail.id ? { ...c, ...detail } : c)),
-        );
+        if (id === selectedId) {
+          const { data: detail } = await refetchSelectedConnector();
+          if (detail?.id) {
+            setConnectors((prev) =>
+              prev.map((c) => (c.id === detail.id ? { ...c, ...detail } : c)),
+            );
+            return;
+          }
+        }
+        await loadConnectors({ showSpinner: false });
       } catch {
         await loadConnectors({ showSpinner: false });
       }
     },
-    [loadConnectors],
+    [loadConnectors, refetchSelectedConnector, selectedId],
   );
 
   useEffect(() => {
@@ -136,7 +145,12 @@ export default function ConnectorSettingsPage() {
     return () => window.removeEventListener("message", handler);
   }, [loadConnectors, refreshSelected, selectedId]);
 
-  const selected = connectors.find((c) => c.id === selectedId) || null;
+  const selectedFromList = connectors.find((c) => c.id === selectedId) || null;
+  const selected =
+    selectedConnector?.id != null &&
+    String(selectedConnector.id) === String(selectedId)
+      ? { ...(selectedFromList || {}), ...selectedConnector }
+      : selectedFromList;
   const filtered = connectors.filter(
     (c) => !search || c.name?.toLowerCase().includes(search.toLowerCase()),
   );
@@ -153,8 +167,11 @@ export default function ConnectorSettingsPage() {
     setIsEditing(true);
   };
 
-  const handleSaved = () => {
-    loadConnectors();
+  const handleSaved = async () => {
+    await loadConnectors();
+    if (selectedId && !isNew) {
+      await refetchSelectedConnector();
+    }
     setIsEditing(false);
     setIsNew(false);
   };
@@ -518,7 +535,8 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
       } else {
         setFeedback({
           severity: "success",
-          message: result?.message || result?.detail || "Authentication updated.",
+          message:
+            result?.message || result?.detail || "Authentication updated.",
         });
         await onRefresh();
       }
