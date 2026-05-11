@@ -1187,10 +1187,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         # Categorical eval post-migration: agent eval stored
                         # output_float; annotation gave us score (0-100). Translate
                         # back to bucket name via eval_template.choice_scores.
-                        # Emit as list w/ output_type='choices' so it matches the
-                        # column config and the existing choices cell renderer.
+                        # Override output_type to "choices" so the frontend
+                        # eval-cell renderer hits the choices branch (otherwise
+                        # metric_type defaults to "score" because output_float
+                        # is set, and the score branch can't render a list).
                         bucket = _score_to_choice(config, score_val)
                         metric_entry["output"] = [bucket] if bucket else []
+                        metric_entry["output_type"] = "choices"
                     else:
                         metric_entry["output"] = (
                             round(score_val, 2)
@@ -3718,6 +3721,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 elif output_type == "choices" and log.output_float is not None:
                     bucket = _score_to_choice(config, round(log.output_float * 100, 2))
                     metric_entry["output"] = [bucket] if bucket else []
+                    metric_entry["output_type"] = "choices"
                 elif log.output_float is not None:
                     metric_entry["output"] = round(log.output_float * 100, 2)
                 else:
@@ -5321,6 +5325,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                 elif output_type == "choices" and isinstance(score_val, (int, float)):
                                     bucket = _score_to_choice(config, score_val)
                                     metric_entry["output"] = [bucket] if bucket else []
+                                    metric_entry["output_type"] = "choices"
                                 else:
                                     metric_entry["output"] = (
                                         round(score_val, 2)
