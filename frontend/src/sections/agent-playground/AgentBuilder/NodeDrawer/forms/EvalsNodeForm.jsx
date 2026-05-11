@@ -48,17 +48,6 @@ export default function EvalsNodeForm({ nodeId }) {
     return node?.data?.evaluators || [];
   }, [getNodeById, nodeId]);
 
-  // Update evaluators in node data
-  const setEvaluators = useCallback(
-    (updater) => {
-      const currentEvaluators = getCurrentEvaluators();
-      const newEvaluators =
-        typeof updater === "function" ? updater(currentEvaluators) : updater;
-      updateNodeData(nodeId, { evaluators: newEvaluators });
-    },
-    [getCurrentEvaluators, updateNodeData, nodeId],
-  );
-
   const persistEvalNode = useCallback(
     async (evaluators, formValues = getValues()) => {
       const node = getNodeById(nodeId);
@@ -119,7 +108,6 @@ export default function EvalsNodeForm({ nodeId }) {
         }));
 
       nextEvaluators = [...currentEvaluators, ...cleanedNew];
-      setEvaluators(nextEvaluators);
     } else {
       nextEvaluators = (() => {
         let updated = [...currentEvaluators];
@@ -147,7 +135,6 @@ export default function EvalsNodeForm({ nodeId }) {
         delete finalEvaluation?.previousId;
         return [...updated, finalEvaluation];
       })();
-      setEvaluators(nextEvaluators);
     }
     await persistEvalNode(nextEvaluators);
     setOpenEvaluationDialog(false);
@@ -173,7 +160,6 @@ export default function EvalsNodeForm({ nodeId }) {
       const targetId = getEvaluatorId(item);
       return targetId !== evalId;
     });
-    setEvaluators(nextEvaluators);
     await persistEvalNode(nextEvaluators);
   };
 

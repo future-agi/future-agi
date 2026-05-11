@@ -92,8 +92,12 @@ export default function AgentEvaluationPanel({
       evaluators,
       threshold: 0.5,
     };
-    const response = await mutateAsync({ graphId, executionId, payload });
-    setSummary(response.data?.result || null);
+    try {
+      const response = await mutateAsync({ graphId, executionId, payload });
+      setSummary(response.data?.result || null);
+    } catch {
+      setSummary(null);
+    }
   }, [evaluators, executionId, graphId, mutateAsync]);
 
   const canEvaluate =

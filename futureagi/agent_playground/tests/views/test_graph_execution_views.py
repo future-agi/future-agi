@@ -576,6 +576,33 @@ class TestGraphExecutionEvaluate:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "successful execution" in response.data["result"]
 
+    def test_returns_400_for_null_threshold(
+        self,
+        authenticated_client,
+        graph,
+        active_graph_version,
+    ):
+        execution = GraphExecution.no_workspace_objects.create(
+            graph_version=active_graph_version,
+            status=GraphExecutionStatus.SUCCESS,
+        )
+        url = reverse(
+            "graph-execution-evaluate",
+            kwargs={"graph_id": graph.id, "execution_id": execution.id},
+        )
+        response = authenticated_client.post(
+            url,
+            {
+                "evaluators": [{"templateId": str(uuid.uuid4())}],
+                "threshold": None,
+                "mappings": {"output": f"{uuid.uuid4()}.answer"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "threshold" in response.data["result"]
+
 
 # =============================================================================
 # Node execution detail

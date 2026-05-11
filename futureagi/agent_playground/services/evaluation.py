@@ -205,7 +205,12 @@ def _eval_mapping(spec: dict[str, Any]) -> dict[str, str]:
 
 
 def coerce_threshold(value: Any) -> float:
-    threshold = float(value)
+    if value is None:
+        raise ValueError("Evaluation threshold is required")
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Evaluation threshold must be a number") from exc
     if threshold < 0 or threshold > 1:
         raise ValueError("Evaluation threshold must be between 0 and 1")
     return threshold
