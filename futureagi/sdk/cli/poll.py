@@ -91,14 +91,19 @@ class SimulatePoller:
         progress_cb: Optional[Callable[[PollState], None]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.poll_interval_s = poll_interval_s
         self.max_polls = max_polls
         self.timeout_s = timeout_s
         self.threshold = threshold
         self.progress_cb = progress_cb
         self._session = requests.Session()
-        self._session.headers.update({"Authorization": f"Api-Key {api_key}"})
+        if ":" not in api_key:
+            raise ValueError(
+                "FI_API_KEY must be '<api_key>:<secret_key>' "
+                "(copy both values from Settings → API Keys in the platform)"
+            )
+        _ak, _sk = api_key.split(":", 1)
+        self._session.headers.update({"X-Api-Key": _ak, "X-Secret-Key": _sk})
 
     # ------------------------------------------------------------------
     # Individual actions (mirror TLA+ action names)
@@ -110,7 +115,7 @@ class SimulatePoller:
         state.phase = Phase.AUTHENTICATING
         try:
             resp = self._session.get(
-                f"{self.base_url}/api/simulate/run-tests/",
+                f"{self.base_url}/simulate/run-tests/",
                 params={"limit": 1},
                 timeout=10,
             )
@@ -133,7 +138,7 @@ class SimulatePoller:
         assert state.execution_id is None, "NeverPollBeforeStart: id already set"
         try:
             resp = self._session.post(
-                f"{self.base_url}/api/simulate/run-tests/{run_test_id}/execute/",
+                f"{self.base_url}/simulate/run-tests/{run_test_id}/execute/",
                 json={},
                 timeout=30,
             )
@@ -179,7 +184,7 @@ class SimulatePoller:
 
         try:
             resp = self._session.get(
-                f"{self.base_url}/api/simulate/run-tests/{run_test_id}/status/",
+                f"{self.base_url}/simulate/run-tests/{run_test_id}/status/",
                 params={"execution_id": state.execution_id},
                 timeout=10,
             )
@@ -214,7 +219,7 @@ class SimulatePoller:
 
         try:
             resp = self._session.get(
-                f"{self.base_url}/api/simulate/run-tests/{run_test_id}/eval-summary/",
+                f"{self.base_url}/simulate/run-tests/{run_test_id}/eval-summary/",
                 params={"execution_id": state.execution_id},
                 timeout=15,
             )
@@ -274,13 +279,32 @@ class SimulatePoller:
         assert state.is_terminal, f"Expected terminal phase, got {state.phase}"
         return state
 
+    def create_suite(
+        self,
+        name: str,
+        agent_url: Optional[str] = None,
+        description: str = "",
+    ) -> dict:
+        """
+        Create a minimal runnable suite (idempotent by name).
+        POST /simulate/run-tests/create-cli/
+        Returns {"id": "<uuid>", "name": "<name>", "created": bool}.
+        """
+        resp = self._session.post(
+            f"{self.base_url}/simulate/run-tests/create-cli/",
+            json={"name": name, "agent_url": agent_url, "description": description},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def list_suites(self, search: str = "", limit: int = 20) -> list[dict]:
         """
         Return simulation suites visible to this API key.
-        GET /api/simulate/run-tests/?search=<search>&limit=<limit>
+        GET /simulate/run-tests/?search=<search>&limit=<limit>
         """
         resp = self._session.get(
-            f"{self.base_url}/api/simulate/run-tests/",
+            f"{self.base_url}/simulate/run-tests/",
             params={"search": search, "limit": limit},
             timeout=10,
         )
@@ -293,10 +317,10 @@ class SimulatePoller:
     def fetch_status(self, run_test_id: str, execution_id: str) -> dict:
         """
         Fetch the current status of a specific execution (read-only).
-        GET /api/simulate/run-tests/<id>/status/?execution_id=<eid>
+        GET /simulate/run-tests/<id>/status/?execution_id=<eid>
         """
         resp = self._session.get(
-            f"{self.base_url}/api/simulate/run-tests/{run_test_id}/status/",
+            f"{self.base_url}/simulate/run-tests/{run_test_id}/status/",
             params={"execution_id": execution_id},
             timeout=10,
         )

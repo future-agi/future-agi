@@ -106,6 +106,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Force JSON output (auto-enabled on non-TTY stdout)",
     )
 
+    # create
+    p_create = sub.add_parser(
+        "create",
+        help="Create a minimal runnable suite (idempotent by name)",
+    )
+    p_create.add_argument(
+        "name", metavar="NAME",
+        help="Suite name (unique within your organisation)",
+    )
+    p_create.add_argument(
+        "--agent-url", default=None, metavar="URL", dest="agent_url",
+        help="HTTP endpoint of the agent to simulate against",
+    )
+    p_create.add_argument(
+        "--description", default="", metavar="TEXT",
+        help="Optional description for the suite",
+    )
+    p_create.add_argument(
+        "--json", action="store_true", dest="json_mode",
+        help="Output as JSON",
+    )
+
     # status
     p_status = sub.add_parser(
         "status",
@@ -294,6 +316,29 @@ def _cmd_run(args, poller: SimulatePoller) -> int:
     return state.exit_code if state.exit_code != -1 else 1
 
 
+def _cmd_create(args, poller: SimulatePoller) -> int:
+    try:
+        result = poller.create_suite(
+            name=args.name,
+            agent_url=args.agent_url,
+            description=args.description,
+        )
+    except Exception as exc:
+        print(f"Error creating suite: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json_mode or not sys.stdout.isatty():
+        print(json.dumps(result))
+        return 0
+
+    verb = "Created" if result.get("created") else "Found existing"
+    print(f"{verb} suite: {result['name']!r}")
+    print(f"ID: {result['id']}")
+    if not result.get("created"):
+        print("(Suite already existed — no changes made.)")
+    return 0
+
+
 def _cmd_status(args, poller: SimulatePoller) -> int:
     try:
         data = poller.fetch_status(args.run_test_id, args.execution_id)
@@ -343,6 +388,8 @@ def main(argv=None) -> int:
         )
     poller = SimulatePoller(**poller_kwargs)
 
+    if args.subcommand == "create":
+        return _cmd_create(args, poller)
     if args.subcommand == "list":
         return _cmd_list(args, poller)
     if args.subcommand == "run":

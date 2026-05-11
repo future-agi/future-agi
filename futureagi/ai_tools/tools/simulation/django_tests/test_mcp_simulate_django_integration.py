@@ -73,6 +73,8 @@ def run_test(db, org):
 def scenario(db, org, run_test):
     from simulate.models.scenarios import Scenarios
     return Scenarios.objects.create(
+        name="test-scenario",
+        source="",
         organization=org,
         run_test=run_test,
     )

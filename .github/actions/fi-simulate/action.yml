@@ -48,8 +48,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Checkout repository
+    - name: Checkout fi-simulate CLI
       uses: actions/checkout@v4
+      with:
+        repository: future-agi/future-agi
+        ref: ${{ github.action_ref }}
+        sparse-checkout: futureagi/sdk
+        path: _fi_simulate
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -73,24 +78,25 @@ runs:
         FI_POLL_INTERVAL: ${{ inputs.poll_interval }}
       run: |
         set +e
-        cd futureagi
+        cd _fi_simulate/futureagi
         RESULT=$(python -m sdk.cli.main run "$FI_RUN_TEST_ID" \
           --threshold "$FI_THRESHOLD" \
           --timeout "$FI_TIMEOUT" \
           --poll-interval "$FI_POLL_INTERVAL" \
           --json)
         EXIT_CODE=$?
-        cd ..
-        set -e
+        cd ../..
 
+        # Extract fields — 2>/dev/null || echo "" guards against non-JSON output
+        # (e.g. CLI crashed with a traceback) so exit $EXIT_CODE always runs.
         echo "result_json=$RESULT" >> "$GITHUB_OUTPUT"
-        echo "pass_rate=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("pass_rate",""))')" >> "$GITHUB_OUTPUT"
-        echo "execution_id=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("execution_id",""))')" >> "$GITHUB_OUTPUT"
-        echo "status=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",""))')" >> "$GITHUB_OUTPUT"
+        echo "pass_rate=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("pass_rate",""))' 2>/dev/null || echo "")" >> "$GITHUB_OUTPUT"
+        echo "execution_id=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("execution_id",""))' 2>/dev/null || echo "")" >> "$GITHUB_OUTPUT"
+        echo "status=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",""))' 2>/dev/null || echo "")" >> "$GITHUB_OUTPUT"
 
         echo "## fi-simulate result" >> "$GITHUB_STEP_SUMMARY"
         echo '```json' >> "$GITHUB_STEP_SUMMARY"
-        echo "$RESULT" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+        echo "$RESULT" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "$RESULT" >> "$GITHUB_STEP_SUMMARY"
         echo '```' >> "$GITHUB_STEP_SUMMARY"
 
         exit $EXIT_CODE
