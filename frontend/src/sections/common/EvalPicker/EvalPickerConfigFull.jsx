@@ -1553,6 +1553,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     control={localFilterForm.control}
                     setValue={localFilterForm.setValue}
                     projectId={sourceId}
+                    isSimulator={String(sourceRowType || "")
+                      .toLowerCase()
+                      .startsWith("voice")}
                   />
                 </Box>
               )}

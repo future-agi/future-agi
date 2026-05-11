@@ -188,7 +188,7 @@ FilterChip.propTypes = {
 };
 
 // ── Main ──
-const TaskFilterBar = ({ control, setValue, projectId }) => {
+const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) => {
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
   const [panelFilters, setPanelFilters] = useState(() =>
@@ -350,6 +350,7 @@ const TaskFilterBar = ({ control, setValue, projectId }) => {
         onClose={() => setAnchorEl(null)}
         currentFilters={panelFilters}
         projectId={projectId}
+        isSimulator={isSimulator}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>
@@ -360,6 +361,7 @@ TaskFilterBar.propTypes = {
   control: PropTypes.object.isRequired,
   setValue: PropTypes.func.isRequired,
   projectId: PropTypes.string,
+  isSimulator: PropTypes.bool,
 };
 
 export default TaskFilterBar;

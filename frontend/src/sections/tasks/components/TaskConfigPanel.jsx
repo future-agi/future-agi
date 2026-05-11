@@ -756,6 +756,7 @@ const TaskConfigPanel = ({
                 control={control}
                 setValue={setValue}
                 projectId={project}
+                isSimulator={isVoiceProject}
               />
             </FilterErrorBoundary>
           </Box>

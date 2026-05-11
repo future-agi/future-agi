@@ -1035,6 +1035,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     control={localFilterForm.control}
                     setValue={localFilterForm.setValue}
                     projectId={sourceId}
+                    isSimulator={String(sourceRowType || "")
+                      .toLowerCase()
+                      .startsWith("voice")}
                   />
                 </Box>
               )}
