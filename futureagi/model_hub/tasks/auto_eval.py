@@ -75,6 +75,14 @@ def flush_auto_eval_batch(self, config_id: str):
         _clear_state(config_id)
         return
 
+    if config.created_by is None:
+        logger.warning(
+            "auto_eval_skipped_no_user",
+            extra={"config_id": config_id},
+        )
+        _clear_state(config_id)
+        return
+
     # Atomically drain the pending list.
     pending_key = _PENDING_KEY.format(config_id=config_id)
     lock_key = _LOCK_KEY.format(config_id=config_id)
