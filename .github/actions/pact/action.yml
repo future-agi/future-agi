@@ -1,0 +1,161 @@
+name: pact — Python + Go static analysis
+description: >
+  Runs pact (Python AST Constraint Tool) on Python and Go source files.
+  Emits formally-grounded violation reports; optionally fails the build.
+
+inputs:
+  python-paths:
+    description: 'Space-separated list of Python files or directories to analyze'
+    required: false
+    default: '.'
+  go-paths:
+    description: 'Space-separated list of Go files or directories to analyze (empty = skip)'
+    required: false
+    default: ''
+  fail-on-violation:
+    description: 'Exit 1 if any violations are found'
+    required: false
+    default: 'true'
+  output-format:
+    description: 'Output format: text | json | sarif'
+    required: false
+    default: 'text'
+  output-file:
+    description: 'Write report to this file (empty = stdout only)'
+    required: false
+    default: ''
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  go-version:
+    description: 'Go version to use when building pact-go (empty = skip Go analysis)'
+    required: false
+    default: '1.23'
+  build-go-checker:
+    description: 'Build pact-go binary from source before running'
+    required: false
+    default: 'true'
+
+outputs:
+  violation-count:
+    description: 'Total number of violations found'
+    value: ${{ steps.count.outputs.count }}
+  report-path:
+    description: 'Path to the written report file (empty if not written)'
+    value: ${{ steps.run-pact.outputs.report_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install pact dependencies
+      shell: bash
+      run: |
+        pip install z3-solver
+        # Install pact from the repo (no external package yet)
+        pip install -e "${{ github.action_path }}/../../.." --quiet 2>/dev/null || true
+
+    - name: Set up Go (for pact-go)
+      if: inputs.go-version != '' && inputs.go-paths != ''
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache-dependency-path: ${{ github.action_path }}/../../pact/go/checker/go.sum
+
+    - name: Build pact-go binary
+      if: inputs.build-go-checker == 'true' && inputs.go-paths != ''
+      shell: bash
+      run: |
+        CHECKER_DIR="${{ github.action_path }}/../../pact/go/checker"
+        if [ -f "$CHECKER_DIR/main.go" ]; then
+          cd "$CHECKER_DIR"
+          go build -o pact-go .
+          echo "pact-go built at $CHECKER_DIR/pact-go"
+        fi
+
+    - name: Run pact
+      id: run-pact
+      shell: bash
+      run: |
+        set +e
+
+        PACT_ARGS=""
+
+        # Python analysis
+        for p in ${{ inputs.python-paths }}; do
+          PACT_ARGS="$PACT_ARGS $p"
+        done
+
+        # Output format
+        if [ "${{ inputs.output-format }}" = "json" ]; then
+          PACT_ARGS="$PACT_ARGS --format json"
+        elif [ "${{ inputs.output-format }}" = "sarif" ]; then
+          PACT_ARGS="$PACT_ARGS --format sarif"
+        fi
+
+        # Output file
+        if [ -n "${{ inputs.output-file }}" ]; then
+          PACT_ARGS="$PACT_ARGS --out ${{ inputs.output-file }}"
+          echo "report_path=${{ inputs.output-file }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "report_path=" >> "$GITHUB_OUTPUT"
+        fi
+
+        python -m tools.pact.cli $PACT_ARGS
+        PYTHON_EXIT=$?
+
+        # Go analysis (if paths provided)
+        GO_EXIT=0
+        if [ -n "${{ inputs.go-paths }}" ]; then
+          GO_PACT_ARGS=""
+          for p in ${{ inputs.go-paths }}; do
+            if [ -d "$p" ]; then
+              GO_PACT_ARGS="$GO_PACT_ARGS --dir $p"
+            else
+              GO_PACT_ARGS="$GO_PACT_ARGS --file $p"
+            fi
+          done
+
+          CHECKER_DIR="${{ github.action_path }}/../../pact/go/checker"
+          BINARY="$CHECKER_DIR/pact-go"
+
+          if [ -f "$BINARY" ]; then
+            "$BINARY" $GO_PACT_ARGS
+          elif command -v pact-go >/dev/null 2>&1; then
+            pact-go $GO_PACT_ARGS
+          else
+            echo "::warning::pact-go binary not found; skipping Go analysis"
+          fi
+          GO_EXIT=$?
+        fi
+
+        # Combine exit codes
+        if [ "$PYTHON_EXIT" -ne 0 ] || [ "$GO_EXIT" -ne 0 ]; then
+          echo "pact_exit=1" >> "$GITHUB_ENV"
+        else
+          echo "pact_exit=0" >> "$GITHUB_ENV"
+        fi
+
+    - name: Count violations
+      id: count
+      shell: bash
+      run: |
+        # Count lines starting with a file path in the output (heuristic for text mode)
+        if [ -n "${{ inputs.output-file }}" ] && [ -f "${{ inputs.output-file }}" ]; then
+          COUNT=$(grep -c "^\S.*\[" "${{ inputs.output-file }}" 2>/dev/null || echo 0)
+        else
+          COUNT=0
+        fi
+        echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+    - name: Fail on violations
+      if: inputs.fail-on-violation == 'true' && env.pact_exit == '1'
+      shell: bash
+      run: |
+        echo "::error::pact found violations. See output above."
+        exit 1
