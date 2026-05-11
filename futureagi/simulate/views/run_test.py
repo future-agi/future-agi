@@ -67,6 +67,18 @@ from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
     CallExecutionStatusUpdateSerializer,
 )
+from simulate.serializers.requests.run_test import (
+    CreateRunTestSerializer,
+    RunTestFilterSerializer,
+    UpdateRunTestSerializer,
+)
+from simulate.serializers.requests.run_test_evals import (
+    AddEvalConfigsRequestSerializer,
+    EvalConfigUpdateRequestSerializer,
+    EvalSummaryComparisonFilterSerializer,
+    EvalSummaryFilterSerializer,
+    RunNewEvalsOnTestExecutionSerializer,
+)
 from simulate.serializers.requests.test_execution import (
     CallExecutionRerunSerializer,
 )
@@ -75,22 +87,38 @@ from simulate.serializers.response.call_execution import (
     CallExecutionErrorResponseSerializer,
     CallExecutionLogsResponseSerializer,
 )
+from simulate.serializers.response.run_test import (
+    AddEvalConfigResponseSerializer,
+    RunTestErrorResponseSerializer,
+    RunTestExecutionsResponseSerializer,
+    RunTestMessageResponseSerializer,
+    RunTestResponseSerializer,
+    RunTestScenarioItemResponseSerializer,
+    TestExecutionItemResponseSerializer,
+)
+from simulate.serializers.response.run_test_evals import (
+    AddEvalConfigsResponseSerializer,
+    DeleteEvalConfigResponseSerializer,
+    EvalConfigResponseSerializer,
+    EvalConfigUpdateResponseSerializer,
+    EvalErrorResponseSerializer,
+    EvalSummaryComparisonResponseSerializer,
+    EvalSummaryResponseSerializer,
+    RunNewEvalsResponseSerializer,
+)
 from simulate.serializers.response.test_execution import (
     CancelTestExecutionResponseSerializer,
     ErrorResponseSerializer,
     RerunCallsResponseSerializer,
 )
 from simulate.serializers.run_test import (
-    CreateRunTestSerializer,
     RunTestSerializer,
-    UpdateRunTestSerializer,
 )
 from simulate.serializers.test_execution import (
     CallExecutionDetailSerializer,
     CallExecutionSerializer,
     CallExecutionSnapshotSerializer,
     PerformanceSummarySerializer,
-    RunNewEvalsOnTestExecutionSerializer,
     TestExecutionAnalyticsSerializer,
     TestExecutionBulkDeleteSerializer,
     TestExecutionColumnOrderSerializer,
@@ -179,6 +207,13 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=RunTestFilterSerializer,
+        responses={
+            200: RunTestResponseSerializer(many=True),
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of run tests for the user's organization
@@ -203,12 +238,22 @@ class RunTestListView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            simulation_type = request.query_params.get("simulation_type", "").strip()
-            prompt_template_id = request.query_params.get(
-                "prompt_template_id", ""
+            # Validate and parse query parameters
+            filter_serializer = RunTestFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return self.gm.bad_request(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    }
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
+            simulation_type = filter_serializer.validated_data.get(
+                "simulation_type", ""
             ).strip()
+            prompt_template_id = filter_serializer.validated_data.get(
+                "prompt_template_id"
+            )
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
@@ -287,6 +332,15 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=CreateRunTestSerializer,
+        responses={
+            201: RunTestResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def post(self, request, *args, **kwargs):
         """Create a new RunTest"""
         try:
@@ -295,7 +349,9 @@ class CreateRunTestView(APIView):
                 data=request.data, context={"request": request}
             )
             if not serializer.is_valid():
-                return self.gm.bad_request("Invalid data")
+                return self.gm.bad_request(
+                    {"error": "Invalid data", "details": serializer.errors}
+                )
 
             validated_data = serializer.validated_data
 
@@ -443,6 +499,13 @@ class RunTestDetailView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """Retrieve a specific RunTest"""
         try:
@@ -467,6 +530,15 @@ class RunTestDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        request_body=UpdateRunTestSerializer,
+        responses={
+            200: RunTestResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update a specific RunTest"""
         try:
@@ -546,6 +618,13 @@ class RunTestDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestMessageResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def delete(self, request, run_test_id, *args, **kwargs):
         """Delete a specific RunTest (soft delete)"""
         try:
@@ -560,9 +639,10 @@ class RunTestDetailView(APIView):
             # Soft delete the run test
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
-            return Response(
-                {"message": "Run test deleted successfully"}, status=status.HTTP_200_OK
+            response_serializer = RunTestMessageResponseSerializer(
+                {"message": "Run test deleted successfully"}
             )
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
 
         except RunTest.DoesNotExist:
             return Response(
@@ -984,6 +1064,14 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        query_serializer=RunTestFilterSerializer,
+        responses={
+            200: RunTestResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of run tests for the user's organization
@@ -1004,8 +1092,17 @@ class RunTestAPIView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get search query parameter
-            search_query = request.query_params.get("search", "").strip()
+            # Validate and parse query parameters
+            filter_serializer = RunTestFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return Response(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
 
             # Filter run tests by organization (only non-deleted)
             run_tests = (
@@ -1056,6 +1153,13 @@ class TestExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: TestExecutionSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of test executions for the user's organization
@@ -4021,6 +4125,13 @@ class RunTestScenariosView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestScenarioItemResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get paginated list of scenarios for a specific run test
@@ -4090,7 +4201,10 @@ class RunTestScenariosView(APIView):
                 )
 
             # Return paginated response
-            return paginator.get_paginated_response(scenario_data)
+            scenario_serializer = RunTestScenarioItemResponseSerializer(
+                scenario_data, many=True
+            )
+            return paginator.get_paginated_response(scenario_serializer.data)
 
         except Exception as e:
             return Response(
@@ -4110,23 +4224,22 @@ class AddEvalConfigView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Configs"],
+        operation_summary="Add evaluation configurations",
+        operation_description="Adds evaluation configurations to a test run. Returns 201 with the created configs.",
+        request_body=AddEvalConfigsRequestSerializer,
+        responses={
+            201: AddEvalConfigsResponseSerializer,
+            400: EvalErrorResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id, *args, **kwargs):
         """
         Add evaluation configs to a run test
-        Request Body:
-        {
-            "evaluations_config": [
-                {
-                    "template_id": "uuid",
-                    "name": "Evaluation Name",
-                    "config": {},
-                    "mapping": {},
-                    "filters": {},
-                    "error_localizer": false,
-                    "model": "gpt-4o-mini"
-                }
-            ]
-        }
         """
         try:
             # Get the organization of the logged-in user
@@ -4145,29 +4258,11 @@ class AddEvalConfigView(APIView):
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
 
-            # Validate request data
-            evaluations_config = request.data.get("evaluations_config", [])
-
-            if not evaluations_config:
-                return self.gm.bad_request(
-                    "evaluations_config is required and cannot be empty"
-                )
-
-            # Check for duplicate names in the request
-            names_in_request = []
-            for eval_config_data in evaluations_config:
-                template_id = eval_config_data.get("template_id")
-                eval_name = eval_config_data.get("name")
-                # Use default name if not provided
-                if not eval_name and template_id:
-                    eval_name = f"Eval-{template_id}"
-
-                if eval_name:
-                    if eval_name in names_in_request:
-                        return self.gm.bad_request(
-                            f"Duplicate eval name '{eval_name}' found in the request. Each evaluation config must have a unique name."
-                        )
-                    names_in_request.append(eval_name)
+            # Validate request data (Phase 0.3: moved from raw dict access)
+            req_serializer = AddEvalConfigsRequestSerializer(data=request.data)
+            if not req_serializer.is_valid():
+                return self.gm.bad_request(req_serializer.errors)
+            evaluations_config = req_serializer.validated_data["evaluations_config"]
 
             # Get existing eval config names for this run test
             existing_eval_configs = SimulateEvalConfig.objects.filter(
@@ -4183,13 +4278,7 @@ class AddEvalConfigView(APIView):
             # Create SimulateEvalConfig instances from evaluations_config
             for eval_config_data in evaluations_config:
                 try:
-                    # Validate required fields
                     template_id = eval_config_data.get("template_id")
-                    if not template_id:
-                        errors.append(
-                            "template_id is required for each evaluation config"
-                        )
-                        continue
 
                     # Get EvalTemplate by ID
                     try:
@@ -4238,25 +4327,18 @@ class AddEvalConfigView(APIView):
 
             # Prepare response
             if created_eval_configs:
-                # Serialize the created eval configs
-                from simulate.serializers.run_test import (
-                    SimulateEvalConfigSimpleSerializer,
-                )
-
-                eval_configs_data = SimulateEvalConfigSimpleSerializer(
-                    created_eval_configs, many=True
-                ).data
-
                 response_data = {
                     "message": f"Successfully added {len(created_eval_configs)} evaluation config(s) to run test",
-                    "created_eval_configs": eval_configs_data,
+                    "created_eval_configs": created_eval_configs,
                     "run_test_id": str(run_test.id),
                 }
-
                 if errors:
                     response_data["warnings"] = errors
 
-                return Response(response_data, status=status.HTTP_201_CREATED)
+                return Response(
+                    AddEvalConfigsResponseSerializer(response_data).data,
+                    status=status.HTTP_201_CREATED,
+                )
             else:
                 return self.gm.bad_request("Failed to create any evaluation configs")
 
@@ -4274,6 +4356,18 @@ class DeleteEvalConfigView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Configs"],
+        operation_summary="Delete evaluation configuration",
+        operation_description="Soft-deletes an evaluation configuration. Cannot delete the last remaining config in the test run.",
+        responses={
+            200: DeleteEvalConfigResponseSerializer,
+            400: EvalErrorResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def delete(self, request, run_test_id, eval_config_id, *args, **kwargs):
         """
         Delete an evaluation config from a run test
@@ -4323,7 +4417,9 @@ class DeleteEvalConfigView(APIView):
                 eval_config.save(update_fields=["deleted", "deleted_at"])
 
             return Response(
-                {"message": "Evaluation config deleted successfully"},
+                DeleteEvalConfigResponseSerializer(
+                    {"message": "Evaluation config deleted successfully"}
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -4476,24 +4572,25 @@ class UpdateEvalConfigView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Configs"],
+        operation_summary="Update evaluation configuration",
+        operation_description=(
+            "Updates an evaluation configuration and optionally triggers a rerun. "
+            "When run=true, test_execution_id is required."
+        ),
+        request_body=EvalConfigUpdateRequestSerializer,
+        responses={
+            200: EvalConfigUpdateResponseSerializer,
+            400: EvalErrorResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id, eval_config_id, *args, **kwargs):
         """
         Update an evaluation config and optionally trigger rerun
-
-        Request Body:
-        {
-            "config": {
-                "config": {...},
-                "mapping": {...}
-            },
-            "mapping": {...},  # Can also be provided at top level
-            "model": "gpt-4o-mini",
-            "error_localizer": false,
-            "kb_id": "uuid",
-            "name": "Evaluation Name",
-            "run": false,  # If true, trigger rerun on specified test execution
-            "test_execution_id": "uuid"  # Required when run is true
-        }
         """
         try:
             # Get the organization of the logged-in user
@@ -4506,6 +4603,12 @@ class UpdateEvalConfigView(APIView):
                     {"error": "Organization not found for the user."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+
+            # Validate request (Phase 0.2: cross-field run+test_execution_id check moved to serializer)
+            req_serializer = EvalConfigUpdateRequestSerializer(data=request.data)
+            if not req_serializer.is_valid():
+                return self._gm.bad_request(req_serializer.errors)
+            validated = req_serializer.validated_data
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4520,29 +4623,28 @@ class UpdateEvalConfigView(APIView):
                 deleted=False,
             )
 
-            # Get run flag
-            run = request.data.get("run", False)
+            run = validated.get("run", False)
 
             # Update config if provided (similar to EditAndRunUserEvalView)
-            new_config = request.data.get("config")
+            new_config = validated.get("config")
             if new_config:
                 eval_config.config = normalize_eval_runtime_config(
                     eval_config.eval_template.config, new_config
                 )
 
             # Update mapping if provided at top level
-            if "mapping" in request.data:
-                eval_config.mapping = request.data.get("mapping")
+            if "mapping" in validated:
+                eval_config.mapping = validated.get("mapping")
 
             # Update other fields if provided
-            if "name" in request.data:
-                eval_config.name = request.data.get("name")
-            if "model" in request.data:
-                eval_config.model = request.data.get("model")
-            if "error_localizer" in request.data:
-                eval_config.error_localizer = request.data.get("error_localizer")
-            if "kb_id" in request.data:
-                kb_id = request.data.get("kb_id")
+            if "name" in validated:
+                eval_config.name = validated.get("name")
+            if "model" in validated:
+                eval_config.model = validated.get("model")
+            if "error_localizer" in validated:
+                eval_config.error_localizer = validated.get("error_localizer")
+            if "kb_id" in validated:
+                kb_id = validated.get("kb_id")
                 if kb_id:
                     from model_hub.models.develop_dataset import KnowledgeBaseFile
 
@@ -4559,13 +4661,9 @@ class UpdateEvalConfigView(APIView):
             eval_config.save()
 
             # If run is True, trigger rerun on the specified test execution
+            # (Phase 0.2: test_execution_id required check moved to EvalConfigUpdateRequestSerializer.validate())
             if run:
-                # Get test_execution_id from request data
-                test_execution_id = request.data.get("test_execution_id")
-                if not test_execution_id:
-                    return self._gm.bad_request(
-                        "test_execution_id is required when run is true"
-                    )
+                test_execution_id = validated.get("test_execution_id")
 
                 # Get the specific test execution and verify it belongs to the run_test
                 test_execution = get_object_or_404(
@@ -4649,23 +4747,28 @@ class UpdateEvalConfigView(APIView):
                 )
 
                 return Response(
-                    {
-                        "message": "Evaluation config updated and rerun triggered successfully",
-                        "eval_config_id": str(eval_config.id),
-                        "run_test_id": str(run_test_id),
-                        "test_execution_id": str(test_execution_id),
-                        "call_execution_count": len(call_execution_ids),
-                        "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
-                    },
+                    EvalConfigUpdateResponseSerializer(
+                        {
+                            "message": "Evaluation config updated and rerun triggered successfully",
+                            "eval_config_id": str(eval_config.id),
+                            "run_test_id": str(run_test_id),
+                            "test_execution_id": str(test_execution_id),
+                            "call_execution_count": len(call_execution_ids),
+                            "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
+                        }
+                    ).data,
                     status=status.HTTP_200_OK,
                 )
 
-            return self._gm.success_response(
-                {
-                    "message": "Evaluation config updated successfully",
-                    "eval_config_id": str(eval_config.id),
-                    "run_test_id": str(run_test_id),
-                }
+            return Response(
+                EvalConfigUpdateResponseSerializer(
+                    {
+                        "message": "Evaluation config updated successfully",
+                        "eval_config_id": str(eval_config.id),
+                        "run_test_id": str(run_test_id),
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
             )
 
         except Exception as e:
@@ -4683,6 +4786,13 @@ class RunTestExecutionsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestExecutionsResponseSerializer(many=True),
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get test execution data for a specific run test
@@ -5003,7 +5113,10 @@ class RunTestExecutionsView(APIView):
                 )
 
             # Return paginated response with execution data
-            return paginator.get_paginated_response(execution_data)
+            execution_serializer = TestExecutionItemResponseSerializer(
+                execution_data, many=True
+            )
+            return paginator.get_paginated_response(execution_serializer.data)
 
         except Exception as e:
             traceback.print_exc()
@@ -5257,12 +5370,27 @@ class RunTestEvalSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Summary"],
+        operation_summary="Get evaluation summary",
+        operation_description="Returns evaluation summary statistics for a test run, optionally scoped to a single execution.",
+        query_serializer=EvalSummaryFilterSerializer,
+        responses={
+            200: EvalSummaryResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         try:
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            execution_id = request.query_params.get("execution_id", None)
+            filter_serializer = EvalSummaryFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return self._gm.bad_request_response(filter_serializer.errors)
+            execution_id = filter_serializer.validated_data.get("execution_id")
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization
@@ -5293,6 +5421,19 @@ class RunTestEvalSummaryComparisonView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Summary"],
+        operation_summary="Compare evaluation summaries",
+        operation_description="Compares evaluation summary statistics across multiple test executions.",
+        query_serializer=EvalSummaryComparisonFilterSerializer,
+        responses={
+            200: EvalSummaryComparisonResponseSerializer,
+            400: EvalErrorResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Compare evaluation summary statistics across multiple executions for a single run test
@@ -5301,15 +5442,12 @@ class RunTestEvalSummaryComparisonView(APIView):
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            execution_ids_param = request.GET.get("execution_ids", "[]")
 
-            try:
-                execution_ids = json.loads(execution_ids_param)
-            except json.JSONDecodeError:
-                return self._gm.bad_request_response("execution_ids must be valid JSON")
-
-            if not execution_ids:
-                return self._gm.bad_request_response("execution_ids list is required")
+            # Phase 0.1: replaced raw json.loads with EvalSummaryComparisonFilterSerializer
+            filter_serializer = EvalSummaryComparisonFilterSerializer(data=request.GET)
+            if not filter_serializer.is_valid():
+                return self._gm.bad_request_response(filter_serializer.errors)
+            execution_ids = filter_serializer.validated_data["execution_ids"]
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization
@@ -6448,18 +6586,25 @@ class RunNewEvalsOnTestExecutionView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Run Tests - Eval Configs"],
+        operation_summary="Run new evaluations on test executions",
+        operation_description=(
+            "Runs new evaluations on completed test executions. "
+            "Either test_execution_ids or select_all=true must be provided."
+        ),
+        request_body=RunNewEvalsOnTestExecutionSerializer,
+        responses={
+            200: RunNewEvalsResponseSerializer,
+            400: EvalErrorResponseSerializer,
+            401: "Unauthorized",
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id):
         """
         Run new evaluations on multiple test executions
-
-        Args:
-            run_test_id: UUID of the RunTest containing the test executions
-
-        Request Body:
-            test_execution_ids: List of test execution IDs (optional if select_all=True)
-            select_all: Boolean to run on all test executions (default: False)
-            eval_config_ids: List of SimulateEvalConfig IDs to run (required)
-            enable_tool_evaluation: Boolean to enable/disable tool evaluation (optional)
         """
         try:
             # Get the organization of the logged-in user
@@ -6690,23 +6835,13 @@ class RunNewEvalsOnTestExecutionView(APIView):
             )
 
             return Response(
-                {
-                    "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
-                    "run_test_id": str(run_test_id),
-                    "task_id": task_id,
-                    "test_execution_count": test_execution_count,
-                    "updated_test_executions": updated_test_executions,
-                    "call_execution_count": len(call_execution_ids),
-                    "eval_config_count": len(eval_config_ids),
-                    "total_evaluations_to_run": len(call_execution_ids)
-                    * len(eval_config_ids),
-                    "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
-                    "status_update": f"Set {len(updated_test_executions)} test executions to EVALUATING status",
-                    "column_order_updated": "New eval configs added to column order for UI visibility",
-                    "eval_configs": [
-                        {"id": str(ec.id), "name": ec.name} for ec in eval_configs
-                    ],
-                },
+                RunNewEvalsResponseSerializer(
+                    {
+                        "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
+                        "run_test_id": str(run_test_id),
+                        "call_execution_count": len(call_execution_ids),
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 

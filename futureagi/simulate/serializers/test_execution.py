@@ -1372,40 +1372,10 @@ class TestExecutionBulkDeleteSerializer(serializers.Serializer):
         return data
 
 
-class RunNewEvalsOnTestExecutionSerializer(serializers.Serializer):
-    """Serializer for running new evaluations on existing test executions"""
+# Migrated to simulate/serializers/requests/run_test_evals.py
+# Re-exported here for backward compatibility.
+from simulate.serializers.requests.run_test_evals import (
+    RunNewEvalsOnTestExecutionSerializer,
+)
 
-    test_execution_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-        help_text="List of specific test execution IDs to run evaluations on",
-    )
-
-    select_all = serializers.BooleanField(
-        default=False,
-        help_text="Whether to run evaluations on all test executions in the run test",
-    )
-
-    eval_config_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=True,
-        help_text="List of SimulateEvalConfig IDs to run on the test executions",
-    )
-
-    enable_tool_evaluation = serializers.BooleanField(
-        required=False,
-        default=None,
-        help_text="Whether to enable tool evaluation for this run (if not provided, uses the run test's current setting)",
-    )
-
-    def validate(self, data):
-        """Validate that either test_execution_ids or select_all is provided, and eval_config_ids is not empty"""
-        if not data.get("select_all") and not data.get("test_execution_ids"):
-            raise serializers.ValidationError(
-                "Either 'select_all' must be True or 'test_execution_ids' must be provided"
-            )
-        if not data.get("eval_config_ids"):
-            raise serializers.ValidationError(
-                "'eval_config_ids' must be provided and cannot be empty"
-            )
-        return data
+__all__ = ["RunNewEvalsOnTestExecutionSerializer"]
