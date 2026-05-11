@@ -9,6 +9,7 @@ from .checker import check_codebase, check_codebase_incremental
 from .extractor import extract_from_codebase
 from .refactor import suggest_refactors
 from .specgen import spec_gen
+from .speccomplete import spec_complete
 from .visualize import (
     format_pr_comment, render_mermaid, render_reduction_sequence,
     render_test_coverage_mermaid,
@@ -46,19 +47,30 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
 
 
 def _spec_cmd(argv) -> int:
-    """Entry point for `pact spec gen <file>`."""
+    """Entry point for `pact spec {gen,complete} <file>`."""
     p = argparse.ArgumentParser(
         prog="pact spec",
-        description="Synthesize a TLA+ specification skeleton from Python source.",
+        description="Synthesize or complete a TLA+ specification from Python source.",
     )
     sub = p.add_subparsers(dest="spec_cmd", required=True)
 
     gen_p = sub.add_parser("gen", help="Generate a TLA+ skeleton from a Python file")
     gen_p.add_argument("file", metavar="FILE", help="Python source file to analyze")
-    gen_p.add_argument(
-        "--output", "-o", metavar="OUT", default=None,
-        help="Write spec to OUT instead of stdout",
+    gen_p.add_argument("--output", "-o", metavar="OUT", default=None,
+                       help="Write spec to OUT instead of stdout")
+
+    cmp_p = sub.add_parser(
+        "complete",
+        help="Fill in TODO stubs using an LLM (requires ANTHROPIC_API_KEY)",
     )
+    cmp_p.add_argument("file", metavar="FILE", help="Python source file to analyze")
+    cmp_p.add_argument("--output", "-o", metavar="OUT", default=None,
+                       help="Write completed spec to OUT instead of stdout")
+    cmp_p.add_argument("--model", default="claude-haiku-4-5-20251001", metavar="MODEL",
+                       help="Claude model to use (default: claude-haiku-4-5-20251001)")
+    cmp_p.add_argument("--api-key", default=None, metavar="KEY",
+                       help="Anthropic API key (default: $ANTHROPIC_API_KEY)")
+
     args = p.parse_args(argv)
 
     src = Path(args.file).resolve()
@@ -67,12 +79,23 @@ def _spec_cmd(argv) -> int:
         return 2
 
     out_path = Path(args.output).resolve() if args.output else None
-    spec = spec_gen(src, out_path)
 
-    if out_path:
-        print(f"✓  pact spec gen: wrote {out_path}")
-    else:
-        print(spec)
+    if args.spec_cmd == "gen":
+        spec = spec_gen(src, out_path)
+        if out_path:
+            print(f"✓  pact spec gen: wrote {out_path}")
+        else:
+            print(spec)
+    else:  # complete
+        try:
+            spec = spec_complete(src, out_path, model=args.model, api_key=args.api_key)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if out_path:
+            print(f"✓  pact spec complete: wrote {out_path}")
+        else:
+            print(spec)
     return 0
 
 
