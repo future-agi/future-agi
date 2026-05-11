@@ -7,14 +7,14 @@ One Z3 formula per field encodes ALL constraints simultaneously:
 Z3 enumerates the violations — we don't write one checker per constraint class.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from .extractor import CallSite, FieldConstraint, FunctionManifest, ModelManifest
 
 try:
     from z3 import (
-        And, Bool, Int, IntVal, Not, Or, Solver, String,
+        Bool, IntVal, Not, Or, Solver,
         Length, StringVal, sat, unsat,
     )
     _HAS_Z3 = True
@@ -164,8 +164,9 @@ def check_function_call(call: CallSite, func: FunctionManifest) -> Optional[Viol
     if not required_args:
         return None
 
+    positional_required = [arg for arg in required_args if not arg.kwonly]
     positional_satisfied = {
-        arg.name for i, arg in enumerate(required_args) if i < call.positional_count
+        arg.name for i, arg in enumerate(positional_required) if i < call.positional_count
     }
     effectively_provided = call.provided_kwargs | positional_satisfied
     missing = _z3_check_presence([a.name for a in required_args], effectively_provided)

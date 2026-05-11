@@ -159,15 +159,33 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             self.optional_vars: dict[str, int] = {}
             self.guarded: set[str] = set()
 
+        def _visit_scope(self, node):
+            outer_optional = self.optional_vars
+            outer_guarded = self.guarded
+            self.optional_vars = {}
+            self.guarded = set()
+            for child in node.body:
+                self.visit(child)
+            self.optional_vars = outer_optional
+            self.guarded = outer_guarded
+
+        def visit_FunctionDef(self, node):
+            self._visit_scope(node)
+
+        def visit_AsyncFunctionDef(self, node):
+            self._visit_scope(node)
+
         def visit_Assign(self, node):
-            if (
-                len(node.targets) == 1
-                and isinstance(node.targets[0], _ast.Name)
-                and isinstance(node.value, _ast.Call)
-                and isinstance(node.value.func, _ast.Attribute)
-                and node.value.func.attr in _OPTIONAL_RETURNING
-            ):
-                self.optional_vars[node.targets[0].id] = node.lineno
+            targets = [target for target in node.targets if isinstance(target, _ast.Name)]
+            for target in targets:
+                self.guarded.discard(target.id)
+                self.optional_vars.pop(target.id, None)
+                if (
+                    isinstance(node.value, _ast.Call)
+                    and isinstance(node.value.func, _ast.Attribute)
+                    and node.value.func.attr in _OPTIONAL_RETURNING
+                ):
+                    self.optional_vars[target.id] = node.lineno
             self.generic_visit(node)
 
         def visit_If(self, node):

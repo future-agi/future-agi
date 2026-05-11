@@ -48,11 +48,27 @@ def scan_branch(pr: dict, worktree_base: Path) -> dict:
             env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
             capture_output=True, text=True, timeout=120,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            return {
+                "number": num,
+                "branch": branch,
+                "title": pr["title"],
+                "violations": [],
+                "error": detail or f"pact exited with status {result.returncode}",
+            }
 
         try:
             violations = json.loads(result.stdout) if result.stdout.strip() else []
-        except json.JSONDecodeError:
-            violations = []
+        except json.JSONDecodeError as exc:
+            detail = (result.stderr or result.stdout or "").strip()
+            return {
+                "number": num,
+                "branch": branch,
+                "title": pr["title"],
+                "violations": [],
+                "error": f"invalid pact JSON: {detail or exc}",
+            }
 
         return {
             "number": num,

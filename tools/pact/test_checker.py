@@ -7,6 +7,7 @@ which is what cli.py actually calls.
 """
 
 import textwrap
+import subprocess
 from pathlib import Path
 
 from .checker import check_codebase
@@ -190,6 +191,33 @@ def test_kwonly_required_arg_flagged(tmp_path):
     assert "role" in kwonly_v[0].missing
 
 
+def test_encoder_kwonly_arg_not_satisfied_by_extra_positional():
+    from .encoder import check_function_call
+    from .extractor import ArgConstraint, CallSite, FunctionManifest
+
+    func = FunctionManifest(
+        name="create_user",
+        file="lib.py",
+        line=1,
+        module_path="lib",
+        args=[
+            ArgConstraint(name="name", required=True),
+            ArgConstraint(name="role", required=True, kwonly=True),
+        ],
+    )
+    call = CallSite(
+        callee_name="create_user",
+        file="usage.py",
+        line=4,
+        positional_count=2,
+    )
+
+    violation = check_function_call(call, func)
+
+    assert violation is not None
+    assert violation.missing == ["role"]
+
+
 # ---------------------------------------------------------------------------
 # bare_except mode
 # ---------------------------------------------------------------------------
@@ -346,3 +374,128 @@ def test_profile_save_without_update_fields_flagged(tmp_path):
     violations = check_codebase(tmp_path)
     save_v = [v for v in violations if v.context == "save_without_update_fields"]
     assert save_v, "profile.save() is a model save, not a safe file receiver"
+
+
+# ---------------------------------------------------------------------------
+# optional_dereference mode
+# ---------------------------------------------------------------------------
+
+
+def test_optional_deref_reassignment_clears_prior_guard(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(users):
+            user = users.first()
+            if user is not None:
+                user.email
+            user = users.first()
+            return user.name
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "user.name"
+    ]
+    assert optional_v, "new optional assignment must not inherit an earlier guard"
+
+
+def test_optional_deref_guard_does_not_cross_function_scope(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def guarded(users):
+            user = users.first()
+            if user is not None:
+                return user.email
+
+        def unguarded(users):
+            user = users.first()
+            return user.email
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "user.email"
+    ]
+    assert optional_v, "optional guards are lexical to their function scope"
+
+
+# ---------------------------------------------------------------------------
+# graph and scanner failure contracts
+# ---------------------------------------------------------------------------
+
+
+def test_call_sites_to_missing_node_is_empty():
+    from .graph import build_call_graph
+
+    graph = build_call_graph([], [])
+
+    assert graph.call_sites_to("missing") == []
+
+
+def test_cli_diff_failure_exits_nonzero(monkeypatch, tmp_path, capsys):
+    from . import cli
+
+    def fail_diff(base, cwd):
+        raise cli.DiffResolutionError("base branch unavailable")
+
+    monkeypatch.setattr(cli, "_changed_files_on_branch", fail_diff)
+
+    exit_code = cli.main(["--diff", "main", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "base branch unavailable" in captured.err
+
+
+def test_scan_prs_reports_pact_cli_failure(monkeypatch, tmp_path):
+    from . import scan_prs
+
+    def fake_run(args, **kwargs):
+        if args[:3] == ["git", "worktree", "add"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:3] == ["git", "worktree", "remove"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 2, "not json", "diff failed")
+
+    monkeypatch.setattr(scan_prs.subprocess, "run", fake_run)
+
+    result = scan_prs.scan_branch(
+        {"number": 381, "headRefName": "feature", "title": "Fix pact"},
+        tmp_path,
+    )
+
+    assert result["violations"] == []
+    assert result["error"] == "diff failed"
+
+
+def test_scan_prs_reports_invalid_json(monkeypatch, tmp_path):
+    from . import scan_prs
+
+    def fake_run(args, **kwargs):
+        if args[:3] == ["git", "worktree", "add"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:3] == ["git", "worktree", "remove"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "not json", "")
+
+    monkeypatch.setattr(scan_prs.subprocess, "run", fake_run)
+
+    result = scan_prs.scan_branch(
+        {"number": 381, "headRefName": "feature", "title": "Fix pact"},
+        tmp_path,
+    )
+
+    assert result["violations"] == []
+    assert result["error"].startswith("invalid pact JSON:")

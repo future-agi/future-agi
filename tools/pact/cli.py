@@ -9,6 +9,10 @@ from .checker import check_codebase
 from .extractor import extract_from_codebase
 
 
+class DiffResolutionError(RuntimeError):
+    """Raised when diff-scoped analysis cannot resolve the changed file set."""
+
+
 def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
     """Return absolute paths of files changed vs base branch."""
     import subprocess
@@ -29,8 +33,11 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
             for p in result.stdout.splitlines()
             if p.strip().endswith(".py")
         }
-    except Exception:
-        return set()
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        detail = stderr or stdout or str(exc)
+        raise DiffResolutionError(detail) from exc
 
 
 def main(argv=None) -> int:
@@ -74,7 +81,11 @@ def main(argv=None) -> int:
     violations = check_codebase(root, _extracted=extracted)
 
     if args.diff is not None:
-        changed = _changed_files_on_branch(args.diff, cwd=root)
+        try:
+            changed = _changed_files_on_branch(args.diff, cwd=root)
+        except DiffResolutionError as exc:
+            print(f"error: pact --diff failed: {exc}", file=sys.stderr)
+            return 2
         violations = [v for v in violations if v.file in changed]
         if args.stats:
             print(f"files changed vs {args.diff}: {len(changed)}")
