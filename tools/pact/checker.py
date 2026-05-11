@@ -52,10 +52,14 @@ def check_codebase(
     model_index: dict[str, ModelManifest] = {m.name: m for m in models}
     func_index: dict[str, FunctionManifest] = {f.name: f for f in functions}
 
+    seen: set[tuple] = set()
     violations: list[Violation] = []
     for call in call_sites:
         for mode in modes:
             for evidence in mode.check(call, model_index, func_index):
-                violations.append(_to_violation(evidence))
+                key = (evidence.file, evidence.line, evidence.mode_name, evidence.call)
+                if key not in seen:
+                    seen.add(key)
+                    violations.append(_to_violation(evidence))
 
     return violations

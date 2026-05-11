@@ -13,6 +13,7 @@ Inspired by ~/src/z3_spelunking/formal_failure_analysis.py.
 from __future__ import annotations
 
 import ast as pyast
+import functools
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -127,6 +128,7 @@ _OPTIONAL_SOURCES = frozenset({
 _OPTIONAL_RETURNING = frozenset({"first", "last", "get_or_none", "one_or_none"})
 _SAFE_CHECKS = frozenset({"is None", "is not None", "if not", "if "})
 
+@functools.lru_cache(maxsize=None)
 def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
     """
     File-level scan: find variables assigned from .first()/.last() etc
