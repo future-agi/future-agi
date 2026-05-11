@@ -9,8 +9,6 @@ import textwrap
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from .z3_engine import PactEngine
 
 
