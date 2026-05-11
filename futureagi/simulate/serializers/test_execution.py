@@ -493,14 +493,35 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "\n".join(assistant_lines),
         )
 
-    def _build_voice_transcript_text(self, obj):
+    def _build_voice_transcripts(self, obj):
+        """Return (transcript, user, assistant) flat strings for a voice sim.
+
+        Mirrors the chat-sim split shape: combined dialogue plus per-role
+        joins keyed off the normalised speaker_role values written to
+        CallTranscript ("user" = simulator, "assistant" = tested agent).
+        """
         if not hasattr(obj, "transcripts"):
-            return ""
+            return "", "", ""
         rows = obj.transcripts.exclude(
             speaker_role=CallTranscript.SpeakerRole.UNKNOWN
         ).order_by("start_time_ms")
-        lines = [f"{r.speaker_role}: {r.content}" for r in rows if (r.content or "").strip()]
-        return "\n".join(lines)
+        full_lines = []
+        user_lines = []
+        assistant_lines = []
+        for r in rows:
+            content = (r.content or "").strip()
+            if not content:
+                continue
+            full_lines.append(f"{r.speaker_role}: {content}")
+            if r.speaker_role == CallTranscript.SpeakerRole.USER:
+                user_lines.append(content)
+            elif r.speaker_role == CallTranscript.SpeakerRole.ASSISTANT:
+                assistant_lines.append(content)
+        return (
+            "\n".join(full_lines),
+            "\n".join(user_lines),
+            "\n".join(assistant_lines),
+        )
 
     def get_transcript_text(self, obj):
         if not self.context.get("detail_mode", True):
@@ -508,21 +529,23 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         simulation_call_type = getattr(obj, "simulation_call_type", None)
         if simulation_call_type == CallExecution.SimulationCallType.TEXT:
             return self._build_chat_transcripts(obj)[0]
-        return self._build_voice_transcript_text(obj)
+        return self._build_voice_transcripts(obj)[0]
 
     def get_user_chat_transcript(self, obj):
         if not self.context.get("detail_mode", True):
             return ""
-        if getattr(obj, "simulation_call_type", None) != CallExecution.SimulationCallType.TEXT:
-            return ""
-        return self._build_chat_transcripts(obj)[1]
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type == CallExecution.SimulationCallType.TEXT:
+            return self._build_chat_transcripts(obj)[1]
+        return self._build_voice_transcripts(obj)[1]
 
     def get_assistant_chat_transcript(self, obj):
         if not self.context.get("detail_mode", True):
             return ""
-        if getattr(obj, "simulation_call_type", None) != CallExecution.SimulationCallType.TEXT:
-            return ""
-        return self._build_chat_transcripts(obj)[2]
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type == CallExecution.SimulationCallType.TEXT:
+            return self._build_chat_transcripts(obj)[2]
+        return self._build_voice_transcripts(obj)[2]
 
     def get_response_time(self, obj):
         """Convert response_time_ms to seconds"""
