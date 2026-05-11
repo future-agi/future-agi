@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .checker import check_codebase
+from .checker import check_codebase, check_codebase_incremental
 from .extractor import extract_from_codebase
 from .refactor import suggest_refactors
 from .visualize import (
@@ -64,6 +64,14 @@ def main(argv=None) -> int:
         help="Only report violations in files changed vs BASE branch (default: main)",
     )
     p.add_argument(
+        "--incremental", metavar="BASE", nargs="?", const="main",
+        help=(
+            "Analyze only the dirty subgraph: files changed vs BASE plus their "
+            "transitive callers (default BASE: main). Faster than --diff because "
+            "unchanged graph nodes are never analyzed."
+        ),
+    )
+    p.add_argument(
         "--suggest", action="store_true",
         help="Suggest safe refactor targets: functions with high violation density and low coupling",
     )
@@ -96,7 +104,23 @@ def main(argv=None) -> int:
     if args.stats:
         print(f"models: {len(models)}  functions: {len(functions)}  call sites: {len(call_sites)}")
 
-    violations = check_codebase(root, _extracted=extracted)
+    incremental_stats: dict = {}
+    if args.incremental is not None:
+        changed = _changed_files_on_branch(args.incremental, cwd=root)
+        violations, incremental_stats = check_codebase_incremental(
+            root, changed, _extracted=extracted,
+        )
+        if args.stats:
+            s = incremental_stats
+            skipped_pct = int(s["skip_ratio"] * 100)
+            print(
+                f"incremental vs {args.incremental}: "
+                f"{s['dirty_files']}/{s['total_files']} files dirty, "
+                f"{s['dirty_call_sites']}/{s['total_call_sites']} call sites analyzed "
+                f"({skipped_pct}% skipped)"
+            )
+    else:
+        violations = check_codebase(root, _extracted=extracted)
 
     if args.diff is not None:
         changed = _changed_files_on_branch(args.diff, cwd=root)

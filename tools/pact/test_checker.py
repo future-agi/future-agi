@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from .checker import check_codebase
+from .checker import check_codebase, check_codebase_incremental
 
 
 def _write_src(tmp_path: Path, filename: str, source: str) -> Path:
@@ -485,3 +485,95 @@ def test_bare_except_no_callsite_flagged(tmp_path):
     violations = check_codebase(tmp_path)
     v = [v for v in violations if v.context == "bare_except"]
     assert v, "bare_except should fire even in file with no call sites"
+
+
+# ---------------------------------------------------------------------------
+# check_codebase_incremental — dirty-set propagation
+# ---------------------------------------------------------------------------
+
+def test_incremental_unchanged_file_not_analyzed(tmp_path):
+    """If models.py is unchanged, violations in its callers are not reported."""
+    models_file = _write_src(tmp_path, "models.py", """
+        from django.db import models
+        class Widget(models.Model):
+            name = models.CharField(max_length=100)
+            color = models.CharField(max_length=50)
+    """)
+    caller_file = _write_src(tmp_path, "views.py", """
+        from models import Widget
+        def create_bad():
+            Widget.objects.create(name="x")  # missing color — required field
+    """)
+    # Only views.py is "changed" — should still catch the violation there
+    violations, stats = check_codebase_incremental(
+        tmp_path, {str(caller_file)}
+    )
+    v = [v for v in violations if v.context == "model_constraint"]
+    assert v, "violation in dirty views.py should be reported"
+    assert stats["dirty_call_sites"] <= stats["total_call_sites"]
+
+
+def test_incremental_callee_change_marks_caller_dirty(tmp_path):
+    """If a callee file changes, its callers must be re-analyzed too."""
+    callee_file = _write_src(tmp_path, "lib.py", """
+        def process(x, required_arg):
+            return x + required_arg
+    """)
+    caller_file = _write_src(tmp_path, "app.py", """
+        from lib import process
+        def run():
+            process(1)  # missing required_arg
+    """)
+    # Only lib.py changed — but app.py calls it, so app.py must be dirty too
+    violations, stats = check_codebase_incremental(
+        tmp_path, {str(callee_file)}
+    )
+    assert stats["dirty_files"] >= 2, (
+        "callee change should propagate dirtiness to caller file"
+    )
+
+
+def test_incremental_unchanged_files_skipped(tmp_path):
+    """Files not reachable from the dirty set are not included in dirty_files."""
+    changed_file = _write_src(tmp_path, "changed.py", """
+        def new_func():
+            pass
+    """)
+    _write_src(tmp_path, "untouched.py", """
+        def old_func():
+            pass
+    """)
+    _, stats = check_codebase_incremental(tmp_path, {str(changed_file)})
+    # dirty_files = 1 (only changed.py); untouched.py is unreachable
+    assert stats["dirty_files"] == 1, (
+        "untouched.py has no connection to changed.py — should stay clean"
+    )
+
+
+def test_incremental_stats_skip_ratio(tmp_path):
+    """skip_ratio should be in [0, 1]."""
+    f = _write_src(tmp_path, "a.py", "x = 1")
+    _, stats = check_codebase_incremental(tmp_path, {str(f)})
+    assert 0.0 <= stats["skip_ratio"] <= 1.0
+
+
+def test_incremental_full_match_when_all_changed(tmp_path):
+    """When all files are dirty, results must match full check_codebase."""
+    _write_src(tmp_path, "models.py", """
+        from django.db import models
+        class Item(models.Model):
+            sku = models.CharField(max_length=50)
+    """)
+    caller = _write_src(tmp_path, "api.py", """
+        from models import Item
+        def make():
+            Item.objects.create()  # missing sku
+    """)
+    all_files = {str(p) for p in tmp_path.iterdir() if p.suffix == ".py"}
+    full = check_codebase(tmp_path)
+    incremental, _ = check_codebase_incremental(tmp_path, all_files)
+    full_keys = {(v.file, v.line, v.context) for v in full}
+    inc_keys = {(v.file, v.line, v.context) for v in incremental}
+    assert full_keys == inc_keys, (
+        "incremental with all files dirty must match full scan"
+    )
