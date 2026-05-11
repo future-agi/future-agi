@@ -411,6 +411,18 @@ const getAverageColumnConfig = (columns, tableRows) => {
   }
 
   for (const [_, cols] of Object.entries(grouping)) {
+    // Ensure evaluation columns come before evaluation_reason so we
+    // pick the result column (which carries averageScore) as cols[0].
+    if (cols.length > 1) {
+      cols.sort((a, b) => {
+        const aType = a.originType || a.origin_type || "";
+        const bType = b.originType || b.origin_type || "";
+        if (aType === "evaluation" && bType !== "evaluation") return -1;
+        if (bType === "evaluation" && aType !== "evaluation") return 1;
+        return 0;
+      });
+    }
+
     if (cols.length === 1) {
       const eachCol = cols[0];
 
