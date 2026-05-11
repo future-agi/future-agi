@@ -23,6 +23,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import { getInitials } from "../annotation-queue-table";
@@ -287,7 +288,11 @@ function AssignedCellRenderer({ data, context }) {
             height: 24,
             fontSize: 12,
             borderStyle: "dashed",
-            "&:hover": canAssign ? { bgcolor: "primary.lighter" } : {},
+            "&:hover": canAssign
+              ? {
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                }
+              : {},
           }}
         />
       )}

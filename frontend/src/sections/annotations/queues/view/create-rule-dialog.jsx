@@ -18,6 +18,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
 import {
@@ -66,6 +67,8 @@ export const TRIGGER_FREQUENCY_OPTIONS = [
   { value: "weekly", label: "Weekly" },
   { value: "monthly", label: "Monthly" },
 ];
+
+const activeFilterButtonBg = (theme) => alpha(theme.palette.primary.main, 0.12);
 
 export const DEFAULT_FILTER = {
   columnId: "",
@@ -666,9 +669,10 @@ function DatasetRuleFilters({
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
-          bgcolor: filters.some((filter) => filter.columnId)
-            ? "primary.lighter"
-            : "transparent",
+          bgcolor: (theme) =>
+            filters.some((filter) => filter.columnId)
+              ? activeFilterButtonBg(theme)
+              : "transparent",
         }}
       >
         <SvgColor
@@ -796,9 +800,10 @@ function TraceRuleFilters({
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
-          bgcolor: filters.some((filter) => filter.columnId)
-            ? "primary.lighter"
-            : "transparent",
+          bgcolor: (theme) =>
+            filters.some((filter) => filter.columnId)
+              ? activeFilterButtonBg(theme)
+              : "transparent",
         }}
       >
         <SvgColor
@@ -894,9 +899,10 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
-          bgcolor: filters.some((filter) => filter.columnId)
-            ? "primary.lighter"
-            : "transparent",
+          bgcolor: (theme) =>
+            filters.some((filter) => filter.columnId)
+              ? activeFilterButtonBg(theme)
+              : "transparent",
         }}
       >
         <SvgColor

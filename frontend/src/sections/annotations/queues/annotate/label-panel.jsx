@@ -22,6 +22,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -474,9 +475,15 @@ const LabelPanel = forwardRef(function LabelPanel(
             onClick={() => setShowShortcuts((p) => !p)}
             sx={{
               color: showShortcuts ? "primary.main" : "text.secondary",
-              bgcolor: showShortcuts ? "primary.lighter" : "transparent",
+              bgcolor: (theme) =>
+                showShortcuts
+                  ? alpha(theme.palette.primary.main, 0.12)
+                  : "transparent",
               "&:hover": {
-                bgcolor: showShortcuts ? "primary.lighter" : "action.hover",
+                bgcolor: (theme) =>
+                  showShortcuts
+                    ? alpha(theme.palette.primary.main, 0.18)
+                    : theme.palette.action.hover,
               },
             }}
           >

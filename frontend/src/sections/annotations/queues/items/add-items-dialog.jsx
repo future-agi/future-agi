@@ -20,6 +20,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import { useAddQueueItems } from "src/api/annotation-queues/annotation-queues";
@@ -1303,7 +1304,10 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -1855,7 +1859,10 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -2424,7 +2431,10 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -2880,7 +2890,10 @@ function SessionSelector({ onSetSelection }) {
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor

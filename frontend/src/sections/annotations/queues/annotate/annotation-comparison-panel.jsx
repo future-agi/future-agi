@@ -14,6 +14,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import AnnotationHistory from "./annotation-history";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
@@ -280,7 +281,10 @@ export default function AnnotationComparisonPanel({
                 sx={{
                   px: 1.5,
                   py: 1,
-                  bgcolor: disagrees ? "warning.lighter" : "background.neutral",
+                  bgcolor: (theme) =>
+                    disagrees
+                      ? alpha(theme.palette.warning.main, 0.16)
+                      : theme.palette.background.neutral,
                 }}
               >
                 <Typography variant="body2" fontWeight={700} sx={{ flex: 1 }}>
