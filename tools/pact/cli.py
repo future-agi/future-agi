@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .checker import check_codebase
 from .extractor import extract_from_codebase
+from .refactor import suggest_refactors
 
 
 def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
@@ -58,6 +59,14 @@ def main(argv=None) -> int:
         "--diff", metavar="BASE", nargs="?", const="main",
         help="Only report violations in files changed vs BASE branch (default: main)",
     )
+    p.add_argument(
+        "--suggest", action="store_true",
+        help="Suggest safe refactor targets: functions with high violation density and low coupling",
+    )
+    p.add_argument(
+        "--suggest-min", type=int, default=1, metavar="N",
+        help="Minimum violations to include in refactor suggestions (default: 1)",
+    )
     args = p.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -96,6 +105,19 @@ def main(argv=None) -> int:
             for v in violations:
                 print(f"  {v}")
             print()
+
+    if args.suggest:
+        suggestions = suggest_refactors(
+            violations, functions, call_sites,
+            min_violations=args.suggest_min,
+        )
+        if suggestions:
+            print(f"\n⚡ pact: {len(suggestions)} refactor suggestion(s)\n")
+            for s in suggestions:
+                print(s.summary())
+                print()
+        else:
+            print("\n✓  pact: no refactor targets above threshold")
 
     return 1 if (violations and args.strict) else 0
 

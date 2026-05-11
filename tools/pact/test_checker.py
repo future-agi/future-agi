@@ -440,3 +440,48 @@ def test_llm_choices_guarded_not_flagged(tmp_path):
     violations = check_codebase(tmp_path)
     v = [v for v in violations if v.context == "llm_response_unguarded"]
     assert not v, "guarded choices access should not be flagged"
+
+
+# ---------------------------------------------------------------------------
+# unvalidated_lookup_chain
+# ---------------------------------------------------------------------------
+
+def test_unvalidated_lookup_chain_flagged(tmp_path):
+    _write_src(tmp_path, "svc.py", """
+        def route(request, registry):
+            handler = registry.get(request.path)
+            if handler:
+                result = handlers[handler]
+                return result
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "unvalidated_lookup_chain"]
+    assert v, "subscript of get() result without membership check should be flagged"
+    assert "handler" in v[0].call
+
+
+def test_unvalidated_lookup_chain_with_guard_not_flagged(tmp_path):
+    _write_src(tmp_path, "svc.py", """
+        def route(request, registry, handlers):
+            handler = registry.get(request.path)
+            if handler and handler in handlers:
+                result = handlers[handler]
+                return result
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "unvalidated_lookup_chain"]
+    assert not v, "guarded lookup chain should not be flagged"
+
+
+def test_bare_except_no_callsite_flagged(tmp_path):
+    """bare_except now has file_check — catches files with no outgoing calls."""
+    _write_src(tmp_path, "handler.py", """
+        def process():
+            try:
+                risky()
+            except:
+                pass
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "bare_except"]
+    assert v, "bare_except should fire even in file with no call sites"

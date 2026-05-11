@@ -325,6 +325,7 @@ BARE_EXCEPT = FailureMode(
         "Makes bugs invisible."
     ),
     check=_check_bare_except,
+    file_check=_scan_file_bare_except,
 )
 
 
@@ -718,6 +719,125 @@ LLM_RESPONSE_UNGUARDED = FailureMode(
 
 
 # ---------------------------------------------------------------------------
+# Failure mode: unvalidated_lookup_chain
+#
+# Detects: a value retrieved via dict.get() is used as a subscript key in a
+# second, different collection without a membership check (x in other_dict).
+#
+# Pattern:
+#   x = mapping.get(key)      # x: Optional[T]
+#   if x:                     # guards None — but NOT "x in other_mapping"
+#       other[x] ...          # cross-index assumption: assumes x is valid in other
+#
+# This fires when the same name appears as:
+#   1. LHS of an assignment whose RHS is a .get() call
+#   2. Used as a subscript index (other[x]) in the same or a subsequent scope
+#   without an intervening `x in other` or `x not in other` check.
+#
+# The bug we found in pact's own refactor.py:
+#   caller = site_key_to_caller.get((v.file, v.line))
+#   if caller:                  # guards None, not "caller in func_by_name"
+#       func_violations[caller].append(v)   # silently drops if caller absent
+# ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=None)
+def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            source = fh.read()
+        tree = pyast.parse(source, filename=path)
+    except SyntaxError:
+        return []
+
+    results: list[FailureEvidence] = []
+
+    class _LookupChainVisitor(pyast.NodeVisitor):
+        def __init__(self):
+            # var_name → line where it was assigned via .get()
+            self._get_vars: dict[str, int] = {}
+            # var_name → set of collections it was membership-checked against
+            self._guarded: dict[str, set[str]] = {}
+
+        def visit_Assign(self, node: pyast.Assign) -> None:
+            # x = something.get(...) or x = d[k] — track .get() assignments
+            if (
+                len(node.targets) == 1
+                and isinstance(node.targets[0], pyast.Name)
+                and isinstance(node.value, pyast.Call)
+                and isinstance(node.value.func, pyast.Attribute)
+                and node.value.func.attr == "get"
+            ):
+                self._get_vars[node.targets[0].id] = node.lineno
+            self.generic_visit(node)
+
+        def visit_Compare(self, node: pyast.Compare) -> None:
+            # x in other_dict — record the guard
+            if (
+                len(node.ops) == 1
+                and isinstance(node.ops[0], (pyast.In, pyast.NotIn))
+                and isinstance(node.left, pyast.Name)
+                and node.left.id in self._get_vars
+            ):
+                for comparator in node.comparators:
+                    if isinstance(comparator, pyast.Name):
+                        self._guarded.setdefault(node.left.id, set()).add(comparator.id)
+            self.generic_visit(node)
+
+        def visit_Subscript(self, node: pyast.Subscript) -> None:
+            # other[x] — check if x was from .get() and not membership-checked
+            if not isinstance(node.slice, pyast.Name):
+                self.generic_visit(node)
+                return
+            var = node.slice.id
+            if var not in self._get_vars:
+                self.generic_visit(node)
+                return
+            # Get the collection being subscripted
+            if not isinstance(node.value, pyast.Name):
+                self.generic_visit(node)
+                return
+            collection = node.value.id
+            guarded_against = self._guarded.get(var, set())
+            if collection not in guarded_against:
+                results.append(FailureEvidence(
+                    mode_name="unvalidated_lookup_chain",
+                    file=path,
+                    line=node.lineno,
+                    call=f"{collection}[{var}]",
+                    message=(
+                        f"'{var}' came from .get() (line {self._get_vars[var]}) "
+                        f"but is used as a key in '{collection}' without "
+                        f"'{var} in {collection}' guard — KeyError if absent"
+                    ),
+                ))
+            self.generic_visit(node)
+
+    visitor = _LookupChainVisitor()
+    visitor.visit(tree)
+    return results
+
+
+def _check_unvalidated_lookup_chain(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    return _scan_file_unvalidated_lookup_chain(call.file)
+
+
+UNVALIDATED_LOOKUP_CHAIN = FailureMode(
+    name="unvalidated_lookup_chain",
+    description=(
+        "A value from dict.get() is used as a subscript key in a second collection "
+        "without a membership check. The None guard doesn't protect against the value "
+        "being absent from the second index."
+    ),
+    check=_check_unvalidated_lookup_chain,
+    file_check=_scan_file_unvalidated_lookup_chain,
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — all active failure modes
 # ---------------------------------------------------------------------------
 
@@ -731,4 +851,5 @@ DEFAULT_MODES: list[FailureMode] = [
     MISSING_AWAIT,
     FORMAT_ARG_MISMATCH,
     LLM_RESPONSE_UNGUARDED,
+    UNVALIDATED_LOOKUP_CHAIN,
 ]
