@@ -122,8 +122,8 @@ EventuallyTerminates ==
 SuccessOnFirstPass ==
     \* If the initial call passes the guardrail, we go directly to done
     \* without incrementing the attempt counter.
-    [](  (state = "idle" /\ passed' = TRUE)
-       => (state' = "done" /\ attempt' = attempt))
+    [][  (state = "idle" /\ passed' = TRUE)
+       => (state' = "done" /\ attempt' = attempt)]_vars
 
 AttemptMonotone ==
     \* attempt only increases.
