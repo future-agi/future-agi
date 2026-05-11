@@ -63,11 +63,6 @@ export async function fetchConnectors() {
   return data;
 }
 
-export async function fetchConnector(id) {
-  const { data } = await axiosInstance.get(endpoints.falconAI.connector(id));
-  return data;
-}
-
 export const falconAIQueryKeys = {
   connector: (id) => ["falcon-ai", "connector", id],
 };
@@ -78,7 +73,9 @@ export function useConnector(id, options = {}) {
   return useQuery({
     queryKey: falconAIQueryKeys.connector(id),
     queryFn: async () => {
-      const data = await fetchConnector(id);
+      const { data } = await axiosInstance.get(
+        endpoints.falconAI.connector(id),
+      );
       return data?.result || data;
     },
     enabled: Boolean(id) && enabled,
