@@ -170,8 +170,8 @@ class CreateCompositeEvalTool(BaseTool):
         # ── 5. Create composite template ──
         try:
             # Infer eval_type from children
-            child_types = list({c.eval_type or "llm" for c in children})
-            composite_eval_type = child_types[0] if len(child_types) == 1 else "llm"
+            child_types = list({c.eval_type or "agent" for c in children})
+            composite_eval_type = child_types[0] if len(child_types) == 1 else "agent"
 
             template = EvalTemplate.objects.create(
                 name=params.name,

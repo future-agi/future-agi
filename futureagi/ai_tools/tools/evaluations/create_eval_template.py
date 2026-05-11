@@ -29,11 +29,14 @@ class CreateEvalTemplateInput(PydanticBaseModel):
         default=None, description="Description of what this evaluation measures"
     )
     eval_type: Literal["llm", "code", "agent"] = Field(
-        default="llm",
+        default="agent",
         description=(
-            "Type of evaluation: 'llm' (LLM-as-a-judge — uses an LLM to evaluate, "
-            "recommended default), 'code' (custom Python/JavaScript code), "
-            "or 'agent' (Falcon AI powered, uses agent loop with tools)."
+            "Type of evaluation. Default 'agent' (recommended for this platform — "
+            "uses an agent loop with tools like web search, knowledge bases, MCP "
+            "connectors, and trace exploration). Use 'llm' (LLM-as-a-judge) only "
+            "if the user explicitly requests a lightweight single-call judge. Use "
+            "'code' only when the user explicitly wants custom Python/JavaScript "
+            "evaluation logic."
         ),
     )
     instructions: Optional[str] = Field(
