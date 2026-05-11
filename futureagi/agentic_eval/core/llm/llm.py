@@ -2116,6 +2116,7 @@ class LLM:
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
+                    drop_params=True,
                 )
             else:
                 response = litellm.completion(
@@ -2123,6 +2124,7 @@ class LLM:
                     api_key=self.api_key,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
+                    drop_params=True,
                 )
 
             self._update_token_usage(response)
