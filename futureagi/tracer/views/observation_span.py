@@ -2956,6 +2956,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             FROM tracer_eval_logger FINAL
             WHERE observation_span_id = %(span_id)s
               AND custom_eval_config_id = %(config_id)s
+              AND target_type = 'span'
               AND _peerdb_is_deleted = 0
               AND (deleted = 0 OR deleted IS NULL)
             LIMIT 1
