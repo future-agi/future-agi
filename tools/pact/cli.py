@@ -14,12 +14,15 @@ from .visualize import (
 )
 
 
+class DiffResolutionError(RuntimeError):
+    """Raised when diff-scoped analysis cannot resolve the changed file set."""
+
+
 def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
     """Return absolute paths of files changed vs base branch."""
     import subprocess
     cwd = cwd or Path(".").resolve()
     try:
-        # Find git root first so paths from `git diff` resolve correctly
         git_root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True, cwd=cwd,
@@ -34,8 +37,11 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
             for p in result.stdout.splitlines()
             if p.strip().endswith(".py")
         }
-    except Exception:
-        return set()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        stderr = (getattr(exc, "stderr", None) or "").strip()
+        stdout = (getattr(exc, "stdout", None) or "").strip()
+        detail = stderr or stdout or str(exc)
+        raise DiffResolutionError(detail) from exc
 
 
 def main(argv=None) -> int:
