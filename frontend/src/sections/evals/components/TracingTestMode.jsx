@@ -45,13 +45,20 @@ import {
   isAudioUrlString,
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
+import { useForm, useWatch } from "react-hook-form";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { JsonValueTree } from "./DatasetTestMode";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
-const ROW_TYPES = ["Span", "Trace", "Session"];
+const ROW_TYPE_OPTIONS = [
+  { value: "Span", label: "Spans", icon: "solar:layers-outline" },
+  { value: "Trace", label: "Traces", icon: "solar:flow-outline" },
+  { value: "Session", label: "Sessions", icon: "solar:chat-line-outline" },
+];
 
 // Hover-tooltip content for the Columns / Value table. Stringifies
 // primitives and JSON-encodes objects, then caps length so a 50k-char
@@ -225,6 +232,11 @@ const TracingTestMode = React.forwardRef(
       compositeAdhocConfig = null,
       // Optional ad-hoc filters merged into the row-list `filters` param.
       localFilters = [],
+      // When true, TracingTestMode owns the filter state internally and
+      // renders a TaskFilterBar above the columns/values table. Used by
+      // TestPlayground (eval detail) where there's no parent form to
+      // wire filters from.
+      hostsFilter = false,
     },
     ref,
   ) => {
@@ -242,6 +254,17 @@ const TracingTestMode = React.forwardRef(
     const [rowType, setRowType] = useState(
       initialRowType ? normalizeRowType(initialRowType) : "Span",
     );
+
+    const internalFilterForm = useForm({ defaultValues: { filters: [] } });
+    const internalFormFilters = useWatch({
+      control: internalFilterForm.control,
+      name: "filters",
+    });
+    const internalApiFilters = useMemo(
+      () => buildApiFilterArray(internalFormFilters),
+      [internalFormFilters],
+    );
+    const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
 
     // Project details fetched per selected project. The list_projects API
     // omits the `source` field, so we hit project-detail to know whether
@@ -401,10 +424,9 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      // Flip loading synchronously so the spinner shows while the fetch
-      // is in flight. Empty-state visibility comes from the render-time
-      // `isPendingNewFetch` comparison, not a `hasFetched` state.
       setLoading(true);
+      let cancelled = false;
+      const fetchKey = `${selectedProjectId}:${rowType}`;
 
       const fetchData = async () => {
         setRows([]);
@@ -415,9 +437,10 @@ const TracingTestMode = React.forwardRef(
                 project_id: selectedProjectId,
                 page: 1,
                 page_size: 50,
-                filters: JSON.stringify(localFilters || []),
+                filters: JSON.stringify(effectiveFilters || []),
               },
             });
+            if (cancelled) return;
             const result = data?.result || data || {};
             const rowsOut = result.results || result.data || result.calls || [];
             setColumns([]);
@@ -432,7 +455,7 @@ const TracingTestMode = React.forwardRef(
             project_id: selectedProjectId,
             page_number: 0,
             page_size: 50,
-            filters: JSON.stringify(localFilters || []),
+            filters: JSON.stringify(effectiveFilters || []),
             interval: "year",
           };
 
@@ -445,9 +468,9 @@ const TracingTestMode = React.forwardRef(
           }
 
           const { data } = await axios.get(endpoint, { params });
+          if (cancelled) return;
           const res = data?.result || {};
 
-          // API returns { config, table, metadata }
           const cols = res.config || [];
           const tableRows = res.table || [];
           const total = res.metadata?.total_rows || tableRows.length;
@@ -457,19 +480,24 @@ const TracingTestMode = React.forwardRef(
           setTotalRows(total);
           setCurrentRowIndex(0);
         } catch {
+          if (cancelled) return;
           setColumns([]);
           setRows([]);
           setTotalRows(0);
         } finally {
-          setLoading(false);
-          setLastFetchedKey(`${selectedProjectId}:${rowType}`);
+          if (!cancelled) {
+            setLoading(false);
+            setLastFetchedKey(fetchKey);
+          }
         }
       };
 
       fetchData();
-      // Stringify so the dep compares by value, not reference.
+      return () => {
+        cancelled = true;
+      };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId, rowType, JSON.stringify(localFilters || [])]);
+    }, [selectedProjectId, rowType, JSON.stringify(effectiveFilters || [])]);
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
@@ -1080,11 +1108,12 @@ const TracingTestMode = React.forwardRef(
               VoiceCall, row type isn't meaningful) */}
         {!rowTypeLocked && !!selectedProjectId && !isVoiceProject && (
           <Box>
-            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Row Type
-              <Typography component="span" sx={{ color: "error.main" }}>
-                *
-              </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+            >
+              Run evaluations on
             </Typography>
             <Tabs
               value={rowType}
@@ -1097,12 +1126,13 @@ const TracingTestMode = React.forwardRef(
                 "& .MuiTabs-scroller": { overflow: "visible !important" },
                 "& .MuiTab-root": {
                   minHeight: 28,
-                  px: 1.5,
+                  px: 1.25,
                   py: 0,
                   mr: "0px !important",
                   textTransform: "none",
                   fontSize: "12px",
                   borderRadius: "6px",
+                  minWidth: "auto",
                 },
                 border: "1px solid",
                 borderColor: "divider",
@@ -1115,33 +1145,66 @@ const TracingTestMode = React.forwardRef(
                     : "background.neutral",
               }}
             >
-              {ROW_TYPES.map((t) => (
+              {ROW_TYPE_OPTIONS.map((t) => (
                 <Tab
-                  key={t}
-                  value={t}
-                  label={t}
+                  key={t.value}
+                  value={t.value}
+                  label={
+                    <Box
+                      sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+                    >
+                      <Iconify icon={t.icon} width={13} />
+                      {t.label}
+                    </Box>
+                  }
                   sx={{
                     bgcolor:
-                      rowType === t
+                      rowType === t.value
                         ? (theme) =>
                             theme.palette.mode === "dark"
                               ? "rgba(255,255,255,0.12)"
                               : "background.paper"
                         : "transparent",
                     boxShadow:
-                      rowType === t
+                      rowType === t.value
                         ? (theme) =>
                             theme.palette.mode === "dark"
                               ? "none"
                               : "0 1px 3px rgba(0,0,0,0.08)"
                         : "none",
                     borderRadius: "6px",
-                    fontWeight: rowType === t ? 600 : 400,
-                    color: rowType === t ? "text.primary" : "text.disabled",
+                    fontWeight: rowType === t.value ? 600 : 400,
+                    color:
+                      rowType === t.value ? "text.primary" : "text.disabled",
                   }}
                 />
               ))}
             </Tabs>
+          </Box>
+        )}
+
+        {hostsFilter && !!selectedProjectId && (
+          <Box>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+            >
+              Narrow down which{" "}
+              {rowType === "Trace"
+                ? "traces"
+                : rowType === "Session"
+                  ? "sessions"
+                  : rowType === "VoiceCall"
+                    ? "voice calls"
+                    : "spans"}{" "}
+              to preview
+            </Typography>
+            <TaskFilterBar
+              control={internalFilterForm.control}
+              setValue={internalFilterForm.setValue}
+              projectId={selectedProjectId}
+            />
           </Box>
         )}
 
