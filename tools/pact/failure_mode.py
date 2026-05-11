@@ -60,6 +60,12 @@ class FailureMode:
     check:
         Callable(call_site, models, functions) → list[FailureEvidence].
         Pure function — no side effects. Called once per call site.
+    file_check:
+        Optional Callable(file_path) → list[FailureEvidence].
+        File-level scan independent of call sites. Used for modes that need
+        to catch patterns in files that may have no outgoing calls (e.g. a
+        module that only defines functions with mutable defaults).
+        Results are deduplicated with `check` results in check_codebase().
     """
     name: str
     description: str
@@ -67,6 +73,7 @@ class FailureMode:
         [CallSite, dict[str, ModelManifest], dict[str, FunctionManifest]],
         list[FailureEvidence],
     ]
+    file_check: Optional[Callable[[str], list[FailureEvidence]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +332,7 @@ BARE_EXCEPT = FailureMode(
 # Django model .save() without update_fields re-writes every column,
 # clobbering concurrent partial updates.
 
-_SAFE_SAVE_SUFFIXES = ("form", "serializer", "fs", "storage", "file")
+_SAFE_SAVE_RECEIVER_KINDS = frozenset({"form", "serializer", "fs", "storage", "file"})
 
 
 def _check_save_without_update_fields(
@@ -337,10 +344,12 @@ def _check_save_without_update_fields(
         return []
     if "update_fields" in call.provided_kwargs:
         return []
-    # Skip form/serializer/storage saves — intentional full saves.
-    # Match on suffix so compound names like `image_dataset_serializer` match.
+    # Split on `_` and check the last component: `user_form` → `form`, `serializer` → `serializer`.
+    # This correctly skips form/serializer/storage saves (intentional full saves)
+    # but `profile.save()` is not misclassified as a file save
+    # (the old `.endswith("file")` check had `'profile'.endswith('file')` == True).
     receiver = call.callee_name.rsplit(".", 1)[0].split(".")[-1].lower()
-    if any(receiver.endswith(safe) for safe in _SAFE_SAVE_SUFFIXES):
+    if receiver.rsplit("_", 1)[-1] in _SAFE_SAVE_RECEIVER_KINDS:
         return []
     return [FailureEvidence(
         mode_name="save_without_update_fields",
@@ -364,6 +373,350 @@ SAVE_WITHOUT_UPDATE_FIELDS = FailureMode(
 )
 
 
+# --- 6. Mutable default argument -------------------------------------------
+# def f(x=[]) — the list is shared across every call. Mutations persist silently.
+
+@functools.lru_cache(maxsize=None)
+def _scan_file_mutable_defaults(path: str) -> list[FailureEvidence]:
+    """File-level scan for mutable (list/dict/set) default arguments."""
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    try:
+        source = _Path(path).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(source, filename=path)
+    except (SyntaxError, OSError):
+        return []
+
+    evidence = []
+    _MUTABLE = (_ast.List, _ast.Dict, _ast.Set)
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        for default in node.args.defaults:
+            if isinstance(default, _MUTABLE):
+                kind = type(default).__name__.lower()
+                evidence.append(FailureEvidence(
+                    mode_name="mutable_default_arg",
+                    file=path,
+                    line=default.lineno,
+                    call=f"def {node.name}",
+                    message=(
+                        f"mutable {kind} default in '{node.name}' — "
+                        "shared across all calls; use None and allocate inside the function"
+                    ),
+                ))
+        for kw_default in node.args.kw_defaults:
+            if kw_default is not None and isinstance(kw_default, _MUTABLE):
+                kind = type(kw_default).__name__.lower()
+                evidence.append(FailureEvidence(
+                    mode_name="mutable_default_arg",
+                    file=path,
+                    line=kw_default.lineno,
+                    call=f"def {node.name}",
+                    message=(
+                        f"mutable {kind} keyword default in '{node.name}' — "
+                        "shared across all calls; use None and allocate inside the function"
+                    ),
+                ))
+    return evidence
+
+
+def _check_mutable_defaults(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    return _scan_file_mutable_defaults(call.file)
+
+
+MUTABLE_DEFAULT_ARG = FailureMode(
+    name="mutable_default_arg",
+    description=(
+        "Function defined with a mutable default argument (list, dict, or set). "
+        "The same object is shared across all calls — mutations persist between invocations."
+    ),
+    check=_check_mutable_defaults,
+    file_check=_scan_file_mutable_defaults,
+)
+
+
+# --- 7. Missing await -------------------------------------------------------
+# async def fetch(): ...
+# result = fetch()     # creates a coroutine object; never runs
+
+@functools.lru_cache(maxsize=None)
+def _scan_file_missing_await(path: str) -> list[FailureEvidence]:
+    """File-level scan for calls to async functions missing `await`."""
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    try:
+        source = _Path(path).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(source, filename=path)
+    except (SyntaxError, OSError):
+        return []
+
+    async_funcs: set[str] = {
+        node.name
+        for node in _ast.walk(tree)
+        if isinstance(node, _ast.AsyncFunctionDef)
+    }
+    if not async_funcs:
+        return []
+
+    evidence = []
+
+    class _Visitor(_ast.NodeVisitor):
+        def __init__(self):
+            self._in_await = False
+
+        def visit_Await(self, node):
+            old = self._in_await
+            self._in_await = True
+            self.generic_visit(node)
+            self._in_await = old
+
+        def visit_Call(self, node):
+            if not self._in_await:
+                name = None
+                if isinstance(node.func, _ast.Name):
+                    name = node.func.id
+                elif isinstance(node.func, _ast.Attribute):
+                    name = node.func.attr
+                if name and name in async_funcs:
+                    evidence.append(FailureEvidence(
+                        mode_name="missing_await",
+                        file=path,
+                        line=node.lineno,
+                        call=name,
+                        message=(
+                            f"coroutine '{name}' called without await — "
+                            "returns a coroutine object that is immediately discarded; "
+                            "the function body never runs"
+                        ),
+                    ))
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return evidence
+
+
+def _check_missing_await(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    return _scan_file_missing_await(call.file)
+
+
+MISSING_AWAIT = FailureMode(
+    name="missing_await",
+    description=(
+        "Async function called without `await`. "
+        "Creates a coroutine object that is silently discarded — the function never executes."
+    ),
+    check=_check_missing_await,
+    file_check=_scan_file_missing_await,
+)
+
+
+# --- 8. String format argument mismatch ------------------------------------
+# "{} {}".format(x)  — 2 placeholders, 1 arg → IndexError at runtime.
+# Z3 verifies: placeholder_count(fmt) == positional_args OR named args match.
+
+@functools.lru_cache(maxsize=None)
+def _scan_file_format_mismatch(path: str) -> list[FailureEvidence]:
+    """File-level scan for .format() calls with mismatched placeholder/arg count."""
+    import ast as _ast
+    import re as _re
+    from pathlib import Path as _Path
+
+    try:
+        source = _Path(path).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(source, filename=path)
+    except (SyntaxError, OSError):
+        return []
+
+    evidence = []
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        if not (isinstance(node.func, _ast.Attribute) and node.func.attr == "format"):
+            continue
+        fmt_node = node.func.value
+        if not isinstance(fmt_node, _ast.Constant) or not isinstance(fmt_node.value, str):
+            continue
+
+        # Skip dynamic calls: *args or **kwargs splice in unknown counts
+        if any(isinstance(a, _ast.Starred) for a in node.args):
+            continue
+        if any(kw.arg is None for kw in node.keywords):
+            continue
+
+        fmt_str = fmt_node.value
+        auto_count = len(_re.findall(r'\{\}', fmt_str))
+        indexed = {int(m) for m in _re.findall(r'\{(\d+)\}', fmt_str)}
+        named = set(_re.findall(r'\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_]\w*)*)\}', fmt_str))
+
+        positional = len(node.args)
+        kw_keys = {kw.arg for kw in node.keywords if kw.arg}
+
+        if auto_count > 0 and positional < auto_count:
+            evidence.append(FailureEvidence(
+                mode_name="format_arg_mismatch",
+                file=path,
+                line=node.lineno,
+                call="str.format()",
+                message=(
+                    f"format string has {auto_count} positional {{}} placeholder(s) "
+                    f"but only {positional} argument(s) provided"
+                ),
+            ))
+        if indexed:
+            max_idx = max(indexed)
+            if positional <= max_idx:
+                evidence.append(FailureEvidence(
+                    mode_name="format_arg_mismatch",
+                    file=path,
+                    line=node.lineno,
+                    call="str.format()",
+                    message=(
+                        f"format string references index {{{max_idx}}} "
+                        f"but only {positional} positional argument(s) provided"
+                    ),
+                ))
+        missing_names = named - kw_keys
+        if missing_names:
+            evidence.append(FailureEvidence(
+                mode_name="format_arg_mismatch",
+                file=path,
+                line=node.lineno,
+                call="str.format()",
+                message=(
+                    f"format string references name(s) {sorted(missing_names)} "
+                    "not provided as keyword arguments"
+                ),
+            ))
+    return evidence
+
+
+def _check_format_mismatch(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    return _scan_file_format_mismatch(call.file)
+
+
+FORMAT_ARG_MISMATCH = FailureMode(
+    name="format_arg_mismatch",
+    description=(
+        "str.format() called with wrong number of arguments. "
+        "Raises IndexError (positional) or KeyError (named) at runtime."
+    ),
+    check=_check_format_mismatch,
+    file_check=_scan_file_format_mismatch,
+)
+
+
+# --- 9. LLM response unguarded index access --------------------------------
+# response.choices[0].message.content — IndexError when the API returns 0 choices.
+# Affects OpenAI, Anthropic (content[0]), Cohere, and any choices-style response.
+
+_LLM_RESPONSE_SOURCES = frozenset({
+    "create", "complete", "generate", "invoke", "chat",
+    "completions", "messages",
+})
+_LLM_RESPONSE_ATTRS = frozenset({"choices", "content", "outputs", "candidates"})
+
+
+@functools.lru_cache(maxsize=None)
+def _scan_file_llm_response_unguarded(path: str) -> list[FailureEvidence]:
+    """File-level scan for unguarded [0] index on LLM response list attributes."""
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    try:
+        source = _Path(path).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(source, filename=path)
+    except (SyntaxError, OSError):
+        return []
+
+    # Collect variables assigned from LLM-style calls
+    llm_vars: dict[str, int] = {}  # var_name → line
+    guarded: set[str] = set()
+
+    class _Visitor(_ast.NodeVisitor):
+        def visit_Assign(self, node):
+            if (len(node.targets) == 1 and isinstance(node.targets[0], _ast.Name)):
+                val = node.value
+                if isinstance(val, _ast.Call):
+                    func = val.func
+                    attr = func.attr if isinstance(func, _ast.Attribute) else (
+                        func.id if isinstance(func, _ast.Name) else None
+                    )
+                    if attr and attr in _LLM_RESPONSE_SOURCES:
+                        llm_vars[node.targets[0].id] = node.lineno
+            self.generic_visit(node)
+
+        def visit_If(self, node):
+            src = _ast.unparse(node.test) if hasattr(_ast, "unparse") else ""
+            for var in list(llm_vars):
+                if var in src:
+                    guarded.add(var)
+            self.generic_visit(node)
+
+        def visit_Subscript(self, node):
+            # Detect: llm_var.choices[0] or llm_var.content[0] etc.
+            if not isinstance(node.slice, _ast.Constant) or node.slice.value != 0:
+                self.generic_visit(node)
+                return
+            obj = node.value
+            if not (isinstance(obj, _ast.Attribute) and obj.attr in _LLM_RESPONSE_ATTRS):
+                self.generic_visit(node)
+                return
+            root = obj.value
+            var_name = root.id if isinstance(root, _ast.Name) else None
+            if var_name and var_name in llm_vars and var_name not in guarded:
+                evidence.append(FailureEvidence(
+                    mode_name="llm_response_unguarded",
+                    file=path,
+                    line=node.lineno,
+                    call=f"{var_name}.{obj.attr}[0]",
+                    message=(
+                        f"'{var_name}.{obj.attr}[0]' without a length/None check — "
+                        "LLM APIs can return empty lists on error, content filtering, or streaming edge cases"
+                    ),
+                ))
+            self.generic_visit(node)
+
+    evidence: list[FailureEvidence] = []
+    _Visitor().visit(tree)
+    return evidence
+
+
+def _check_llm_response_unguarded(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    return _scan_file_llm_response_unguarded(call.file)
+
+
+LLM_RESPONSE_UNGUARDED = FailureMode(
+    name="llm_response_unguarded",
+    description=(
+        "Unguarded index-0 access on an LLM response list (choices, content, outputs). "
+        "Raises IndexError when the API returns an empty list on error or content filtering."
+    ),
+    check=_check_llm_response_unguarded,
+    file_check=_scan_file_llm_response_unguarded,
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — all active failure modes
 # ---------------------------------------------------------------------------
@@ -374,4 +727,8 @@ DEFAULT_MODES: list[FailureMode] = [
     OPTIONAL_DEREF,
     BARE_EXCEPT,
     SAVE_WITHOUT_UPDATE_FIELDS,
+    MUTABLE_DEFAULT_ARG,
+    MISSING_AWAIT,
+    FORMAT_ARG_MISMATCH,
+    LLM_RESPONSE_UNGUARDED,
 ]

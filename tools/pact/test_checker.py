@@ -233,3 +233,210 @@ def test_form_save_not_flagged(tmp_path):
     violations = check_codebase(tmp_path)
     save_v = [v for v in violations if v.context == "save_without_update_fields"]
     assert not save_v, "form.save() should not be flagged"
+
+
+def test_compound_serializer_save_not_flagged(tmp_path):
+    _write_src(tmp_path, "views.py", """
+        def update(request, pk):
+            user_serializer = UserSerializer(data=request.data)
+            if user_serializer.is_valid():
+                user_serializer.save()
+    """)
+    violations = check_codebase(tmp_path)
+    save_v = [v for v in violations if v.context == "save_without_update_fields"]
+    assert not save_v, "compound *_serializer.save() should not be flagged"
+
+
+def test_profile_save_is_flagged(tmp_path):
+    """'profile'.endswith('file') is True — must NOT be whitelisted by the suffix check."""
+    _write_src(tmp_path, "views.py", """
+        def update_profile(user, name):
+            profile = user.profile
+            profile.name = name
+            profile.save()
+    """)
+    violations = check_codebase(tmp_path)
+    save_v = [v for v in violations if v.context == "save_without_update_fields"]
+    assert save_v, "profile.save() should be flagged — 'profile' ends with 'file' but is not a file object"
+
+
+# ---------------------------------------------------------------------------
+# mutable_default_arg mode
+# ---------------------------------------------------------------------------
+
+def test_list_default_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def append_item(item, items=[]):
+            items.append(item)
+            return items
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "mutable_default_arg"]
+    assert v, "list default should be flagged"
+    assert any("list" in m for m in v[0].missing)
+
+
+def test_dict_default_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def update_cache(key, cache={}):
+            cache[key] = True
+            return cache
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "mutable_default_arg"]
+    assert v, "dict default should be flagged"
+    assert any("dict" in m for m in v[0].missing)
+
+
+def test_none_default_not_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def append_item(item, items=None):
+            if items is None:
+                items = []
+            items.append(item)
+            return items
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "mutable_default_arg"]
+    assert not v, "None default is the correct pattern — should not be flagged"
+
+
+def test_immutable_default_not_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def greet(name="world", count=0, flag=True):
+            return f"Hello {name}"
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "mutable_default_arg"]
+    assert not v, "str/int/bool defaults should not be flagged"
+
+
+# ---------------------------------------------------------------------------
+# missing_await mode
+# ---------------------------------------------------------------------------
+
+def test_missing_await_flagged(tmp_path):
+    _write_src(tmp_path, "tasks.py", """
+        import asyncio
+
+        async def fetch_data(url):
+            return url
+
+        def start():
+            fetch_data("http://example.com")  # missing await
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "missing_await"]
+    assert v, "unawaited coroutine call should be flagged"
+    assert v[0].call == "fetch_data"
+
+
+def test_awaited_call_not_flagged(tmp_path):
+    _write_src(tmp_path, "tasks.py", """
+        async def fetch_data(url):
+            return url
+
+        async def start():
+            result = await fetch_data("http://example.com")
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "missing_await"]
+    assert not v, "properly awaited call should not be flagged"
+
+
+def test_sync_function_not_flagged_as_missing_await(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def compute(x):
+            return x * 2
+
+        def run():
+            result = compute(5)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "missing_await"]
+    assert not v, "sync function call should not be flagged as missing await"
+
+
+# ---------------------------------------------------------------------------
+# format_arg_mismatch mode
+# ---------------------------------------------------------------------------
+
+def test_positional_format_mismatch_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def greet(name):
+            msg = "{} {} {}".format(name)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "format_arg_mismatch"]
+    assert v, "too few positional args should be flagged"
+    assert any("3" in m and "1" in m for m in v[0].missing)
+
+
+def test_named_format_missing_kwarg_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def greet():
+            msg = "Hello {name}, you are {age} years old".format(name="Alice")
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "format_arg_mismatch"]
+    assert v, "missing named kwarg should be flagged"
+    assert any("age" in m for m in v[0].missing)
+
+
+def test_correct_format_not_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def greet(name, age):
+            msg = "Hello {}, you are {} years old".format(name, age)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "format_arg_mismatch"]
+    assert not v, "correct positional format should not be flagged"
+
+
+def test_format_with_star_args_not_flagged(tmp_path):
+    _write_src(tmp_path, "lib.py", """
+        def greet(args):
+            msg = "{} {}".format(*args)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "format_arg_mismatch"]
+    assert not v, "format with *args splice cannot be statically counted — should not be flagged"
+
+
+# ---------------------------------------------------------------------------
+# llm_response_unguarded mode
+# ---------------------------------------------------------------------------
+
+def test_llm_choices_unguarded_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        import openai
+
+        def get_reply(prompt):
+            response = openai.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "llm_response_unguarded"]
+    assert v, "unguarded response.choices[0] should be flagged"
+    assert "choices" in v[0].call
+
+
+def test_llm_choices_guarded_not_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        import openai
+
+        def get_reply(prompt):
+            response = openai.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if not response.choices:
+                return None
+            return response.choices[0].message.content
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "llm_response_unguarded"]
+    assert not v, "guarded choices access should not be flagged"
