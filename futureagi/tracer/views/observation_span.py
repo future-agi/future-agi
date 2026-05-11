@@ -21,6 +21,7 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
+    Max,
     OuterRef,
     Q,
     Subquery,
@@ -68,6 +69,11 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    QueryType,
+)
 from tracer.serializers.observation_span import (
     ObservationSpanSerializer,
     SpanExportSerializer,
@@ -2826,18 +2832,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
-        """
-        Get list of distinct span attribute keys for a project.
+        """Distinct span_attributes keys for a project (spans surface).
 
         Query params:
-            filters: JSON string with {"project_id": "<uuid>"}
+            filters: JSON {"project_id": "<uuid>"} (required)
 
         Returns:
-            List of distinct attribute keys found in span_attributes
+            List of attribute key strings.
         """
         try:
-            import time
-
             filters = self.request.query_params.get("filters", "{}")
             if filters:
                 filters = json.loads(filters)
@@ -2846,42 +2849,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 return self._gm.bad_request("project_id is required")
 
-            start_time = time.time()
-            logger.info(
-                f"get_span_attributes_list Start time: {start_time} for project_id: {project_id}"
-            )
-
-            # ClickHouse dispatch
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
-
-            analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                try:
-                    result = analytics.get_span_attribute_keys_ch(str(project_id))
-                    if result:
-                        end_time = time.time()
-                        logger.info(
-                            f"get_span_attributes_list (CH) Time taken: {end_time - start_time}s for project_id: {project_id}"
-                        )
-                        return self._gm.success_response(result)
-                    logger.info(
-                        "CH span attributes empty, falling back to PG for project_id: %s",
-                        project_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH span attributes failed, falling back to PG", error=str(e)
-                    )
-
-            result = SQL_query_handler.get_span_attributes_for_project(project_id)
-
-            end_time = time.time()
-            logger.info(
-                f"get_span_attributes_list Time taken: {end_time - start_time} seconds for project_id: {project_id}"
-            )
+            result = self._get_span_attribute_keys(project_id)
             return self._gm.success_response(result)
 
         except Exception as e:
@@ -2892,40 +2860,22 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
-        """
-        Return the list of attribute paths the EvalPicker should expose for
-        a given ``row_type`` so users can map eval inputs against the right
-        unit of evaluation.
-
-        This is the public attribute-list endpoint — every EvalPicker /
-        FilterRow caller in the frontend hits it (15+ call sites; see
-        ``getEvalAttributeList`` in ``frontend/src/utils/axios.js``).
-        ``get_span_attributes_list`` above is an internal-only helper for
-        the spans-only path; it has no direct FE callers and is invoked
-        only via this method's ``row_type=spans`` delegation. The earlier
-        "DEPRECATED, use get_span_attributes_list instead" comment was
-        misleading — kept this naming for backward compatibility with the
-        15+ FE call sites.
+        """Attribute paths the EvalPicker exposes per row_type.
 
         Query params:
-            filters: JSON string with ``{"project_id": "<uuid>"}`` (required).
-            row_type: one of ``spans`` / ``traces`` / ``sessions``
-                      (default ``spans`` — matches pre-row_type behaviour).
+            filters: JSON {"project_id": "<uuid>"} (required)
+            row_type: spans | traces | sessions (default spans;
+                      voiceCalls aliases to spans)
 
-        Response shapes:
-          - ``spans``: flat list of distinct ``span_attributes`` keys
-            observed in the project. Unchanged from the legacy behaviour.
-          - ``traces``: trace-level model fields (``input``, ``output``,
-            etc.) plus ``spans.<n>.<key>`` paths where ``n`` ranges from
-            0 to (max-spans-per-trace observed in the project − 1) and
-            ``<key>`` is each observed span attribute key.
-          - ``sessions``: session-level model fields plus
-            ``traces.<i>.<trace_field>`` and ``traces.<i>.spans.<j>.<key>``
-            paths sized to the observed maxes.
+        Returns:
+            spans/voiceCalls: distinct span_attributes keys
+            traces:           trace fields + spans.<n>.<key>
+            sessions:         session fields + traces.<i>.<trace_field>
+                              + traces.<i>.spans.<j>.<key>
 
-        Position counts come from a sample of the project's most recent
-        ``_OBSERVED_MAX_SAMPLE_SIZE`` traces / sessions — keeps the
-        enumeration query cheap while capturing the typical maximum.
+        Indexed positions are sized to the project's observed maxes;
+        ordering of ``traces.<i>`` / ``spans.<n>`` slots is decided at
+        resolve time (see ``_resolve_session_path`` / ``_resolve_trace_path``).
         """
         try:
             filters = self.request.query_params.get("filters", "{}")
@@ -2988,24 +2938,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _OBSERVED_MAX_SAMPLE_SIZE = 100
 
     def _get_span_attribute_keys(self, project_id: str) -> list:
-        """Resolve the project's distinct span_attributes keys as bare strings.
+        """Project's distinct span_attributes keys. CH-first, PG fallback.
 
-        Mirrors the dispatch in ``get_span_attributes_list``: ClickHouse
-        first when enabled and reachable, PG fallback otherwise. Reused
-        by the trace + session attribute path builders.
+        Single source for both ``get_span_attributes_list`` (which wraps
+        it in a DRF response) and the trace + session path builders.
 
-        The CH path returns ``[{"key": ..., "type": ...}, ...]`` so the
-        legacy spans picker can render type chips. The path builders
-        here need bare strings — without normalisation we'd f-string a
-        whole dict into the path and produce
-        ``traces.0.spans.0.{'key': '…', 'type': 'text'}`` garbage.
-        Always hand callers strings.
+        CH returns ``[{"key": ..., "type": ...}, ...]`` (spans picker
+        renders type chips); the trace + session path builders need
+        bare strings. The normalization loop below collapses both
+        shapes to ``list[str]`` so callers never see dicts f-stringed
+        into paths like ``traces.0.spans.0.{'key': '...', ...}``.
         """
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-            QueryType,
-        )
-
         raw = None
         analytics = AnalyticsQueryService()
         if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
@@ -3036,14 +2979,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def _max_spans_per_trace(self, project_id: str) -> int:
         """Max span count observed across the project's most recent traces.
 
-        Bounds the indexed positions we expose under ``spans.<n>.<...>``.
-        Sampling the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces keeps
-        the aggregate cheap on large projects while still capturing the
-        typical maximum (a project that ever produced 12-span traces will
-        have done so within its recent history).
+        Bounds the indexed positions exposed under ``spans.<n>.<...>``.
+        Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
+        keep the aggregate cheap on large projects.
         """
-        from django.db.models import Count, Max
-
         sample_trace_ids = Trace.objects.filter(
             project_id=project_id
         ).order_by("-created_at").values_list("id", flat=True)[
@@ -3059,9 +2998,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     def _max_traces_per_session(self, project_id: str) -> int:
         """Max trace count observed across the project's most recent sessions."""
-        from django.db.models import Count, Max
-        from tracer.models.trace_session import TraceSession
-
         sample_session_ids = TraceSession.objects.filter(
             project_id=project_id
         ).order_by("-created_at").values_list("id", flat=True)[
