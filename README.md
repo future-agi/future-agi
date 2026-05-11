@@ -100,16 +100,15 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ## 🚀 Quickstart (60 seconds)
 
-Three ways, picked by how much you want to install:
+Two ways, picked by how much you want to install:
 
 <table width="100%">
 <tr>
-<th width="34%">Cloud (fastest)</th>
-<th width="36%">Self-host (Docker)</th>
-<th width="30%">Self-host (Kubernetes)</th>
+<th width="50%">Cloud (fastest)</th>
+<th width="50%">Self-host (Docker)</th>
 </tr>
 <tr valign="top">
-<td width="34%">
+<td width="50%">
 
 **No install. Free tier.**
 
@@ -123,30 +122,24 @@ pip install ai-evaluation
 <sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
 
 </td>
-<td width="36%">
+<td width="50%">
 
-**One command, full stack.**
+**One command, full stack. Published images, no source build.**
 
 ```bash
+# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-cp futureagi/.env.example futureagi/.env
-docker compose up -d
+./bin/install
+
+# Windows (PowerShell)
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
-Open [http://localhost:3031](http://localhost:3031).
-
-</td>
-<td width="30%">
-
-**Production-grade, HA.**
-
-```bash
-helm repo add futureagi \
-helm install fagi futureagi/future-agi
-```
-
-<sub>Helm chart — v1 in progress. Until then, kubectl manifests in `deploy/`.</sub>
+Open [http://localhost:3000](http://localhost:3000).
+<sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
 
 </td>
 </tr>
@@ -244,7 +237,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 ### 🎛️ Agent Command Center
 OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
 
-<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./futureagi/agentcc-gateway/README.md#-benchmarks)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -277,9 +270,10 @@ Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-
 -->
 | Target | Status | Notes |
 |---|:---:|---|
-|  Docker Compose | ✅ | `docker compose up -d` from a fresh clone |
-|  Kubernetes | ✅ | Plain manifests today; Helm chart v1 in progress |
-|  AWS / GCP / Azure | ✅ | Runs on any container runtime — ECS · Cloud Run · AKS · EKS · GKE |
+|  Docker Compose | ✅ | Published images with `docker compose up -d` from a fresh clone |
+|  Production Compose overlay | ✅ | `./deploy/setup.sh` generates secrets, pins image tags, pulls images, and starts the stack |
+|  Kubernetes / Helm | ⏳ | Official manifests and Helm charts are coming soon |
+|  AWS / GCP / Azure | ✅ | Run Docker Compose on a VM today; managed Kubernetes support is coming soon |
 |  AWS Marketplace | ⏳ | Coming soon |
 |  Air-gapped / on-prem | ✅ | No phone-home — [contact sales](mailto:sales@futureagi.com) |
 
@@ -308,7 +302,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 | Layer | Component | Code |
 |---|---|---|
 |  Edge | **traceAI** — OpenTelemetry instrumentation | [`future-agi/traceAI`](https://github.com/future-agi/traceAI) |
-|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`futureagi/agentcc-gateway/`](./futureagi/agentcc-gateway) |
+|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`agentcc-gateway/`](./agentcc-gateway) |
 |  Platform | **tracer** — OTLP ingest, span graph | [`futureagi/tracer/`](./futureagi/tracer) |
 |  Platform | **agentic_eval** — 50+ metrics, LLM-as-judge | [`futureagi/agentic_eval/`](./futureagi/agentic_eval) |
 |  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
@@ -444,7 +438,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 - [x] Dashboards
 - [x] Access platform via MCP
 - [x] Annotation Queues
-- [x] Command Center (Prism)
+- [x] Command Center
 - [x] Open source Future AGI stack
 - [x] Eval Explanation Output Size Control 
 
