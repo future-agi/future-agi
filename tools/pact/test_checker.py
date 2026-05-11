@@ -679,6 +679,29 @@ def test_optional_deref_condition_access_uses_condition_guard(tmp_path):
     ], "condition-side guarded attribute access must not be reported"
 
 
+def test_optional_deref_bare_attribute_condition_is_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(users):
+            user = users.first()
+            if user.email:
+                return user.email
+            return None
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "user.email"
+    ]
+    assert optional_v, "attribute conditions are unsafe without an explicit object guard"
+
+
 # ---------------------------------------------------------------------------
 # graph and scanner failure contracts
 # ---------------------------------------------------------------------------

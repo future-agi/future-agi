@@ -189,16 +189,42 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             self.generic_visit(node)
 
         def visit_If(self, node):
-            src = _ast.unparse(node.test) if hasattr(_ast, "unparse") else ""
-            guarded_here = {var for var in self.optional_vars if var in src}
             original_guarded = self.guarded
-            self.guarded = original_guarded | guarded_here
-            self.visit(node.test)
+            body_guarded = original_guarded | self._visit_condition(node.test, original_guarded)
+            self.guarded = body_guarded
             for child in node.body:
                 self.visit(child)
             self.guarded = original_guarded
             for child in node.orelse:
                 self.visit(child)
+
+        def _visit_condition(self, node, guarded: set[str]) -> set[str]:
+            current = set(guarded)
+            if isinstance(node, _ast.BoolOp) and isinstance(node.op, _ast.And):
+                for value in node.values:
+                    current |= self._visit_condition(value, current)
+                return current - guarded
+
+            previous = self.guarded
+            self.guarded = current
+            self.visit(node)
+            self.guarded = previous
+            return self._guards_from_condition(node) - guarded
+
+        def _guards_from_condition(self, node) -> set[str]:
+            if isinstance(node, _ast.Name) and node.id in self.optional_vars:
+                return {node.id}
+            if not isinstance(node, _ast.Compare) or len(node.ops) != 1:
+                return set()
+            if not isinstance(node.left, _ast.Name) or node.left.id not in self.optional_vars:
+                return set()
+            if not node.comparators or not isinstance(node.comparators[0], _ast.Constant):
+                return set()
+            if node.comparators[0].value is not None:
+                return set()
+            if isinstance(node.ops[0], _ast.IsNot):
+                return {node.left.id}
+            return set()
 
         def visit_Attribute(self, node):
             # var.something — flag if var is unguarded optional

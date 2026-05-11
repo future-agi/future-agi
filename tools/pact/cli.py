@@ -103,7 +103,7 @@ def main(argv=None) -> int:
             print(f"✓  pact: no constraint violations {label}".rstrip(" "))
         else:
             label = f"(diff vs {args.diff})" if args.diff else ""
-            print(f"✗  pact: {len(violations)} violation(s) {label}\n".rstrip(" "))
+            print(f"✗  pact: {len(violations)} violation(s) {label}".rstrip(" "))
             for v in violations:
                 print(f"  {v}")
             print()
