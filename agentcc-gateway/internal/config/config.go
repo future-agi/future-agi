@@ -889,10 +889,10 @@ func DefaultConfig() *Config {
 			Reflexion: ReflexionConfig{
 				// Enabled intentionally defaults to false — reflexion is an opt-in feature.
 				// Operators enable it by setting guardrails.reflexion.enabled: true in YAML.
-				// MaxAttempts:3 is preserved here so that enabling reflexion in YAML without
-				// an explicit max_attempts gets a sensible default; the handler also
-				// defaults to 3 if MaxAttempts is 0 at runtime.
-				MaxAttempts: 3,
+				// MaxAttempts is left at zero here so that DefaultConfig() is unambiguously
+				// inert: Enabled=false AND MaxAttempts=0 means reflexion is fully off.
+				// When an operator sets enabled:true in YAML without an explicit max_attempts,
+				// the handler falls back to 3 at runtime (see runReflexion in handlers.go).
 			},
 		},
 		Logging: LoggingConfig{

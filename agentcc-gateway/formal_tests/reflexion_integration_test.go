@@ -35,6 +35,11 @@ type ReflexionResult struct {
 	TotalAttempts    int    // number of provider calls made
 	FeedbackInjected int    // feedback messages appended to conversation
 	FinalError       string // non-empty iff Success==false
+	// FeedbackSteps records the cumulative feedback count before each provider call.
+	// Index i holds len(feedback) immediately before attempt i+1's provider.Call().
+	// Used to verify the TLA+ box-action invariant [][Len(feedback') >= Len(feedback)]_feedback
+	// — feedback must never shrink between any two consecutive states.
+	FeedbackSteps []int
 }
 
 // ── Provider interface ────────────────────────────────────────────────────────
@@ -98,8 +103,21 @@ func runReflexion(cfg ReflexionConfig, provider callableProvider) (ReflexionResu
 	}
 
 	var feedback []string // accumulates injected feedback messages
+	var feedbackSteps []int
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Inject feedback BEFORE calling the provider on EVERY attempt.
+		// This mirrors handlers.go runReflexion, which appends the guardrail block
+		// reason as a user-turn message at the top of the loop — pre-call, not post-call.
+		// On attempt 1 the injection carries the initial block reason that triggered
+		// reflexion; on attempt 2+ it carries the reason from the previous attempt's block.
+		feedback = append(feedback, fmt.Sprintf(feedbackTmpl, "content_policy_violation"))
+
+		// Record cumulative feedback length immediately before this provider call.
+		// This snapshot sequence is used by assertInvariants to verify the TLA+
+		// box-action property [][Len(feedback') >= Len(feedback)]_feedback.
+		feedbackSteps = append(feedbackSteps, len(feedback))
+
 		passed, err := provider.Call()
 		if err != nil {
 			return ReflexionResult{}, fmt.Errorf("provider error on attempt %d: %w", attempt, err)
@@ -110,12 +128,8 @@ func runReflexion(cfg ReflexionConfig, provider callableProvider) (ReflexionResu
 				Success:          true,
 				TotalAttempts:    attempt,
 				FeedbackInjected: len(feedback),
+				FeedbackSteps:    feedbackSteps,
 			}, nil
-		}
-
-		// Inject feedback before the next attempt (mirrors rc.Request.Messages append).
-		if attempt < maxAttempts {
-			feedback = append(feedback, fmt.Sprintf(feedbackTmpl, "content_policy_violation"))
 		}
 	}
 
@@ -124,6 +138,7 @@ func runReflexion(cfg ReflexionConfig, provider callableProvider) (ReflexionResu
 		TotalAttempts:    maxAttempts,
 		FeedbackInjected: len(feedback),
 		FinalError:       "content_blocked_after_reflexion",
+		FeedbackSteps:    feedbackSteps,
 	}, nil
 }
 
@@ -161,14 +176,26 @@ func assertInvariants(t *testing.T, result ReflexionResult, cfg ReflexionConfig,
 			label)
 	}
 
-	// FeedbackGrows: injected feedback count is non-negative and ≤ attempts-1
+	// FeedbackGrows: verify the TLA+ box-action formula [][Len(feedback') >= Len(feedback)]_feedback
+	// — feedback must NEVER shrink between any two consecutive states.
+	// Because the production handler (handlers.go runReflexion) injects one feedback message
+	// PRE-CALL on every attempt, FeedbackInjected == TotalAttempts when all attempts are made.
+	// We verify two things:
+	//   1. FeedbackInjected is non-negative (sanity).
+	//   2. Step-by-step monotonicity using FeedbackSteps (the pre-call snapshots) — this is the
+	//      direct translation of the TLA+ box-action formula, not just a final-state check.
 	if result.FeedbackInjected < 0 {
 		t.Errorf("[%s] FeedbackGrows violated: FeedbackInjected=%d < 0",
 			label, result.FeedbackInjected)
 	}
-	if result.TotalAttempts > 0 && result.FeedbackInjected >= result.TotalAttempts {
-		t.Errorf("[%s] FeedbackGrows violated: FeedbackInjected=%d >= TotalAttempts=%d (can't inject on final attempt)",
-			label, result.FeedbackInjected, result.TotalAttempts)
+	// Step-by-step monotonicity: each consecutive pair of FeedbackSteps must be non-decreasing.
+	// This matches [][Len(feedback') >= Len(feedback)]_feedback — checked at each state transition,
+	// not just at the end.
+	for i := 1; i < len(result.FeedbackSteps); i++ {
+		if result.FeedbackSteps[i] < result.FeedbackSteps[i-1] {
+			t.Errorf("[%s] FeedbackGrows (box-action) violated at step %d→%d: feedback shrank from %d to %d",
+				label, i-1, i, result.FeedbackSteps[i-1], result.FeedbackSteps[i])
+		}
 	}
 
 	// provider call count matches reported TotalAttempts
@@ -200,7 +227,7 @@ func TestReflexionDisabledReturnsImmediately(t *testing.T) {
 
 // ── Scenario: pass on first attempt ──────────────────────────────────────────
 
-func TestPassOnFirstAttemptNoFeedback(t *testing.T) {
+func TestPassOnFirstAttemptOneFeedback(t *testing.T) {
 	cfg := ReflexionConfig{Enabled: true, MaxAttempts: 3}
 	provider := NewMockProvider(0) // call 1 passes immediately
 	result, err := runReflexion(cfg, provider)
@@ -215,8 +242,10 @@ func TestPassOnFirstAttemptNoFeedback(t *testing.T) {
 	if result.TotalAttempts != 1 {
 		t.Errorf("expected TotalAttempts=1, got %d", result.TotalAttempts)
 	}
-	if result.FeedbackInjected != 0 {
-		t.Errorf("expected FeedbackInjected=0, got %d", result.FeedbackInjected)
+	// With pre-call injection (mirroring handlers.go), one feedback message is injected
+	// before the provider call even on the first attempt, so FeedbackInjected=1.
+	if result.FeedbackInjected != 1 {
+		t.Errorf("expected FeedbackInjected=1 (pre-call injection on attempt 1), got %d", result.FeedbackInjected)
 	}
 }
 
@@ -250,8 +279,11 @@ func TestBlockNThenPass(t *testing.T) {
 			if result.TotalAttempts != expectedAttempts {
 				t.Errorf("[%s] TotalAttempts=%d, want %d", label, result.TotalAttempts, expectedAttempts)
 			}
-			if result.FeedbackInjected != tc.blockFirst {
-				t.Errorf("[%s] FeedbackInjected=%d, want %d", label, result.FeedbackInjected, tc.blockFirst)
+			// With pre-call injection, one feedback message is injected before every
+			// provider call, so FeedbackInjected == TotalAttempts == blockFirst+1.
+			expectedFeedback := tc.blockFirst + 1
+			if result.FeedbackInjected != expectedFeedback {
+				t.Errorf("[%s] FeedbackInjected=%d, want %d", label, result.FeedbackInjected, expectedFeedback)
 			}
 		})
 	}
@@ -318,9 +350,9 @@ func TestFeedbackAccumulatesMonotonically(t *testing.T) {
 	}
 	assertInvariants(t, result, cfg, provider, "feedback_accumulates")
 
-	// With 4 blocks followed by a pass: 4 feedback messages injected, 5 attempts.
-	if result.FeedbackInjected != 4 {
-		t.Errorf("expected FeedbackInjected=4, got %d", result.FeedbackInjected)
+	// With pre-call injection: one feedback per attempt, so 5 attempts → 5 feedback messages.
+	if result.FeedbackInjected != 5 {
+		t.Errorf("expected FeedbackInjected=5 (pre-call injection on each of 5 attempts), got %d", result.FeedbackInjected)
 	}
 	if result.TotalAttempts != 5 {
 		t.Errorf("expected TotalAttempts=5, got %d", result.TotalAttempts)
