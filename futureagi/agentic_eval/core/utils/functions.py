@@ -2,6 +2,7 @@ import ast
 import base64
 import io
 import json
+import mimetypes
 import os
 import re
 import traceback
@@ -480,6 +481,95 @@ def is_uuid(v) -> bool:
     except (ValueError, AttributeError, TypeError):
         return False
 
+
+# Hosts that user-supplied URLs must never reach from the API server.
+# Pre-checked before any HTTP request to bound the SSRF surface that
+# `_classify_url_type` opens up for billing-classification accuracy.
+_BLOCKED_HOST_PREFIXES = (
+    "localhost",
+    "127.",
+    "10.",
+    "169.254.",
+    "192.168.",
+    "0.0.0.0",
+    "::1",
+    "metadata.google.internal",
+)
+_BLOCKED_HOST_172 = tuple(f"172.{i}." for i in range(16, 32))  # 172.16-31.x.x (RFC1918)
+
+
+def _host_is_blocked(host: str) -> bool:
+    host = (host or "").lower().strip()
+    if not host:
+        return True
+    return host.startswith(_BLOCKED_HOST_PREFIXES) or host.startswith(_BLOCKED_HOST_172)
+
+
+def _classify_url_mime(mime: str) -> str | None:
+    if not mime:
+        return None
+    mime = mime.lower()
+    if mime.startswith("audio/"):
+        return "audio"
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("application/pdf"):
+        return "pdf"
+    if mime.startswith("video/") or mime.startswith("application/"):
+        return "file"
+    return None
+
+
+def _classify_url_type(item: str) -> str:
+    """Classify a URL as audio / image / pdf / file / text for billing.
+
+    Tries extension first (instant, no I/O). Then a bounded HTTP probe with
+    a short timeout to cover paths like FAI's S3 (UUID names, no extension).
+    Private / loopback / metadata hosts are blocked before the probe to
+    contain the SSRF surface this introduces. Any failure falls back to
+    'text' so billing accuracy never blocks the eval from running.
+    """
+    # Cheap extension check first — covers ~95% with zero network.
+    path = urlparse(item).path
+    guessed, _ = mimetypes.guess_type(path)
+    cls = _classify_url_mime(guessed) if guessed else None
+    if cls:
+        return cls
+
+    # Fall back to a bounded probe for extensionless URLs.
+    host = urlparse(item).hostname or ""
+    if _host_is_blocked(host):
+        return "text"
+    try:
+        with requests.get(
+            item,
+            # (connect_timeout, read_timeout) — total wall-clock stays under
+            # ~4s on unreachable hosts so PG never feels frozen.
+            timeout=(2, 2),
+            stream=True,
+            allow_redirects=False,
+            headers={"Range": "bytes=0-511"},
+        ) as response:
+            if response.status_code >= 400:
+                return "file"
+            header_mime = (response.headers.get("Content-Type", "") or "").split(";")[0].strip()
+            cls = _classify_url_mime(header_mime)
+            if cls:
+                return cls
+            # Magic-byte sniff on a small slice — filetype.guess needs ~262 bytes.
+            head_bytes = response.raw.read(512, decode_content=True)
+            kind = filetype.guess(head_bytes) if head_bytes else None
+            if kind:
+                cls = _classify_url_mime(kind.mime)
+                if cls:
+                    return cls
+            return "file"
+    except Exception:
+        # Fetch timed out / connection refused / DNS failed / etc.
+        # Billing defaults to text rather than block the eval.
+        return "text"
+
+
 def detect_input_type(input_item: Any) -> dict:
     """
     Detect the type of input (text, image, audio, file) based on content.
@@ -503,35 +593,7 @@ def detect_input_type(input_item: Any) -> dict:
             # check for URLs first
             if isinstance(item, str) and (item.startswith(('http://', 'https://')) or (urlparse(item).scheme and urlparse(item).netloc)):
                 logger.info(' ----- HANDLING URL First Condition----- ')
-                with requests.get(item, timeout=100) as response:
-                    if response.status_code == 200:
-                        content = response.content
-                        kind = filetype.guess(content)
-                        header_type = response.headers.get('Content-Type', '').lower()
-
-                        if kind is not None:
-                            if kind.mime.startswith('audio/'):
-                                return 'audio'
-                            elif kind.mime.startswith('image/'):
-                                return 'image'
-                            elif kind.mime.startswith('application/pdf'):
-                                return 'pdf'
-                            else:
-                                return 'file'
-                        elif header_type:
-                            if header_type.startswith('audio/'):
-                                return 'audio'
-                            elif header_type.startswith('image/'):
-                                return 'image'
-                            elif header_type.startswith('application/pdf'):
-                                return 'pdf'
-                            else:
-                                return 'file'
-                        logger.info(' ----- KIND IS NONE ----- ')
-                        return None
-                    else:
-                        return 'file'
-                # Handle string representation of dictionary
+                return _classify_url_type(item)
 
             if isinstance(item, str) and item.strip().startswith('{') and item.strip().endswith('}'):
                 logger.info(' ----- HANDLING STRING REPRESENTATION OF DICTIONARY Second Condition ----- ')
