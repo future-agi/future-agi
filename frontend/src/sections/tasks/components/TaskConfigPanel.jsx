@@ -23,6 +23,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { enqueueSnackbar } from "src/components/snackbar";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -118,6 +119,8 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
     evalItem?.evalTemplate?.config?.language ||
     (isCode ? "Python" : null);
 
+  const hasError = !evalItem?.id;
+
   return (
     <Box
       sx={{
@@ -127,13 +130,13 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         p: 1.5,
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: hasError ? "error.main" : "divider",
         bgcolor:
           theme.palette.mode === "dark"
             ? "rgba(255,255,255,0.02)"
             : "rgba(0,0,0,0.01)",
         transition: "border-color 0.15s",
-        "&:hover": { borderColor: "primary.main" },
+        "&:hover": { borderColor: hasError ? "error.main" : "primary.main" },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -205,6 +208,19 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             />
           )}
         </Box>
+        {hasError && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mt: 0.5,
+              fontSize: "11px",
+              color: "error.main",
+            }}
+          >
+            Failed to save — remove and re-add this evaluation.
+          </Typography>
+        )}
         {mappedKeys.length > 0 && (
           <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
             {mappedKeys.slice(0, 4).map((key) => (
@@ -424,8 +440,15 @@ const TaskConfigPanel = ({
             templateId: tplId,
           };
         }
-      } catch {
-        // Fall back to local-only entry — task create will still send it
+      } catch (error) {
+       
+        enqueueSnackbar(
+          error?.response?.data?.result ||
+            error?.response?.data?.error ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
+        throw error;
       }
 
       if (editingIndex !== null) {
@@ -469,8 +492,12 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId =
-      stored.templateId || stored.template_id || stored.eval_template;
+    const tplId =  stored.templateId || stored.template_id || stored.eval_template;
+
+    const savedErrorLocalizer =
+      stored.error_localizer_enabled ?? stored.error_localizer;
+    const existingRunConfig =
+      stored.run_config || stored.config?.run_config || {};
     return {
       ...stored,
       id: tplId,
@@ -478,6 +505,13 @@ const TaskConfigPanel = ({
       templateId: tplId,
       // `stored.id` is always the CustomEvalConfig id (from POST response or API load)
       customEvalConfigId: stored.customEvalConfigId || stored.id,
+      run_config: {
+        ...existingRunConfig,
+        ...(stored.model && { model: stored.model }),
+        ...(savedErrorLocalizer !== undefined && {
+          error_localizer_enabled: savedErrorLocalizer,
+        }),
+      },
     };
   }, [editingIndex, configuredEvals]);
   const resolvedProjectName =

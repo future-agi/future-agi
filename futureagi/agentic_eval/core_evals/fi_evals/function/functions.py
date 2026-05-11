@@ -1706,11 +1706,7 @@ def custom_code_eval(code, language=None, **kwargs):
     Returns:
         dict: {"result": float, "reason": str}
     """
-    code_execution = CodeExecution(code=code)
-
-    if language:
-        code_execution.language = language
-
+    code_execution = CodeExecution(code=code, language=language)
     result = code_execution.execute(kwargs)
 
     status = result.get("status")
