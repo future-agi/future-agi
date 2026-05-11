@@ -109,6 +109,7 @@ const DetailsEdit = ({
   });
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
   const [configureEvalOpen, setConfigureEvalOpen] = useState(false);
   const [, setSelectedEval] = useState(null);
@@ -201,10 +202,11 @@ const DetailsEdit = ({
   }, [configuredEvalList]);
 
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", filters],
+    queryKey: ["eval-attributes", rowType, filters],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filters)),
         },
       }),
@@ -249,9 +251,22 @@ const DetailsEdit = ({
   const onUpdateSubmit = (data, editType) => {
     const attributeFilters = extractAttributeFilters(data?.filters);
 
-    const observationTypes = data.filters
-      .filter((f) => f.property === "observationType")
-      .map((f) => f?.filterConfig?.filterValue);
+    // Generic system filter aggregation — every non-attribute filter
+    // row contributes its value to a BE key named after `f.property`.
+    // Mirrors the create-side getNewTaskFilters (validation.js) so
+    // span_kind, latency_ms, total_tokens, etc. all round-trip without
+    // each one being hard-coded.
+    const systemFilters = {};
+    (data.filters || []).forEach((f) => {
+      if (!f?.property || f.property === "attributes") return;
+      const v = f?.filterConfig?.filterValue;
+      if (v === undefined || v === null || v === "") return;
+      if (systemFilters[f.property]) {
+        systemFilters[f.property].push(v);
+      } else {
+        systemFilters[f.property] = [v];
+      }
+    });
 
     const transformedData = {
       evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -261,14 +276,11 @@ const DetailsEdit = ({
           new Date(startDateField.value).toISOString(),
           new Date(endDateField.value).toISOString(),
         ],
-        ...(observationTypes && observationTypes?.length > 0
-          ? { observation_type: observationTypes }
-          : {}),
+        ...systemFilters,
         ...(attributeFilters && attributeFilters?.length > 0
           ? { span_attributes_filters: attributeFilters }
           : {}),
       },
-      observation_type: observationTypes,
       project_id: data.project,
       name: data.name,
       project: data.project,

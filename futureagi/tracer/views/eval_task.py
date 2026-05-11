@@ -93,10 +93,15 @@ def _resolve_input_variables(custom_eval_config, obs_span):
 logger = structlog.get_logger(__name__)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.serializers.eval_task import EditEvalTaskSerializer, EvalTaskSerializer
+from tracer.serializers.eval_task import (
+    EditEvalTaskSerializer,
+    EvalTaskSerializer,
+    PaginationQuerySerializer,
+)
 from tracer.utils.eval_tasks import parsing_evaltask_filters, run_for_processed_spans
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
@@ -388,10 +393,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # ── Query params ──
-            page = max(int(self.request.query_params.get("page", 0)), 0)
-            page_size = min(
-                max(int(self.request.query_params.get("page_size", 25)), 1), 100
-            )
+            qp = PaginationQuerySerializer(data=self.request.query_params)
+            qp.is_valid(raise_exception=True)
+            page_size = qp.validated_data["page_size"]
             period = self.request.query_params.get("period", "30d")
             # Optional eval filter — tasks may run multiple evals; the UI
             # passes this when the user picks one from the dropdown.
@@ -574,8 +578,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "custom_eval_config__eval_template",
                 "trace_session",
             ).order_by("-created_at")
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+
+            paginator = ExtendedPageNumberPagination()
+            paginator.page_size = page_size
+            logs_page = paginator.paginate_queryset(
+                logs_qs, self.request, view=self
+            )
 
             log_items = []
             for log in logs_page:
@@ -714,12 +722,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 },
                 "evals": evals_meta,
                 "chart": chart_data,
-                "logs": {
-                    "items": log_items,
-                    "total": total_logs,
-                    "page": page,
-                    "page_size": page_size,
-                },
+                # Paginator native shape (matches eval_logs):
+                # {count, next, previous, results, total_pages, current_page}
+                "logs": paginator.get_paginated_response(log_items).data,
                 # Echo back the period actually used. If the user picked
                 # "30D" but the task only has older runs, this will be
                 # "all" — the frontend can show a hint explaining why.

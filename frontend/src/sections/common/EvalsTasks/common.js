@@ -7,6 +7,7 @@ import { dateValueFormatter } from "src/utils/dateTimeUtils";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
+import { canonicalEntries } from "src/utils/utils";
 
 export const getEvalsTaskColumnConfig = (observeId) => {
   const columns = [
@@ -189,29 +190,72 @@ export const EvalTaskFilterDefinition = (observeId) => {
 //     }
 // ]
 
+// Reserved keys on the saved BE filters dict that are metadata, not
+// user-visible filter rows. Everything else is treated as a generic
+// system filter (one row per value).
+const RESERVED_FILTER_KEYS = new Set([
+  "project_id",
+  "date_range",
+  "start_date",
+  "end_date",
+  "span_attributes_filters",
+]);
+
+// Legacy → current vocabulary aliases. The TraceFilterPanel column
+// for span observation type was renamed from `observation_type` to
+// `span_kind`; old tasks in the DB still use the legacy key, so map
+// it back to the new field on hydration so the filter row appears
+// under the correct column in the UI. Add a new entry here if any
+// other system column is ever renamed.
+const FILTER_KEY_ALIAS = {
+  observation_type: "span_kind",
+};
+
 export const formatTaskFilters = (filters_applied) => {
-  const observation_type = filters_applied?.observation_type
-    ? filters_applied?.observation_type.map((i) => ({
-        property: "observation_type",
+  if (!filters_applied) return [];
+
+  // Attribute filters carry a nested {columnId, filterConfig} shape on
+  // the BE — keep their dedicated converter.
+  const span_attributes_filters = (filters_applied.span_attributes_filters || [])
+    .map((i) => ({
+      property: "attributes",
+      propertyId: i?.columnId,
+      filterConfig: {
+        filterType: i?.filterConfig?.filterType,
+        filterOp: i?.filterConfig?.filterOp,
+        filterValue: i?.filterConfig?.filterValue,
+      },
+    }));
+
+  // Every other top-level key is treated as a generic system filter:
+  // one filter row per value. Round-trips arbitrary keys (span_kind,
+  // latency_ms, total_tokens, status_code, …) without each one needing
+  // to be hard-coded here.
+  //
+  // canonicalEntries (not Object.entries) drops the camelCase aliases
+  // the axios interceptor auto-attaches alongside every snake_case
+  // key — without it we'd render duplicate chips like `span_kind` AND
+  // `spanKind`, and the reserved-key skip would miss `projectId` /
+  // `dateRange` because the set only lists the snake_case forms.
+  const systemFilters = [];
+  canonicalEntries(filters_applied).forEach(([key, vals]) => {
+    if (RESERVED_FILTER_KEYS.has(key)) return;
+    const field = FILTER_KEY_ALIAS[key] || key;
+    const arr = Array.isArray(vals) ? vals : [vals];
+    arr.forEach((v) => {
+      if (v === undefined || v === null || v === "") return;
+      systemFilters.push({
+        property: field,
         filterConfig: {
-          filterType: "text",
+          filterType: typeof v === "number" ? "number" : "text",
           filterOp: "equals",
-          filterValue: i,
+          filterValue: v,
         },
-      }))
-    : [];
-  const span_attributes_filters = filters_applied?.span_attributes_filters
-    ? filters_applied?.span_attributes_filters.map((i) => ({
-        property: "attributes",
-        propertyId: i?.columnId,
-        filterConfig: {
-          filterType: i?.filterConfig?.filterType,
-          filterOp: i?.filterConfig?.filterOp,
-          filterValue: i?.filterConfig?.filterValue,
-        },
-      }))
-    : [];
-  return [...observation_type, ...span_attributes_filters];
+      });
+    });
+  });
+
+  return [...systemFilters, ...span_attributes_filters];
 };
 
 export const getDefaultTaskValues = (data, observeId) => {

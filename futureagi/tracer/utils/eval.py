@@ -1566,7 +1566,28 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
         return walked if walked is not None else _MISSING
 
     if head == "traces":
-        traces = list(trace_session.traces.order_by("created_at", "id"))
+        # Match the trace-listing UI's ordering (``list_traces_of_session``
+        # in ``tracer/views/trace.py``): earliest root span's ``start_time``,
+        # falling back to ``created_at`` when no root span has landed yet.
+        # Without this, sessions whose traces share a ``created_at`` (the
+        # SDK stamps every trace in a run with the same instant) tie-break
+        # by id alphabetically -- picking a "trace 0" the user never sees
+        # at the top of the trace list.
+        from django.db.models import OuterRef, Subquery
+        from django.db.models.functions import Coalesce
+
+        root_start = (
+            ObservationSpan.objects.filter(
+                trace_id=OuterRef("id"), parent_span_id__isnull=True
+            )
+            .order_by("start_time")
+            .values("start_time")[:1]
+        )
+        traces = list(
+            trace_session.traces.annotate(
+                _root_start=Coalesce(Subquery(root_start), "created_at")
+            ).order_by("_root_start", "id")
+        )
         return _resolve_collection_path(traces, rest, _resolve_trace_path)
 
     return _MISSING

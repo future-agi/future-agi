@@ -210,6 +210,100 @@ class TestGetEvalAttributesListSessions:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestSpanAttributeKeysNormalisation:
+    """``_get_span_attribute_keys`` must hand callers bare strings.
+
+    The CH-backed ``get_span_attribute_keys_ch`` returns ``{key, type}`` dicts
+    so the legacy spans picker can render type chips. The trace/session
+    path builders f-string into ``spans.<n>.<key>`` — without unwrapping,
+    paths become ``spans.0.{'key': '…', 'type': 'text'}`` garbage.
+
+    Pin the unwrap behaviour and the regression at the live endpoint:
+    no path in the trace/session response should contain ``{`` or ``}``.
+    """
+
+    def test_normalises_dict_and_string_inputs(self, monkeypatch):
+        """Pure unit test on ``_get_span_attribute_keys`` itself.
+
+        Forces the CH analytics service to return mixed input — dicts
+        with ``key``, dicts without ``key``, bare strings, and empty
+        sentinels — and asserts the helper hands callers only the
+        usable bare-string keys. Empty / malformed entries are dropped
+        entirely; nothing gets stringified into the path output.
+        """
+        from tracer.services.clickhouse.query_service import (
+            AnalyticsQueryService,
+        )
+        from tracer.views.observation_span import ObservationSpanView
+
+        raw_input = [
+            {"key": "gen_ai.input.foo", "type": "text"},
+            "bare_string_key",
+            {"key": "gen_ai.output.bar", "type": "text"},
+            {"type": "text"},  # no key — must be dropped
+            {"key": "", "type": "text"},  # empty key — must be dropped
+            "",  # empty string — must be dropped
+        ]
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            lambda self, qt: True,
+        )
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch",
+            lambda self, pid: raw_input,
+        )
+
+        view = ObservationSpanView()
+        result = view._get_span_attribute_keys("any-project-id")
+
+        assert result == [
+            "gen_ai.input.foo",
+            "bare_string_key",
+            "gen_ai.output.bar",
+        ]
+
+    def test_no_curly_braces_in_traces_response(
+        self, auth_client, populated_observe_project
+    ):
+        """End-to-end pin: the live row_type=traces response NEVER contains
+        ``{`` or ``}`` characters in any path. Catches a regression of the
+        original dict-stringify bug at the live endpoint, regardless of
+        what shape the underlying CH/PG helper returns."""
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "traces",
+            },
+        )
+        result = response.json().get("result", [])
+        bad = [p for p in result if "{" in p or "}" in p]
+        assert bad == [], f"Found malformed paths: {bad[:5]}"
+
+    def test_no_curly_braces_in_sessions_response(
+        self, auth_client, populated_observe_project
+    ):
+        """End-to-end pin for row_type=sessions, same rationale as the
+        traces version above."""
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "sessions",
+            },
+        )
+        result = response.json().get("result", [])
+        bad = [p for p in result if "{" in p or "}" in p]
+        assert bad == [], f"Found malformed paths: {bad[:5]}"
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestGetEvalAttributesListUnknownRowType:
     def test_unknown_row_type_returns_400(
         self, auth_client, populated_observe_project

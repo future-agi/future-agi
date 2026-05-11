@@ -2942,13 +2942,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         Single source for both ``get_span_attributes_list`` (which wraps
         it in a DRF response) and the trace + session path builders.
+
+        CH returns ``[{"key": ..., "type": ...}, ...]`` (spans picker
+        renders type chips); the trace + session path builders need
+        bare strings. The normalization loop below collapses both
+        shapes to ``list[str]`` so callers never see dicts f-stringed
+        into paths like ``traces.0.spans.0.{'key': '...', ...}``.
         """
+        raw = None
         analytics = AnalyticsQueryService()
         if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
             try:
-                result = analytics.get_span_attribute_keys_ch(str(project_id))
-                if result:
-                    return list(result)
+                ch_result = analytics.get_span_attribute_keys_ch(str(project_id))
+                if ch_result:
+                    raw = ch_result
             except Exception as ch_err:
                 logger.warning(
                     "CH span attribute keys failed in get_eval_attributes_list, "
@@ -2956,7 +2963,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     error=str(ch_err),
                 )
 
-        return list(SQL_query_handler.get_span_attributes_for_project(project_id))
+        if raw is None:
+            raw = SQL_query_handler.get_span_attributes_for_project(project_id)
+
+        keys = []
+        for item in raw or []:
+            if isinstance(item, dict):
+                k = item.get("key")
+                if k:
+                    keys.append(k)
+            elif isinstance(item, str) and item:
+                keys.append(item)
+        return keys
 
     def _max_spans_per_trace(self, project_id: str) -> int:
         """Max span count observed across the project's most recent traces.
