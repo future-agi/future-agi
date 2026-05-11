@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .checker import check_codebase
+from .extractor import extract_from_codebase
 
 
 def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
@@ -13,11 +14,21 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
     import subprocess
     cwd = cwd or Path(".").resolve()
     try:
+        # Find git root first so paths from `git diff` resolve correctly
+        git_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True, cwd=cwd,
+        ).stdout.strip()
+        git_root_path = Path(git_root)
         result = subprocess.run(
             ["git", "diff", "--name-only", f"{base}...HEAD"],
-            capture_output=True, text=True, check=True, cwd=cwd,
+            capture_output=True, text=True, check=True, cwd=git_root_path,
         )
-        return {str(cwd / p.strip()) for p in result.stdout.splitlines() if p.strip().endswith(".py")}
+        return {
+            str(git_root_path / p.strip())
+            for p in result.stdout.splitlines()
+            if p.strip().endswith(".py")
+        }
     except Exception:
         return set()
 
@@ -54,14 +65,13 @@ def main(argv=None) -> int:
         print(f"error: {root} is not a directory", file=sys.stderr)
         return 2
 
-    from .extractor import extract_from_codebase
-    models, functions, call_sites = extract_from_codebase(root)
+    extracted = extract_from_codebase(root)
+    models, functions, call_sites = extracted
 
     if args.stats:
         print(f"models: {len(models)}  functions: {len(functions)}  call sites: {len(call_sites)}")
 
-    from .checker import check_codebase
-    violations = check_codebase(root)
+    violations = check_codebase(root, _extracted=extracted)
 
     if args.diff is not None:
         changed = _changed_files_on_branch(args.diff, cwd=root)

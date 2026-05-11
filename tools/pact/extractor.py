@@ -69,6 +69,7 @@ class CallSite:
     positional_count: int = 0
     is_create_call: bool = False
     model_name: Optional[str] = None
+    caller_name: Optional[str] = None   # qualified name of the enclosing function, if any
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +305,14 @@ class _FunctionVisitor(ast.NodeVisitor):
             required = i < required_cutoff
             constraints.append(ArgConstraint(name=arg.arg, required=required, has_default=not required))
 
+        # Keyword-only args (after *)
+        kw_defaults = args_spec.kw_defaults  # parallel list; None means no default
+        for i, arg in enumerate(args_spec.kwonlyargs):
+            if arg.arg in ("self", "cls"):
+                continue
+            has_default = kw_defaults[i] is not None
+            constraints.append(ArgConstraint(name=arg.arg, required=not has_default, has_default=has_default))
+
         qual = ".".join(self._class_stack + [node.name])
         self.functions.append(
             FunctionManifest(
@@ -324,6 +333,16 @@ class _CallVisitor(ast.NodeVisitor):
     def __init__(self, file_path: str) -> None:
         self.file = file_path
         self.call_sites: list[CallSite] = []
+        self._func_stack: list[str] = []  # qualified names of enclosing functions
+
+    def _enter_func(self, node):
+        qual = self._func_stack[-1] + "." + node.name if self._func_stack else node.name
+        self._func_stack.append(qual)
+        self.generic_visit(node)
+        self._func_stack.pop()
+
+    visit_FunctionDef = _enter_func
+    visit_AsyncFunctionDef = _enter_func
 
     def visit_Call(self, node: ast.Call) -> None:
         site = self._make_site(node)
@@ -340,6 +359,8 @@ class _CallVisitor(ast.NodeVisitor):
         }
         positional = len(node.args)
         func = node.func
+
+        caller = self._func_stack[-1] if self._func_stack else None
 
         # Model.objects.create(...)
         if (
@@ -360,6 +381,7 @@ class _CallVisitor(ast.NodeVisitor):
                 positional_count=positional,
                 is_create_call=True,
                 model_name=model_name,
+                caller_name=caller,
             )
 
         # Regular call
@@ -372,6 +394,7 @@ class _CallVisitor(ast.NodeVisitor):
                 provided_kwargs=kwargs,
                 kwarg_values=kwarg_values,
                 positional_count=positional,
+                caller_name=caller,
             )
         return None
 

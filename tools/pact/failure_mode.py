@@ -75,15 +75,7 @@ class FailureMode:
 # ---------------------------------------------------------------------------
 
 def _z3_missing(required: list[str], provided: set[str]) -> list[str]:
-    missing = [f for f in required if f not in provided]
-    if not missing or not _HAS_Z3:
-        return missing
-    s = Solver()
-    for name in required:
-        v = Bool(f"provided_{name}")
-        s.add(v == (name in provided))
-        s.add(v)
-    return missing if s.check() == unsat else []
+    return [f for f in required if f not in provided]
 
 
 # --- 1. Universal model constraint check (presence + range + choices + max_length) ---
@@ -198,21 +190,12 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
     return evidence
 
 
-# Scan each file once; report findings only on the first call site per file.
-_optional_deref_cache: dict[str, list[FailureEvidence]] = {}
-_optional_deref_reported: set[str] = set()
-
 def _check_optional_deref(
     call: CallSite,
     models: dict[str, ModelManifest],
     functions: dict[str, FunctionManifest],
 ) -> list[FailureEvidence]:
-    if call.file not in _optional_deref_cache:
-        _optional_deref_cache[call.file] = _scan_file_optional_deref(call.file)
-    if call.file in _optional_deref_reported:
-        return []
-    _optional_deref_reported.add(call.file)
-    return _optional_deref_cache[call.file]
+    return _scan_file_optional_deref(call.file)
 
 
 OPTIONAL_DEREF = FailureMode(
@@ -232,7 +215,7 @@ def _check_required_arg(
     models: dict[str, ModelManifest],
     functions: dict[str, FunctionManifest],
 ) -> list[FailureEvidence]:
-    if call.is_create_call or "." not in call.callee_name:
+    if call.is_create_call:
         return []
     func = functions.get(call.callee_name)
     if not func or not func.required_args:

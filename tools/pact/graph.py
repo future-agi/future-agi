@@ -65,12 +65,11 @@ def build_call_graph(
         short_to_qual.setdefault(short, f.name)
 
     for call in call_sites:
+        source = call.caller_name or "__root__"
         target = call.callee_name
         if target not in func_names:
-            # Try short name resolution
             short = target.split(".")[-1]
             target = short_to_qual.get(short, target)
-
-        G.add_edge("__root__", target, call_site=call)
+        G.add_edge(source, target, call_site=call)
 
     return CallGraph(_g=G)

@@ -8,7 +8,6 @@ from typing import Optional
 from .encoder import Violation
 from .extractor import FunctionManifest, ModelManifest, extract_from_codebase
 from .failure_mode import DEFAULT_MODES, FailureEvidence, FailureMode
-from .graph import build_call_graph
 
 
 def _to_violation(e: FailureEvidence) -> Violation:
@@ -24,6 +23,8 @@ def _to_violation(e: FailureEvidence) -> Violation:
 def check_codebase(
     root: Path,
     modes: Optional[list[FailureMode]] = None,
+    *,
+    _extracted=None,  # (models, functions, call_sites) if already extracted
 ) -> list[Violation]:
     """
     Run all FailureModes against every call site in the codebase.
@@ -36,16 +37,20 @@ def check_codebase(
         FailureMode list to run. Defaults to DEFAULT_MODES.
         Pass a custom list to add or replace constraint classes without
         touching any other code.
+    _extracted:
+        Pre-extracted (models, functions, call_sites) tuple. If provided,
+        skips the extraction step to avoid double-parsing.
     """
     if modes is None:
         modes = DEFAULT_MODES
 
-    models, functions, call_sites = extract_from_codebase(root)
+    if _extracted is not None:
+        models, functions, call_sites = _extracted
+    else:
+        models, functions, call_sites = extract_from_codebase(root)
 
     model_index: dict[str, ModelManifest] = {m.name: m for m in models}
     func_index: dict[str, FunctionManifest] = {f.name: f for f in functions}
-
-    build_call_graph(functions, call_sites)
 
     violations: list[Violation] = []
     for call in call_sites:
