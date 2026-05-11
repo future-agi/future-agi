@@ -47,7 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--api-key",
         default=os.environ.get("FI_API_KEY", ""),
         metavar="KEY",
-        help="Future AGI API key (defaults to FI_API_KEY env var)",
+        help="API key in '<api_key>:<secret_key>' format (defaults to FI_API_KEY env var)",
     )
     p.add_argument(
         "--base-url",
