@@ -12,24 +12,18 @@ Inspired by ~/src/z3_spelunking/formal_failure_analysis.py.
 
 from __future__ import annotations
 
-import ast as pyast
 import functools
 from dataclasses import dataclass, field
-from typing import Callable, Optional
-
-try:
-    from z3 import BoolVal, Solver, sat, unsat, Bool, And, Or, Not, Implies
-    _HAS_Z3 = True
-except ImportError:
-    _HAS_Z3 = False
+from typing import Callable
 
 from .encoder import check_model_create
-from .extractor import CallSite, FieldConstraint, FunctionManifest, ModelManifest
+from .extractor import CallSite, FunctionManifest, ModelManifest
 
 
 @dataclass
 class FailureEvidence:
     """Concrete evidence of a FailureMode violation at a specific site."""
+
     mode_name: str
     file: str
     line: int
@@ -46,6 +40,7 @@ class FailureEvidence:
 # The FailureMode type
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FailureMode:
     """
@@ -61,6 +56,7 @@ class FailureMode:
         Callable(call_site, models, functions) → list[FailureEvidence].
         Pure function — no side effects. Called once per call site.
     """
+
     name: str
     description: str
     check: Callable[
@@ -75,11 +71,13 @@ class FailureMode:
 #  direct use; failure_mode.py is the extensible plugin layer on top)
 # ---------------------------------------------------------------------------
 
+
 def _z3_missing(required: list[str], provided: set[str]) -> list[str]:
     return [f for f in required if f not in provided]
 
 
 # --- 1. Universal model constraint check (presence + range + choices + max_length) ---
+
 
 def _check_model_constraints(
     call: CallSite,
@@ -95,7 +93,8 @@ def _check_model_constraints(
     return [
         FailureEvidence(
             mode_name="model_constraint",
-            file=v.file, line=v.line,
+            file=v.file,
+            line=v.line,
             call=v.call,
             message="; ".join(v.missing),
             missing=v.missing,
@@ -119,14 +118,22 @@ REQUIRED_FIELD_MISSING = FailureMode(
 # call that returns Optional (common Django patterns: .first(), .get_or_none(),
 # dict.get(), os.environ.get()).
 
-_OPTIONAL_SOURCES = frozenset({
-    "first", "last", "get_or_none", "filter().first",
-    "get", "environ.get", "os.environ.get",
-})
+_OPTIONAL_SOURCES = frozenset(
+    {
+        "first",
+        "last",
+        "get_or_none",
+        "filter().first",
+        "get",
+        "environ.get",
+        "os.environ.get",
+    }
+)
 
 
 _OPTIONAL_RETURNING = frozenset({"first", "last", "get_or_none", "one_or_none"})
 _SAFE_CHECKS = frozenset({"is None", "is not None", "if not", "if "})
+
 
 @functools.lru_cache(maxsize=None)
 def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
@@ -153,11 +160,13 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             self.guarded: set[str] = set()
 
         def visit_Assign(self, node):
-            if (len(node.targets) == 1 and
-                    isinstance(node.targets[0], _ast.Name) and
-                    isinstance(node.value, _ast.Call) and
-                    isinstance(node.value.func, _ast.Attribute) and
-                    node.value.func.attr in _OPTIONAL_RETURNING):
+            if (
+                len(node.targets) == 1
+                and isinstance(node.targets[0], _ast.Name)
+                and isinstance(node.value, _ast.Call)
+                and isinstance(node.value.func, _ast.Attribute)
+                and node.value.func.attr in _OPTIONAL_RETURNING
+            ):
                 self.optional_vars[node.targets[0].id] = node.lineno
             self.generic_visit(node)
 
@@ -171,21 +180,25 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
 
         def visit_Attribute(self, node):
             # var.something — flag if var is unguarded optional
-            if (isinstance(node.value, _ast.Name) and
-                    node.value.id in self.optional_vars and
-                    node.value.id not in self.guarded):
+            if (
+                isinstance(node.value, _ast.Name)
+                and node.value.id in self.optional_vars
+                and node.value.id not in self.guarded
+            ):
                 var = node.value.id
                 assign_line = self.optional_vars[var]
-                evidence.append(FailureEvidence(
-                    mode_name="optional_dereference",
-                    file=path,
-                    line=node.lineno,
-                    call=f"{var}.{node.attr}",
-                    message=(
-                        f"'{var}' assigned from optional source at line {assign_line} "
-                        f"but used without None check"
-                    ),
-                ))
+                evidence.append(
+                    FailureEvidence(
+                        mode_name="optional_dereference",
+                        file=path,
+                        line=node.lineno,
+                        call=f"{var}.{node.attr}",
+                        message=(
+                            f"'{var}' assigned from optional source at line {assign_line} "
+                            f"but used without None check"
+                        ),
+                    )
+                )
             self.generic_visit(node)
 
     _Visitor().visit(tree)
@@ -212,6 +225,7 @@ OPTIONAL_DEREF = FailureMode(
 
 # --- 3. Missing required function argument ---------------------------------
 
+
 def _check_required_arg(
     call: CallSite,
     models: dict[str, ModelManifest],
@@ -227,19 +241,23 @@ def _check_required_arg(
     # index i is never falsely marked covered because positional_count > i.
     positional_required = [a for a in func.required_args if not a.kwonly]
     positional_covered = {
-        arg.name for i, arg in enumerate(positional_required)
+        arg.name
+        for i, arg in enumerate(positional_required)
         if i < call.positional_count
     }
     provided = call.provided_kwargs | positional_covered
     missing = _z3_missing([a.name for a in func.required_args], provided)
     if missing:
-        return [FailureEvidence(
-            mode_name="required_arg_missing",
-            file=call.file, line=call.line,
-            call=call.callee_name,
-            message=f"missing required arg(s): {', '.join(missing)}",
-            missing=missing,
-        )]
+        return [
+            FailureEvidence(
+                mode_name="required_arg_missing",
+                file=call.file,
+                line=call.line,
+                call=call.callee_name,
+                message=f"missing required arg(s): {', '.join(missing)}",
+                missing=missing,
+            )
+        ]
     return []
 
 
@@ -255,6 +273,7 @@ REQUIRED_ARG_MISSING = FailureMode(
 
 # --- 4. Bare except that swallows all exceptions ---------------------------
 # Detects `except:` or `except Exception: pass` — silent failure patterns.
+
 
 @functools.lru_cache(maxsize=None)
 def _scan_file_bare_except(path: str) -> list[FailureEvidence]:
@@ -274,13 +293,15 @@ def _scan_file_bare_except(path: str) -> list[FailureEvidence]:
             continue
         if node.type is None:
             # bare `except:` — catches KeyboardInterrupt, SystemExit, everything
-            evidence.append(FailureEvidence(
-                mode_name="bare_except",
-                file=path,
-                line=node.lineno,
-                call="except:",
-                message="bare `except:` catches all exceptions including KeyboardInterrupt",
-            ))
+            evidence.append(
+                FailureEvidence(
+                    mode_name="bare_except",
+                    file=path,
+                    line=node.lineno,
+                    call="except:",
+                    message="bare `except:` catches all exceptions including KeyboardInterrupt",
+                )
+            )
         elif isinstance(node.type, _ast.Name) and node.type.id == "Exception":
             # `except Exception: pass` or `except Exception: ...` — silent swallow
             body = node.body
@@ -293,13 +314,15 @@ def _scan_file_bare_except(path: str) -> list[FailureEvidence]:
                 )
             )
             if is_silent:
-                evidence.append(FailureEvidence(
-                    mode_name="bare_except",
-                    file=path,
-                    line=node.lineno,
-                    call="except Exception: pass",
-                    message="`except Exception: pass` silently swallows all errors",
-                ))
+                evidence.append(
+                    FailureEvidence(
+                        mode_name="bare_except",
+                        file=path,
+                        line=node.lineno,
+                        call="except Exception: pass",
+                        message="`except Exception: pass` silently swallows all errors",
+                    )
+                )
     return evidence
 
 
@@ -325,7 +348,7 @@ BARE_EXCEPT = FailureMode(
 # Django model .save() without update_fields re-writes every column,
 # clobbering concurrent partial updates.
 
-_SAFE_SAVE_SUFFIXES = ("form", "serializer", "fs", "storage", "file")
+_SAFE_SAVE_RECEIVER_KINDS = frozenset({"form", "serializer", "fs", "storage", "file"})
 
 
 def _check_save_without_update_fields(
@@ -338,20 +361,23 @@ def _check_save_without_update_fields(
     if "update_fields" in call.provided_kwargs:
         return []
     # Skip form/serializer/storage saves — intentional full saves.
-    # Match on suffix so compound names like `image_dataset_serializer` match.
+    # Match on snake_case receiver kind so `image_dataset_serializer` is safe
+    # but `profile.save()` is not misclassified as a file save.
     receiver = call.callee_name.rsplit(".", 1)[0].split(".")[-1].lower()
-    if any(receiver.endswith(safe) for safe in _SAFE_SAVE_SUFFIXES):
+    if receiver.rsplit("_", 1)[-1] in _SAFE_SAVE_RECEIVER_KINDS:
         return []
-    return [FailureEvidence(
-        mode_name="save_without_update_fields",
-        file=call.file,
-        line=call.line,
-        call=call.callee_name,
-        message=(
-            ".save() without update_fields re-writes every column; "
-            "use save(update_fields=[...]) to prevent clobbering concurrent writes"
-        ),
-    )]
+    return [
+        FailureEvidence(
+            mode_name="save_without_update_fields",
+            file=call.file,
+            line=call.line,
+            call=call.callee_name,
+            message=(
+                ".save() without update_fields re-writes every column; "
+                "use save(update_fields=[...]) to prevent clobbering concurrent writes"
+            ),
+        )
+    ]
 
 
 SAVE_WITHOUT_UPDATE_FIELDS = FailureMode(

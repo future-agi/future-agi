@@ -16,15 +16,15 @@ from typing import Optional
 @dataclass
 class FieldConstraint:
     name: str
-    required: bool          # null=False AND no default= → must be provided in create()
+    required: bool  # null=False AND no default= → must be provided in create()
     field_type: str
     null: bool = True
     blank: bool = True
     unique: bool = False
     max_length: Optional[int] = None
-    min_value: Optional[int] = None    # explicit or implicit from field type
+    min_value: Optional[int] = None  # explicit or implicit from field type
     max_value: Optional[int] = None
-    choices: Optional[list] = None     # literal values only (first elem of 2-tuples)
+    choices: Optional[list] = None  # literal values only (first elem of 2-tuples)
 
 
 @dataclass
@@ -44,12 +44,12 @@ class ArgConstraint:
     name: str
     required: bool
     has_default: bool = False
-    kwonly: bool = False   # keyword-only (after *); cannot be filled by positional args
+    kwonly: bool = False  # keyword-only (after *); cannot be filled by positional args
 
 
 @dataclass
 class FunctionManifest:
-    name: str           # qualified: ClassName.method_name or function_name
+    name: str  # qualified: ClassName.method_name or function_name
     file: str
     line: int
     module_path: str
@@ -66,16 +66,21 @@ class CallSite:
     file: str
     line: int
     provided_kwargs: set[str] = field(default_factory=set)
-    kwarg_values: dict[str, object] = field(default_factory=dict)  # name → literal value
+    kwarg_values: dict[str, object] = field(
+        default_factory=dict
+    )  # name → literal value
     positional_count: int = 0
     is_create_call: bool = False
     model_name: Optional[str] = None
-    caller_name: Optional[str] = None   # qualified name of the enclosing function, if any
+    caller_name: Optional[str] = (
+        None  # qualified name of the enclosing function, if any
+    )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _is_django_field(node: ast.expr) -> Optional[str]:
     if not isinstance(node, ast.Call):
@@ -135,20 +140,27 @@ def _extract_choices(node: ast.expr) -> Optional[list]:
 
 # Implicit integer bounds by field type
 _FIELD_BOUNDS: dict[str, tuple[Optional[int], Optional[int]]] = {
-    "PositiveIntegerField":         (0,    2_147_483_647),
-    "PositiveSmallIntegerField":    (0,    32_767),
-    "PositiveBigIntegerField":      (0,    9_223_372_036_854_775_807),
-    "SmallIntegerField":            (-32_768, 32_767),
-    "IntegerField":                 (-2_147_483_648, 2_147_483_647),
-    "BigIntegerField":              (-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
+    "PositiveIntegerField": (0, 2_147_483_647),
+    "PositiveSmallIntegerField": (0, 32_767),
+    "PositiveBigIntegerField": (0, 9_223_372_036_854_775_807),
+    "SmallIntegerField": (-32_768, 32_767),
+    "IntegerField": (-2_147_483_648, 2_147_483_647),
+    "BigIntegerField": (-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
 }
 
-_RELATION_FIELD_TYPES = frozenset({
-    "ManyToManyField", "ManyToManyRel", "ManyToOneRel", "OneToOneRel",
-})
+_RELATION_FIELD_TYPES = frozenset(
+    {
+        "ManyToManyField",
+        "ManyToManyRel",
+        "ManyToOneRel",
+        "OneToOneRel",
+    }
+)
 
 
-def _build_field_constraint(field_name: str, call: ast.Call, save_assigned: bool) -> FieldConstraint:
+def _build_field_constraint(
+    field_name: str, call: ast.Call, save_assigned: bool
+) -> FieldConstraint:
     """Extract all constraint metadata from a Django field declaration AST node."""
     field_type = call.func.attr if isinstance(call.func, ast.Attribute) else ""
 
@@ -156,26 +168,26 @@ def _build_field_constraint(field_name: str, call: ast.Call, save_assigned: bool
     if field_type in _RELATION_FIELD_TYPES:
         return FieldConstraint(name=field_name, required=False, field_type=field_type)
 
-    null_node   = _get_kwarg(call, "null")
-    blank_node  = _get_kwarg(call, "blank")
+    null_node = _get_kwarg(call, "null")
+    blank_node = _get_kwarg(call, "blank")
     unique_node = _get_kwarg(call, "unique")
 
-    is_null  = null_node  is not None and _is_true_literal(null_node)
+    is_null = null_node is not None and _is_true_literal(null_node)
     is_blank = blank_node is not None and _is_true_literal(blank_node)
     is_unique = unique_node is not None and _is_true_literal(unique_node)
 
     has_default = _get_kwarg(call, "default") is not None
-    has_auto    = any(
+    has_auto = any(
         _get_kwarg(call, kw) is not None and _is_true_literal(_get_kwarg(call, kw))
         for kw in ("auto_now", "auto_now_add")
     )
 
     required = (
-        not is_null and
-        not is_blank and
-        not has_default and
-        not has_auto and
-        not save_assigned
+        not is_null
+        and not is_blank
+        and not has_default
+        and not has_auto
+        and not save_assigned
     )
 
     # max_length
@@ -217,6 +229,7 @@ def _build_field_constraint(field_name: str, call: ast.Call, save_assigned: bool
 # Visitors
 # ---------------------------------------------------------------------------
 
+
 def _class_has_django_fields(node: ast.ClassDef) -> bool:
     """Heuristic: if a class body has any models.XField(...) assignments, treat it as a model.
     This catches custom base classes (BaseModel, TimestampedModel, etc.) without needing
@@ -241,9 +254,12 @@ def _save_auto_assigned(class_node: ast.ClassDef) -> set[str]:
             # match: `not self.field` or `if not self.field`
             negated = isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
             attr_test = test.operand if negated else test
-            if (negated and isinstance(attr_test, ast.Attribute) and
-                    isinstance(attr_test.value, ast.Name) and
-                    attr_test.value.id == "self"):
+            if (
+                negated
+                and isinstance(attr_test, ast.Attribute)
+                and isinstance(attr_test.value, ast.Name)
+                and attr_test.value.id == "self"
+            ):
                 auto.add(attr_test.attr)
     return auto
 
@@ -304,7 +320,9 @@ class _FunctionVisitor(ast.NodeVisitor):
             if arg.arg in ("self", "cls"):
                 continue
             required = i < required_cutoff
-            constraints.append(ArgConstraint(name=arg.arg, required=required, has_default=not required))
+            constraints.append(
+                ArgConstraint(name=arg.arg, required=required, has_default=not required)
+            )
 
         # Keyword-only args (after *)
         kw_defaults = args_spec.kw_defaults  # parallel list; None means no default
@@ -312,7 +330,14 @@ class _FunctionVisitor(ast.NodeVisitor):
             if arg.arg in ("self", "cls"):
                 continue
             has_default = kw_defaults[i] is not None
-            constraints.append(ArgConstraint(name=arg.arg, required=not has_default, has_default=has_default, kwonly=True))
+            constraints.append(
+                ArgConstraint(
+                    name=arg.arg,
+                    required=not has_default,
+                    has_default=has_default,
+                    kwonly=True,
+                )
+            )
 
         qual = ".".join(self._class_stack + [node.name])
         self.functions.append(
@@ -334,8 +359,8 @@ class _CallVisitor(ast.NodeVisitor):
     def __init__(self, file_path: str) -> None:
         self.file = file_path
         self.call_sites: list[CallSite] = []
-        self._class_stack: list[str] = []   # class names (mirrors _FunctionVisitor)
-        self._func_stack: list[str] = []    # qualified function names within classes
+        self._class_stack: list[str] = []  # class names (mirrors _FunctionVisitor)
+        self._func_stack: list[str] = []  # qualified function names within classes
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._class_stack.append(node.name)
@@ -381,7 +406,9 @@ class _CallVisitor(ast.NodeVisitor):
             if isinstance(func.value.value, ast.Name):
                 model_name = func.value.value.id
             return CallSite(
-                callee_name=f"{model_name}.objects.create" if model_name else "?.objects.create",
+                callee_name=(
+                    f"{model_name}.objects.create" if model_name else "?.objects.create"
+                ),
                 file=self.file,
                 line=node.lineno,
                 provided_kwargs=kwargs,
@@ -419,10 +446,26 @@ class _CallVisitor(ast.NodeVisitor):
 # Public API
 # ---------------------------------------------------------------------------
 
-_SKIP_DIRS = frozenset({
-    "__pycache__", ".git", ".venv", "venv", "node_modules",
-    "migrations", ".mypy_cache", ".uv-cache", ".ruff_cache",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "migrations",
+        ".mypy_cache",
+        ".uv-cache",
+        ".ruff_cache",
+    }
+)
+
+
+def iter_python_files(root: Path):
+    for path in root.rglob("*.py"):
+        if any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        yield path
 
 
 def extract_from_file(
@@ -455,9 +498,7 @@ def extract_from_codebase(
     all_funcs: list[FunctionManifest] = []
     all_calls: list[CallSite] = []
 
-    for path in root.rglob("*.py"):
-        if any(part in _SKIP_DIRS for part in path.parts):
-            continue
+    for path in iter_python_files(root):
         models, funcs, calls = extract_from_file(path)
         all_models.extend(models)
         all_funcs.extend(funcs)
