@@ -41,8 +41,15 @@ export default function useAddNodeOptimistic() {
 
       if (!result) return null;
 
-      const { nodeId, edgeId, position, ports, label } = result;
-      const config = payload.config;
+      const {
+        nodeId,
+        edgeId,
+        position,
+        ports,
+        label,
+        config: computedConfig,
+      } = result;
+      const config = computedConfig || payload.config;
 
       // Don't select the node yet — wait until ensureDraft completes
       // to avoid triggering the discard dialog if a drawer is open with dirty form.

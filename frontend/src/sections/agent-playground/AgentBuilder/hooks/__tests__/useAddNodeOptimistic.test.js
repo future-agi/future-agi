@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import useAddNodeOptimistic from "../useAddNodeOptimistic";
 import { useAgentPlaygroundStore } from "../../../store";
+import { NODE_TYPES } from "../../../utils/constants";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -29,9 +30,8 @@ vi.mock("../../../utils/versionPayloadUtils", () => ({
 }));
 
 // Re-import after mocks are set up
-const { addNodeApi } = await import(
-  "src/api/agent-playground/agent-playground"
-);
+const { addNodeApi } =
+  await import("src/api/agent-playground/agent-playground");
 const logger = (await import("src/utils/logger")).default;
 
 // ---------------------------------------------------------------------------
@@ -177,6 +177,50 @@ describe("useAddNodeOptimistic", () => {
       nodeId: "node-123",
       position: { x: 100, y: 200 },
     });
+  });
+
+  it("draft path: creates code nodes with store-computed defaults", async () => {
+    const codeConfig = {
+      language: "python",
+      code: 'result = {"ok": True}',
+      timeout_ms: 5000,
+      memory_mb: 128,
+    };
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue({
+      ...defaultOptimisticResult,
+      ports: [
+        { key: "inputs", direction: "input" },
+        { key: "result", direction: "output" },
+      ],
+      config: codeConfig,
+    });
+    mockGetNodeById.mockReturnValue({
+      id: "node-123",
+      type: NODE_TYPES.CODE_EXECUTION,
+    });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        type: NODE_TYPES.CODE_EXECUTION,
+        config: {},
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          config: codeConfig,
+          ports: [
+            { key: "inputs", direction: "input" },
+            { key: "result", direction: "output" },
+          ],
+        }),
+      }),
+    );
   });
 
   it("draft path: when addOptimisticNode returns null, returns null without calling addNodeApi", async () => {
