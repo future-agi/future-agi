@@ -387,9 +387,14 @@ class TestExecutionWorkflow:
         between each sub-batch to prevent thundering-herd 503s from LiveKit
         agent workers when many calls are initiated simultaneously.
         """
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        try:
+            from ee.voice.temporal.workflows.call_execution_workflow import (
+                CallExecutionWorkflow,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "Voice call execution workflow is unavailable without Enterprise Edition."
+            ) from exc
 
         for i, call_id in enumerate(call_ids):
             # Stagger: pause between sub-batches to let agent workers accept dispatches
