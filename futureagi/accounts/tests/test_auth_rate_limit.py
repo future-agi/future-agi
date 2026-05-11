@@ -70,12 +70,12 @@ class TestLoginRateLimitWindow:
         fake_now = time.time()
         thirty_min_ago = fake_now - 1800
 
-        # 9 requests at T-30min
+        # 10 requests at T-30min (exhaust limit)
         with patch("time.time", return_value=thirty_min_ago):
-            for _ in range(9):
+            for _ in range(10):
                 middleware(_make_request(ip=ip))
 
-        # 10th request at T=now should trigger block (still within 1h window)
+        # 11th request at T=now should be blocked (still within 1h window)
         with patch("time.time", return_value=fake_now):
             response = middleware(_make_request(ip=ip))
             assert response.status_code == 403

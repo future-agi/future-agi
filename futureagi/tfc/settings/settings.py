@@ -171,6 +171,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # 'tfc.middleware.debug_middleware.DebugMiddleware',
+    "tfc.middleware.auth_monitoring.AuthMonitoringMiddleware",
     "tfc.utils.audit.AuditMiddleware",  # Stores request.user in thread-local for audit logging
     # 'tfc.middleware.query_timeout.QueryTimeoutMiddleware',
     "accounts.authentication.AuthMonitoringMiddleware",
