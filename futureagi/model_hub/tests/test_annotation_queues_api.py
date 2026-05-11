@@ -11,9 +11,11 @@ Tests cover:
 """
 
 import uuid
+from io import StringIO
 from unittest.mock import patch
 
 import pytest
+from django.core.management import call_command
 from rest_framework import status
 
 from model_hub.models.annotation_queues import AnnotationQueue, AnnotationQueueAnnotator
@@ -384,6 +386,69 @@ class TestUpdateQueue:
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
+
+
+# ---------------------------------------------------------------------------
+# 1.4b – Multi-role data backfill
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestAnnotationQueueRoleBackfill:
+
+    def test_backfill_command_upgrades_existing_creator_manager(
+        self, organization, workspace, user
+    ):
+        queue = AnnotationQueue.objects.create(
+            name=f"Legacy Creator Queue {uuid.uuid4()}",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        membership = AnnotationQueueAnnotator.objects.create(
+            queue=queue,
+            user=user,
+            role=AnnotatorRole.MANAGER.value,
+            roles=[],
+        )
+
+        out = StringIO()
+        call_command("backfill_annotation_queue_roles", stdout=out)
+
+        membership.refresh_from_db()
+        assert membership.role == AnnotatorRole.MANAGER.value
+        assert membership.roles == [
+            AnnotatorRole.MANAGER.value,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.ANNOTATOR.value,
+        ]
+        assert "1 memberships updated" in out.getvalue()
+
+    def test_backfill_command_creates_missing_creator_membership(
+        self, organization, workspace, user
+    ):
+        queue = AnnotationQueue.objects.create(
+            name=f"Missing Creator Membership Queue {uuid.uuid4()}",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+
+        out = StringIO()
+        call_command("backfill_annotation_queue_roles", stdout=out)
+
+        membership = AnnotationQueueAnnotator.objects.get(
+            queue=queue,
+            user=user,
+            deleted=False,
+        )
+        assert membership.role == AnnotatorRole.MANAGER.value
+        assert membership.roles == [
+            AnnotatorRole.MANAGER.value,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.ANNOTATOR.value,
+        ]
+        assert "1 creator memberships created" in out.getvalue()
 
 
 # ---------------------------------------------------------------------------
