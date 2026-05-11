@@ -147,7 +147,7 @@ class PactEngine:
         self._site_meta: dict[int, dict] = {}
 
     def _sid(self, file: str, line: int, call: str) -> int:
-        key = (file, line)
+        key = (file, line, call)
         if key not in self._site_id:
             n = len(self._site_id)
             self._site_id[key] = n

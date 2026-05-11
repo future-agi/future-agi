@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-_UNKNOWN = object()
+UNKNOWN_VALUE = object()
 
 
 @dataclass
@@ -120,8 +120,8 @@ def _literal_value(node: ast.expr) -> object:
         return node.value
     if isinstance(node, (ast.List, ast.Tuple)):
         items = [_literal_value(e) for e in node.elts]
-        return items if _UNKNOWN not in items else _UNKNOWN
-    return _UNKNOWN
+        return items if UNKNOWN_VALUE not in items else UNKNOWN_VALUE
+    return UNKNOWN_VALUE
 
 
 def _extract_choices(node: ast.expr) -> Optional[list]:
@@ -133,11 +133,11 @@ def _extract_choices(node: ast.expr) -> Optional[list]:
         # 2-tuple (value, display) — take the first element
             if isinstance(elt, (ast.List, ast.Tuple)) and elt.elts:
                 v = _literal_value(elt.elts[0])
-                if v is not _UNKNOWN:
+                if v is not UNKNOWN_VALUE:
                     values.append(v)
             else:
                 v = _literal_value(elt)
-                if v is not _UNKNOWN:
+                if v is not UNKNOWN_VALUE:
                     values.append(v)
     return values or None
 
@@ -415,7 +415,6 @@ class _CallVisitor(ast.NodeVisitor):
             for kw in node.keywords
             if kw.arg is not None
             for value in [_literal_value(kw.value)]
-            if value is not _UNKNOWN
         }
         positional = len(node.args)
         func = node.func

@@ -10,14 +10,18 @@ Z3 enumerates the violations — we don't write one checker per constraint class
 from dataclasses import dataclass
 from typing import Optional
 
-from .extractor import CallSite, FieldConstraint, FunctionManifest, ModelManifest
-
-_UNKNOWN_VALUE = object()
+from .extractor import (
+    UNKNOWN_VALUE,
+    CallSite,
+    FieldConstraint,
+    FunctionManifest,
+    ModelManifest,
+)
 
 try:
     from z3 import (
-        Bool, IntVal, Not, Or, Solver,
-        Length, StringVal, sat, unsat,
+        IntVal, Not, Or, Solver,
+        Length, StringVal, sat,
     )
     _HAS_Z3 = True
 except ImportError:
@@ -135,9 +139,9 @@ def check_model_create(call: CallSite, model: ModelManifest) -> list[Violation]:
         provided = any(name in call.provided_kwargs for name in field_names)
         value = next(
             (call.kwarg_values[name] for name in field_names if name in call.kwarg_values),
-            _UNKNOWN_VALUE,
+            UNKNOWN_VALUE,
         )
-        if value is _UNKNOWN_VALUE:
+        if value is UNKNOWN_VALUE:
             if provided:
                 continue
             value = None
@@ -161,15 +165,7 @@ def check_model_create(call: CallSite, model: ModelManifest) -> list[Violation]:
 # ---------------------------------------------------------------------------
 
 def _z3_check_presence(required: list[str], provided: set[str]) -> list[str]:
-    missing = [f for f in required if f not in provided]
-    if not missing or not _HAS_Z3:
-        return missing
-    s = Solver()
-    for name in required:
-        v = Bool(f"provided_{name}")
-        s.add(v == (name in provided))
-        s.add(v)
-    return missing if s.check() == unsat else []
+    return [f for f in required if f not in provided]
 
 
 def check_function_call(call: CallSite, func: FunctionManifest) -> Optional[Violation]:

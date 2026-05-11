@@ -207,6 +207,35 @@ def test_computed_required_field_value_is_not_treated_as_none(tmp_path):
     ], "computed values prove presence but should not be checked as literal None"
 
 
+def test_computed_required_field_value_is_preserved_as_unknown(tmp_path):
+    from .extractor import UNKNOWN_VALUE, extract_from_codebase
+
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Widget(models.Model):
+            name = models.CharField(max_length=64)
+            class Meta: app_label = 'x'
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make(source):
+            Widget.objects.create(name=source.name)
+    """,
+    )
+
+    _models, _functions, calls = extract_from_codebase(tmp_path)
+    create_call = next(call for call in calls if call.callee_name == "Widget.objects.create")
+
+    assert "name" in create_call.provided_kwargs
+    assert create_call.kwarg_values["name"] is UNKNOWN_VALUE
+
+
 def test_foreign_key_accepts_python_attribute_or_id_kwarg(tmp_path):
     _write_src(
         tmp_path,

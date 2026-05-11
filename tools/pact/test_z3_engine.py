@@ -9,7 +9,7 @@ import textwrap
 import tempfile
 from pathlib import Path
 
-from .z3_engine import PactEngine
+from .z3_engine import PactEngine, run
 
 
 def _make_fixture(source: str) -> Path:
@@ -188,6 +188,27 @@ def test_cross_file_violation_detected():
     assert len(viols) == 1
     assert 'name' in viols[0].missing
     assert 'views.py' in viols[0].file
+
+
+def test_same_line_create_sites_keep_distinct_site_ids():
+    d = Path(tempfile.mkdtemp())
+    (d / "models.py").write_text(textwrap.dedent("""
+        import django.db.models as m
+
+        class Widget(m.Model):
+            name = m.CharField(max_length=100)
+
+        class Gadget(m.Model):
+            title = m.CharField(max_length=100)
+
+        Widget.objects.create(); Gadget.objects.create()
+    """))
+
+    viols = run(d)
+
+    assert len(viols) == 2
+    assert {v.call for v in viols} == {"Widget.objects.create", "Gadget.objects.create"}
+    assert {tuple(v.missing) for v in viols} == {("name",), ("title",)}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
