@@ -53,7 +53,15 @@ export const NewTaskValidationSchema = () =>
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
-        .transform((evals) => evals?.map((e) => e.id)),
+        .transform((evals, ctx) => {
+          if (evals?.some((e) => !e?.id)) {
+            // Block submit silently — the per-eval-card warning is the
+            // UI signal that tells the user which eval is broken.
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "" });
+            return z.NEVER;
+          }
+          return evals.map((e) => e.id);
+        }),
       startDate: z.string(),
       endDate: z.string(),
       runType: z.enum(["historical", "continuous"], {

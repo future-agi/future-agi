@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
@@ -94,6 +95,7 @@ const EVAL_TYPE_META = {
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
   const theme = useTheme();
+  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
@@ -127,13 +129,13 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         p: 1.5,
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: invalid ? "error.main" : "divider",
         bgcolor:
           theme.palette.mode === "dark"
             ? "rgba(255,255,255,0.02)"
             : "rgba(0,0,0,0.01)",
         transition: "border-color 0.15s",
-        "&:hover": { borderColor: "primary.main" },
+        "&:hover": { borderColor: invalid ? "error.main" : "primary.main" },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -205,6 +207,22 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             />
           )}
         </Box>
+        {invalid && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              mt: 0.5,
+              color: "error.main",
+            }}
+          >
+            <Iconify icon="solar:danger-circle-bold" width={13} />
+            <Typography variant="caption" sx={{ fontSize: "11px" }}>
+              Failed to save — remove and re-add this evaluation
+            </Typography>
+          </Box>
+        )}
         {mappedKeys.length > 0 && (
           <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
             {mappedKeys.slice(0, 4).map((key) => (
@@ -425,8 +443,15 @@ const TaskConfigPanel = ({
             templateId: tplId,
           };
         }
-      } catch {
-        // Fall back to local-only entry — task create will still send it
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
+        setEditingIndex(null);
+        return;
       }
 
       if (editingIndex !== null) {

@@ -40,7 +40,11 @@ function readDraft(storageKey) {
         localStorage.removeItem(storageKey);
         return null;
       }
-      return parsed.values;
+      const values = parsed.values;
+      if (Array.isArray(values.evalsDetails)) {
+        values.evalsDetails = values.evalsDetails.filter((e) => e?.id);
+      }
+      return values;
     }
     return null;
   } catch {

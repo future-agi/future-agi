@@ -315,9 +315,13 @@ const NewTaskDrawerV2 = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch {
-        // If backend save fails, still add locally
-        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
       }
     },
     [project, addEval],
