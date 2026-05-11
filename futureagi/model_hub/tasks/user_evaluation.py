@@ -641,6 +641,28 @@ def _get_input_type(input):
     return input_type
 
 
+def _eval_passed(value) -> bool:
+    """
+    Determine if an eval result represents a passing evaluation.
+    Returns True if the eval passed (error localizer should be skipped).
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value >= 0.8
+    if isinstance(value, str):
+        return value.lower() in ("passed", "pass", "true", "1")
+    if isinstance(value, list):
+        return all(_eval_passed(v) for v in value) if value else False
+    if isinstance(value, dict):
+        inner = value.get("result") or value.get("output")
+        if inner is not None:
+            return _eval_passed(inner)
+    return False
+
+
 def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     """
     Validate required fields for error localization.
@@ -838,10 +860,13 @@ def _get_input_keys(input_data):
 
 
 def trigger_error_localization_for_standalone(evaluation: Evaluation):
-    """
-    Helper function to create ErrorLocalizerTask for standalone evaluations.
-    """
     try:
+        if _eval_passed(evaluation.data):
+            logger.info(
+                f"Skipping error localization for passing eval {evaluation.id}"
+            )
+            return None
+
         input_keys = _get_input_keys(evaluation.input_data)
         input_types = _get_input_type(evaluation.input_data)
 
