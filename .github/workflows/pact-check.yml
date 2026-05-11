@@ -26,11 +26,11 @@ jobs:
       - name: Install pact dependencies
         run: pip install z3-solver hypothesis
 
-      - name: Run pact (diff mode — new violations only)
+      - name: Run pact (incremental — dirty subgraph only)
         id: pact
         run: |
           python -m tools.pact.cli futureagi/ \
-            --json --diff \
+            --json --incremental --stats \
             2>/dev/null | tee /tmp/pact_violations.json
           COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/pact_violations.json'))))")
           echo "violation_count=$COUNT" >> $GITHUB_OUTPUT
@@ -57,30 +57,45 @@ jobs:
   tlc:
     name: tlc / model checking
     runs-on: ubuntu-latest
-    if: |
-      contains(github.event.pull_request.changed_files_url, 'docs/tla') ||
-      hashFiles('docs/tla/*.tla') != ''
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find changed TLA+ specs
+        id: changed_tla
+        run: |
+          changed=$(git diff --name-only origin/main...HEAD -- 'docs/tla/*.tla' | tr '\n' ' ')
+          echo "specs=$changed" >> $GITHUB_OUTPUT
+          if [ -z "$changed" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Download TLC
+        if: steps.changed_tla.outputs.skip != 'true'
         run: curl -fsSL --fail -o /tmp/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar
 
-      - name: Run TLC on all specs with configs
+      - name: Run TLC on changed specs only
+        if: steps.changed_tla.outputs.skip != 'true'
         run: |
           set -e
-          cd docs/tla
           failed=0
-          for cfg in *.cfg; do
-            spec="${cfg%.cfg}.tla"
-            [ -f "$spec" ] || continue
+          for spec in ${{ steps.changed_tla.outputs.specs }}; do
+            cfg="${spec%.tla}.cfg"
+            [ -f "$cfg" ] || { echo "::warning file=$spec::No .cfg found — skipping TLC"; continue; }
             echo "=== TLC: $spec ==="
-            if ! java -jar /tmp/tla2tools.jar -config "$cfg" "$spec" -deadlock 2>&1 | tee /tmp/tlc_${cfg%.cfg}.log | grep -q "Model checking completed"; then
-              echo "::error file=docs/tla/$spec::TLC found an error — see log"
+            if ! java -jar /tmp/tla2tools.jar -config "$cfg" "$spec" -deadlock 2>&1 | tee /tmp/tlc_$(basename ${spec%.tla}).log | grep -q "Model checking completed"; then
+              echo "::error file=$spec::TLC found an error — see log"
               failed=1
             fi
           done
           exit $failed
+
+      - name: Skip notice
+        if: steps.changed_tla.outputs.skip == 'true'
+        run: echo "No TLA+ specs changed — TLC skipped"
 
   z3-hypothesis:
     name: z3 + hypothesis / formal tests
