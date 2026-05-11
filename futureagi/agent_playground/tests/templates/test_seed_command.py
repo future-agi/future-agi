@@ -16,12 +16,17 @@ class TestSeedNodeTemplatesCommand:
         """Running the command creates the template record."""
         call_command("seed_node_templates")
         assert NodeTemplate.no_workspace_objects.filter(name="llm_prompt").exists()
+        assert NodeTemplate.no_workspace_objects.filter(name="code_execution").exists()
 
     def test_idempotent(self, db):
         """Running the command twice produces exactly one record."""
         call_command("seed_node_templates")
         call_command("seed_node_templates")
         assert NodeTemplate.no_workspace_objects.filter(name="llm_prompt").count() == 1
+        assert (
+            NodeTemplate.no_workspace_objects.filter(name="code_execution").count()
+            == 1
+        )
 
     def test_updates_safe_fields(self, db):
         """Re-running after a safe field change updates the record."""
@@ -76,13 +81,15 @@ class TestSeedNodeTemplatesCommand:
     def test_created_template_passes_clean(self, db):
         """The seeded template passes model validation."""
         call_command("seed_node_templates")
-        template = NodeTemplate.no_workspace_objects.get(name="llm_prompt")
-        template.clean()  # should not raise
+        for name in ("llm_prompt", "code_execution"):
+            template = NodeTemplate.no_workspace_objects.get(name=name)
+            template.clean()  # should not raise
 
     def test_template_filter(self, db):
         """--template flag seeds only the specified template."""
-        call_command("seed_node_templates", template="llm_prompt")
-        assert NodeTemplate.no_workspace_objects.filter(name="llm_prompt").exists()
+        call_command("seed_node_templates", template="code_execution")
+        assert not NodeTemplate.no_workspace_objects.filter(name="llm_prompt").exists()
+        assert NodeTemplate.no_workspace_objects.filter(name="code_execution").exists()
 
     def test_template_filter_unknown(self, db):
         """--template with unknown name prints error and creates nothing."""
