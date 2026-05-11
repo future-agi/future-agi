@@ -280,13 +280,22 @@ def _build_transcript_data(call_execution):
                 is_outbound = str(call_dir).strip().lower() == "outbound"
 
                 for transcript in transcripts:
-                    if transcript.content.strip():
-                        eval_role = SpeakerRoleResolver.get_eval_role_label(
-                            transcript.speaker_role,
-                            provider=provider,
-                            is_outbound=is_outbound,
-                        )
-                        transcript_text.append(f"{eval_role}: {transcript.content}")
+                    content = (transcript.content or "").strip()
+                    if not content:
+                        continue
+                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                        transcript.speaker_role,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                    transcript_text.append(f"{eval_role}: {content}")
+                    # Per-role splits, keyed off the raw CallTranscript role
+                    # ("user" = simulator, "assistant" = tested agent — see
+                    # SpeakerRoleResolver._VAPI_INBOUND for the convention).
+                    if transcript.speaker_role == CallTranscript.SpeakerRole.USER:
+                        user_chat_transcript_text.append(content)
+                    elif transcript.speaker_role == CallTranscript.SpeakerRole.ASSISTANT:
+                        assistant_chat_transcript_text.append(content)
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(
