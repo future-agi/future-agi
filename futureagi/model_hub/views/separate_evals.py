@@ -5299,6 +5299,16 @@ class EvalPlayGroundAPIView(APIView):
                         get_error_message("MISSING_EVAL_TEMPLATE")
                     )
 
+                # Validate + coerce function params (matches Dataset / Experiments
+                # paths). Without this, FE-sent blank strings flow straight into
+                # int()/float() inside eval bodies and crash with cryptic errors.
+                try:
+                    runtime_config = normalize_eval_runtime_config(
+                        eval_template.config, runtime_config
+                    )
+                except ValueError as ve:
+                    return self._gm.bad_request(str(ve))
+
                 try:
                     # Run the evaluation with the provided config
                     response = run_eval_func(
