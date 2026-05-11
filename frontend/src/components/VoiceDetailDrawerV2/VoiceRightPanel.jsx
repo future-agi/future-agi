@@ -203,7 +203,12 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       : Object.entries(evalRows);
 
     return rows.map(([id, e], i) => {
-      const rawValue = e?.score ?? e?.output ?? e?.value;
+      // Categorical evals (post-migration) emit output as a list like ["never"].
+      // Surface the first bucket name so it shows in the badge.
+      let rawValue = e?.score ?? e?.output ?? e?.value;
+      if (Array.isArray(rawValue)) {
+        rawValue = rawValue.length === 1 ? rawValue[0] : rawValue.join(", ");
+      }
       let score = null;
       let scoreLabel;
 

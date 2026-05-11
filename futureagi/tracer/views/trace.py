@@ -86,6 +86,38 @@ from tracer.utils.otel import DECODER, CallAttributes, ConversationAttributes
 from tracer.views.observation_span import get_observation_spans
 
 
+def _is_choices_eval(config) -> bool:
+    """True when the eval template's output_type is 'choices' (categorical)."""
+    tpl = getattr(config, "eval_template", None)
+    if tpl is None:
+        return False
+    return (getattr(tpl, "config", None) or {}).get("output") == "choices"
+
+
+def _score_to_choice(config, score_val):
+    """Map an annotated score (0-100) back to the categorical bucket name via
+    eval_template.choice_scores. Returns the bucket whose stored score is
+    closest to the normalized (0-1) input. None if no choice_scores exist."""
+    tpl = getattr(config, "eval_template", None)
+    if tpl is None:
+        return None
+    choice_scores = getattr(tpl, "choice_scores", None) or {}
+    if not choice_scores:
+        return None
+    normalized = float(score_val) / 100.0
+    best = None
+    best_dist = None
+    for bucket, bucket_score in choice_scores.items():
+        try:
+            dist = abs(float(bucket_score) - normalized)
+        except (TypeError, ValueError):
+            continue
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = bucket
+    return best
+
+
 def _sanitize_nonfinite_floats(value):
     """Recursively replace NaN/+-Infinity floats with ``None``.
 
@@ -1151,6 +1183,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     score_val = data.get("score")
                     if metric_type == EvalOutputType.PASS_FAIL:
                         metric_entry["output"] = "Pass" if score_val > 0 else "Fail"
+                    elif _is_choices_eval(config) and isinstance(score_val, (int, float)):
+                        # Categorical eval post-migration: agent eval stored
+                        # output_float; annotation gave us score (0-100). Translate
+                        # back to bucket name via eval_template.choice_scores.
+                        # Emit as list w/ output_type='choices' so it matches the
+                        # column config and the existing choices cell renderer.
+                        bucket = _score_to_choice(config, score_val)
+                        metric_entry["output"] = [bucket] if bucket else []
                     else:
                         metric_entry["output"] = (
                             round(score_val, 2)
@@ -3675,6 +3715,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     metric_entry["output"] = log.output_str_list
                 elif output_type == "Pass/Fail" and log.output_bool is not None:
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
+                elif output_type == "choices" and log.output_float is not None:
+                    bucket = _score_to_choice(config, round(log.output_float * 100, 2))
+                    metric_entry["output"] = [bucket] if bucket else []
                 elif log.output_float is not None:
                     metric_entry["output"] = round(log.output_float * 100, 2)
                 else:
@@ -5158,9 +5201,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 4 (child spans) removed — observation_span is a detail-only field.
 
-        # Build column config
+        # Build column config — match the PG path: skip_choices=True collapses
+        # categorical evals to ONE column (rather than N bucket-columns) so the
+        # post-migration single-value agent eval renders correctly.
         column_config = update_column_config_based_on_eval_config(
-            [], eval_configs, is_simulator=True
+            [], eval_configs, skip_choices=True, is_simulator=True
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -5273,6 +5318,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                         if score_val and score_val > 0
                                         else "Fail"
                                     )
+                                elif output_type == "choices" and isinstance(score_val, (int, float)):
+                                    bucket = _score_to_choice(config, score_val)
+                                    metric_entry["output"] = [bucket] if bucket else []
                                 else:
                                     metric_entry["output"] = (
                                         round(score_val, 2)
