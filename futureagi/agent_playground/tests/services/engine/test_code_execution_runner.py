@@ -1,12 +1,15 @@
+import sys
 from pathlib import Path
 
 import jsonschema
 
 from agent_playground.services.engine.runners.code_execution import (
+    BoundedProcessResult,
     CodeExecutionError,
     CodeExecutionRunner,
     DockerCodeSandbox,
     SandboxResult,
+    _run_bounded_subprocess,
 )
 from agent_playground.templates.code_execution import CODE_EXECUTION_TEMPLATE
 
@@ -50,6 +53,9 @@ def test_code_execution_runner_delegates_to_sandbox():
         "runner": "python",
         "timed_out": False,
         "memory_mb": None,
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "output_limit_bytes": None,
     }
     assert sandbox.calls == [
         {
@@ -108,6 +114,9 @@ def test_code_execution_template_result_schema_matches_runner_payload():
             "runner": "node",
             "timed_out": False,
             "memory_mb": 128,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "output_limit_bytes": 131072,
         },
     }
 
@@ -182,6 +191,9 @@ def test_code_execution_runner_fails_graph_on_execution_error():
                     "runner": "python",
                     "timed_out": False,
                     "memory_mb": None,
+                    "stdout_truncated": False,
+                    "stderr_truncated": False,
+                    "output_limit_bytes": None,
                 },
             }
         }
@@ -248,12 +260,15 @@ def test_docker_sandbox_fails_when_runner_marker_is_missing(monkeypatch):
         lambda workdir, language, code: (Path("runner.py"), ["python"]),
     )
     monkeypatch.setattr(
-        "agent_playground.services.engine.runners.code_execution.subprocess.run",
-        lambda *args, **kwargs: type(
-            "Result",
-            (),
-            {"returncode": 0, "stdout": "visible only", "stderr": ""},
-        )(),
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
+        lambda *args, **kwargs: BoundedProcessResult(
+            returncode=0,
+            stdout="visible only",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+        ),
     )
 
     result = sandbox.run(
@@ -300,6 +315,18 @@ def test_docker_sandbox_pulls_missing_image_before_execution(monkeypatch):
         "agent_playground.services.engine.runners.code_execution.subprocess.run",
         fake_run,
     )
+    monkeypatch.setattr(
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
+        lambda command, **kwargs: commands.append(command)
+        or BoundedProcessResult(
+            returncode=0,
+            stdout='__FAGI_CODE_RESULT__{"result": 1}',
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+        ),
+    )
 
     result = sandbox.run(
         language="python",
@@ -331,7 +358,7 @@ def test_docker_sandbox_returns_structured_failure_when_docker_run_cannot_start(
         raise OSError("docker disappeared")
 
     monkeypatch.setattr(
-        "agent_playground.services.engine.runners.code_execution.subprocess.run",
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
         raise_os_error,
     )
 
@@ -361,12 +388,15 @@ def test_docker_sandbox_marks_timeout_metadata(monkeypatch):
     )
     monkeypatch.setattr(sandbox, "_remove_container", lambda container_name: None)
 
-    import subprocess
-
     monkeypatch.setattr(
-        "agent_playground.services.engine.runners.code_execution.subprocess.run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired(args[0], timeout=1, output="partial")
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
+        lambda *args, **kwargs: BoundedProcessResult(
+            returncode=None,
+            stdout="partial",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=True,
         ),
     )
 
@@ -397,19 +427,16 @@ def test_docker_sandbox_decodes_timeout_output_bytes(monkeypatch):
     )
     monkeypatch.setattr(sandbox, "_remove_container", lambda container_name: None)
 
-    import subprocess
-
-    def raise_timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired(
-            args[0],
-            timeout=1,
-            output=b"partial stdout",
-            stderr=b"partial stderr",
-        )
-
     monkeypatch.setattr(
-        "agent_playground.services.engine.runners.code_execution.subprocess.run",
-        raise_timeout,
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
+        lambda *args, **kwargs: BoundedProcessResult(
+            returncode=None,
+            stdout="partial stdout",
+            stderr="partial stderr",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=True,
+        ),
     )
 
     result = sandbox.run(
@@ -425,6 +452,28 @@ def test_docker_sandbox_decodes_timeout_output_bytes(monkeypatch):
     assert result.stderr == "partial stderr"
     assert isinstance(result.stdout, str)
     assert isinstance(result.stderr, str)
+
+
+def test_bounded_subprocess_drains_and_truncates_output():
+    result = _run_bounded_subprocess(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.write('x' * 2048); "
+                "sys.stderr.write('y' * 2048)"
+            ),
+        ],
+        timeout=5,
+        output_limit_bytes=1024,
+    )
+
+    assert result.returncode == 0
+    assert len(result.stdout.encode("utf-8")) == 1024
+    assert len(result.stderr.encode("utf-8")) == 1024
+    assert result.stdout_truncated is True
+    assert result.stderr_truncated is True
 
 
 def test_typescript_runner_declares_esm_package(tmp_path):
@@ -526,6 +575,18 @@ def test_docker_sandbox_runs_with_least_privilege_flags(monkeypatch):
     monkeypatch.setattr(
         "agent_playground.services.engine.runners.code_execution.subprocess.run",
         fake_run,
+    )
+    monkeypatch.setattr(
+        "agent_playground.services.engine.runners.code_execution._run_bounded_subprocess",
+        lambda command, **kwargs: commands.append(command)
+        or BoundedProcessResult(
+            returncode=0,
+            stdout='__FAGI_CODE_RESULT__{"result": 1}',
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+        ),
     )
 
     sandbox.run(

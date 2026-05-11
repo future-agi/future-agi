@@ -70,7 +70,15 @@ export const CODE_EXECUTION_RESULT_SCHEMA = {
     metadata: {
       type: "object",
       additionalProperties: false,
-      required: ["language", "runner", "timed_out", "memory_mb"],
+      required: [
+        "language",
+        "runner",
+        "timed_out",
+        "memory_mb",
+        "stdout_truncated",
+        "stderr_truncated",
+        "output_limit_bytes",
+      ],
       properties: {
         language: {
           type: "string",
@@ -79,6 +87,9 @@ export const CODE_EXECUTION_RESULT_SCHEMA = {
         runner: { anyOf: [{ type: "string" }, { type: "null" }] },
         timed_out: { type: "boolean" },
         memory_mb: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        stdout_truncated: { type: "boolean" },
+        stderr_truncated: { type: "boolean" },
+        output_limit_bytes: { anyOf: [{ type: "integer" }, { type: "null" }] },
       },
     },
   },

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ _SANDBOX_UNAVAILABLE = (
 )
 _IMAGE_UNAVAILABLE = "SANDBOX_UNAVAILABLE: Docker image '{image}' is not available and could not be pulled."
 _IMAGE_PULL_TIMEOUT_MS = 120000
+_OUTPUT_LIMIT_BYTES = 131072
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,20 @@ class SandboxResult:
     runner: str | None = "python"
     timed_out: bool = False
     memory_mb: int | None = None
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    output_limit_bytes: int | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class BoundedProcessResult:
+    returncode: int | None
+    stdout: str
+    stderr: str
+    stdout_truncated: bool
+    stderr_truncated: bool
+    timed_out: bool
 
 
 class CodeExecutionError(RuntimeError):
@@ -111,6 +126,7 @@ class DockerCodeSandbox:
                 language=language,
                 runner=self._runner_for_language(language),
                 memory_mb=memory_mb,
+                output_limit_bytes=self._output_limit_bytes(),
                 error=_SANDBOX_UNAVAILABLE,
             )
         image = self._image_for_language(language)
@@ -125,6 +141,7 @@ class DockerCodeSandbox:
                 language=language,
                 runner=self._runner_for_language(language),
                 memory_mb=memory_mb,
+                output_limit_bytes=self._output_limit_bytes(),
                 error=_IMAGE_UNAVAILABLE.format(image=image),
             )
 
@@ -145,6 +162,7 @@ class DockerCodeSandbox:
                     language=language,
                     runner=self._runner_for_language(language),
                     memory_mb=memory_mb,
+                    output_limit_bytes=self._output_limit_bytes(),
                     error=f"INPUT_SERIALIZATION_FAILED: {exc}",
                 )
             script_path, command = self._write_runner(workdir, language, code)
@@ -181,30 +199,32 @@ class DockerCodeSandbox:
                 f"/workspace/{script_path.name}",
             ]
             started = time.monotonic()
+            output_limit_bytes = self._output_limit_bytes()
             try:
-                completed = subprocess.run(
+                completed = _run_bounded_subprocess(
                     docker_cmd,
-                    capture_output=True,
-                    check=False,
-                    text=True,
                     timeout=timeout_ms / 1000,
+                    output_limit_bytes=output_limit_bytes,
                 )
                 duration_ms = int((time.monotonic() - started) * 1000)
-            except subprocess.TimeoutExpired as exc:
-                self._remove_container(container_name)
-                return SandboxResult(
-                    ok=False,
-                    value=None,
-                    stdout=_coerce_subprocess_text(exc.stdout),
-                    stderr=_coerce_subprocess_text(exc.stderr),
-                    exit_code=None,
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    language=language,
-                    runner=self._runner_for_language(language),
-                    timed_out=True,
-                    memory_mb=memory_mb,
-                    error=f"TIMEOUT: execution exceeded {timeout_ms} ms.",
-                )
+                if completed.timed_out:
+                    self._remove_container(container_name)
+                    return SandboxResult(
+                        ok=False,
+                        value=None,
+                        stdout=completed.stdout,
+                        stderr=completed.stderr,
+                        exit_code=None,
+                        duration_ms=duration_ms,
+                        language=language,
+                        runner=self._runner_for_language(language),
+                        timed_out=True,
+                        memory_mb=memory_mb,
+                        stdout_truncated=completed.stdout_truncated,
+                        stderr_truncated=completed.stderr_truncated,
+                        output_limit_bytes=output_limit_bytes,
+                        error=f"TIMEOUT: execution exceeded {timeout_ms} ms.",
+                    )
             except OSError as exc:
                 return SandboxResult(
                     ok=False,
@@ -216,6 +236,7 @@ class DockerCodeSandbox:
                     language=language,
                     runner=self._runner_for_language(language),
                     memory_mb=memory_mb,
+                    output_limit_bytes=output_limit_bytes,
                     error=f"SANDBOX_EXECUTION_FAILED: {exc}",
                 )
 
@@ -236,6 +257,9 @@ class DockerCodeSandbox:
                 language=language,
                 runner=self._runner_for_language(language),
                 memory_mb=memory_mb,
+                stdout_truncated=completed.stdout_truncated,
+                stderr_truncated=completed.stderr_truncated,
+                output_limit_bytes=output_limit_bytes,
                 error=error,
             )
 
@@ -312,6 +336,16 @@ class DockerCodeSandbox:
         except ValueError:
             return _IMAGE_PULL_TIMEOUT_MS
         return max(1000, timeout_ms)
+
+    def _output_limit_bytes(self) -> int:
+        raw_limit = os.environ.get("FAGI_CODE_EXECUTION_OUTPUT_LIMIT_BYTES")
+        if raw_limit is None:
+            return _OUTPUT_LIMIT_BYTES
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return _OUTPUT_LIMIT_BYTES
+        return max(1024, limit)
 
     def _python_wrapper(self, code: str) -> str:
         return "\n".join(
@@ -446,6 +480,9 @@ def _result_payload(result: SandboxResult) -> dict[str, Any]:
             "runner": result.runner,
             "timed_out": result.timed_out,
             "memory_mb": result.memory_mb,
+            "stdout_truncated": result.stdout_truncated,
+            "stderr_truncated": result.stderr_truncated,
+            "output_limit_bytes": result.output_limit_bytes,
         },
     }
 
@@ -456,6 +493,72 @@ def _coerce_subprocess_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _run_bounded_subprocess(
+    command: list[str],
+    *,
+    timeout: float,
+    output_limit_bytes: int,
+) -> BoundedProcessResult:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    stdout_state = {"size": 0, "truncated": False}
+    stderr_state = {"size": 0, "truncated": False}
+
+    stdout_thread = threading.Thread(
+        target=_drain_bounded_stream,
+        args=(process.stdout, stdout_chunks, stdout_state, output_limit_bytes),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_drain_bounded_stream,
+        args=(process.stderr, stderr_chunks, stderr_state, output_limit_bytes),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    timed_out = False
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        process.kill()
+        returncode = process.wait()
+
+    stdout_thread.join()
+    stderr_thread.join()
+
+    return BoundedProcessResult(
+        returncode=None if timed_out else returncode,
+        stdout=_coerce_subprocess_text(b"".join(stdout_chunks)),
+        stderr=_coerce_subprocess_text(b"".join(stderr_chunks)),
+        stdout_truncated=stdout_state["truncated"],
+        stderr_truncated=stderr_state["truncated"],
+        timed_out=timed_out,
+    )
+
+
+def _drain_bounded_stream(stream, chunks: list[bytes], state: dict, limit: int) -> None:
+    if stream is None:
+        return
+    while True:
+        chunk = stream.read(8192)
+        if not chunk:
+            return
+        remaining = limit - state["size"]
+        if remaining > 0:
+            chunks.append(chunk[:remaining])
+        if len(chunk) > remaining:
+            state["truncated"] = True
+        state["size"] += len(chunk)
 
 
 register_runner("code_execution", CodeExecutionRunner())
