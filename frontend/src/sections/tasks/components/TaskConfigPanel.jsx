@@ -119,6 +119,8 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
     evalItem?.evalTemplate?.config?.language ||
     (isCode ? "Python" : null);
 
+  const hasError = !evalItem?.id;
+
   return (
     <Box
       sx={{
@@ -128,13 +130,13 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         p: 1.5,
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: hasError ? "error.main" : "divider",
         bgcolor:
           theme.palette.mode === "dark"
             ? "rgba(255,255,255,0.02)"
             : "rgba(0,0,0,0.01)",
         transition: "border-color 0.15s",
-        "&:hover": { borderColor: "primary.main" },
+        "&:hover": { borderColor: hasError ? "error.main" : "primary.main" },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -206,6 +208,19 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             />
           )}
         </Box>
+        {hasError && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mt: 0.5,
+              fontSize: "11px",
+              color: "error.main",
+            }}
+          >
+            Failed to save — remove and re-add this evaluation.
+          </Typography>
+        )}
         {mappedKeys.length > 0 && (
           <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
             {mappedKeys.slice(0, 4).map((key) => (

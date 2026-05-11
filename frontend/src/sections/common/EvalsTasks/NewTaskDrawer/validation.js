@@ -56,11 +56,11 @@ export const NewTaskValidationSchema = () =>
         .refine(
           (evals) =>
             evals.every(
-              (e) => typeof e?.id === "string" && e?.id?.length > 0,
+              (e) => typeof e?.id === "string" && e.id.length > 0,
             ),
           {
             message:
-              "One or more evaluations failed to save. Please remove and re-add them.",
+              "Remove the highlighted evaluation(s) and re-add them before continuing.",
           },
         )
         .transform((evals) => evals.map((e) => e.id)),
