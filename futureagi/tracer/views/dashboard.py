@@ -923,16 +923,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+    
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
                         Score.objects.filter(
                             Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids),
+                            | Q(trace__project_id__in=project_ids)
+                            | Q(observation_span__project_id__in=project_ids),
                             deleted=False,
                         )
                         .values_list("label_id", flat=True)
