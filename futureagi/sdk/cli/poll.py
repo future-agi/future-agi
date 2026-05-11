@@ -171,11 +171,13 @@ class SimulatePoller:
         # TimeoutBounded invariant — check before sleeping
         if state.elapsed_s + self.poll_interval_s > self.timeout_s:
             state.phase = Phase.TIMED_OUT
+            state.run_status = "timed_out"
             state.exit_code = 1
             return
         # Exhausted poll budget
         if state.polls_done >= self.max_polls:
             state.phase = Phase.TIMED_OUT
+            state.run_status = "timed_out"
             state.exit_code = 1
             return
 
