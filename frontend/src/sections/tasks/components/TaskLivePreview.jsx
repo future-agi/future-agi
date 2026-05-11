@@ -496,12 +496,25 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             }));
             return;
           }
+          // Build data_injection flags from the eval's saved config
+          // so the BE enables the correct context toggles (same as
+          // EvalPickerConfigFull does for tracing tab).
+          const diFlags =
+            evalItem?.data_injection ||
+            evalItem?.config?.run_config?.data_injection ||
+            evalItem?.config?.data_injection ||
+            {};
           const { data } = await axios.post(
             endpoints.develop.eval.evalPlayground,
             {
               template_id: templateId,
               model: evalItem?.model || "turing_large",
-              config: { mapping: resolveMapping(evalItem?.mapping) },
+              config: {
+                mapping: resolveMapping(evalItem?.mapping),
+                ...(Object.keys(diFlags).length > 0
+                  ? { data_injection: diFlags }
+                  : {}),
+              },
               ...autoCtx,
             },
           );

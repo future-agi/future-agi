@@ -6,6 +6,10 @@ const {
   GITHUB_TOKEN,
   SLACK_WEBHOOK_URL,
   GITHUB_REPOSITORY,
+  // Optional PAT with `read:org` scope. The default GITHUB_TOKEN cannot see
+  // private org membership, and most members keep their membership private,
+  // so without this token nearly everyone is misclassified as External.
+  ORG_READ_TOKEN,
 } = process.env;
 
 for (const [k, v] of Object.entries({
@@ -19,9 +23,20 @@ for (const [k, v] of Object.entries({
   }
 }
 
+if (!ORG_READ_TOKEN) {
+  console.warn(
+    'ORG_READ_TOKEN is not set; falling back to author_association for Internal/External classification. ' +
+      'Members with private org membership will be miscounted as External. ' +
+      'Add a PAT with read:org scope as the ORG_READ_TOKEN secret to fix.',
+  );
+}
+
 const [OWNER, REPO] = GITHUB_REPOSITORY.split('/');
 const GH_API = 'https://api.github.com';
 const DESC_MAX = 140;
+// Slack caps a single message at 50 blocks. We use 1 header + N PR sections
+// per message; 35 keeps us well clear of the limit even with edge-case sections.
+const PRS_PER_MESSAGE = 35;
 
 const ghHeaders = {
   Accept: 'application/vnd.github+json',
@@ -93,10 +108,33 @@ function reviewerInfo(pr, reviews) {
   return { attached: all.length > 0, names: all };
 }
 
-function bucket(pr) {
-  return pr.author_association === 'MEMBER' || pr.author_association === 'OWNER'
-    ? 'internal'
-    : 'external';
+const memberCache = new Map();
+
+async function isOrgMember(login) {
+  if (!login || !ORG_READ_TOKEN) return null;
+  if (memberCache.has(login)) return memberCache.get(login);
+  const res = await fetch(`${GH_API}/orgs/${OWNER}/members/${encodeURIComponent(login)}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${ORG_READ_TOKEN}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': `${OWNER}-${REPO}-pr-digest`,
+    },
+  });
+  // 204 = member; 302 = token can't see; 404 = not a member.
+  const isMember = res.status === 204;
+  memberCache.set(login, isMember);
+  return isMember;
+}
+
+async function bucket(pr) {
+  // Public org members surface as MEMBER on author_association — no API call needed.
+  if (pr.author_association === 'OWNER' || pr.author_association === 'MEMBER') {
+    return 'internal';
+  }
+  // Private members default to CONTRIBUTOR/NONE on author_association; query the org API.
+  const memberOf = await isOrgMember(pr.user?.login);
+  return memberOf === true ? 'internal' : 'external';
 }
 
 function truncate(s) {
@@ -157,16 +195,17 @@ function emptyStub() {
 }
 
 async function enrichPR(pr) {
-  const [files, reviews] = await Promise.all([
+  const [files, reviews, prBucket] = await Promise.all([
     ghAll(`/repos/${OWNER}/${REPO}/pulls/${pr.number}/files`),
     ghAll(`/repos/${OWNER}/${REPO}/pulls/${pr.number}/reviews`),
+    bucket(pr),
   ]);
   return {
     number: pr.number,
     title: pr.title,
     html_url: pr.html_url,
     user: { login: pr.user?.login || 'unknown' },
-    bucket: bucket(pr),
+    bucket: prBucket,
     area: classifyArea(files),
     review: classifyReviewState(pr, reviews),
     reviewers: reviewerInfo(pr, reviews),
@@ -198,8 +237,32 @@ async function postSlack(blocks, fallbackText) {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Slack webhook failed: ${res.status} ${await res.text()}`);
+    const body = await res.text();
+    throw new Error(
+      `Slack webhook failed: ${res.status} ${body} (block count: ${blocks.length})`,
+    );
   }
+}
+
+async function postBucket(bucketEmoji, bucketLabel, prs) {
+  if (prs.length === 0) {
+    await postSlack(
+      [header(`${bucketEmoji} ${bucketLabel} (0)`), emptyStub()],
+      `${bucketLabel}: none`,
+    );
+    return 1;
+  }
+  const totalParts = Math.ceil(prs.length / PRS_PER_MESSAGE);
+  for (let i = 0; i < totalParts; i++) {
+    const chunk = prs.slice(i * PRS_PER_MESSAGE, (i + 1) * PRS_PER_MESSAGE);
+    const partSuffix = totalParts > 1 ? ` — part ${i + 1}/${totalParts}` : '';
+    const blocks = [
+      header(`${bucketEmoji} ${bucketLabel} (${prs.length})${partSuffix}`),
+      ...chunk.map(prSection),
+    ];
+    await postSlack(blocks, `${bucketLabel}${partSuffix}`);
+  }
+  return totalParts;
 }
 
 async function main() {
@@ -210,22 +273,21 @@ async function main() {
   const external = enriched.filter((p) => p.bucket === 'external');
   const internal = enriched.filter((p) => p.bucket === 'internal');
 
-  const blocks = [
+  // Message 1: digest summary. Subsequent messages: each bucket, chunked if needed.
+  const summaryBlocks = [
     header(`🚀 PR Digest — ${istDateString()}`),
     context(
       `${enriched.length} open  •  ${external.length} External  •  ${internal.length} Internal`,
     ),
-    { type: 'divider' },
-    header(`📤 External PRs (${external.length})`),
-    ...(external.length ? external.map(prSection) : [emptyStub()]),
-    { type: 'divider' },
-    header(`🏢 Internal PRs (${internal.length})`),
-    ...(internal.length ? internal.map(prSection) : [emptyStub()]),
   ];
-
   const fallback = `PR Digest — ${enriched.length} open (${external.length} external, ${internal.length} internal)`;
-  await postSlack(blocks, fallback);
-  console.log(`Posted digest: ${fallback}`);
+  await postSlack(summaryBlocks, fallback);
+
+  const externalParts = await postBucket('📤', 'External PRs', external);
+  const internalParts = await postBucket('🏢', 'Internal PRs', internal);
+
+  const totalMessages = 1 + externalParts + internalParts;
+  console.log(`Posted digest in ${totalMessages} message(s): ${fallback}`);
 }
 
 main().catch((err) => {

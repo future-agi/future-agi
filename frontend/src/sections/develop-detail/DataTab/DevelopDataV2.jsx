@@ -411,6 +411,18 @@ const getAverageColumnConfig = (columns, tableRows) => {
   }
 
   for (const [_, cols] of Object.entries(grouping)) {
+    // Ensure evaluation columns come before evaluation_reason so we
+    // pick the result column (which carries averageScore) as cols[0].
+    if (cols.length > 1) {
+      cols.sort((a, b) => {
+        const aType = a.originType || a.origin_type || "";
+        const bType = b.originType || b.origin_type || "";
+        if (aType === "evaluation" && bType !== "evaluation") return -1;
+        if (bType === "evaluation" && aType !== "evaluation") return 1;
+        return 0;
+      });
+    }
+
     if (cols.length === 1) {
       const eachCol = cols[0];
 
@@ -562,6 +574,17 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     [],
   );
   isProcessingSyntheticData;
+
+  // Reset row selection when dataset changes or component unmounts (tab switch)
+  useEffect(() => {
+    useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+    useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    gridApiRef.current?.api?.deselectAll();
+    return () => {
+      useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+      useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    };
+  }, [dataset]);
 
   useEffect(() => {
     const dataSource = getDataSource(
@@ -719,6 +742,21 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         }
       } else {
         grouping[eachCol?.id] = [eachCol];
+      }
+    }
+
+    // Ensure evaluation columns come before evaluation_reason in each
+    // group so the result renders by default (not the reason).
+    for (const key of Object.keys(grouping)) {
+      const grp = grouping[key];
+      if (grp.length > 1) {
+        grp.sort((a, b) => {
+          const aType = a.originType || a.origin_type || "";
+          const bType = b.originType || b.origin_type || "";
+          if (aType === "evaluation" && bType !== "evaluation") return -1;
+          if (bType === "evaluation" && aType !== "evaluation") return 1;
+          return 0;
+        });
       }
     }
 
