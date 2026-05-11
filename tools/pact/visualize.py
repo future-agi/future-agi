@@ -134,8 +134,7 @@ def render_mermaid(
     if skip_test_files:
         functions = [f for f in functions if not _is_test_file(f.file)]
         call_sites = [cs for cs in call_sites
-                      if not _is_test_file(cs.file)
-                      and not _is_test_file(cs.caller_name or "")]
+                      if not _is_test_file(cs.file)]
 
     # Per-function violation counts — prefer caller-attributed data
     if violation_counts is not None:

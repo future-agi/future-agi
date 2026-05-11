@@ -253,10 +253,10 @@ def suggest_refactors(
         if func is None:
             continue
 
-        # Callers: look up both qualified and short names
+        # Callers: merge both qualified and short names to avoid or-shortcircuit drop
         callers = (
             callee_to_callers.get(func_name, [])
-            or callee_to_callers.get(func.name.split(".")[-1], [])
+            + callee_to_callers.get(func.name.split(".")[-1], [])
         )
 
         # Z3 safety check

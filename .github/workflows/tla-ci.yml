@@ -25,7 +25,7 @@ jobs:
 
       - name: Download tla2tools
         run: |
-          curl -sL "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar" \
+          curl -fsL "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar" \
             -o /tmp/tla2tools.jar
 
       - name: Run TLC on all specs with .cfg files

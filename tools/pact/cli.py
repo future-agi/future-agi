@@ -128,7 +128,7 @@ def main(argv=None) -> int:
             violations, functions, call_sites,
             min_violations=args.suggest_min,
         )
-        if args.suggest:
+        if args.suggest and not args.json_mode:
             if suggestions:
                 print(f"\n⚡ pact: {len(suggestions)} refactor suggestion(s)\n")
                 for s in suggestions:

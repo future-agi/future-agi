@@ -126,8 +126,11 @@ def run_go_checker(
     except (subprocess.TimeoutExpired, OSError):
         return []
 
-    # Exit codes: 0 = success (violations or clean), 1 = some tools signal violations,
-    # 2 = usage error (no files given). Any non-zero with no stdout → no results.
+    # Exit codes: 0 = success (no violations), 1 = violations found,
+    # 2 = usage error (no files given — treated as no results, not a fatal error).
+    # Any unexpected exit code with no output is also treated as no results.
+    if result.returncode not in (0, 1, 2):
+        return []
     raw = result.stdout.strip()
     if not raw:
         return []

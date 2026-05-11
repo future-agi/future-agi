@@ -350,7 +350,7 @@ ExtractionConfluent ==
     \A f \in Functions :
         \A g \in Functions :
             (f # g /\ SitesSatisfy(f) /\ SitesSatisfy(g)) =>
-            (SitesSatisfy(f))   \* holds regardless of extracted state
+            (SitesSatisfy(g))   \* g remains extractable regardless of whether f was extracted first
             \* TLC exhaustively verifies no ordering makes this false
 
 (*

@@ -27,11 +27,23 @@
  *   - validate: safely extractable (no required args ✓)
  *   - route: safely extractable (s1 provides "path","method" ✓)
  *   ExtractionConfluent: TLC finds no ordering that blocks another extraction
+ *
+ * To check with TLC:
+ *   java -XX:+UseParallelGC -jar tla2tools.jar \
+ *     -config PactExtractionExample.cfg -deadlock PactExtractionExample
  *)
 
 EXTENDS TLC, FiniteSets
 
-ArgNames == {"x", "path", "method"}
+\* ---------------------------------------------------------------------------
+\* Concrete constants — defined here, then substituted into Pact via INSTANCE.
+\* ---------------------------------------------------------------------------
+
+ModesImpl      == {"required_arg_missing"}
+FileModesImpl  == {}
+SitesImpl      == {"s1", "s2", "s3"}
+FilesImpl      == {}
+FunctionsImpl  == {"process", "validate", "route"}
 
 ContractImpl == [
     process  |-> {"x"},
@@ -50,5 +62,15 @@ ProvisionImpl == [
     s2 |-> {"x"},
     s3 |-> {}
 ]
+
+INSTANCE Pact WITH
+    Modes      <- ModesImpl,
+    FileModes  <- FileModesImpl,
+    Sites      <- SitesImpl,
+    Files      <- FilesImpl,
+    Functions  <- FunctionsImpl,
+    Contracts  <- ContractImpl,
+    CallSites3 <- CallSites3Impl,
+    Provision  <- ProvisionImpl
 
 =============================================================================
