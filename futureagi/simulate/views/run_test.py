@@ -306,16 +306,20 @@ class CreateMinimalSuiteView(APIView):
         agent_url = (request.data.get("agent_url") or "").strip() or None
         description = (request.data.get("description") or "").strip()
 
-        # Idempotent — return existing suite without touching anything
-        existing = RunTest.objects.filter(name=name, organization=org, deleted=False).first()
-        if existing:
-            return Response(
-                {"id": str(existing.id), "name": existing.name, "created": False},
-                status=status.HTTP_200_OK,
-            )
-
         try:
             with transaction.atomic():
+                # Idempotent inside atomic so concurrent creates don't race past the check
+                existing = (
+                    RunTest.objects.select_for_update()
+                    .filter(name=name, organization=org, deleted=False)
+                    .first()
+                )
+                if existing:
+                    return Response(
+                        {"id": str(existing.id), "name": existing.name, "created": False},
+                        status=status.HTTP_200_OK,
+                    )
+
                 agent_def = AgentDefinition.objects.create(
                     agent_name=name,
                     agent_type=AgentTypeChoices.TEXT,

@@ -332,8 +332,8 @@ def _cmd_create(args, poller: SimulatePoller) -> int:
         return 0
 
     verb = "Created" if result.get("created") else "Found existing"
-    print(f"{verb} suite: {result['name']!r}")
-    print(f"ID: {result['id']}")
+    print(f"{verb} suite: {result.get('name', '(unknown)')!r}")
+    print(f"ID: {result.get('id', '(unknown)')}")
     if not result.get("created"):
         print("(Suite already existed — no changes made.)")
     return 0

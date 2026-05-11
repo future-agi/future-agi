@@ -465,7 +465,8 @@ def _fetch_summary(run_test, execution_id: str) -> tuple[list, Optional[float], 
             return [], None, None
 
         scores = [
-            item.get("pass_rate") or item.get("score") or 0
+            item["total_pass_rate"] if item.get("total_pass_rate") is not None
+            else item.get("total_avg", 0)
             for item in summary
             if isinstance(item, dict)
         ]
