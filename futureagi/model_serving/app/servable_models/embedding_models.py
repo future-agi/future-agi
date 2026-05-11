@@ -15,6 +15,18 @@ from transformers import AutoProcessor, CLIPModel, Wav2Vec2Model, Wav2Vec2Proces
 
 logger = structlog.get_logger(__name__)
 
+# Browser-like UA so public hosts that block default `python-requests/X.X`
+# (Wikipedia, many CDNs) don't return 403 when CLIP / image preprocessing
+# tries to fetch a user-supplied URL. S3 public-read buckets don't need
+# this — they accept any UA — but it costs nothing and unblocks the rest.
+_IMAGE_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    )
+}
+
 
 class TextEmbeddingModel(ModelServing):
     _model_instance = None
@@ -79,7 +91,7 @@ class ImageEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10)
+                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
                     response.raise_for_status()
                     return Image.open(io.BytesIO(response.content))
                 except Exception as e:
@@ -221,7 +233,7 @@ class ImageTextEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10)
+                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
                     response.raise_for_status()
                     return {
                         "data": Image.open(io.BytesIO(response.content)),
