@@ -41,6 +41,18 @@ from tracer.models.observability_provider import ProviderChoices
 # ============================================================================
 
 
+def _ee_voice_large():
+    return pytest.importorskip("ee.voice.temporal.activities.voice_large")
+
+
+def _ee_processing_gating():
+    return pytest.importorskip("ee.voice.utils.processing_gating")
+
+
+def _ee_call_execution_workflow():
+    return pytest.importorskip("ee.voice.temporal.workflows.call_execution_workflow")
+
+
 @pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
@@ -897,7 +909,7 @@ class TestFetchAndPersistCallResultActivity:
         self, call_execution
     ):
         """Test that fetch_and_persist_call_result updates CallExecution fields."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -992,7 +1004,7 @@ class TestFetchAndPersistCallResultActivity:
         self, call_execution
     ):
         """Test that fetch_and_persist_call_result handles failed calls."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -1084,7 +1096,7 @@ class TestFetchAndPersistCallResultActivity:
         self, db
     ):
         """Test that fetch_and_persist_call_result returns error for non-existent call."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -2040,7 +2052,7 @@ class TestCallProcessingGatingRules:
     """Tests for conversation-validity gating helper logic."""
 
     def test_transcript_with_both_roles_allows_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=4,
@@ -2053,7 +2065,7 @@ class TestCallProcessingGatingRules:
         assert decision.processing_skip_reason == ""
 
     def test_transcript_missing_customer_skips_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=2,
@@ -2066,7 +2078,7 @@ class TestCallProcessingGatingRules:
         assert "customer" in decision.processing_skip_reason.lower()
 
     def test_no_transcript_short_duration_skips_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=0,
@@ -2118,9 +2130,7 @@ class TestHeartbeatConfiguration:
         import ast
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2132,9 +2142,7 @@ class TestHeartbeatConfiguration:
         """Verify CallExecutionWorkflow sets heartbeat_timeout for run_simulate_evaluations."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2146,9 +2154,7 @@ class TestHeartbeatConfiguration:
         """Verify CallExecutionWorkflow sets heartbeat_timeout for run_tool_call_evaluation."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2164,9 +2170,7 @@ class TestHeartbeatConfiguration:
         """
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow)
         assert "tool-eval-activity" in source
@@ -2175,9 +2179,7 @@ class TestHeartbeatConfiguration:
         """Verify _run_eval_only_mode uses workflow.patched for tool-eval-activity."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow._run_eval_only_mode)
         assert "tool-eval-activity" in source

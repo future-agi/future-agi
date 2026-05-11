@@ -199,7 +199,7 @@ def _build_transcript_data(call_execution):
     records, and reads recording URLs from call_execution fields.
     """
     from simulate.models import CallTranscript, ChatMessageModel
-    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+    from simulate.utils.transcript_roles import SpeakerRoleResolver
 
     transcript_data = {
         "transcript": "",

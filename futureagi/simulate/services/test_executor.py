@@ -36,6 +36,17 @@ from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
+
+def _empty_call_log_summary(reason: str) -> dict:
+    return {
+        "total_entries": 0,
+        "level_counts": {},
+        "category_counts": {},
+        "last_logged_at": None,
+        "skipped_reason": reason,
+    }
+
+
 try:
     from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator
 except ImportError:
@@ -3519,15 +3530,27 @@ class TestExecutor:
             if log_url:
                 call_execution.customer_log_url = log_url
                 update_fields.add("customer_log_url")
-                from ee.voice.tasks.call_log_tasks import ingest_call_logs_task
-
-                ingest_call_logs_task.apply_async(
-                    args=(str(call_execution.id), log_url),
-                    kwargs={
-                        "verify_ssl": False,
-                        "source": CallLogEntry.LogSource.CUSTOMER,
-                    },
-                )
+                call_execution.logs_ingested_at = timezone.now()
+                update_fields.add("logs_ingested_at")
+                try:
+                    from ee.voice.tasks.call_log_tasks import ingest_call_logs_task
+                except ImportError:
+                    call_execution.customer_logs_summary = _empty_call_log_summary(
+                        "ee_voice_not_available"
+                    )
+                    update_fields.add("customer_logs_summary")
+                    logger.info(
+                        "call_log_ingestion_task_unavailable",
+                        call_execution_id=str(call_execution.id),
+                    )
+                else:
+                    ingest_call_logs_task.apply_async(
+                        args=(str(call_execution.id), log_url),
+                        kwargs={
+                            "verify_ssl": False,
+                            "source": CallLogEntry.LogSource.CUSTOMER,
+                        },
+                    )
 
             performance_metrics = call_data.performance_metrics.get(provider, {})
             customer_metrics_result = self.voice_service_manager.get_customer_metrics(
@@ -4284,7 +4307,7 @@ class TestExecutor:
                 "outbound" in call_type_lower and "inbound" not in call_type_lower
             )
 
-        from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+        from simulate.utils.transcript_roles import SpeakerRoleResolver
 
         provider = SpeakerRoleResolver.detect_provider(
             call_execution.provider_call_data
@@ -4333,7 +4356,7 @@ class TestExecutor:
         Returns:
             dict: Transcript and voice recording data
         """
-        from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+        from simulate.utils.transcript_roles import SpeakerRoleResolver
 
         transcript_data = {
             "transcript": "",

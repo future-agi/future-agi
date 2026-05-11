@@ -696,7 +696,7 @@ class BranchDeviationAnalyzer:
 
             else:
 
-                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+                from simulate.utils.transcript_roles import SpeakerRoleResolver
 
                 transcripts = CallTranscript.objects.filter(
                     call_execution=call_execution,

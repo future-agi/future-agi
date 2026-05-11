@@ -39,7 +39,7 @@ class CallTranscriptView(APIView):
                 test_execution__organization=user_organization,
             )
 
-            from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+            from simulate.utils.transcript_roles import SpeakerRoleResolver
 
             # Get all transcripts for this call
             transcripts = CallTranscript.objects.filter(
@@ -97,7 +97,7 @@ class TestExecutionTranscriptsView(APIView):
             for call_execution in call_executions:
                 # Filter transcripts by speaker role and order by start_time_ms
                 # Since we prefetched, this filtering happens in Python
-                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+                from simulate.utils.transcript_roles import SpeakerRoleResolver
 
                 displayable = SpeakerRoleResolver.get_displayable_roles()
                 transcripts = [

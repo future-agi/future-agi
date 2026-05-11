@@ -3328,13 +3328,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse for pagination + PG for span_attributes (hybrid)
             analytics = AnalyticsQueryService()
             if analytics.should_use_clickhouse(QueryType.VOICE_CALL_LIST):
-                return self._list_voice_calls_clickhouse(
-                    request,
-                    project_id,
-                    validated_data,
-                    remove_simulation_calls,
-                    analytics,
-                )
+                try:
+                    return self._list_voice_calls_clickhouse(
+                        request,
+                        project_id,
+                        validated_data,
+                        remove_simulation_calls,
+                        analytics,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "CH voice-call-list failed, falling back to PG",
+                        error=str(e),
+                    )
 
             # Build optimized base query: only traces whose root span is a conversation
             root_span_qs = ObservationSpan.objects.filter(

@@ -37,6 +37,13 @@ const TABS = {
   SCENARIO: "scenario",
 };
 
+const hasAttributeContent = (value) => {
+  if (!value) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
 const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
@@ -135,7 +142,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       });
     }
     return t;
-  }, [hasLogs, hasScenarioData]);
+  }, [hasLogs, hasScenarioData, hideAnnotationTab]);
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
@@ -285,11 +292,12 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
     //  3. Legacy `trace_details.attributes` for older cached payloads.
     //  4. The span object itself as a last resort.
     return (
-      observationSpan?.span_attributes ||
-      data?.attributes ||
-      data?.trace_details?.attributes ||
-      observationSpan ||
-      null
+      [
+        observationSpan?.span_attributes,
+        data?.attributes,
+        data?.trace_details?.attributes,
+        observationSpan,
+      ].find(hasAttributeContent) || null
     );
   }, [data, observationSpan]);
 

@@ -491,11 +491,36 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
             # Normalize Unicode characters (non-breaking spaces, zero-width chars, etc.)
             # that come from rich text editors / web UI copy-paste
-            from ee.agent_opt.utils.template_variables import (
-                build_template_variable_instruction,
-                extract_template_variables,
-                normalize_prompt_text,
-            )
+            try:
+                from ee.agent_opt.utils.template_variables import (
+                    build_template_variable_instruction,
+                    extract_template_variables,
+                    normalize_prompt_text,
+                )
+            except ImportError:
+                import re
+                import unicodedata
+
+                def normalize_prompt_text(text: str) -> str:
+                    text = unicodedata.normalize("NFKC", text)
+                    return re.sub(r"[\u200b\u200c\u200d\u200e\u200f\ufeff]", "", text)
+
+                def extract_template_variables(prompt: str) -> set[str]:
+                    return set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", prompt))
+
+                def build_template_variable_instruction(
+                    template_variables: set[str],
+                ) -> str:
+                    if not template_variables:
+                        return ""
+                    vars_list = ", ".join(
+                        f"{{{{{var}}}}}" for var in sorted(template_variables)
+                    )
+                    return (
+                        "\n\nCRITICAL CONSTRAINT - Template Variable Preservation:\n"
+                        "Preserve these template variables exactly, including "
+                        f"double curly braces: {vars_list}"
+                    )
 
             initial_prompt = normalize_prompt_text(initial_prompt)
 

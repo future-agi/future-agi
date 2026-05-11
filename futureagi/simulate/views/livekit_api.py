@@ -9,9 +9,11 @@ Two authentication modes:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import structlog
@@ -31,6 +33,20 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
+
+_ASYNC_THREAD_POOL_TIMEOUT = 120
+
+
+def _run_async(coro):
+    """Run an async coroutine from a sync DRF view."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(asyncio.run, coro)
+        return future.result(timeout=_ASYNC_THREAD_POOL_TIMEOUT)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +421,6 @@ class ValidateLiveKitCredentialsView(APIView):
         )
 
         from simulate.serializers.agent_definition import _is_masked
-        from ee.voice.services.livekit.service import _run_async
 
         data = request.data
         livekit_url = (data.get("livekit_url") or "").strip()
