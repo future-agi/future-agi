@@ -459,6 +459,22 @@ def test_cli_diff_failure_exits_nonzero(monkeypatch, tmp_path, capsys):
     assert "base branch unavailable" in captured.err
 
 
+def test_changed_files_wraps_missing_git(monkeypatch, tmp_path):
+    from . import cli
+
+    def missing_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", missing_git)
+
+    try:
+        cli._changed_files_on_branch("main", cwd=tmp_path)
+    except cli.DiffResolutionError as exc:
+        assert "git" in str(exc)
+    else:
+        raise AssertionError("missing git should raise DiffResolutionError")
+
+
 def test_scan_prs_reports_pact_cli_failure(monkeypatch, tmp_path):
     from . import scan_prs
 

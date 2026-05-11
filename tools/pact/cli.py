@@ -33,9 +33,9 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
             for p in result.stdout.splitlines()
             if p.strip().endswith(".py")
         }
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        stderr = (getattr(exc, "stderr", None) or "").strip()
+        stdout = (getattr(exc, "stdout", None) or "").strip()
         detail = stderr or stdout or str(exc)
         raise DiffResolutionError(detail) from exc
 
