@@ -19,9 +19,20 @@ import pytest
 # dependency).
 import model_hub.tasks  # noqa: F401, E402
 
+from django.core.exceptions import ValidationError  # noqa: E402
 from django.db import IntegrityError, transaction  # noqa: E402
 
 from tracer.models.observation_span import EvalLogger, EvalTargetType  # noqa: E402
+
+# The per-target_type FK shape is enforced in two layers:
+#   - Python: ``EvalLogger.clean()`` (via ``save() -> full_clean()``) raises
+#     ``ValidationError`` for single-row writes.
+#   - DB: ``eval_logger_target_type_fks`` CHECK constraint raises
+#     ``IntegrityError`` for paths that bypass ``save()`` (``bulk_create``,
+#     raw SQL, the ClickHouse CDC mirror).
+# Either rejection satisfies the contract; tests accept both so refactors
+# of one layer don't churn the other.
+_REJECTION_ERRORS = (ValidationError, IntegrityError)
 
 
 @pytest.mark.integration
@@ -79,8 +90,8 @@ class TestEvalLoggerTargetTypeShape:
     def test_rejects_span_target_with_session_set(
         self, observation_span, trace_session, custom_eval_config
     ):
-        """target_type='span' AND trace_session set → IntegrityError."""
-        with pytest.raises(IntegrityError), transaction.atomic():
+        """target_type='span' AND trace_session set → rejected (ValidationError or IntegrityError)."""
+        with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
                 target_type=EvalTargetType.SPAN,
                 observation_span=observation_span,
@@ -92,8 +103,8 @@ class TestEvalLoggerTargetTypeShape:
     def test_rejects_trace_target_with_null_span(
         self, trace, custom_eval_config
     ):
-        """target_type='trace' MUST anchor to a root span. NULL observation_span → IntegrityError."""
-        with pytest.raises(IntegrityError), transaction.atomic():
+        """target_type='trace' MUST anchor to a root span. NULL observation_span → rejected."""
+        with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
                 target_type=EvalTargetType.TRACE,
                 observation_span=None,
@@ -104,8 +115,8 @@ class TestEvalLoggerTargetTypeShape:
     def test_rejects_session_target_with_span_set(
         self, observation_span, trace_session, custom_eval_config
     ):
-        """target_type='session' MUST have NULL span — IntegrityError otherwise."""
-        with pytest.raises(IntegrityError), transaction.atomic():
+        """target_type='session' MUST have NULL span — rejected otherwise."""
+        with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
                 target_type=EvalTargetType.SESSION,
                 observation_span=observation_span,
@@ -117,8 +128,8 @@ class TestEvalLoggerTargetTypeShape:
     def test_rejects_session_target_with_trace_set(
         self, trace_session, trace, custom_eval_config
     ):
-        """target_type='session' MUST have NULL trace — IntegrityError otherwise."""
-        with pytest.raises(IntegrityError), transaction.atomic():
+        """target_type='session' MUST have NULL trace — rejected otherwise."""
+        with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
                 target_type=EvalTargetType.SESSION,
                 observation_span=None,
