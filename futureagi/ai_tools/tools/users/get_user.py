@@ -33,6 +33,14 @@ class GetUserTool(BaseTool):
         from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.user import User
         from accounts.models.workspace import WorkspaceMembership
+        from tfc.permissions.utils import get_org_membership
+
+        # Verify actor is a member of this org
+        actor_membership = get_org_membership(context.user)
+        if actor_membership is None:
+            return ToolResult.permission_denied(
+                "You are not a member of this organization."
+            )
 
         try:
             user = User.objects.get(

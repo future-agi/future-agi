@@ -288,3 +288,199 @@ class TestInviteUsersPermissions:
         )
         assert result.is_error
         assert result.error_code == "PERMISSION_DENIED"
+
+
+# ===================================================================
+# whoami authorization — role display accuracy
+# ===================================================================
+
+
+class TestWhoamiRoleDisplay:
+    """Regression: whoami must show role from level-based RBAC, not legacy field."""
+
+    def test_member_sees_member_role(self, member_context):
+        """Member user sees 'Member' — not a stale legacy role."""
+        result = run_tool("whoami", {}, member_context)
+        assert not result.is_error
+        assert result.data["organization_role"] == "Member"
+
+    def test_owner_sees_owner_role(self, tool_context):
+        """Owner user sees 'Owner'."""
+        result = run_tool("whoami", {}, tool_context)
+        assert not result.is_error
+        assert result.data["organization_role"] == "Owner"
+
+    def test_whoami_includes_workspace_role(self, member_context):
+        """whoami includes workspace role for the current workspace."""
+        result = run_tool("whoami", {}, member_context)
+        assert not result.is_error
+        assert "workspace_role" in result.data
+
+    def test_stale_legacy_role_not_used(self, member_context, member_user):
+        """Even if legacy User.organization_role is 'Owner', whoami uses level-based role."""
+        # Simulate stale legacy field
+        member_user.organization_role = "Owner"
+        member_user.save()
+
+        result = run_tool("whoami", {}, member_context)
+        assert not result.is_error
+        # Should still show "Member" because OrganizationMembership.level=3
+        assert result.data["organization_role"] == "Member"
+
+
+# ===================================================================
+# list_workspace_members authorization
+# ===================================================================
+
+
+class TestListWorkspaceMembersPermissions:
+    """Regression: Members must NOT list members of inaccessible workspaces."""
+
+    def test_member_cannot_list_private_workspace_members(
+        self, member_context, private_workspace
+    ):
+        """P0 regression: Member denied listing members of a workspace they can't access."""
+        result = run_tool(
+            "list_workspace_members",
+            {"workspace_id": str(private_workspace.id)},
+            member_context,
+        )
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+
+    def test_member_can_list_own_workspace_members(self, member_context, workspace):
+        """Member CAN list members of their own workspace."""
+        result = run_tool(
+            "list_workspace_members",
+            {"workspace_id": str(workspace.id)},
+            member_context,
+        )
+        assert not result.is_error
+
+    def test_admin_can_list_any_workspace_members(
+        self, tool_context, private_workspace
+    ):
+        """Org Owner/Admin CAN list members of any workspace."""
+        result = run_tool(
+            "list_workspace_members",
+            {"workspace_id": str(private_workspace.id)},
+            tool_context,
+        )
+        assert not result.is_error
+
+
+# ===================================================================
+# get_user_permissions authorization
+# ===================================================================
+
+
+class TestGetUserPermissions:
+    """Regression: Members must NOT query other users' permissions."""
+
+    def test_member_cannot_query_other_user_permissions(self, member_context, user):
+        """Member denied querying another user's permissions."""
+        result = run_tool(
+            "get_user_permissions",
+            {"user_id": str(user.id)},
+            member_context,
+        )
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+
+    def test_member_can_query_own_permissions(self, member_context):
+        """Member CAN query their own permissions."""
+        result = run_tool(
+            "get_user_permissions",
+            {"user_id": str(member_context.user.id)},
+            member_context,
+        )
+        assert not result.is_error
+
+    def test_admin_can_query_any_user_permissions(self, tool_context, member_user):
+        """Org Owner/Admin CAN query any user's permissions."""
+        result = run_tool(
+            "get_user_permissions",
+            {"user_id": str(member_user.id)},
+            tool_context,
+        )
+        assert not result.is_error
+
+
+# ===================================================================
+# update_user_role authorization
+# ===================================================================
+
+
+class TestUpdateUserRolePermissions:
+    """Regression: Role hierarchy must be enforced in update_user_role."""
+
+    def test_member_cannot_update_roles(self, member_context, user):
+        """Member denied changing any user's role."""
+        result = run_tool(
+            "update_user_role",
+            {
+                "user_id": str(user.id),
+                "new_role": "Admin",
+                "level": "org",
+            },
+            member_context,
+        )
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+
+    def test_admin_cannot_escalate_to_owner(self, ws_admin_context, member_user):
+        """Non-owner admin cannot grant Owner role."""
+        result = run_tool(
+            "update_user_role",
+            {
+                "user_id": str(member_user.id),
+                "new_role": "Owner",
+                "level": "org",
+            },
+            ws_admin_context,
+        )
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+
+
+# ===================================================================
+# list_workspaces — legacy fallback protection
+# ===================================================================
+
+
+class TestListWorkspacesLegacyFallback:
+    """Regression: stale User.organization_role must NOT grant global workspace access."""
+
+    def test_member_with_stale_owner_legacy_field(
+        self, member_context, member_user, private_workspace
+    ):
+        """Even with legacy organization_role='Owner', member only sees accessible workspaces."""
+        # Simulate stale legacy field
+        member_user.organization_role = "Owner"
+        member_user.save()
+
+        result = run_tool("list_workspaces", {}, member_context)
+        assert not result.is_error
+        workspace_ids = [ws["id"] for ws in result.data["workspaces"]]
+        # Must NOT see private workspace — level-based check should prevail
+        assert str(private_workspace.id) not in workspace_ids
+
+
+# ===================================================================
+# list_api_keys authorization
+# ===================================================================
+
+
+class TestListApiKeysPermissions:
+    """API keys are sensitive — require admin."""
+
+    def test_member_cannot_list_api_keys(self, member_context):
+        """Member denied listing API keys."""
+        result = run_tool("list_api_keys", {}, member_context)
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+
+    def test_admin_can_list_api_keys(self, tool_context):
+        """Org Owner/Admin CAN list API keys."""
+        result = run_tool("list_api_keys", {}, tool_context)
+        assert not result.is_error

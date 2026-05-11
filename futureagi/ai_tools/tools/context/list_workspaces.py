@@ -15,11 +15,18 @@ class ListWorkspacesTool(BaseTool):
 
     def execute(self, params: EmptyInput, context: ToolContext) -> ToolResult:
         from accounts.models.workspace import Workspace, WorkspaceMembership
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import get_org_membership
 
         user = context.user
         org = context.organization
 
-        if user.has_global_workspace_access(org):
+        # Use level-based RBAC directly — avoids the legacy fallback in
+        # has_global_workspace_access() that reads the stale User.organization_role field.
+        membership = get_org_membership(user)
+        is_admin = membership is not None and membership.level_or_legacy >= Level.ADMIN
+
+        if is_admin:
             # Org Admin/Owner: see all workspaces
             workspaces = (
                 Workspace.objects.filter(

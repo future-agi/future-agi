@@ -40,25 +40,27 @@ class UpdateUserRoleTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import (
-            OrganizationRoles,
             Workspace,
             WorkspaceMembership,
         )
-        from tfc.constants.roles import RolePermissions
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import (
+            can_invite_at_level,
+            get_effective_workspace_level,
+            get_org_membership,
+        )
 
         org = context.organization
         actor = context.user
 
-        # Permission check: only Owner/Admin can change roles
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
-            return ToolResult.error(
+        # Level-based permission check
+        actor_membership = get_org_membership(actor)
+        if actor_membership is None or actor_membership.level_or_legacy < Level.ADMIN:
+            return ToolResult.permission_denied(
                 "You do not have permission to update user roles. "
-                "Only Owner or Admin roles can change user roles.",
-                error_code="PERMISSION_DENIED",
+                "Requires organization admin or owner role."
             )
+        actor_level = actor_membership.level_or_legacy
 
         # Find the target user
         try:
@@ -66,21 +68,28 @@ class UpdateUserRoleTool(BaseTool):
         except User.DoesNotExist:
             return ToolResult.not_found("User", str(params.user_id))
 
-        # Prevent changing own role to a lower level
+        # Prevent changing own role
         if target_user.id == actor.id:
-            return ToolResult.error(
-                "You cannot change your own role.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult.validation_error("You cannot change your own role.")
+
+        # Prevent non-owners from modifying owners
+        target_membership = get_org_membership(target_user)
+        target_level = target_membership.level_or_legacy if target_membership else 0
+        if target_level >= Level.OWNER and actor_level < Level.OWNER:
+            return ToolResult.permission_denied(
+                "Only Owners can modify another Owner's role."
             )
 
-        # Prevent non-owners from modifying owner roles
-        if (
-            target_user.organization_role == OrganizationRoles.OWNER
-            and actor.organization_role != OrganizationRoles.OWNER
-        ):
-            return ToolResult.error(
-                "Only Owners can modify another Owner's role.",
-                error_code="PERMISSION_DENIED",
+        # Validate the new role and enforce hierarchy
+        try:
+            new_level = Level.from_string(params.new_role)
+        except ValueError:
+            return ToolResult.validation_error(f"Invalid role '{params.new_role}'.")
+
+        if not can_invite_at_level(actor_level, new_level):
+            return ToolResult.permission_denied(
+                f"You cannot assign the '{params.new_role}' role — "
+                "it requires a higher privilege level than yours."
             )
 
         if params.level == "org":

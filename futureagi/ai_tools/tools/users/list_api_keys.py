@@ -35,8 +35,18 @@ class ListApiKeysTool(BaseTool):
     def execute(self, params: ListApiKeysInput, context: ToolContext) -> ToolResult:
 
         from accounts.models.user import OrgApiKey
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import get_org_membership
 
         org = context.organization
+
+        # API keys are sensitive — require admin
+        actor_membership = get_org_membership(context.user)
+        if actor_membership is None or actor_membership.level_or_legacy < Level.ADMIN:
+            return ToolResult.permission_denied(
+                "You do not have permission to list API keys. "
+                "Requires organization admin or owner role."
+            )
 
         qs = OrgApiKey.no_workspace_objects.filter(organization=org).order_by(
             "-created_at"

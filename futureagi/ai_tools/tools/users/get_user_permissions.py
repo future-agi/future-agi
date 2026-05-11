@@ -37,6 +37,11 @@ class GetUserPermissionsTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import Workspace
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import (
+            get_effective_workspace_level,
+            get_org_membership,
+        )
 
         org = context.organization
 
@@ -48,6 +53,17 @@ class GetUserPermissionsTool(BaseTool):
                 return ToolResult.not_found("User", str(params.user_id))
         else:
             target_user = context.user
+
+        # If querying another user, require org admin
+        if target_user.id != context.user.id:
+            actor_membership = get_org_membership(context.user)
+            if (
+                actor_membership is None
+                or actor_membership.level_or_legacy < Level.ADMIN
+            ):
+                return ToolResult.permission_denied(
+                    "Only organization admins can view other users' permissions."
+                )
 
         # Determine target workspace
         if params.workspace_id:
@@ -62,20 +78,31 @@ class GetUserPermissionsTool(BaseTool):
         else:
             workspace = context.workspace
 
-        # Check permissions
+        # Resolve permissions using level-based RBAC
+        target_membership = get_org_membership(target_user)
+        org_role = (
+            Level.to_org_string(target_membership.level_or_legacy)
+            if target_membership
+            else "—"
+        )
+        has_global_access = (
+            target_membership is not None
+            and target_membership.level_or_legacy >= Level.ADMIN
+        )
+
+        ws_level = get_effective_workspace_level(target_user, workspace.id)
+        workspace_role = Level.to_ws_string(ws_level) if ws_level else "—"
+
         can_access = target_user.can_access_workspace(workspace)
         can_read = target_user.can_read_from_workspace(workspace)
         can_write = target_user.can_write_to_workspace(workspace)
-        workspace_role = target_user.get_workspace_role(workspace)
-        org_role = target_user.get_organization_role(org)
-        has_global_access = target_user.has_global_workspace_access(org)
 
         info = key_value_block(
             [
                 ("User", f"{target_user.name} ({target_user.email})"),
-                ("Organization Role", org_role or "—"),
+                ("Organization Role", org_role),
                 ("Workspace", f"{workspace.name} (`{workspace.id}`)"),
-                ("Workspace Role", workspace_role or "—"),
+                ("Workspace Role", workspace_role),
                 ("Global Workspace Access", "Yes" if has_global_access else "No"),
                 ("Can Access Workspace", "Yes" if can_access else "No"),
                 ("Can Read", "Yes" if can_read else "No"),

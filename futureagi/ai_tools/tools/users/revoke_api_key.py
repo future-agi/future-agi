@@ -25,20 +25,18 @@ class RevokeApiKeyTool(BaseTool):
     def execute(self, params: RevokeApiKeyInput, context: ToolContext) -> ToolResult:
 
         from accounts.models.user import OrgApiKey
-        from accounts.models.workspace import OrganizationRoles
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import get_org_membership
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
-            return ToolResult.error(
+        # Level-based permission check
+        actor_membership = get_org_membership(actor)
+        if actor_membership is None or actor_membership.level_or_legacy < Level.ADMIN:
+            return ToolResult.permission_denied(
                 "You do not have permission to revoke API keys. "
-                "Only Owner or Admin roles can revoke API keys.",
-                error_code="PERMISSION_DENIED",
+                "Requires organization admin or owner role."
             )
 
         try:

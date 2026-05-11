@@ -51,8 +51,16 @@ class ListUsersTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import WorkspaceMembership
+        from tfc.permissions.utils import get_org_membership
 
         org = context.organization
+
+        # Verify actor is a member of this org
+        actor_membership = get_org_membership(context.user)
+        if actor_membership is None:
+            return ToolResult.permission_denied(
+                "You are not a member of this organization."
+            )
 
         # Base queryset: users in this organization
         qs = User.objects.filter(organization=org).order_by("-created_at")

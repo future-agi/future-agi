@@ -29,19 +29,18 @@ class CreateWorkspaceTool(BaseTool):
         from django.db import IntegrityError
 
         from accounts.models.workspace import OrganizationRoles, Workspace
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import get_org_membership
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
-            return ToolResult.error(
+        # Level-based permission check
+        actor_membership = get_org_membership(actor)
+        if actor_membership is None or actor_membership.level_or_legacy < Level.ADMIN:
+            return ToolResult.permission_denied(
                 "You do not have permission to create workspaces. "
-                "Only Owner or Admin roles can create workspaces.",
-                error_code="PERMISSION_DENIED",
+                "Requires organization admin or owner role."
             )
 
         try:

@@ -30,20 +30,19 @@ class UpdateWorkspaceTool(BaseTool):
     def execute(self, params: UpdateWorkspaceInput, context: ToolContext) -> ToolResult:
         from django.db import IntegrityError
 
-        from accounts.models.workspace import OrganizationRoles, Workspace
+        from accounts.models.workspace import Workspace
+        from tfc.constants.levels import Level
+        from tfc.permissions.utils import get_effective_workspace_level
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
-            return ToolResult.error(
-                "You do not have permission to update workspaces. "
-                "Only Owner or Admin roles can update workspaces.",
-                error_code="PERMISSION_DENIED",
+        # Level-based permission check: org admin or workspace admin for the target
+        actor_level = get_effective_workspace_level(actor, params.workspace_id)
+        if actor_level is None or actor_level < Level.WORKSPACE_ADMIN:
+            return ToolResult.permission_denied(
+                "You must be a workspace admin or organization admin "
+                "to update this workspace."
             )
 
         try:

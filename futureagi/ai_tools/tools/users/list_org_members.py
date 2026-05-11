@@ -30,8 +30,16 @@ class ListOrgMembersTool(BaseTool):
     def execute(self, params: ListOrgMembersInput, context: ToolContext) -> ToolResult:
 
         from accounts.models.user import User
+        from tfc.permissions.utils import get_org_membership
 
         org = context.organization
+
+        # Verify actor is a member of this org
+        actor_membership = get_org_membership(context.user)
+        if actor_membership is None:
+            return ToolResult.permission_denied(
+                "You are not a member of this organization."
+            )
 
         qs = User.objects.filter(organization=org).order_by(
             "-is_active", "organization_role", "email"

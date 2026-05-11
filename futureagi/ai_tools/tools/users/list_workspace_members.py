@@ -38,6 +38,7 @@ class ListWorkspaceMembersTool(BaseTool):
     ) -> ToolResult:
 
         from accounts.models.workspace import Workspace, WorkspaceMembership
+        from tfc.permissions.utils import get_effective_workspace_level
 
         org = context.organization
 
@@ -53,6 +54,13 @@ class ListWorkspaceMembersTool(BaseTool):
                 return ToolResult.not_found("Workspace", str(params.workspace_id))
         else:
             workspace = context.workspace
+
+        # Verify actor can access this workspace
+        actor_level = get_effective_workspace_level(context.user, workspace.id)
+        if actor_level is None:
+            return ToolResult.permission_denied(
+                "You do not have access to this workspace."
+            )
 
         # Query memberships
         qs = (

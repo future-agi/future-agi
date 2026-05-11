@@ -1,6 +1,8 @@
 from ai_tools.base import BaseTool, EmptyInput, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from tfc.constants.levels import Level
+from tfc.permissions.utils import get_effective_workspace_level, get_org_membership
 
 
 @register_tool
@@ -19,22 +21,47 @@ class WhoamiTool(BaseTool):
         org = context.organization
         workspace = context.workspace
 
+        # Resolve role from level-based RBAC (not the stale legacy field)
+        membership = get_org_membership(user)
+        org_role = (
+            Level.to_org_string(membership.level_or_legacy) if membership else "—"
+        )
+
+        # Resolve workspace role
+        ws_level = get_effective_workspace_level(user, workspace.id)
+        ws_role = Level.to_ws_string(ws_level) if ws_level else "—"
+
         # Get subscription info
         subscription_info = self._get_subscription(org)
 
-        # Get workspace count
-        from accounts.models.workspace import Workspace
+        # Count only accessible workspaces
+        from accounts.models.workspace import Workspace, WorkspaceMembership
 
-        workspace_count = Workspace.objects.filter(
-            organization=org, is_active=True, deleted=False
-        ).count()
+        if membership and membership.level_or_legacy >= Level.ADMIN:
+            workspace_count = Workspace.objects.filter(
+                organization=org, is_active=True, deleted=False
+            ).count()
+        else:
+            workspace_count = (
+                WorkspaceMembership.no_workspace_objects.filter(
+                    user=user,
+                    is_active=True,
+                    workspace__organization=org,
+                    workspace__is_active=True,
+                    workspace__deleted=False,
+                )
+                .values("workspace_id")
+                .distinct()
+                .count()
+            )
 
         info = key_value_block(
             [
                 ("User", f"{user.name} ({user.email})"),
-                ("Role", getattr(user, "organization_role", "—")),
+                ("Role", org_role),
                 ("Organization", f"{org.name} (`{org.id}`)"),
                 ("Workspace", f"{workspace.name} (`{workspace.id}`)"),
+                ("Workspace Role", ws_role),
                 ("Subscription", subscription_info.get("tier", "—")),
                 ("Status", subscription_info.get("status", "—")),
                 (
@@ -59,8 +86,10 @@ class WhoamiTool(BaseTool):
                 "user_name": user.name,
                 "organization_id": str(org.id),
                 "organization_name": org.name,
+                "organization_role": org_role,
                 "workspace_id": str(workspace.id),
                 "workspace_name": workspace.name,
+                "workspace_role": ws_role,
                 "subscription_tier": subscription_info.get("tier"),
                 "wallet_balance": subscription_info.get("balance"),
             },
