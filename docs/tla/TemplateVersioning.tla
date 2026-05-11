@@ -10,7 +10,7 @@
   Key invariants:
     ActiveVersionUnique:    ∀ t: |{v ∈ versions(t) : state[v] = active}| ≤ 1
     NoDraftExecution:       every execution is pinned to a non-draft version
-    ExecutionVersionStability: no execution changes its pinned version
+    ExecutionVersionStability: once pinned, the pin never changes
 
   Key liveness properties:
     EventuallyPublishable:  a template with a draft version can always be published
@@ -19,6 +19,12 @@
   Fairness:
     WF_vars(PublishTemplate)   — publication always eventually fires
     WF_vars(CompleteExecution) — executions always eventually complete
+
+  Implementation note — exec_pinned is modeled as a RELATION
+  (set of <<e, t, v>> triples) rather than a partial function.
+  This avoids TLC fingerprinting failures that occur when a function
+  maps some keys to tuples and others to the string "none" — TLC cannot
+  canonically sort heterogeneous value types when building its FP set.
 *)
 
 EXTENDS Naturals, Sequences, FiniteSets, TLC
@@ -38,11 +44,8 @@ VersionStates == {"draft", "active", "inactive"}
 ExecStates == {"running", "completed"}
 
 VARIABLES
-    \* version_state: [template → [version_index → state]]
-    \* We model versions as indices 1..MaxVersions
     version_state,   \* version_state[t][v] \in VersionStates ∪ {"none"}
-    \* exec_pinned: [exec_id → {template, version}] or "none"
-    exec_pinned,     \* exec_pinned[e] = <<t, v>> or "none"
+    exec_pinned,     \* SUBSET (Executions × Templates × Versions): active pins
     exec_state       \* exec_state[e] \in ExecStates ∪ {"none"}
 
 vars == <<version_state, exec_pinned, exec_state>>
@@ -61,12 +64,15 @@ HasDraft(t) ==
 HasActive(t) ==
     ActiveVersionOf(t) /= {}
 
+IsPinned(e) ==
+    \E <<e2, t, v>> \in exec_pinned : e2 = e
+
 \* ── Initial state ─────────────────────────────────────────────────────────────
 
 Init ==
     /\ version_state = [t \in Templates |->
                           [v \in Versions |-> IF v = 1 THEN "draft" ELSE "none"]]
-    /\ exec_pinned   = [e \in Executions |-> "none"]
+    /\ exec_pinned   = {}
     /\ exec_state    = [e \in Executions |-> "none"]
 
 \* ── Actions ───────────────────────────────────────────────────────────────────
@@ -84,24 +90,22 @@ PublishTemplate(t) ==
     /\ HasDraft(t)
     /\ \E draft_v \in Versions :
         /\ version_state[t][draft_v] = "draft"
-        /\ LET old_active == ActiveVersionOf(t)
-           IN  version_state' = [version_state EXCEPT
-                   ![t][draft_v] = "active",
-                   \* demote old active to inactive (at most one)
-                   ![t] = [v2 \in Versions |->
-                       IF v2 = draft_v THEN "active"
-                       ELSE IF version_state[t][v2] = "active" THEN "inactive"
-                       ELSE version_state[t][v2]
-                   ]]
+        /\ version_state' = [version_state EXCEPT
+               ![t] = [v \in Versions |->
+                   IF v = draft_v THEN "active"
+                   ELSE IF version_state[t][v] = "active" THEN "inactive"
+                   ELSE version_state[t][v]
+               ]]
     /\ UNCHANGED <<exec_pinned, exec_state>>
 
 \* StartExecution: pin an idle execution slot to the active version
 StartExecution(t, e) ==
     /\ HasActive(t)
-    /\ exec_pinned[e] = "none"
+    /\ ~IsPinned(e)
+    /\ exec_state[e] = "none"
     /\ \E v \in ActiveVersionOf(t) :
-        /\ exec_pinned' = [exec_pinned EXCEPT ![e] = <<t, v>>]
-        /\ exec_state'  = [exec_state  EXCEPT ![e] = "running"]
+        /\ exec_pinned' = exec_pinned \union {<<e, t, v>>}
+        /\ exec_state'  = [exec_state EXCEPT ![e] = "running"]
     /\ UNCHANGED version_state
 
 \* CompleteExecution: running → completed (pin is preserved for audit)
@@ -129,6 +133,7 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 TypeInvariant ==
     /\ \A t \in Templates, v \in Versions :
            version_state[t][v] \in (VersionStates \union {"none"})
+    /\ exec_pinned \subseteq (Executions \X Templates \X Versions)
     /\ \A e \in Executions :
            exec_state[e] \in (ExecStates \union {"none"})
 
@@ -138,22 +143,17 @@ ActiveVersionUnique ==
 
 \* No execution is ever pinned to a draft version
 NoDraftExecution ==
-    \A e \in Executions :
-        exec_pinned[e] /= "none" =>
-            LET pin == exec_pinned[e]
-                t   == pin[1]
-                v   == pin[2]
-            IN  version_state[t][v] /= "draft"
+    \A <<e, t, v>> \in exec_pinned :
+        version_state[t][v] /= "draft"
 
-\* Once an execution is pinned to a version, that version index never changes
+\* Once pinned, an execution's pin triple is never removed (monotone growth)
 ExecutionVersionStability ==
-    \A e \in Executions :
-        exec_pinned[e] /= "none" =>
-            [](exec_pinned[e] = exec_pinned[e])  \* trivially true — stated for clarity
-\* The meaningful form: pinned version is never "none" once set to a version
+    [][exec_pinned \subseteq exec_pinned']_exec_pinned
+
+\* Once an execution has a pin, it stays in a non-idle exec_state
 ExecutionPinMonotone ==
     \A e \in Executions :
-        (exec_pinned[e] /= "none") => [](exec_state[e] /= "none")
+        IsPinned(e) => [](exec_state[e] /= "none")
 
 \* ── Liveness ──────────────────────────────────────────────────────────────────
 
