@@ -46,6 +46,12 @@ RUN pip install --no-cache-dir \
     nltk rouge-score Levenshtein \
     && pip install --no-cache-dir falcon gunicorn
 
+# Pre-download NLTK corpora into the image. The sandbox has no network at
+# runtime, so anything NLTK needs (wordnet for METEOR synonym matching,
+# omw-1.4 for non-English wordnets, punkt for tokenization) must be baked
+# in here. ~30MB total.
+RUN python -m nltk.downloader -d /usr/local/share/nltk_data wordnet omw-1.4 punkt punkt_tab
+
 # Create sandbox directories
 RUN mkdir -p /sandbox/tmp /sandbox/python-libs /sandbox/config \
     && chmod 755 /sandbox/tmp
