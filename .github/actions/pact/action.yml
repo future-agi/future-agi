@@ -58,20 +58,20 @@ runs:
       run: |
         pip install z3-solver
         # Install pact from the repo (no external package yet)
-        pip install -e "${{ github.action_path }}/../../.." --quiet 2>/dev/null || true
+        pip install -e "${{ github.action_path }}/../../../.." --quiet 2>/dev/null || true
 
     - name: Set up Go (for pact-go)
       if: inputs.go-version != '' && inputs.go-paths != ''
       uses: actions/setup-go@v5
       with:
         go-version: ${{ inputs.go-version }}
-        cache-dependency-path: ${{ github.action_path }}/../../pact/go/checker/go.sum
+        cache-dependency-path: ${{ github.action_path }}/../../../tools/pact/go/checker/go.sum
 
     - name: Build pact-go binary
       if: inputs.build-go-checker == 'true' && inputs.go-paths != ''
       shell: bash
       run: |
-        CHECKER_DIR="${{ github.action_path }}/../../pact/go/checker"
+        CHECKER_DIR="${{ github.action_path }}/../../../tools/pact/go/checker"
         if [ -f "$CHECKER_DIR/main.go" ]; then
           cd "$CHECKER_DIR"
           go build -o pact-go .
@@ -81,57 +81,66 @@ runs:
     - name: Run pact
       id: run-pact
       shell: bash
+      env:
+        # Bind inputs to env vars to avoid shell injection from unquoted expressions.
+        PACT_PYTHON_PATHS: ${{ inputs.python-paths }}
+        PACT_GO_PATHS: ${{ inputs.go-paths }}
+        PACT_OUTPUT_FORMAT: ${{ inputs.output-format }}
+        PACT_OUTPUT_FILE: ${{ inputs.output-file }}
+        PACT_ACTION_PATH: ${{ github.action_path }}
       run: |
         set +e
 
-        PACT_ARGS=""
+        PACT_ARGS=()
 
-        # Python analysis
-        for p in ${{ inputs.python-paths }}; do
-          PACT_ARGS="$PACT_ARGS $p"
+        # Python analysis — word-split over env var (not expression) is intentional
+        for p in $PACT_PYTHON_PATHS; do
+          PACT_ARGS+=("$p")
         done
 
         # Output format
-        if [ "${{ inputs.output-format }}" = "json" ]; then
-          PACT_ARGS="$PACT_ARGS --format json"
-        elif [ "${{ inputs.output-format }}" = "sarif" ]; then
-          PACT_ARGS="$PACT_ARGS --format sarif"
+        if [ "$PACT_OUTPUT_FORMAT" = "json" ]; then
+          PACT_ARGS+=("--format" "json")
+        elif [ "$PACT_OUTPUT_FORMAT" = "sarif" ]; then
+          PACT_ARGS+=("--format" "sarif")
         fi
 
         # Output file
-        if [ -n "${{ inputs.output-file }}" ]; then
-          PACT_ARGS="$PACT_ARGS --out ${{ inputs.output-file }}"
-          echo "report_path=${{ inputs.output-file }}" >> "$GITHUB_OUTPUT"
+        if [ -n "$PACT_OUTPUT_FILE" ]; then
+          PACT_ARGS+=("--out" "$PACT_OUTPUT_FILE")
+          echo "report_path=$PACT_OUTPUT_FILE" >> "$GITHUB_OUTPUT"
         else
           echo "report_path=" >> "$GITHUB_OUTPUT"
         fi
 
-        python -m tools.pact.cli $PACT_ARGS
+        python -m tools.pact.cli "${PACT_ARGS[@]}"
         PYTHON_EXIT=$?
 
         # Go analysis (if paths provided)
         GO_EXIT=0
-        if [ -n "${{ inputs.go-paths }}" ]; then
-          GO_PACT_ARGS=""
-          for p in ${{ inputs.go-paths }}; do
+        if [ -n "$PACT_GO_PATHS" ]; then
+          GO_PACT_ARGS=()
+          for p in $PACT_GO_PATHS; do
             if [ -d "$p" ]; then
-              GO_PACT_ARGS="$GO_PACT_ARGS --dir $p"
+              GO_PACT_ARGS+=("--dir" "$p")
             else
-              GO_PACT_ARGS="$GO_PACT_ARGS --file $p"
+              GO_PACT_ARGS+=("--file" "$p")
             fi
           done
 
-          CHECKER_DIR="${{ github.action_path }}/../../pact/go/checker"
+          CHECKER_DIR="$PACT_ACTION_PATH/../../../tools/pact/go/checker"
           BINARY="$CHECKER_DIR/pact-go"
 
           if [ -f "$BINARY" ]; then
-            "$BINARY" $GO_PACT_ARGS
+            "$BINARY" "${GO_PACT_ARGS[@]}"
+            GO_EXIT=$?
           elif command -v pact-go >/dev/null 2>&1; then
-            pact-go $GO_PACT_ARGS
+            pact-go "${GO_PACT_ARGS[@]}"
+            GO_EXIT=$?
           else
             echo "::warning::pact-go binary not found; skipping Go analysis"
+            GO_EXIT=0
           fi
-          GO_EXIT=$?
         fi
 
         # Combine exit codes
@@ -144,10 +153,12 @@ runs:
     - name: Count violations
       id: count
       shell: bash
+      env:
+        PACT_OUTPUT_FILE: ${{ inputs.output-file }}
       run: |
         # Count lines starting with a file path in the output (heuristic for text mode)
-        if [ -n "${{ inputs.output-file }}" ] && [ -f "${{ inputs.output-file }}" ]; then
-          COUNT=$(grep -c "^\S.*\[" "${{ inputs.output-file }}" 2>/dev/null || echo 0)
+        if [ -n "$PACT_OUTPUT_FILE" ] && [ -f "$PACT_OUTPUT_FILE" ]; then
+          COUNT=$(grep -c "^\S.*\[" "$PACT_OUTPUT_FILE" 2>/dev/null || echo 0)
         else
           COUNT=0
         fi

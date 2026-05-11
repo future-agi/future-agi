@@ -126,9 +126,8 @@ def run_go_checker(
     except (subprocess.TimeoutExpired, OSError):
         return []
 
-    if result.returncode not in (0, 1):  # 1 = violations found (some tools use that)
-        return []
-
+    # Exit codes: 0 = success (violations or clean), 1 = some tools signal violations,
+    # 2 = usage error (no files given). Any non-zero with no stdout → no results.
     raw = result.stdout.strip()
     if not raw:
         return []
@@ -136,6 +135,9 @@ def run_go_checker(
     try:
         records = json.loads(raw)
     except json.JSONDecodeError:
+        return []
+
+    if not isinstance(records, list):
         return []
 
     evidence = []

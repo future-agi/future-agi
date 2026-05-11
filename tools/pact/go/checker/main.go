@@ -218,7 +218,8 @@ func checkUncheckedAssertion(fset *token.FileSet, f *ast.File, file string) []Vi
 // Heuristic: body doesn't reference wg, ch, ctx, cancel, done, errCh.
 // ----------------------------------------------------------------------------
 
-var syncHints = []string{"wg", "Wait", "Add", "Done", "ch", "chan", "ctx", "cancel", "done", "errCh", "group"}
+// "chan" is intentionally absent: it's a keyword, never an ast.Ident name.
+var syncHints = []string{"wg", "Wait", "Add", "Done", "ch", "ctx", "cancel", "done", "errCh", "group"}
 
 func bodySource(fset *token.FileSet, body *ast.BlockStmt) string {
 	// Quick heuristic: stringify idents referenced in the body

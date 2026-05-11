@@ -329,6 +329,9 @@ def main(argv=None) -> int:
 
         for repo_meta in repo_iter:
             full_name = repo_meta["full_name"]
+            if "/" not in full_name:
+                print(f"[pact] skipping malformed repo name: {full_name!r}", file=sys.stderr)
+                continue
             owner, repo_name = full_name.split("/", 1)
             stars = repo_meta.get("stargazers_count", 0)
             stats["repos"] += 1
