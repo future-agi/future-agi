@@ -645,6 +645,8 @@ def convert_to_mp3(audio_bytes):
             raise Exception(f"FFmpeg Conversion Error: {stderr.decode('utf-8')}")
 
         return stdout, "mp3"
+    except TimeoutError:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise ValueError(get_storage_error_message("UNABLE_TO_PROCESS_AUDIO")) from e
