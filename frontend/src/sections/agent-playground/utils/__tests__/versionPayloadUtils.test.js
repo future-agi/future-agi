@@ -120,6 +120,13 @@ describe("buildVersionPayload", () => {
           config: { language: "python", code: "result = inputs" },
           ports: [
             {
+              temp_id: "code-in",
+              key: "inputs",
+              display_name: "inputs",
+              direction: "input",
+              data_schema: { type: "object" },
+            },
+            {
               temp_id: "code-out",
               key: "result",
               display_name: "result",
@@ -139,6 +146,22 @@ describe("buildVersionPayload", () => {
       config: { language: "python", code: "result = inputs" },
     });
     expect(result.nodes[0]).not.toHaveProperty("prompt_template");
+    expect(result.nodes[0].ports).toEqual([
+      {
+        id: "code-in",
+        key: "inputs",
+        display_name: "inputs",
+        direction: "input",
+        data_schema: { type: "object" },
+      },
+      {
+        id: "code-out",
+        key: "result",
+        display_name: "result",
+        direction: "output",
+        data_schema: { type: "object" },
+      },
+    ]);
   });
 
   it("does not include node_template_id for subgraph nodes", () => {

@@ -4,6 +4,7 @@ from django.db import IntegrityError, transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+import agent_playground.services.engine.runners  # noqa: F401
 from agent_playground.models.choices import PortDirection
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion

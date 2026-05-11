@@ -107,11 +107,12 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
         apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
       }
 
-      const atomicOutputPorts = (node.data?.ports || []).filter(
-        (p) => p.direction === "output",
+      const atomicPorts = (node.data?.ports || []).filter(
+        (port) =>
+          node.type === NODE_TYPES.CODE_EXECUTION || port.direction === "output",
       );
-      if (atomicOutputPorts.length > 0) {
-        apiNode.ports = atomicOutputPorts.map((port) => ({
+      if (atomicPorts.length > 0) {
+        apiNode.ports = atomicPorts.map((port) => ({
           id: port.id || port.temp_id,
           key: port.key,
           display_name: port.display_name,
