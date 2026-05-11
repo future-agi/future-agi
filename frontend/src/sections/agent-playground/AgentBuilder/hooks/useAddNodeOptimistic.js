@@ -49,7 +49,10 @@ export default function useAddNodeOptimistic() {
         label,
         config: computedConfig,
       } = result;
-      const config = computedConfig || payload.config;
+      const config =
+        payload.type === NODE_TYPES.CODE_EXECUTION
+          ? computedConfig || payload.config
+          : payload.config;
 
       // Don't select the node yet — wait until ensureDraft completes
       // to avoid triggering the discard dialog if a drawer is open with dirty form.

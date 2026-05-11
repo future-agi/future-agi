@@ -154,7 +154,10 @@ describe("useAddNodeOptimistic", () => {
 
   it("draft path: calls addOptimisticNode, fires addNodeApi, returns { nodeId, position }", async () => {
     mockEnsureDraft.mockResolvedValue("existing-draft");
-    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockAddOptimisticNode.mockReturnValue({
+      ...defaultOptimisticResult,
+      config: { prompt_template_id: null, prompt_version_id: null },
+    });
     mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
 
     const { result } = renderHook(() => useAddNodeOptimistic());
@@ -173,6 +176,26 @@ describe("useAddNodeOptimistic", () => {
       defaultPayload.config,
     );
     expect(addNodeApi).toHaveBeenCalled();
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          prompt_template: expect.objectContaining({
+            messages: [
+              {
+                id: expect.any(String),
+                role: "system",
+                content: [{ type: "text", text: "" }],
+              },
+              {
+                id: expect.any(String),
+                role: "user",
+                content: [{ type: "text", text: "" }],
+              },
+            ],
+          }),
+        }),
+      }),
+    );
     expect(returnValue).toEqual({
       nodeId: "node-123",
       position: { x: 100, y: 200 },
