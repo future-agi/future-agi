@@ -398,28 +398,32 @@ def _scan_file_mutable_defaults(path: str) -> list[FailureEvidence]:
         for default in node.args.defaults:
             if isinstance(default, _MUTABLE):
                 kind = type(default).__name__.lower()
+                msg = (
+                    f"mutable {kind} default in '{node.name}' — "
+                    "shared across all calls; use None and allocate inside the function"
+                )
                 evidence.append(FailureEvidence(
                     mode_name="mutable_default_arg",
                     file=path,
                     line=default.lineno,
                     call=f"def {node.name}",
-                    message=(
-                        f"mutable {kind} default in '{node.name}' — "
-                        "shared across all calls; use None and allocate inside the function"
-                    ),
+                    message=msg,
+                    missing=[msg],
                 ))
         for kw_default in node.args.kw_defaults:
             if kw_default is not None and isinstance(kw_default, _MUTABLE):
                 kind = type(kw_default).__name__.lower()
+                msg = (
+                    f"mutable {kind} keyword default in '{node.name}' — "
+                    "shared across all calls; use None and allocate inside the function"
+                )
                 evidence.append(FailureEvidence(
                     mode_name="mutable_default_arg",
                     file=path,
                     line=kw_default.lineno,
                     call=f"def {node.name}",
-                    message=(
-                        f"mutable {kind} keyword default in '{node.name}' — "
-                        "shared across all calls; use None and allocate inside the function"
-                    ),
+                    message=msg,
+                    missing=[msg],
                 ))
     return evidence
 

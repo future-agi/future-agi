@@ -17,8 +17,8 @@
  * To check with TLC:
  *   1. CONSTANTS: Modes = {"m1","m2"}, FileModes = {"fm1"},
  *                 Sites = {"s1","s2"}, Files = {"f1","f2"}
- *   2. INVARIANTS: TypeInvariant, DeduplicationInvariant, MonotonicViolations
- *   3. PROPERTIES: EventuallyTerminates, CoverageComplete
+ *   2. INVARIANTS: TypeInvariant, CoverageInvariant
+ *   3. PROPERTIES: EventuallyTerminates, CoverageComplete, MonotonicViolations
  *   4. SPECIFICATION Spec
  *)
 
@@ -153,9 +153,11 @@ DeduplicationInvariant ==
 (*
  * MonotonicViolations — the violations set only grows.
  * No previously found violation is ever retracted.
+ * This is a temporal safety property ([][P]_v form) so it must be listed
+ * under PROPERTIES in the TLC config, not INVARIANTS.
  *)
 MonotonicViolations ==
-    violations \subseteq violations'
+    [][violations \subseteq violations']_violations
 
 (*
  * PendingShrinks — work queues only shrink or stay the same.
