@@ -266,6 +266,13 @@ const TracingTestMode = React.forwardRef(
     );
     const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
 
+    // Filter rows are project-scoped (attribute columns differ per project);
+    // clear them when the user switches projects so stale columns aren't sent.
+    useEffect(() => {
+      if (hostsFilter) internalFilterForm.reset({ filters: [] });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedProjectId]);
+
     // Project details fetched per selected project. The list_projects API
     // omits the `source` field, so we hit project-detail to know whether
     // the selected project is a voice/simulator project. Task flow relies
