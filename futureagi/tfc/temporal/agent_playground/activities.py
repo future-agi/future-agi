@@ -306,6 +306,12 @@ def _execute_node_sync(
 
         except Exception as e:
             failure_outputs = getattr(e, "outputs", {}) or {}
+            node_execution.status = NodeExecutionStatus.FAILED
+            node_execution.completed_at = timezone.now()
+            node_execution.error_message = str(e)
+            node_execution.save(
+                update_fields=["status", "completed_at", "error_message"]
+            )
             if failure_outputs:
                 route_node_outputs(
                     node_id=UUID(node_id),
@@ -324,14 +330,6 @@ def _execute_node_sync(
                 outputs=failure_outputs,
                 status="FAILED",
                 metadata={"graph_execution_id": graph_execution_id, "error": str(e)},
-            )
-
-            # Mark as FAILED
-            node_execution.status = NodeExecutionStatus.FAILED
-            node_execution.completed_at = timezone.now()
-            node_execution.error_message = str(e)
-            node_execution.save(
-                update_fields=["status", "completed_at", "error_message"]
             )
 
             activity.logger.exception(f"Node {node_id} failed: {e}")

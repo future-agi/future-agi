@@ -385,6 +385,64 @@ def test_docker_sandbox_marks_timeout_metadata(monkeypatch):
     assert result.memory_mb == 64
 
 
+def test_docker_sandbox_decodes_timeout_output_bytes(monkeypatch):
+    sandbox = DockerCodeSandbox()
+
+    monkeypatch.setattr(sandbox, "available", lambda: True)
+    monkeypatch.setattr(sandbox, "_ensure_image", lambda image: True)
+    monkeypatch.setattr(
+        sandbox,
+        "_write_runner",
+        lambda workdir, language, code: (Path("runner.py"), ["python"]),
+    )
+    monkeypatch.setattr(sandbox, "_remove_container", lambda container_name: None)
+
+    import subprocess
+
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args[0],
+            timeout=1,
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+
+    monkeypatch.setattr(
+        "agent_playground.services.engine.runners.code_execution.subprocess.run",
+        raise_timeout,
+    )
+
+    result = sandbox.run(
+        language="python",
+        code="while True: pass",
+        inputs={},
+        timeout_ms=1000,
+        memory_mb=64,
+    )
+
+    assert result.ok is False
+    assert result.stdout == "partial stdout"
+    assert result.stderr == "partial stderr"
+    assert isinstance(result.stdout, str)
+    assert isinstance(result.stderr, str)
+
+
+def test_typescript_runner_declares_esm_package(tmp_path):
+    sandbox = DockerCodeSandbox()
+
+    path, command = sandbox._write_runner(
+        tmp_path,
+        "typescript",
+        "const value: number = inputs.value; return value;",
+    )
+
+    assert path.name == "runner.ts"
+    assert command == ["node", "--experimental-strip-types"]
+    assert (tmp_path / "package.json").read_text(encoding="utf-8") == (
+        '{"type": "module"}'
+    )
+
+
 def test_docker_sandbox_returns_structured_failure_for_unserializable_inputs():
     sandbox = DockerCodeSandbox()
     sandbox.available = lambda: True

@@ -195,8 +195,8 @@ class DockerCodeSandbox:
                 return SandboxResult(
                     ok=False,
                     value=None,
-                    stdout=exc.stdout or "",
-                    stderr=exc.stderr or "",
+                    stdout=_coerce_subprocess_text(exc.stdout),
+                    stderr=_coerce_subprocess_text(exc.stderr),
                     exit_code=None,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     language=language,
@@ -251,6 +251,9 @@ class DockerCodeSandbox:
         path = workdir / f"runner.{extension}"
         path.write_text(self._node_wrapper(code), encoding="utf-8")
         if language == "typescript":
+            (workdir / "package.json").write_text(
+                json.dumps({"type": "module"}), encoding="utf-8"
+            )
             return path, ["node", "--experimental-strip-types"]
         return path, ["node"]
 
@@ -445,6 +448,14 @@ def _result_payload(result: SandboxResult) -> dict[str, Any]:
             "memory_mb": result.memory_mb,
         },
     }
+
+
+def _coerce_subprocess_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 register_runner("code_execution", CodeExecutionRunner())

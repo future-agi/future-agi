@@ -20,6 +20,7 @@ import {
 import { useAgentPlaygroundStoreShallow } from "../../../store";
 import usePartialNodeUpdate from "../../hooks/usePartialNodeUpdate";
 import { useSaveDraftContext } from "../../saveDraftContext";
+import { getCodeExecutionEditorLanguage } from "./codeExecutionNodeFormUtils";
 
 function buildConfig(values) {
   return {
@@ -51,7 +52,7 @@ export default function CodeExecutionNodeForm({ nodeId }) {
   const { mutateAsync: testNode, isPending: isTesting } =
     useTestNodeExecution();
 
-  const editorLanguage = language === "python" ? "python" : "javascript";
+  const editorLanguage = getCodeExecutionEditorLanguage(language);
   const [testInputs, setTestInputs] = useState("{}");
 
   const saveConfig = handleSubmit(async (values) => {
