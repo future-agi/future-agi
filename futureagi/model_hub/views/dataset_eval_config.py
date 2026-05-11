@@ -51,7 +51,7 @@ class DatasetEvalConfigViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         return _gm.success_response(
             DatasetEvalConfigSerializer(config).data,
-            status_code=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED,
         )
 
     def partial_update(self, request, *args, **kwargs):

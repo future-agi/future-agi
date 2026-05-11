@@ -4,19 +4,22 @@ a Temporal eval batch workflow.
 
 The debounce protocol (race-free, proven by DatasetAutoEval.tla):
 
-  1. On each rows_appended signal: RPUSH row IDs to a Redis list.
+  1. On each rows_appended signal: RPUSH row IDs atomically into a Redis
+     list (one operation per call — no read-modify-write race).
   2. SET a lock key NX (only-if-not-exists) with TTL = debounce_seconds.
      The first signal within the window acquires the lock and schedules
      this task; subsequent signals within the window skip scheduling.
   3. This task fires after countdown = debounce_seconds, drains the list
-     atomically, then starts the Temporal workflow.
+     atomically via a Lua script (LRANGE + DEL in one round-trip), then
+     starts the Temporal workflow.
 
 TLA+ invariant NoDuplicateEval is maintained because:
   - Row IDs enter Redis exactly once (RPUSH after committed bulk_create).
-  - The drain is atomic (GETDEL pipeline): no concurrent flush can drain
-    the same IDs.
-  - If the Temporal workflow fails, IDs are re-pushed (WorkflowFail action
-    in the spec) under a new debounce window.
+  - The drain is atomic (Lua LRANGE+DEL): no concurrent flush sees the
+    same IDs.
+  - If the Temporal workflow fails, IDs are re-pushed (WorkflowFail
+    action in the spec) under a new debounce window; no Celery retry
+    fires (max_retries=0) to avoid a double-flush race.
 """
 
 import logging
@@ -32,28 +35,54 @@ _PENDING_KEY = "auto_eval:{config_id}:pending"
 _LOCK_KEY = "auto_eval:{config_id}:lock"
 
 
+# Lua script: atomically read the whole list and delete it in one round-trip.
+_DRAIN_LUA = """
+local result = redis.call('LRANGE', KEYS[1], 0, -1)
+redis.call('DEL', KEYS[1])
+return result
+"""
+
+
 def _atomic_drain(pending_key: str) -> list:
     """
-    Fetch and delete the pending list in one operation to eliminate the
-    get→delete race window.  Uses Redis GETDEL when django-redis is available;
-    falls back to non-atomic get+delete for other backends (e.g. test locmem).
+    Fetch and clear the Redis list in one atomic Lua script.
+    Falls back to non-atomic get+delete for non-Redis backends (e.g. locmem).
     """
     try:
-        import pickle
-
         from django_redis import get_redis_connection
 
         r = get_redis_connection("default")
         versioned = cache.make_key(pending_key)
-        raw = r.execute_command("GETDEL", versioned)
-        return pickle.loads(raw) if raw else []
+        drain = r.register_script(_DRAIN_LUA)
+        raw = drain(keys=[versioned])
+        return [x.decode() if isinstance(x, bytes) else x for x in raw] if raw else []
     except Exception:
         val = cache.get(pending_key)
         cache.delete(pending_key)
         return val or []
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def _rpush_pending(pending_key: str, row_ids: list, timeout: int) -> None:
+    """
+    Atomically append row_ids to the Redis list.  A single RPUSH is atomic
+    so concurrent callers can't lose each other's IDs (unlike cache.get+set).
+    Falls back to non-atomic extend for non-Redis backends.
+    """
+    if not row_ids:
+        return
+    try:
+        from django_redis import get_redis_connection
+
+        r = get_redis_connection("default")
+        versioned = cache.make_key(pending_key)
+        r.rpush(versioned, *[str(i) for i in row_ids])
+        r.expire(versioned, timeout)
+    except Exception:
+        existing = cache.get(pending_key) or []
+        cache.set(pending_key, existing + row_ids, timeout=timeout)
+
+
+@shared_task(bind=True, max_retries=0)
 def flush_auto_eval_batch(self, config_id: str):
     """
     Drain accumulated row IDs and start a Temporal eval batch workflow.
@@ -129,13 +158,15 @@ def flush_auto_eval_batch(self, config_id: str):
             "auto_eval_workflow_start_failed",
             extra={"config_id": config_id, "error": str(exc)},
         )
-        # Delete the just-created evaluations so the retry starts clean.
+        # Delete the just-created evaluations (TLA+ WorkflowFail cleanup).
         from model_hub.models.evaluation import Evaluation
 
         Evaluation.objects.filter(id__in=evaluation_ids).delete()
-        # Re-queue rows for next window (TLA+ WorkflowFail action).
+        # Re-queue rows under a fresh debounce window.  No Celery retry: a
+        # retry fires after default_retry_delay=30 s, which races with the
+        # new debounce window and causes double-flush when
+        # debounce_seconds < 30.
         _requeue_rows(config_id, row_ids, config.debounce_seconds)
-        raise self.retry(exc=exc)
 
 
 def schedule_auto_eval(config_id: str, row_ids: list, debounce_seconds: int):
@@ -147,10 +178,9 @@ def schedule_auto_eval(config_id: str, row_ids: list, debounce_seconds: int):
     pending_key = _PENDING_KEY.format(config_id=config_id)
     lock_key = _LOCK_KEY.format(config_id=config_id)
 
-    # Accumulate row IDs.  Cache value is a plain list; extend atomically
-    # enough for Django's cache (single-process) or Redis backend.
-    existing = cache.get(pending_key) or []
-    cache.set(pending_key, existing + row_ids, timeout=debounce_seconds * 10)
+    # Atomically append row IDs to the Redis list (RPUSH is single-op
+    # atomic — no read-modify-write race between concurrent callers).
+    _rpush_pending(pending_key, row_ids, timeout=debounce_seconds * 10)
 
     # Arm the flush task only once per debounce window.
     if cache.add(lock_key, "1", timeout=debounce_seconds * 2):

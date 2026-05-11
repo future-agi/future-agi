@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("accounts", "0001_initial"),
+        ("accounts", "0019_merge_20260407_1927"),
         ("model_hub", "0090_merge_20260423_1541"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
