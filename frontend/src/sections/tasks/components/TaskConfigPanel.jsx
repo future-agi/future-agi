@@ -317,7 +317,6 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
-  console.log("Configured evals", configuredEvals);
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
