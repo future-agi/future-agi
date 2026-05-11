@@ -23,6 +23,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { enqueueSnackbar } from "src/components/snackbar";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -425,8 +426,15 @@ const TaskConfigPanel = ({
             templateId: tplId,
           };
         }
-      } catch {
-        // Fall back to local-only entry — task create will still send it
+      } catch (error) {
+       
+        enqueueSnackbar(
+          error?.response?.data?.result ||
+            error?.response?.data?.error ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
+        throw error;
       }
 
       if (editingIndex !== null) {

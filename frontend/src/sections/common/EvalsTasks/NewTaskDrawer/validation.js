@@ -53,7 +53,17 @@ export const NewTaskValidationSchema = () =>
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
-        .transform((evals) => evals?.map((e) => e.id)),
+        .refine(
+          (evals) =>
+            evals.every(
+              (e) => typeof e?.id === "string" && e?.id?.length > 0,
+            ),
+          {
+            message:
+              "One or more evaluations failed to save. Please remove and re-add them.",
+          },
+        )
+        .transform((evals) => evals.map((e) => e.id)),
       startDate: z.string(),
       endDate: z.string(),
       runType: z.enum(["historical", "continuous"], {
