@@ -317,6 +317,47 @@ class EvalLogger(BaseModel):
     def __str__(self):
         return f"Eval Log {self.id}"
 
+    def clean(self):
+        """Enforce the per-``target_type`` FK shape at the Python layer.
+
+        Mirrors the ``eval_logger_target_type_fks`` DB CHECK constraint so
+        single-row ``.save()`` writes raise a clean ``ValidationError`` early
+        instead of bubbling an opaque ``IntegrityError`` from Postgres. The
+        DB CHECK remains the authoritative defense for paths that bypass
+        ``Model.save()`` — ``bulk_create``, raw SQL, the ClickHouse CDC
+        mirror.
+        """
+        super().clean()
+        if self.target_type == EvalTargetType.SESSION:
+            if self.observation_span_id or self.trace_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must not set "
+                    "observation_span or trace."
+                )
+            if not self.trace_session_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must set trace_session."
+                )
+        else:
+            if self.trace_session_id:
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must not set "
+                    "trace_session."
+                )
+            if not (self.observation_span_id and self.trace_id):
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must set both "
+                    "observation_span and trace."
+                )
+
+    def save(self, *args, **kwargs):
+        # ``full_clean()`` runs field validators + ``clean()``. Single-row
+        # writes via ``.save()`` get this validation; ``bulk_create`` / raw
+        # inserts rely on the DB CHECK constraint instead (Django skips
+        # ``clean()`` for ``bulk_create`` by design).
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = "tracer_eval_logger"
         ordering = ["-created_at"]
