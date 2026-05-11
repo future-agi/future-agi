@@ -72,9 +72,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         state = compute_drain_state(obj)
         dispatched = state["dispatched"]
         completed = state["completed"]
-        percent = (
-            round(100.0 * completed / dispatched, 2) if dispatched else None
-        )
+        percent = round(100.0 * completed / dispatched, 2) if dispatched else None
         return {
             "dispatched": dispatched,
             "completed": completed,
@@ -130,6 +128,12 @@ class EditEvalTaskSerializer(serializers.Serializer):
         choices=[("edit_rerun", "edit_rerun"), ("fresh_run", "fresh_run")],
         required=True,
     )
+
+    def validate_row_type(self, value):
+        raise serializers.ValidationError(
+            "row_type cannot be changed after task creation. "
+            "Create a new evaluation task with the desired row_type instead."
+        )
 
     def validate_evals(self, value):
         try:

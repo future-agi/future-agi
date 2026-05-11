@@ -993,8 +993,10 @@ def evaluate_observation_span_observe(
         observation_span_id=observation_span_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-        deleted=False,
     ).exists():
+        # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
+        # already excluded, so an explicit ``deleted=False`` would be a
+        # tautology.
         logger.info(
             f"EvalLogger with observation_span_id {observation_span_id} and custom_eval_config_id {custom_eval_config_id} already exists for eval task {eval_task_id}."
         )
@@ -1422,14 +1424,25 @@ def score_categorical(evals: list, value):
 
 
 def _find_anchor_span(trace: Trace):
-    span = (
-        trace.observation_spans.filter(parent_span_id__isnull=True)
-        .order_by("start_time", "id")
+    # Single query: root spans (parent_span_id IS NULL) get rank 0 so they
+    # sort first; non-root spans fall back to rank 1. Ties within a rank
+    # break on start_time then id for determinism. Empty traces → first()
+    # returns None, matching the original contract. Saves one DB round-trip
+    # per trace — meaningful when process_eval_task dispatches across
+    # hundreds of traces per tick.
+    from django.db.models import Case, IntegerField, When
+
+    return (
+        trace.observation_spans.annotate(
+            _root_rank=Case(
+                When(parent_span_id__isnull=True, then=0),
+                default=1,
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("_root_rank", "start_time", "id")
         .first()
     )
-    if span is not None:
-        return span
-    return trace.observation_spans.order_by("start_time", "id").first()
 
 
 # ── Path resolution ──
@@ -1583,7 +1596,19 @@ def _process_trace_mapping(
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
     except EvalTemplate.DoesNotExist:
-        pass
+        # A missing EvalTemplate means we cannot determine which mapping
+        # keys are optional, so treating every key as required would
+        # produce misleading "Required attribute X not found" errors for
+        # legitimately-optional keys. Fail fast — the caller writes a
+        # failed EvalLogger row and continues, same as on a required-key
+        # miss below.
+        logger.error(
+            f"EvalTemplate {eval_template_id} not found while processing "
+            f"trace mapping for trace {trace.id}"
+        )
+        raise ValueError(
+            f"EvalTemplate {eval_template_id} not found"
+        )
 
     for key, attribute in mapping.items():
         value = _resolve_trace_path(trace, attribute) if attribute else _MISSING
@@ -1619,7 +1644,16 @@ def _process_session_mapping(
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
     except EvalTemplate.DoesNotExist:
-        pass
+        # See ``_process_trace_mapping`` above for the rationale: silently
+        # skipping optional-keys handling on a missing template produces
+        # misleading "required attribute not found" errors. Fail fast.
+        logger.error(
+            f"EvalTemplate {eval_template_id} not found while processing "
+            f"session mapping for session {trace_session.id}"
+        )
+        raise ValueError(
+            f"EvalTemplate {eval_template_id} not found"
+        )
 
     for key, attribute in mapping.items():
         value = (
@@ -2091,7 +2125,6 @@ def evaluate_trace_observe(
         trace_id=trace_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-        deleted=False,
     ).exists():
         logger.info(
             f"EvalLogger (target_type=trace) for trace_id {trace_id} and "
@@ -2222,7 +2255,6 @@ def evaluate_trace_session_observe(
         trace_session_id=session_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-        deleted=False,
     ).exists():
         logger.info(
             f"EvalLogger (target_type=session) for session_id {session_id} "

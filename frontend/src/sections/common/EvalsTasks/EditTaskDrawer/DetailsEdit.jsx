@@ -273,7 +273,8 @@ const DetailsEdit = ({
       name: data.name,
       project: data.project,
       run_type: data.runType,
-      row_type: data.rowType,
+      // row_type intentionally omitted from update payload — immutable
+      // after task creation; the BE serializer rejects it on PATCH.
       sampling_rate: data.samplingRate,
       spans_limit: String(data.spansLimit),
       edit_type: editType,

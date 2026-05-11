@@ -277,9 +277,18 @@ def process_eval_task(eval_task_id: str):
             )
             entity_qs = TraceSession.objects.filter(id__in=matching_session_ids)
             dispatch = evaluate_trace_session_observe
-        else:
+        elif eval_task.row_type == RowType.SPANS:
             entity_qs = ObservationSpan.objects.filter(filters)
             dispatch = evaluate_observation_span_observe
+        else:
+            # Fail fast on unknown / future row types instead of silently
+            # dispatching down the span path. Catches both corrupt rows and
+            # the case where a new RowType enum value is added without
+            # updating this dispatcher.
+            raise ValueError(
+                f"Unhandled row_type {eval_task.row_type!r} on "
+                f"EvalTask {eval_task.id}"
+            )
 
         sampling_rate = eval_task.sampling_rate
         span_limit = eval_task.spans_limit
@@ -408,12 +417,16 @@ def process_eval_task(eval_task_id: str):
             if len(spanids_processed) > 0:
                 # ``spanids_processed`` is stored as strings; trace/session
                 # ids are UUIDs and Django coerces on ``id__in`` lookup.
-                spans = entity_qs.only("id").exclude(id__in=spanids_processed)
+                # The field name is historical (it once held only span ids);
+                # for row_type=traces/sessions it now holds trace/session ids.
+                pending_entities = entity_qs.only("id").exclude(
+                    id__in=spanids_processed
+                )
             else:
-                spans = entity_qs.only("id")
+                pending_entities = entity_qs.only("id")
 
 
-            filtered_spans = spans.values_list("id", flat=True)
+            filtered_spans = pending_entities.values_list("id", flat=True)
 
             # Filter spans based on sampling rate
             if sampling_rate and sampling_rate > 0 and sampling_rate <= 100:
@@ -426,13 +439,14 @@ def process_eval_task(eval_task_id: str):
                     if cnt is not None:
                         max_samples = min(max_samples, cnt)
                     # Sample at the DB level instead of materializing every
-                    # candidate span id into Python memory. ``order_by("?")``
+                    # candidate entity id into Python memory. ``order_by("?")``
                     # is backed by RANDOM() in PostgreSQL, which is sufficient
                     # here and bounded by ``LIMIT sample_count``.
-                    total_available = spans.count()
+                    total_available = pending_entities.count()
                     sample_count = min(max_samples, total_available)
                     sampled_span_ids = list(
-                        spans.order_by("?").values_list("id", flat=True)[:sample_count]
+                        pending_entities.order_by("?")
+                        .values_list("id", flat=True)[:sample_count]
                     )
                     filtered_spans = sampled_span_ids
             if cnt is not None:
