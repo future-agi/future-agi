@@ -37,6 +37,14 @@ type ReflexionResult struct {
 	FinalError       string // non-empty iff Success==false
 }
 
+// ── Provider interface ────────────────────────────────────────────────────────
+
+// callableProvider is the minimal interface runReflexion needs from a provider.
+// Both *MockProvider and *errProvider satisfy it.
+type callableProvider interface {
+	Call() (passed bool, err error)
+}
+
 // ── Mock provider ─────────────────────────────────────────────────────────────
 
 // MockProvider simulates a provider that blocks on the first N calls and passes
@@ -68,7 +76,7 @@ func (p *MockProvider) Call() (passed bool, err error) {
 // does not need to import the (dependency-heavy) server package.
 //
 // Returns a ReflexionResult describing the final state.
-func runReflexion(cfg ReflexionConfig, provider *MockProvider) (ReflexionResult, error) {
+func runReflexion(cfg ReflexionConfig, provider callableProvider) (ReflexionResult, error) {
 	if !cfg.Enabled {
 		return ReflexionResult{
 			Success:    false,
@@ -354,39 +362,17 @@ func (p *errProvider) Call() (bool, error) {
 }
 
 func TestProviderErrorPropagates(t *testing.T) {
-	// We test the runReflexion function by using a simpler inline variant to
-	// verify that provider errors (as opposed to guardrail blocks) short-circuit
-	// the loop correctly.
+	// errProvider errors on the very first call, so runReflexion must propagate
+	// that error immediately rather than treating it as a guardrail block.
 	cfg := ReflexionConfig{Enabled: true, MaxAttempts: 3}
 	failingProvider := &errProvider{inner: NewMockProvider(0), failOnCall: 1}
 
-	maxAttempts := cfg.MaxAttempts
-	if maxAttempts > hardCap {
-		maxAttempts = hardCap
-	}
-	var feedback []string
-	var loopErr error
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		passed, err := failingProvider.Call()
-		if err != nil {
-			loopErr = fmt.Errorf("provider error on attempt %d: %w", attempt, err)
-			break
-		}
-		if passed {
-			break
-		}
-		if attempt < maxAttempts {
-			feedback = append(feedback, "feedback")
-		}
-	}
-
-	if loopErr == nil {
+	_, err := runReflexion(cfg, failingProvider)
+	if err == nil {
 		t.Errorf("expected provider error to propagate, got nil")
 	}
-	// Feedback list must not have grown past call count - 1
-	if len(feedback) >= failingProvider.inner.callCount {
-		t.Errorf("FeedbackGrows violated: len(feedback)=%d >= callCount=%d",
-			len(feedback), failingProvider.inner.callCount)
+	// Only one call should have been made before the error short-circuited the loop.
+	if failingProvider.inner.callCount != 1 {
+		t.Errorf("expected exactly 1 provider call before error, got %d", failingProvider.inner.callCount)
 	}
 }
