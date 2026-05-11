@@ -2988,23 +2988,31 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _OBSERVED_MAX_SAMPLE_SIZE = 100
 
     def _get_span_attribute_keys(self, project_id: str) -> list:
-        """Resolve the project's distinct span_attributes keys.
+        """Resolve the project's distinct span_attributes keys as bare strings.
 
         Mirrors the dispatch in ``get_span_attributes_list``: ClickHouse
         first when enabled and reachable, PG fallback otherwise. Reused
         by the trace + session attribute path builders.
+
+        The CH path returns ``[{"key": ..., "type": ...}, ...]`` so the
+        legacy spans picker can render type chips. The path builders
+        here need bare strings — without normalisation we'd f-string a
+        whole dict into the path and produce
+        ``traces.0.spans.0.{'key': '…', 'type': 'text'}`` garbage.
+        Always hand callers strings.
         """
         from tracer.services.clickhouse.query_service import (
             AnalyticsQueryService,
             QueryType,
         )
 
+        raw = None
         analytics = AnalyticsQueryService()
         if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
             try:
-                result = analytics.get_span_attribute_keys_ch(str(project_id))
-                if result:
-                    return list(result)
+                ch_result = analytics.get_span_attribute_keys_ch(str(project_id))
+                if ch_result:
+                    raw = ch_result
             except Exception as ch_err:
                 logger.warning(
                     "CH span attribute keys failed in get_eval_attributes_list, "
@@ -3012,7 +3020,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     error=str(ch_err),
                 )
 
-        return list(SQL_query_handler.get_span_attributes_for_project(project_id))
+        if raw is None:
+            raw = SQL_query_handler.get_span_attributes_for_project(project_id)
+
+        keys = []
+        for item in raw or []:
+            if isinstance(item, dict):
+                k = item.get("key")
+                if k:
+                    keys.append(k)
+            elif isinstance(item, str) and item:
+                keys.append(item)
+        return keys
 
     def _max_spans_per_trace(self, project_id: str) -> int:
         """Max span count observed across the project's most recent traces.

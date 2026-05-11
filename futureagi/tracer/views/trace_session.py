@@ -481,7 +481,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 any(output) AS output,
                 min(CASE WHEN parent_span_id IS NULL OR parent_span_id = '' THEN latency_ms ELSE NULL END) AS root_latency_ms,
                 round(sum(cost), 6) AS total_cost,
-                min(start_time) AS start_time,
+                min(start_time) AS trace_min_start_time,
                 sum(total_tokens) AS total_tokens,
                 sum(prompt_tokens) AS input_tokens,
                 sum(completion_tokens) AS output_tokens
@@ -490,7 +490,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
               AND trace_session_id = %(session_id)s
               AND _peerdb_is_deleted = 0
             GROUP BY trace_id
-            ORDER BY min(start_time) ASC
+            ORDER BY trace_min_start_time ASC
             LIMIT %(limit)s
             OFFSET %(offset)s
         """
@@ -576,7 +576,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "system_metrics": {
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "total_cost": trace_row.get("total_cost", 0),
-                    "start_time": format_datetime_to_iso(trace_row.get("start_time")),
+                    "start_time": format_datetime_to_iso(
+                        trace_row.get("trace_min_start_time")
+                    ),
                     "total_tokens": trace_row.get("total_tokens", 0),
                     "input_tokens": trace_row.get("input_tokens", 0),
                     "output_tokens": trace_row.get("output_tokens", 0),

@@ -1578,6 +1578,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    pickerSourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />
                 )}

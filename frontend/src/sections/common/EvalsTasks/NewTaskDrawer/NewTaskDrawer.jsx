@@ -77,6 +77,7 @@ const NewTaskDrawerChild = ({
   };
   const navigate = useNavigate();
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
 
   const {
@@ -177,11 +178,12 @@ const NewTaskDrawerChild = ({
   };
 
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
