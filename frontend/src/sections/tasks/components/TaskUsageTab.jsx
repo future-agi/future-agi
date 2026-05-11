@@ -698,7 +698,11 @@ const DetailPanelContent = ({ row, isDark }) => {
               {detail.target_type === "session" ? (
                 <>
                   {detail.session_name && (
-                    <DetailRow label="Session" value={detail.session_name} mono />
+                    <DetailRow
+                      label="Session"
+                      value={detail.session_name}
+                      mono
+                    />
                   )}
                   {detail.session_id && (
                     <DetailRow
@@ -711,7 +715,12 @@ const DetailPanelContent = ({ row, isDark }) => {
               ) : (
                 <>
                   {detail.target_type === "trace" && (
-                    <DetailRow label="Type" value="Trace eval" chip chipColor="info" />
+                    <DetailRow
+                      label="Type"
+                      value="Trace eval"
+                      chip
+                      chipColor="info"
+                    />
                   )}
                   {detail.span_name && (
                     <DetailRow label="Span" value={detail.span_name} mono />
@@ -837,8 +846,8 @@ const TaskUsageTab = ({ taskId }) => {
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
   const evalsList = chartData?.evals || [];
-  const logItems = logsData?.items || [];
-  const totalLogs = logsData?.total || 0;
+  const logItems = logsData?.results || [];
+  const totalLogs = logsData?.count || 0;
   // Backend may have widened the window to "all time" if the requested
   // period excluded every run. Surface that to the user as a hint so
   // they don't think the date filter is broken.

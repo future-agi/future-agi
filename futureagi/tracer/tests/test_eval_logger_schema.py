@@ -301,11 +301,12 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
 
         response = auth_client.get(
             "/tracer/eval-task/get_usage/",
-            {"eval_task_id": str(task.id), "page": 0, "page_size": 25, "period": "30d"},
+            {"eval_task_id": str(task.id), "page": 1, "page_size": 25, "period": "30d"},
         )
         assert response.status_code == 200
         body = response.json().get("result", {})
-        items = body.get("logs", {}).get("items", [])
+        # ExtendedPageNumberPagination native shape: results/count/...
+        items = body.get("logs", {}).get("results", [])
         assert len(items) == 1, f"expected one log item, got {items}"
         item = items[0]
         # Top-level cross-references: span/trace NULL, session_id populated.

@@ -94,9 +94,9 @@ const SessionEvalsList = ({ sessionId }) => {
     queryFn: () =>
       axios
         .get(endpoints.project.getSessionEvalLogs(sessionId), {
-          params: { page: 0, page_size: 100 },
+          params: { page: 1, page_size: 100 },
         })
-        .then((res) => res.data?.result || { items: [], total: 0 }),
+        .then((res) => res.data?.result || { results: [], count: 0 }),
     enabled: Boolean(sessionId),
   });
 
@@ -118,7 +118,7 @@ const SessionEvalsList = ({ sessionId }) => {
     );
   }
 
-  const items = data?.items || [];
+  const items = data?.results || [];
 
   if (items.length === 0) {
     return (

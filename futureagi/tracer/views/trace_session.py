@@ -61,6 +61,8 @@ from tracer.models.trace import Trace
 
 session_logger = structlog.get_logger(__name__)
 from tracer.models.trace_session import TraceSession
+from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
     TraceSessionExportSerializer,
     TraceSessionSerializer,
@@ -1793,41 +1795,36 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def eval_logs(self, request, *args, **kwargs):
-        """
-        Session-scoped eval log feed for the TracesDrawer "Evals" tab.
+        """Session-scoped eval log feed for TracesDrawer's "Evals" tab.
 
-        Session-level eval results NEVER appear on span- or trace-level
-        surfaces (the spans table, trace drawer, or span detail panel) —
-        this endpoint is the only place users can see them. Conversely,
-        span/trace evals never appear here: the ``target_type='session'``
-        filter walls the surfaces apart.
-
-        The response shape mirrors ``EvalTaskView.get_usage`` ``log_items``
-        so the FE can reuse the same renderer (ScoreCell, DetailRow,
-        ErrorDetails, ExpandableJson). Span/trace-only fields are dropped
-        because the ``eval_logger_target_type_fks`` check constraint
-        guarantees they're NULL on session rows.
+        Session-level eval results are walled off from span/trace surfaces
+        by ``target_type='session'`` — this endpoint is the only place
+        they appear.
 
         Query params:
-            page (int, default 0)
+            page (int, 1-indexed, default 1)
             page_size (int, default 25, max 100)
+
+        Returns:
+            Paginated DRF response: {count, next, previous, results,
+            total_pages, current_page}. Each ``results`` item carries the
+            same fields ``EvalTaskView.get_usage`` exposes, minus
+            span/trace-only fields (NULL on session rows per the
+            ``eval_logger_target_type_fks`` check constraint).
         """
         try:
             # get_object() applies the org-scoped queryset filter and
-            # raises 404 if the caller can't access the session — the
-            # standard DRF auth pattern, no extra check needed here.
+            # raises 404 if the caller can't access the session.
             session = self.get_object()
 
-            page = max(int(request.query_params.get("page", 0)), 0)
-            page_size = min(
-                max(int(request.query_params.get("page_size", 25)), 1), 100
-            )
+            qp = PaginationQuerySerializer(data=request.query_params)
+            qp.is_valid(raise_exception=True)
+            page_size = qp.validated_data["page_size"]
 
             logs_qs = (
                 EvalLogger.objects.filter(
                     trace_session_id=session.id,
                     target_type=EvalTargetType.SESSION,
-                    deleted=False,
                 )
                 .select_related(
                     "custom_eval_config",
@@ -1835,8 +1832,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 .order_by("-created_at")
             )
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+
+            paginator = ExtendedPageNumberPagination()
+            paginator.page_size = page_size
+            logs_page = paginator.paginate_queryset(logs_qs, request, view=self)
 
             items = []
             for log in logs_page:
@@ -1906,14 +1905,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            return self._gm.success_response(
-                {
-                    "items": items,
-                    "total": total_logs,
-                    "page": page,
-                    "page_size": page_size,
-                }
-            )
+            # ExtendedPageNumberPagination response shape:
+            # {count, next, previous, results, total_pages, current_page}
+            paginated = paginator.get_paginated_response(items)
+            return self._gm.success_response(paginated.data)
         except Exception as e:
             logger.exception(f"Error in fetching session eval logs: {str(e)}")
             return self._gm.bad_request(
