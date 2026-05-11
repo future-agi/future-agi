@@ -138,6 +138,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -220,6 +221,7 @@ const NewTaskDrawerV2 = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -230,6 +232,7 @@ const NewTaskDrawerV2 = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),

@@ -157,6 +157,7 @@ const DetailsEdit = ({
   const onAddSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -167,6 +168,7 @@ const DetailsEdit = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -271,6 +273,7 @@ const DetailsEdit = ({
       name: data.name,
       project: data.project,
       run_type: data.runType,
+      row_type: data.rowType,
       sampling_rate: data.samplingRate,
       spans_limit: String(data.spansLimit),
       edit_type: editType,

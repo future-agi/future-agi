@@ -57,6 +57,7 @@ const NewTaskDrawerChild = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
@@ -151,6 +152,7 @@ const NewTaskDrawerChild = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -161,6 +163,7 @@ const NewTaskDrawerChild = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),

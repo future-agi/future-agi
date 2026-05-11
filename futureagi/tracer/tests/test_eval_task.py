@@ -333,3 +333,110 @@ class TestEvalTaskGetDetailsAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["name"] == eval_task.name
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestEvalTaskRowTypePersistence:
+    """`row_type` round-trips through create / get / update (PR2).
+
+    The FE sends one of `spans` / `traces` / `sessions` / `voiceCalls`; the
+    backend persists it on EvalTask and surfaces it on every read so the
+    UI's row-type tab survives an edit. Runtime semantics still spans-only
+    until PR4.
+    """
+
+    @pytest.mark.parametrize("row_type", ["spans", "traces", "sessions", "voiceCalls"])
+    def test_create_task_persists_row_type(
+        self, auth_client, project, custom_eval_config, row_type
+    ):
+        """row_type round-trips through POST -> DB -> GET."""
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": f"Test {row_type} task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "row_type": row_type,
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        task_id = get_result(response)["id"]
+
+        from tracer.models.eval_task import EvalTask
+
+        task = EvalTask.objects.get(id=task_id)
+        assert task.row_type == row_type
+
+    def test_create_task_default_row_type_is_spans(
+        self, auth_client, project, custom_eval_config
+    ):
+        """Omitting row_type defaults to 'spans' for back-compat."""
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Default row_type task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        task_id = get_result(response)["id"]
+
+        from tracer.models.eval_task import EvalTask
+
+        task = EvalTask.objects.get(id=task_id)
+        assert task.row_type == "spans"
+
+    def test_get_eval_details_returns_row_type(
+        self, auth_client, project, custom_eval_config
+    ):
+        """get_eval_details surfaces row_type so edit-mode hydration finds it."""
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+
+        task = EvalTask.objects.create(
+            project=project,
+            name="Trace task",
+            filters={},
+            sampling_rate=100,
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            spans_limit=100,
+            row_type="traces",
+        )
+        task.evals.add(custom_eval_config)
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/",
+            {"eval_id": str(task.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["row_type"] == "traces"
+
+    def test_update_eval_task_changes_row_type(
+        self, auth_client, eval_task
+    ):
+        """PATCH update_eval_task updates row_type."""
+        # eval_task fixture defaults to row_type='spans'
+        assert eval_task.row_type == "spans"
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "row_type": "sessions",
+                "edit_type": "fresh_run",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        eval_task.refresh_from_db()
+        assert eval_task.row_type == "sessions"

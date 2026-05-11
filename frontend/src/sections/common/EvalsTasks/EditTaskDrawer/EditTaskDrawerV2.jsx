@@ -285,6 +285,7 @@ const EditTaskDrawerV2Content = ({
         name: data.name,
         project: data.project,
         run_type: data.runType,
+        row_type: data.rowType,
         sampling_rate: data.samplingRate,
         spans_limit: String(data.spansLimit),
         edit_type: editType,

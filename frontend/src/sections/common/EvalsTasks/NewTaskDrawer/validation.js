@@ -99,6 +99,7 @@ export const NewTaskValidationSchema = () =>
         samplingRate: data?.samplingRate,
         evals: data?.evalsDetails,
         runType: data?.runType,
+        rowType: data?.rowType ?? "spans",
         filters: {
           ...filters,
           ...(attributeFilters && attributeFilters?.length > 0

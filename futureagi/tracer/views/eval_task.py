@@ -1070,6 +1070,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             "spans_limit",
             "evals",
             "run_type",
+            "row_type",
         ]
 
         for field in allowed_fields:
@@ -1330,6 +1331,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "sampling_rate": queryset.sampling_rate,
                 "last_run": queryset.last_run,
                 "run_type": queryset.run_type,
+                "row_type": queryset.row_type,
             }
 
             return self._gm.success_response(result)
