@@ -2,8 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCompositeSourceModeProps,
+  contextOptionsForRowType,
   getSourceModeVariables,
 } from "./evalPickerConfigUtils";
+
+describe("contextOptionsForRowType", () => {
+  it("maps each known row type to its default data_injection flags", () => {
+    expect(contextOptionsForRowType("spans")).toEqual(["span_context"]);
+    expect(contextOptionsForRowType("traces")).toEqual(["trace_context"]);
+    expect(contextOptionsForRowType("sessions")).toEqual([
+      "session_context",
+      "trace_context",
+    ]);
+    expect(contextOptionsForRowType("voiceCalls")).toEqual(["call_context"]);
+  });
+
+  it("returns null for unknown / missing row types so the caller can fall back", () => {
+    expect(contextOptionsForRowType(undefined)).toBeNull();
+    expect(contextOptionsForRowType(null)).toBeNull();
+    expect(contextOptionsForRowType("")).toBeNull();
+    expect(contextOptionsForRowType("unknown")).toBeNull();
+  });
+});
 
 describe("buildCompositeSourceModeProps", () => {
   it("does not expose adhoc config for non-composite evals", () => {
