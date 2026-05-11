@@ -316,6 +316,7 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
+  console.log("Configured evals", configuredEvals);
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
@@ -469,8 +470,12 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId =
-      stored.templateId || stored.template_id || stored.eval_template;
+    const tplId =  stored.templateId || stored.template_id || stored.eval_template;
+
+    const savedErrorLocalizer =
+      stored.error_localizer_enabled ?? stored.error_localizer;
+    const existingRunConfig =
+      stored.run_config || stored.config?.run_config || {};
     return {
       ...stored,
       id: tplId,
@@ -478,6 +483,13 @@ const TaskConfigPanel = ({
       templateId: tplId,
       // `stored.id` is always the CustomEvalConfig id (from POST response or API load)
       customEvalConfigId: stored.customEvalConfigId || stored.id,
+      run_config: {
+        ...existingRunConfig,
+        ...(stored.model && { model: stored.model }),
+        ...(savedErrorLocalizer !== undefined && {
+          error_localizer_enabled: savedErrorLocalizer,
+        }),
+      },
     };
   }, [editingIndex, configuredEvals]);
   const resolvedProjectName =
