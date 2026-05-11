@@ -285,7 +285,9 @@ const EditTaskDrawerV2Content = ({
         name: data.name,
         project: data.project,
         run_type: data.runType,
-        row_type: data.rowType,
+        // row_type intentionally omitted — immutable after task creation.
+        // The BE serializer rejects it on PATCH; the picker is also
+        // locked on edit (see TaskConfigPanel rowTypeLocked).
         sampling_rate: data.samplingRate,
         spans_limit: String(data.spansLimit),
         edit_type: editType,
