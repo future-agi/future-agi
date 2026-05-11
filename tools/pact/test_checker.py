@@ -155,6 +155,37 @@ def test_save_guard_without_assignment_does_not_make_field_optional(tmp_path):
     assert any("slug" in missing for missing in widget_v[0].missing)
 
 
+def test_nested_class_save_does_not_auto_assign_outer_model_field(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Widget(models.Model):
+            slug = models.CharField(max_length=64)
+            class Meta: app_label = 'x'
+            class Helper:
+                def save(self):
+                    if not self.slug:
+                        self.slug = "helper"
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make():
+            Widget.objects.create()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    widget_v = [v for v in violations if v.call == "Widget.objects.create"]
+    assert widget_v, "nested helper save methods must not affect the outer model"
+    assert any("slug" in missing for missing in widget_v[0].missing)
+
+
 # ---------------------------------------------------------------------------
 # required_arg_missing mode
 # ---------------------------------------------------------------------------

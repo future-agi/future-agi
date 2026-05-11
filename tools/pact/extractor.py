@@ -264,7 +264,7 @@ def _save_auto_assigned(class_node: ast.ClassDef) -> set[str]:
                     return True
         return False
 
-    for item in ast.walk(class_node):
+    for item in class_node.body:
         if not isinstance(item, ast.FunctionDef) or item.name != "save":
             continue
         for stmt in ast.walk(item):
