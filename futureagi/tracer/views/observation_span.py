@@ -1736,10 +1736,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Add Span Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(
-                project__id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+            annotation_labels = get_annotation_labels_for_project(
+                project_id,
+                getattr(request, "organization", None) or request.user.organization,
             )
             base_query = build_annotation_subqueries(
                 base_query,

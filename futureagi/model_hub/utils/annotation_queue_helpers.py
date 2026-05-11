@@ -39,6 +39,57 @@ FILTER_MODE_SOURCE_TYPES = {
 }
 
 
+def _trace_primary_span(trace):
+    if not trace:
+        return None
+
+    prefetched_spans = getattr(trace, "_queue_export_spans", None)
+    if prefetched_spans is not None:
+        spans = list(prefetched_spans)
+        root_spans = [
+            span for span in spans if not getattr(span, "parent_span_id", None)
+        ]
+        return (
+            next(
+                (
+                    span
+                    for span in root_spans
+                    if getattr(span, "observation_type", None) == "conversation"
+                ),
+                None,
+            )
+            or (root_spans[0] if root_spans else None)
+            or (spans[0] if spans else None)
+        )
+
+    spans = trace.observation_spans.filter(deleted=False)
+    root_spans = spans.filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
+    return (
+        root_spans.filter(observation_type="conversation")
+        .order_by("start_time", "created_at")
+        .first()
+        or root_spans.order_by("start_time", "created_at").first()
+        or spans.order_by("start_time", "created_at").first()
+    )
+
+
+def _metric_payload(obj, *, response_field="response_time"):
+    return {
+        "latency_ms": getattr(obj, "latency_ms", None),
+        "response_time_ms": getattr(obj, response_field, None),
+    }
+
+
+def _call_execution_metric_payload(call):
+    avg_agent_latency_ms = getattr(call, "avg_agent_latency_ms", None)
+    payload = {
+        "response_time_ms": getattr(call, "response_time_ms", None),
+        "latency_ms": avg_agent_latency_ms,
+        "avg_agent_latency_ms": avg_agent_latency_ms,
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
 def get_source_model(source_type):
     """Return the Django model class for a given source_type."""
     from django.apps import apps
@@ -185,12 +236,15 @@ def resolve_source_preview(item):
             trace = item.trace
             if not trace:
                 return {"type": "trace", "deleted": True}
+            primary_span = _trace_primary_span(trace)
+            metrics = _metric_payload(primary_span) if primary_span else {}
             return {
                 "type": "trace",
                 "name": trace.name or "",
                 "project_id": str(trace.project_id) if trace.project_id else None,
                 "input_preview": _truncate(str(trace.input or ""), 200),
                 "output_preview": _truncate(str(trace.output or ""), 200),
+                **metrics,
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
@@ -205,6 +259,7 @@ def resolve_source_preview(item):
                 "output_preview": _truncate(
                     str(getattr(span, "output", "") or ""), 200
                 ),
+                **_metric_payload(span),
             }
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
@@ -227,6 +282,7 @@ def resolve_source_preview(item):
                 "status": getattr(call, "status", ""),
                 "duration_seconds": getattr(call, "duration_seconds", None),
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
+                **_call_execution_metric_payload(call),
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
@@ -259,6 +315,10 @@ def resolve_source_content(item):
                 "dataset_name": getattr(row.dataset, "name", ""),
                 "row_order": row.order,
                 "row_id": str(row.id),
+                "source_id": str(row.id),
+                "name": f"Row {row.order}",
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
             }
             # Include row field values from cells
             fields = {}
@@ -295,17 +355,43 @@ def resolve_source_content(item):
             if not trace:
                 return {"type": "trace", "deleted": True}
             project_source = trace.project.source if trace.project_id else None
+            primary_span = _trace_primary_span(trace)
+            span_metrics = _metric_payload(primary_span) if primary_span else {}
+            trace_latency = getattr(trace, "latency", None)
+            trace_status = getattr(trace, "status", None)
             return {
                 "type": "trace",
                 "trace_id": str(trace.id),
                 "name": trace.name or "",
                 "project_id": str(trace.project_id) if trace.project_id else None,
                 "project_source": project_source,
+                "created_at": trace.created_at,
+                "updated_at": trace.updated_at,
                 "input": trace.input,
                 "output": trace.output,
                 "metadata": trace.metadata if hasattr(trace, "metadata") else {},
-                "latency": getattr(trace, "latency", None),
-                "status": getattr(trace, "status", None),
+                "latency": trace_latency,
+                "latency_ms": (
+                    span_metrics.get("latency_ms")
+                    if span_metrics.get("latency_ms") is not None
+                    else trace_latency
+                ),
+                "response_time_ms": span_metrics.get("response_time_ms"),
+                "status": (
+                    trace_status
+                    if trace_status is not None
+                    else getattr(primary_span, "status", None)
+                    if primary_span
+                    else None
+                ),
+                "span_attributes": (
+                    getattr(primary_span, "span_attributes", {}) if primary_span else {}
+                ),
+                "resource_attributes": (
+                    getattr(primary_span, "resource_attributes", {})
+                    if primary_span
+                    else {}
+                ),
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
@@ -318,10 +404,29 @@ def resolve_source_content(item):
                 "trace_id": str(span.trace_id) if span.trace_id else None,
                 "name": span.name or "",
                 "observation_type": getattr(span, "observation_type", ""),
+                "project_id": str(span.project_id) if span.project_id else None,
+                "created_at": span.created_at,
+                "updated_at": span.updated_at,
+                "start_time": span.start_time,
+                "end_time": span.end_time,
                 "input": getattr(span, "input", None),
                 "output": getattr(span, "output", None),
                 "metadata": getattr(span, "metadata", {}),
                 "events": getattr(span, "events", []),
+                "latency_ms": getattr(span, "latency_ms", None),
+                "response_time_ms": getattr(span, "response_time", None),
+                "model": getattr(span, "model", None),
+                "provider": getattr(span, "provider", None),
+                "cost": getattr(span, "cost", None),
+                "prompt_tokens": getattr(span, "prompt_tokens", None),
+                "completion_tokens": getattr(span, "completion_tokens", None),
+                "total_tokens": getattr(span, "total_tokens", None),
+                "status": getattr(span, "status", None),
+                "status_message": getattr(span, "status_message", None),
+                "tags": getattr(span, "tags", []),
+                "span_attributes": getattr(span, "span_attributes", {}),
+                "resource_attributes": getattr(span, "resource_attributes", {}),
+                "eval_attributes": getattr(span, "eval_attributes", {}),
             }
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
@@ -334,6 +439,8 @@ def resolve_source_content(item):
                 "name": getattr(run, "name", ""),
                 "model": getattr(run, "model", ""),
                 "status": getattr(run, "status", ""),
+                "created_at": run.created_at,
+                "updated_at": run.updated_at,
                 "prompt": getattr(run, "prompt", None),
                 "response": getattr(run, "response", None),
             }
@@ -345,11 +452,42 @@ def resolve_source_content(item):
             return {
                 "type": "call_execution",
                 "call_id": str(call.id),
+                "source_id": str(call.id),
                 "status": getattr(call, "status", ""),
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
+                "call_type": getattr(call, "call_type", None),
+                "phone_number": getattr(call, "phone_number", None),
+                "service_provider_call_id": getattr(call, "service_provider_call_id", None),
+                "customer_call_id": getattr(call, "customer_call_id", None),
+                "customer_number": getattr(call, "customer_number", None),
+                "assistant_id": getattr(call, "assistant_id", None),
+                "created_at": call.created_at,
+                "updated_at": call.updated_at,
+                "start_time": getattr(call, "started_at", None),
+                "end_time": getattr(call, "completed_at", None),
+                "ended_at": getattr(call, "ended_at", None),
                 "duration_seconds": getattr(call, "duration_seconds", None),
+                **_call_execution_metric_payload(call),
+                "cost": getattr(call, "cost_cents", None),
+                "ended_reason": getattr(call, "ended_reason", None),
+                "message_count": getattr(call, "message_count", None),
+                "call_summary": getattr(call, "call_summary", None),
+                "user_wpm": getattr(call, "user_wpm", None),
+                "agent_wpm": getattr(call, "bot_wpm", None),
+                "talk_ratio": getattr(call, "talk_ratio", None),
+                "user_interruption_count": getattr(call, "user_interruption_count", None),
+                "ai_interruption_count": getattr(call, "ai_interruption_count", None),
                 "input": getattr(call, "input", None),
                 "output": getattr(call, "output", None),
+                "metadata": getattr(call, "call_metadata", {}) or {},
+                "call_metadata": getattr(call, "call_metadata", {}) or {},
+                "provider_call_data": getattr(call, "provider_call_data", {}) or {},
+                "monitor_call_data": getattr(call, "monitor_call_data", {}) or {},
+                "analysis_data": getattr(call, "analysis_data", {}) or {},
+                "evaluation_data": getattr(call, "evaluation_data", {}) or {},
+                "customer_latency_metrics": (
+                    getattr(call, "customer_latency_metrics", {}) or {}
+                ),
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
@@ -359,8 +497,11 @@ def resolve_source_content(item):
             return {
                 "type": "trace_session",
                 "session_id": str(session.id),
+                "source_id": str(session.id),
                 "name": session.name or "",
                 "project_id": str(session.project_id) if session.project_id else None,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
             }
 
     except Exception as e:

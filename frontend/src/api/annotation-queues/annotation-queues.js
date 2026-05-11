@@ -50,6 +50,7 @@ export const annotationQueueKeys = {
   all: ["annotation-queues"],
   list: (filters) => ["annotation-queues", "list", filters],
   detail: (id) => ["annotation-queues", "detail", id],
+  exportFields: (id) => ["annotation-queues", "export-fields", id],
   progress: (queueId) => ["annotation-queues", "progress", queueId],
   analytics: (queueId) => ["annotation-queues", "analytics", queueId],
   agreement: (queueId) => ["annotation-queues", "agreement", queueId],
@@ -696,12 +697,56 @@ export const useExportToDataset = () => {
   });
 };
 
+export const useDownloadAnnotationQueueExport = () => {
+  return useMutation({
+    mutationFn: ({ queueId, status }) =>
+      axios.get(`/model-hub/annotation-queues/${queueId}/export/`, {
+        params: {
+          export_format: "json",
+          ...(status ? { status } : {}),
+        },
+      }),
+    onSuccess: (response, variables) => {
+      const payload = extractData(response, []);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `annotation-queue-${variables.queueId}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      enqueueSnackbar("Annotation export downloaded", { variant: "success" });
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to download export"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
 export const useQueueAgreement = (queueId, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.agreement(queueId),
     queryFn: () =>
       axios.get(`/model-hub/annotation-queues/${queueId}/agreement/`),
     select: (d) => extractData(d),
+    enabled: !!queueId,
+    staleTime: 1000 * 60 * 2,
+    ...options,
+  });
+};
+
+export const useAnnotationQueueExportFields = (queueId, options = {}) => {
+  return useQuery({
+    queryKey: annotationQueueKeys.exportFields(queueId),
+    queryFn: () =>
+      axios.get(`/model-hub/annotation-queues/${queueId}/export-fields/`),
+    select: (d) => extractData(d, { fields: [], default_mapping: [] }),
     enabled: !!queueId,
     staleTime: 1000 * 60 * 2,
     ...options,

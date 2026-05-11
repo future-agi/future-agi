@@ -33,6 +33,7 @@ import RHFTextField from "src/components/hook-form/rhf-text-field";
 import { RHFCheckbox } from "src/components/hook-form/rhf-checkbox";
 import LabelPicker from "../components/label-picker";
 import AnnotatorPicker from "../components/annotator-picker";
+import { isQueueAnnotatorRole } from "../constants";
 
 /** @type {Record<string, { label: string; hint: string }>} */
 const ALL_STATUS_OPTIONS = {
@@ -65,7 +66,7 @@ function getStatusOptions(currentStatus, { hasLabels = true } = {}) {
   };
   return [
     opt(currentStatus, { isCurrent: true }),
-    ...allowed.map(( s) => opt(s)),
+    ...allowed.map((s) => opt(s)),
   ];
 }
 
@@ -103,6 +104,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
   const hasInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -218,11 +220,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                   name="status"
                   control={control}
                   render={({ field }) => {
-              
                     const currentStatus = queue?.status || field.value;
-                    const labelGateBlocks =
-                      currentStatus !== "active" &&
-                      (labelIds || []).length === 0;
                     return (
                       <TextField
                         {...field}
@@ -230,7 +228,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                         select
                         label="Status"
                         fullWidth
-                      
                         FormHelperTextProps={{
                           sx: { ml: 0, color: "warning.main" },
                         }}
@@ -334,8 +331,8 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                       const n = Number(value);
                       if (!value && value !== 0) return "Required";
                       if (n < 1) return "Must be at least 1";
-                      if (annotators.length > 0 && n > annotators.length)
-                        return `Cannot exceed annotator count (${annotators.length})`;
+                      if (annotatorCount > 0 && n > annotatorCount)
+                        return `Cannot exceed annotator count (${annotatorCount})`;
                       return true;
                     },
                   }}
@@ -526,7 +523,9 @@ function DangerZone({ queue }) {
   const matches = typed === queue.name;
   return (
     <>
-      <Card sx={{ borderColor: "error.main", borderWidth: 1, borderStyle: "solid" }}>
+      <Card
+        sx={{ borderColor: "error.main", borderWidth: 1, borderStyle: "solid" }}
+      >
         <CardContent>
           <Stack spacing={2}>
             <Typography variant="h6" color="error.main">
@@ -564,13 +563,12 @@ function DangerZone({ queue }) {
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Alert severity="error">
-              This will hard-delete <strong>{queue.name}</strong> along with
-              all rules, items, assignments, and scores. There is no way to
-              recover the data after this.
+              This will hard-delete <strong>{queue.name}</strong> along with all
+              rules, items, assignments, and scores. There is no way to recover
+              the data after this.
             </Alert>
             <Typography variant="body2">
-              Type the queue name to confirm:{" "}
-              <strong>{queue.name}</strong>
+              Type the queue name to confirm: <strong>{queue.name}</strong>
             </Typography>
             <TextField
               autoFocus

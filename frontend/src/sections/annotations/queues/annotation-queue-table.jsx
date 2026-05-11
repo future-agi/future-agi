@@ -25,6 +25,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
 import "src/styles/clean-data-table.css";
+import { QUEUE_ROLES } from "./constants";
 
 // Skeleton cell renderer shown during loading
 const SkeletonCell = () => (
@@ -157,15 +158,58 @@ function LabelsCellRenderer({ data }) {
   );
 }
 
-AnnotatorsCellRenderer.propTypes = {
+const MEMBER_ROLE_GROUPS = [
+  { role: QUEUE_ROLES.MANAGER, label: "Managers" },
+  { role: QUEUE_ROLES.ANNOTATOR, label: "Annotators" },
+  { role: QUEUE_ROLES.REVIEWER, label: "Reviewers" },
+];
+
+function roleTitle(role) {
+  if (!role) return "Annotators";
+  return role.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function memberDisplayName(member) {
+  if (member.name && member.email) return `${member.name} (${member.email})`;
+  return member.name || member.email || "Unnamed";
+}
+
+function groupQueueMembers(members) {
+  const knownGroups = MEMBER_ROLE_GROUPS.map((group) => ({
+    ...group,
+    members: members.filter((member) =>
+      group.role === QUEUE_ROLES.ANNOTATOR
+        ? !member.role || member.role === group.role
+        : member.role === group.role,
+    ),
+  })).filter((group) => group.members.length > 0);
+
+  const knownRoles = new Set(MEMBER_ROLE_GROUPS.map((group) => group.role));
+  const unknownGroups = Object.entries(
+    members
+      .filter((member) => member.role && !knownRoles.has(member.role))
+      .reduce((acc, member) => {
+        acc[member.role] = [...(acc[member.role] || []), member];
+        return acc;
+      }, {}),
+  ).map(([role, groupMembers]) => ({
+    role,
+    label: roleTitle(role),
+    members: groupMembers,
+  }));
+
+  return [...knownGroups, ...unknownGroups];
+}
+
+MembersCellRenderer.propTypes = {
   data: PropTypes.object,
 };
 
-function AnnotatorsCellRenderer({ data }) {
+function MembersCellRenderer({ data }) {
   if (!data) return null;
-  const annotators = data.annotators || [];
+  const members = data.annotators || [];
 
-  if (annotators.length === 0) {
+  if (members.length === 0) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
         <Typography variant="body2" color="text.secondary">
@@ -176,14 +220,31 @@ function AnnotatorsCellRenderer({ data }) {
   }
 
   return (
-    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+    <Box
+      data-testid={`queue-members-${data.id}`}
+      sx={{ display: "flex", alignItems: "center", height: "100%" }}
+    >
       <Tooltip
         title={
-          <Stack spacing={0.5} sx={{ py: 0.5 }}>
-            {annotators.map((a) => (
-              <Typography key={a.id || a.user_id} variant="caption">
-                {a.name || "Unnamed"} {a.email ? `(${a.email})` : ""}
-              </Typography>
+          <Stack spacing={1} sx={{ py: 0.5 }}>
+            {groupQueueMembers(members).map((group) => (
+              <Stack key={group.role} spacing={0.25}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  fontWeight={700}
+                >
+                  {group.label}
+                </Typography>
+                {group.members.map((member) => (
+                  <Typography
+                    key={member.id || member.user_id}
+                    variant="caption"
+                  >
+                    {memberDisplayName(member)}
+                  </Typography>
+                ))}
+              </Stack>
             ))}
           </Stack>
         }
@@ -212,8 +273,8 @@ function AnnotatorsCellRenderer({ data }) {
             },
           }}
         >
-          {annotators.map((a) => (
-            <Avatar key={a.id || a.user_id}>
+          {members.map((a) => (
+            <Avatar key={a.id || a.user_id} aria-label={memberDisplayName(a)}>
               {getInitials(a.name, a.email)}
             </Avatar>
           ))}
@@ -399,10 +460,10 @@ export default function AnnotationQueueTable({
       },
       {
         field: "annotators",
-        headerName: "Annotators",
+        headerName: "Members",
         flex: 1,
         minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : AnnotatorsCellRenderer,
+        cellRenderer: loading ? SkeletonCell : MembersCellRenderer,
       },
       {
         field: "created_at",

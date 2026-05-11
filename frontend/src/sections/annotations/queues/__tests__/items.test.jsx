@@ -186,7 +186,12 @@ const MOCK_ITEMS = [
   {
     id: "item-2",
     source_type: "trace",
-    source_preview: { type: "trace", name: "Hello trace" },
+    source_preview: {
+      type: "trace",
+      name: "Hello trace",
+      latency_ms: 120,
+      response_time_ms: 240,
+    },
     status: "completed",
     assigned_to_name: "Alice",
     assigned_users: [{ id: "user-1", name: "Alice" }],
@@ -215,6 +220,8 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("Source")).toBeInTheDocument();
     expect(screen.getByText("Preview")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("Latency")).toBeInTheDocument();
+    expect(screen.getByText("Response Time")).toBeInTheDocument();
     expect(screen.getByText("Assigned To")).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
   });
@@ -238,6 +245,28 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("+ Assign")).toBeInTheDocument();
     // Assigned user shows as avatar with initials
     expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("shows source metrics when provided", () => {
+    render(<QueueItemsTable {...tableProps} />);
+    expect(screen.getByText("120ms")).toBeInTheDocument();
+    expect(screen.getByText("240ms")).toBeInTheDocument();
+  });
+
+  it("shows all annotators in auto-assign mode", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        autoAssign
+        annotators={[
+          { user_id: "user-1", name: "Alice", role: "annotator" },
+          { user_id: "user-2", name: "Bob", role: "annotator" },
+          { user_id: "user-3", name: "Reviewer", role: "reviewer" },
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("All annotators").length).toBeGreaterThan(0);
+    expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
   });
 
   it("shows review status chip when present", () => {

@@ -170,7 +170,6 @@ function apiFilterToPanel(api) {
     value,
   };
 }
-import { getComplexFilterValidation } from "src/components/ComplexFilter/common";
 import {
   getSessionListColumnDef,
   filterDefinition as sessionFilterDefinition,
@@ -178,7 +177,6 @@ import {
 } from "src/sections/projects/SessionsView/common";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
-import { VoiceCallsGrid } from "src/components/data-table";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -186,11 +184,6 @@ import { VoiceCallsGrid } from "src/components/data-table";
 const DATASET_ROWS_LIMIT = 10;
 const TRACE_ROWS_LIMIT = 20;
 const DEFAULT_MIN_WIDTH = 300;
-const DONT_FORMAT_COL_ID_FOR = [
-  "Evaluation Metrics",
-  "Attribute",
-  "Annotation Metrics",
-];
 
 const DATASET_GRID_THEME_PARAMS = {
   columnBorder: true,
@@ -733,12 +726,20 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               borderTop: "1px solid",
               borderColor: "divider",
               display: "flex",
-              justifyContent: "flex-end",
               alignItems: "center",
               gap: 1.5,
               flexShrink: 0,
             }}
           >
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ flex: 1 }}
+            >
+              {selectionCount === 0
+                ? "Select rows with the checkbox column to add them."
+                : `${selectionCount} selected`}
+            </Typography>
             <Button
               variant="outlined"
               color="primary"
@@ -1477,7 +1478,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     dateFilter: dateFilterForOption("7D"),
     dateOption: "7D",
   }));
-  const [filterDefinition, setFilterDefinition] = useState([]);
+  const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
@@ -2083,7 +2084,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     dateFilter: dateFilterForOption("7D"),
     dateOption: "7D",
   }));
-  const [filterDefinition, setFilterDefinition] = useState([]);
+  const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);

@@ -5,8 +5,16 @@ import FormSearchSelectFieldState from "src/components/FromSearchSelectField/For
 import {
   Box,
   Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
   IconButton,
   LinearProgress,
+  Menu,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -26,6 +34,8 @@ import {
   useRemoveQueueItem,
   useBulkRemoveQueueItems,
   useAssignQueueItems,
+  useDownloadAnnotationQueueExport,
+  useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
 import StatusBadge from "../components/status-badge";
 import QueueItemsTable from "../items/queue-items-table";
@@ -38,6 +48,7 @@ import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { isQueueAnnotatorRole } from "../constants";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -78,6 +89,9 @@ export default function QueueDetailView() {
   const [activeTab, setActiveTab] = useState(0);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [bulkAssignUserIds, setBulkAssignUserIds] = useState(new Set());
   const [selectedIds, setSelectedIds] = useState(new Set());
 
   const { data: queue } = useAnnotationQueueDetail(queueId);
@@ -91,6 +105,10 @@ export default function QueueDetailView() {
   const { mutate: removeItem } = useRemoveQueueItem();
   const { mutate: bulkRemove } = useBulkRemoveQueueItems();
   const { mutate: assignItems } = useAssignQueueItems();
+  const { mutate: downloadExport, isPending: isDownloadingExport } =
+    useDownloadAnnotationQueueExport();
+  const { mutate: updateStatus, isPending: isUpdatingStatus } =
+    useUpdateAnnotationQueueStatus();
   const { data: progress } = useQueueProgress(queueId);
 
   const items = useMemo(() => itemsData?.results || [], [itemsData?.results]);
@@ -102,6 +120,19 @@ export default function QueueDetailView() {
     const me = annotators.find((a) => a.user_id === (user.id || user.pk));
     return me?.role === "manager";
   }, [queue, user]);
+
+  const queueAnnotators = useMemo(
+    () =>
+      (queue?.annotators || []).filter(
+        (annotator) => isQueueAnnotatorRole(annotator) && annotator.user_id,
+      ),
+    [queue?.annotators],
+  );
+
+  const canStartAnnotating =
+    totalCount > 0 &&
+    (queue?.status === "active" ||
+      (queue?.status === "completed" && (progress?.skipped || 0) > 0));
 
   // Ordered tab labels based on role — items is always 0
   const tabLabels = useMemo(
@@ -159,6 +190,39 @@ export default function QueueDetailView() {
     [queueId, assignItems],
   );
 
+  const handleOpenBulkAssign = useCallback(() => {
+    setBulkAssignUserIds(new Set());
+    setBulkAssignOpen(true);
+  }, []);
+
+  const handleDownloadExport = useCallback(() => {
+    setExportMenuAnchor(null);
+    downloadExport({ queueId });
+  }, [downloadExport, queueId]);
+
+  const handleOpenDatasetExport = useCallback(() => {
+    setExportMenuAnchor(null);
+    setExportDialogOpen(true);
+  }, []);
+
+  const handleApplyBulkAssign = useCallback(() => {
+    assignItems(
+      {
+        queueId,
+        itemIds: Array.from(selectedIds),
+        userIds: Array.from(bulkAssignUserIds),
+        action: "set",
+      },
+      {
+        onSuccess: () => {
+          setBulkAssignOpen(false);
+          setSelectedIds(new Set());
+          setBulkAssignUserIds(new Set());
+        },
+      },
+    );
+  }, [assignItems, queueId, selectedIds, bulkAssignUserIds]);
+
   const isEmpty =
     !isLoading &&
     items.length === 0 &&
@@ -193,25 +257,51 @@ export default function QueueDetailView() {
         <Typography variant="h4">{queue?.name || "Queue"}</Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
         <Box sx={{ flex: 1 }} />
+        {isManager && queue?.status && queue.status !== "active" && (
+          <Button
+            variant="outlined"
+            disabled={isUpdatingStatus}
+            startIcon={<Iconify icon="eva:play-circle-fill" />}
+            onClick={() => updateStatus({ id: queueId, status: "active" })}
+          >
+            Activate
+          </Button>
+        )}
         <Button
           variant="outlined"
-          disabled={totalCount === 0}
+          disabled={totalCount === 0 || isDownloadingExport}
           startIcon={<Iconify icon="eva:download-fill" />}
-          onClick={() => setExportDialogOpen(true)}
+          endIcon={<Iconify icon="eva:arrow-ios-downward-fill" />}
+          onClick={(event) => setExportMenuAnchor(event.currentTarget)}
         >
-          Export to Dataset
+          Export
         </Button>
-        {queue?.status === "active" && (
+        <Menu
+          anchorEl={exportMenuAnchor}
+          open={Boolean(exportMenuAnchor)}
+          onClose={() => setExportMenuAnchor(null)}
+        >
+          <MenuItem onClick={handleDownloadExport}>
+            <Iconify icon="eva:download-outline" sx={{ mr: 1 }} />
+            Download
+          </MenuItem>
+          <MenuItem onClick={handleOpenDatasetExport}>
+            <Iconify icon="eva:archive-outline" sx={{ mr: 1 }} />
+            Export to Dataset
+          </MenuItem>
+        </Menu>
+        {canStartAnnotating && (
           <Button
             variant="contained"
             color="primary"
-            disabled={totalCount === 0}
             startIcon={<Iconify icon="eva:edit-2-fill" />}
             onClick={() =>
               navigate(paths.dashboard.annotations.annotate(queueId))
             }
           >
-            Start Annotating
+            {queue?.status === "completed"
+              ? "Resume Skipped"
+              : "Start Annotating"}
           </Button>
         )}
       </Stack>
@@ -397,14 +487,25 @@ export default function QueueDetailView() {
 
               <Stack direction="row" spacing={1}>
                 {selectedIds.size > 0 && (
-                  <Button
-                    color="error"
-                    variant="outlined"
-                    size="medium"
-                    onClick={handleBulkRemove}
-                  >
-                    Remove Selected ({selectedIds.size})
-                  </Button>
+                  <>
+                    {isManager && !queue?.auto_assign && (
+                      <Button
+                        variant="outlined"
+                        size="medium"
+                        onClick={handleOpenBulkAssign}
+                      >
+                        Assign Selected ({selectedIds.size})
+                      </Button>
+                    )}
+                    <Button
+                      color="error"
+                      variant="outlined"
+                      size="medium"
+                      onClick={handleBulkRemove}
+                    >
+                      Remove Selected ({selectedIds.size})
+                    </Button>
+                  </>
                 )}
                 <Button
                   variant="contained"
@@ -454,7 +555,7 @@ export default function QueueDetailView() {
                   );
                 }
               }}
-              annotators={queue?.annotators || []}
+              annotators={queueAnnotators}
               onAssign={isManager ? handleAssign : undefined}
               autoAssign={queue?.auto_assign ?? false}
             />
@@ -473,6 +574,56 @@ export default function QueueDetailView() {
         onClose={() => setExportDialogOpen(false)}
         queueId={queueId}
       />
+
+      <Dialog
+        open={bulkAssignOpen}
+        onClose={() => setBulkAssignOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Assign Selected Items</DialogTitle>
+        <DialogContent>
+          <Stack spacing={0.5} sx={{ mt: 1 }}>
+            {queueAnnotators.map((annotator) => {
+              const uid = String(annotator.user_id);
+              return (
+                <FormControlLabel
+                  key={uid}
+                  control={
+                    <Checkbox
+                      checked={bulkAssignUserIds.has(uid)}
+                      onChange={(event) => {
+                        setBulkAssignUserIds((prev) => {
+                          const next = new Set(prev);
+                          if (event.target.checked) next.add(uid);
+                          else next.delete(uid);
+                          return next;
+                        });
+                      }}
+                    />
+                  }
+                  label={annotator.name || annotator.email}
+                />
+              );
+            })}
+            {queueAnnotators.length === 0 && (
+              <Typography variant="body2" color="text.secondary">
+                No annotators are configured for this queue.
+              </Typography>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkAssignOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleApplyBulkAssign}
+            disabled={queueAnnotators.length === 0}
+          >
+            Apply
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

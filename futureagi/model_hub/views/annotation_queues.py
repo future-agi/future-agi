@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 import structlog
 from django.db.models import Count, Max, Prefetch, Q
@@ -24,10 +24,15 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
+    AnnotationTypeChoices,
     AnnotatorRole,
     AssignmentStrategy,
+    DataTypeChoices,
     QueueItemStatus,
+    QueueItemSourceType,
+    SourceChoices,
     ScoreSource,
+    StatusType,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
@@ -58,7 +63,7 @@ from model_hub.utils.annotation_queue_helpers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.models.observation_span import ObservationSpan
+from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 
@@ -69,22 +74,61 @@ logger = structlog.get_logger(__name__)
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
 MAX_SELECTION_CAP = 10_000
 
+SOURCE_TYPE_EXPORT_LABELS = {
+    QueueItemSourceType.DATASET_ROW.value: "dataset row",
+    QueueItemSourceType.TRACE.value: "trace",
+    QueueItemSourceType.OBSERVATION_SPAN.value: "span",
+    QueueItemSourceType.PROTOTYPE_RUN.value: "prototype run",
+    QueueItemSourceType.CALL_EXECUTION.value: "voice call",
+    QueueItemSourceType.TRACE_SESSION.value: "session",
+}
+
+ANNOTATION_SLOT_FIELDS = (
+    ("value", "score", None),
+    ("annotator_name", "annotator name", DataTypeChoices.TEXT.value),
+    ("annotator_email", "annotator email", DataTypeChoices.TEXT.value),
+    ("annotator_id", "annotator ID", DataTypeChoices.TEXT.value),
+    ("notes", "notes", DataTypeChoices.TEXT.value),
+    ("score_source", "score source", DataTypeChoices.TEXT.value),
+    ("created_at", "annotated at", DataTypeChoices.DATETIME.value),
+    ("updated_at", "updated at", DataTypeChoices.DATETIME.value),
+    ("annotation", "annotation record", DataTypeChoices.JSON.value),
+)
+
+
+def _queue_item_user_scope(queryset, user, *, include_unassigned):
+    """Apply legacy and multi-assignment ownership rules for queue items."""
+    user_id = getattr(user, "id", user)
+    assigned_to_user = Q(assigned_to_id=user_id) | Q(
+        assignments__user_id=user_id,
+        assignments__deleted=False,
+    )
+    if include_unassigned:
+        assigned_to_user |= Q(assigned_to__isnull=True) & ~Q(
+            assignments__deleted=False
+        )
+    return queryset.filter(assigned_to_user).distinct()
+
 
 def _scores_for_queue_item(item):
     """Return queue-item scores plus source-level scores for this item's labels."""
-    base_q = Q(queue_item=item)
+    label_ids = list(
+        item.queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
+    )
+    if not label_ids:
+        return Score.objects.none()
+
+    base_q = Q(queue_item=item, label_id__in=label_ids)
     fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
     source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
     if fk_field and source_id:
         # Score is source-scoped; queue_item is provenance, not the only way a
         # saved annotation belongs to this item. Inline annotations from the
         # trace/call UI must still prefill queue detail and history.
-        label_ids = item.queue.queue_labels.filter(deleted=False).values_list(
-            "label_id", flat=True
-        )
         base_q |= Q(
             source_type=item.source_type,
             label_id__in=label_ids,
+            queue_item__isnull=True,
             **{f"{fk_field}_id": source_id},
         )
     return Score.objects.filter(base_q, deleted=False)
@@ -107,6 +151,1041 @@ def _span_notes_target_for_queue_item(item):
         .first()
         or root_spans.order_by("start_time", "created_at").first()
     )
+
+
+def _source_id_for_queue_item(item):
+    fk_field = SOURCE_TYPE_FK_MAP.get(item.source_type)
+    return str(getattr(item, f"{fk_field}_id", "") or "") if fk_field else ""
+
+
+def _to_cell_str(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return json.dumps(value, default=str)
+
+
+def _extract_input_output(content):
+    source_type = content.get("type", "")
+    if source_type == "dataset_row":
+        fields = content.get("fields", {})
+        return _to_cell_str(fields.get("input", "")), _to_cell_str(
+            fields.get("output", "")
+        )
+    if source_type == "prototype_run":
+        return _to_cell_str(content.get("prompt")), _to_cell_str(
+            content.get("response")
+        )
+    return _to_cell_str(content.get("input")), _to_cell_str(content.get("output"))
+
+
+def _first_existing(content, *keys):
+    for key in keys:
+        if content.get(key) is not None:
+            return content.get(key)
+    return None
+
+
+def _latest_item_note(item):
+    span = _span_notes_target_for_queue_item(item)
+    if span is None:
+        return ""
+    note = SpanNotes.objects.filter(span=span).order_by("-created_at").first()
+    return note.notes if note else ""
+
+
+def _span_note_targets_for_queue_items(items):
+    """Resolve whole-item note spans in bulk for export."""
+    targets = {}
+    trace_ids = []
+    for item in items:
+        if item.source_type == "observation_span" and item.observation_span_id:
+            targets[item.id] = item.observation_span
+        elif item.source_type == "trace" and item.trace_id:
+            trace_ids.append(item.trace_id)
+
+    if trace_ids:
+        spans = (
+            ObservationSpan.objects.filter(
+                trace_id__in=trace_ids,
+                deleted=False,
+            )
+            .filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
+            .order_by("trace_id", "start_time", "created_at")
+        )
+        first_root_by_trace = {}
+        first_conversation_by_trace = {}
+        for span in spans:
+            first_root_by_trace.setdefault(span.trace_id, span)
+            if span.observation_type == "conversation":
+                first_conversation_by_trace.setdefault(span.trace_id, span)
+        for item in items:
+            if item.source_type == "trace" and item.trace_id:
+                target = first_conversation_by_trace.get(
+                    item.trace_id
+                ) or first_root_by_trace.get(item.trace_id)
+                if target is not None:
+                    targets[item.id] = target
+
+    return targets
+
+
+def _latest_item_notes_for_queue_items(items):
+    targets = _span_note_targets_for_queue_items(items)
+    span_ids = [span.id for span in targets.values() if span is not None]
+    if not span_ids:
+        return {}
+
+    notes_by_span = {}
+    for note in SpanNotes.objects.filter(span_id__in=span_ids).order_by(
+        "span_id", "-created_at"
+    ):
+        notes_by_span.setdefault(note.span_id, note.notes)
+
+    return {
+        item_id: notes_by_span.get(span.id, "")
+        for item_id, span in targets.items()
+        if span is not None
+    }
+
+
+def _normalize_export_status_filter(status_filter):
+    if status_filter is None:
+        return None
+    normalized = str(status_filter).strip()
+    if not normalized or normalized.lower() == "all":
+        return None
+    return normalized
+
+
+def _scores_for_queue_items(items, queue_label_ids):
+    if not items or not queue_label_ids:
+        return {}
+
+    item_ids = [item.id for item in items]
+    score_filter = Q(queue_item_id__in=item_ids, label_id__in=queue_label_ids)
+    source_items = {}
+    for item in items:
+        fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
+        source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
+        if fk_field and source_id:
+            source_items.setdefault((item.source_type, str(source_id)), []).append(
+                item.id
+            )
+
+    for source_type, fk_field in SCORE_SOURCE_FK_MAP.items():
+        source_ids = [
+            source_id
+            for (item_source_type, source_id) in source_items
+            if item_source_type == source_type
+        ]
+        if source_ids:
+            score_filter |= Q(
+                source_type=source_type,
+                label_id__in=queue_label_ids,
+                queue_item__isnull=True,
+                **{f"{fk_field}_id__in": source_ids},
+            )
+
+    scores_by_item = {item_id: [] for item_id in item_ids}
+    seen_by_item = {item_id: set() for item_id in item_ids}
+    scores = (
+        Score.objects.filter(score_filter, deleted=False)
+        .select_related("label", "annotator")
+        .order_by("created_at")
+    )
+    for score in scores:
+        matched_item_ids = []
+        if score.queue_item_id in scores_by_item:
+            matched_item_ids.append(score.queue_item_id)
+
+        fk_field = SCORE_SOURCE_FK_MAP.get(score.source_type)
+        source_id = getattr(score, f"{fk_field}_id", None) if fk_field else None
+        if fk_field and source_id:
+            matched_item_ids.extend(
+                source_items.get((score.source_type, str(source_id)), [])
+            )
+
+        for item_id in matched_item_ids:
+            if score.id in seen_by_item[item_id]:
+                continue
+            seen_by_item[item_id].add(score.id)
+            scores_by_item[item_id].append(score)
+
+    return scores_by_item
+
+
+def _infer_dataset_type(value):
+    if isinstance(value, bool):
+        return DataTypeChoices.BOOLEAN.value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return DataTypeChoices.INTEGER.value
+    if isinstance(value, float):
+        return DataTypeChoices.FLOAT.value
+    if isinstance(value, (date, datetime)):
+        return DataTypeChoices.DATETIME.value
+    if isinstance(value, list):
+        return DataTypeChoices.ARRAY.value
+    if isinstance(value, dict):
+        return DataTypeChoices.JSON.value
+    return DataTypeChoices.TEXT.value
+
+
+def _source_export_label(source_type):
+    return SOURCE_TYPE_EXPORT_LABELS.get(source_type, str(source_type).replace("_", " "))
+
+
+def _parse_attribute_field_id(field_id):
+    if not field_id.startswith("attr:"):
+        return None, ""
+
+    path = field_id.removeprefix("attr:").strip()
+    known_source_types = {choice.value for choice in QueueItemSourceType}
+    source_type, separator, scoped_path = path.partition(":")
+    if separator and source_type in known_source_types:
+        return source_type, scoped_path.strip()
+    return None, path
+
+
+def _flatten_export_attributes(value, prefix="", depth=0):
+    if value is None or depth > 3:
+        return []
+    if not isinstance(value, dict):
+        return [(prefix, value)] if prefix else []
+
+    flattened = []
+    for key, child in value.items():
+        key_str = str(key)
+        path = f"{prefix}.{key_str}" if prefix else key_str
+        if isinstance(child, dict) and depth < 3:
+            flattened.extend(_flatten_export_attributes(child, path, depth + 1))
+        else:
+            flattened.append((path, child))
+    return flattened
+
+
+def _nested_get(value, dotted_path):
+    current = value
+    for part in dotted_path.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            current = current[index] if index < len(current) else None
+        else:
+            return None
+    return current
+
+
+def _single_or_list(values):
+    present = [value for value in values if value is not None and value != ""]
+    if not present:
+        return ""
+    if len(present) == 1:
+        return present[0]
+    return present
+
+
+def _score_created_at(score):
+    created_at = getattr(score, "created_at", None)
+    return created_at.isoformat() if created_at else None
+
+
+def _score_updated_at(score):
+    updated_at = getattr(score, "updated_at", None)
+    return updated_at.isoformat() if updated_at else None
+
+
+def _score_annotator(score):
+    return getattr(score, "annotator", None) if score.annotator_id else None
+
+
+def _score_annotator_name(score):
+    annotator = _score_annotator(score)
+    return annotator.name if annotator else None
+
+
+def _score_annotator_email(score):
+    annotator = _score_annotator(score)
+    return annotator.email if annotator else None
+
+
+def _serialize_score_for_export(score):
+    annotator = _score_annotator(score)
+    return {
+        "label_id": str(score.label_id),
+        "label_name": score.label.name if score.label else None,
+        "value": score.value,
+        "notes": score.notes,
+        "annotator_id": str(score.annotator_id) if score.annotator_id else None,
+        "annotator_name": annotator.name if annotator else None,
+        "annotator_email": annotator.email if annotator else None,
+        "score_source": score.score_source,
+        "created_at": _score_created_at(score),
+        "updated_at": _score_updated_at(score),
+    }
+
+
+def _serialize_item_review(item):
+    reviewer = getattr(item, "reviewed_by", None)
+    return {
+        "requires_review": bool(getattr(item.queue, "requires_review", False)),
+        "status": item.review_status,
+        "notes": item.review_notes,
+        "reviewed_at": item.reviewed_at.isoformat() if item.reviewed_at else None,
+        "reviewed_by_id": str(item.reviewed_by_id) if item.reviewed_by_id else None,
+        "reviewed_by_name": reviewer.name if reviewer else None,
+        "reviewed_by_email": reviewer.email if reviewer else None,
+    }
+
+
+def _label_scores(scores, label_id):
+    return [score for score in scores if str(score.label_id) == str(label_id)]
+
+
+def _label_export_value(scores, label_id, kind):
+    label_scores = _label_scores(scores, label_id)
+    if kind == "annotation":
+        return [_serialize_score_for_export(score) for score in label_scores]
+
+    value_getters = {
+        "value": lambda score: score.value,
+        "notes": lambda score: score.notes,
+        "annotator_id": lambda score: (
+            str(score.annotator_id) if score.annotator_id else None
+        ),
+        "annotator_name": _score_annotator_name,
+        "annotator_email": _score_annotator_email,
+        "score_source": lambda score: score.score_source,
+        "created_at": _score_created_at,
+        "updated_at": _score_updated_at,
+    }
+    getter = value_getters.get(kind)
+    if getter is None:
+        return ""
+    return _single_or_list([getter(score) for score in label_scores])
+
+
+def _label_slot_export_value(scores, label_id, slot, kind):
+    label_scores = _label_scores(scores, label_id)
+    index = max(int(slot or 1) - 1, 0)
+    if index >= len(label_scores):
+        return ""
+
+    score = label_scores[index]
+    if kind == "annotation":
+        return _serialize_score_for_export(score)
+    return _label_export_value([score], label_id, kind)
+
+
+def _annotation_metrics_for_scores(scores):
+    metrics = {}
+    for score in scores:
+        if not score.label:
+            continue
+        metrics.setdefault(score.label.name, []).append(_serialize_score_for_export(score))
+    return {
+        label_name: entries[0] if len(entries) == 1 else entries
+        for label_name, entries in metrics.items()
+    }
+
+
+def _eval_output_value(log):
+    if log.output_float is not None:
+        return log.output_float
+    if log.output_bool is not None:
+        return log.output_bool
+    if log.output_str not in (None, ""):
+        return log.output_str
+    return log.output_str_list
+
+
+def _eval_metric_key(log):
+    if log.custom_eval_config_id and getattr(log.custom_eval_config, "name", None):
+        return log.custom_eval_config.name
+    return log.eval_type_id or log.eval_id or str(log.id)
+
+
+def _serialize_eval_log(log):
+    return {
+        "score": _eval_output_value(log),
+        "explanation": log.results_explanation or log.eval_explanation,
+        "tags": log.results_tags or log.eval_tags,
+        "error": log.error,
+        "error_message": log.error_message if log.error else None,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
+def _eval_metrics_for_queue_items(items):
+    from collections import defaultdict
+
+    if not items:
+        return {}
+
+    span_item_ids = defaultdict(list)
+    trace_item_ids = defaultdict(list)
+    for item in items:
+        if item.source_type == "observation_span" and item.observation_span_id:
+            span_item_ids[str(item.observation_span_id)].append(item.id)
+        elif item.source_type == "trace" and item.trace_id:
+            trace_item_ids[str(item.trace_id)].append(item.id)
+
+    eval_filter = Q()
+    if span_item_ids:
+        eval_filter |= Q(observation_span_id__in=list(span_item_ids))
+    if trace_item_ids:
+        eval_filter |= Q(trace_id__in=list(trace_item_ids))
+    if not eval_filter:
+        return {}
+
+    metrics_by_item = {item.id: {} for item in items}
+    seen_by_item = {item.id: set() for item in items}
+    eval_logs = (
+        EvalLogger.objects.filter(eval_filter, deleted=False)
+        .select_related("custom_eval_config")
+        .order_by("created_at")
+    )
+    for log in eval_logs:
+        matched_item_ids = []
+        if log.observation_span_id:
+            matched_item_ids.extend(span_item_ids.get(str(log.observation_span_id), []))
+        if log.trace_id:
+            matched_item_ids.extend(trace_item_ids.get(str(log.trace_id), []))
+
+        for item_id in matched_item_ids:
+            if log.id in seen_by_item[item_id]:
+                continue
+            seen_by_item[item_id].add(log.id)
+            key = _eval_metric_key(log)
+            metrics_by_item[item_id].setdefault(key, []).append(_serialize_eval_log(log))
+
+    return metrics_by_item
+
+
+def _eval_metrics_export_value(metrics_by_key):
+    return {
+        key: entries[0] if len(entries) == 1 else entries
+        for key, entries in metrics_by_key.items()
+    }
+
+
+def _eval_export_value(metrics_by_key, eval_key, kind):
+    entries = metrics_by_key.get(eval_key, [])
+    return _single_or_list([entry.get(kind) for entry in entries])
+
+
+LABEL_TYPE_TO_DATA_TYPE = {
+    AnnotationTypeChoices.NUMERIC.value: DataTypeChoices.FLOAT.value,
+    AnnotationTypeChoices.TEXT.value: DataTypeChoices.TEXT.value,
+    AnnotationTypeChoices.CATEGORICAL.value: DataTypeChoices.ARRAY.value,
+    AnnotationTypeChoices.STAR.value: DataTypeChoices.FLOAT.value,
+    AnnotationTypeChoices.THUMBS_UP_DOWN.value: DataTypeChoices.TEXT.value,
+}
+
+
+def _unique_export_column_name(name, used):
+    base = (name or "column").strip() or "column"
+    candidate = base
+    suffix = 2
+    while candidate.lower() in used:
+        candidate = f"{base} {suffix}"
+        suffix += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def _export_field(
+    field_id,
+    label,
+    column,
+    data_type=DataTypeChoices.TEXT.value,
+    group="Source",
+    default=False,
+    *,
+    path=None,
+    kind=None,
+    label_id=None,
+    eval_key=None,
+    slot=None,
+    source_type=None,
+    expand_fields=None,
+):
+    field = {
+        "id": field_id,
+        "label": label,
+        "column": column,
+        "data_type": data_type,
+        "group": group,
+        "default": default,
+    }
+    if path:
+        field["path"] = path
+    if kind:
+        field["kind"] = kind
+    if label_id:
+        field["label_id"] = str(label_id)
+    if eval_key:
+        field["eval_key"] = eval_key
+    if slot:
+        field["slot"] = int(slot)
+    if source_type:
+        field["source_type"] = source_type
+    if expand_fields:
+        field["expand_fields"] = expand_fields
+    return field
+
+
+def _base_export_field_defs():
+    return [
+        _export_field("source_type", "Source type", "source_type", default=True),
+        _export_field("source_id", "Source ID", "source_id", default=True),
+        _export_field(
+            "source_name", "Source name", "source_name", default=True, path="name"
+        ),
+        _export_field(
+            "source_status", "Source status", "source_status", default=True, path="status"
+        ),
+        _export_field(
+            "project_id", "Project ID", "project_id", default=True, path="project_id"
+        ),
+        _export_field(
+            "item_status",
+            "Queue item status",
+            "item_status",
+            group="Queue item",
+            default=True,
+        ),
+        _export_field(
+            "item_order",
+            "Queue item order",
+            "item_order",
+            DataTypeChoices.INTEGER.value,
+            "Queue item",
+            True,
+        ),
+        _export_field(
+            "queue_requires_review",
+            "Requires review",
+            "requires_review",
+            DataTypeChoices.BOOLEAN.value,
+            "Review",
+            True,
+        ),
+        _export_field(
+            "review_status",
+            "Review status",
+            "review_status",
+            group="Review",
+            default=True,
+        ),
+        _export_field(
+            "reviewed_by_name",
+            "Reviewer name",
+            "reviewer_name",
+            group="Review",
+            default=True,
+        ),
+        _export_field(
+            "reviewed_by_email",
+            "Reviewer email",
+            "reviewer_email",
+            group="Review",
+            default=True,
+        ),
+        _export_field(
+            "reviewed_by_id",
+            "Reviewer ID",
+            "reviewer_id",
+            group="Review",
+            default=True,
+        ),
+        _export_field(
+            "reviewed_at",
+            "Reviewed at",
+            "reviewed_at",
+            DataTypeChoices.DATETIME.value,
+            "Review",
+            True,
+        ),
+        _export_field(
+            "review_notes",
+            "Review notes",
+            "review_notes",
+            group="Review",
+            default=True,
+        ),
+        _export_field("input", "Input", "input", default=True),
+        _export_field("output", "Output", "output", default=True),
+        _export_field(
+            "latency_ms",
+            "Latency (ms)",
+            "latency_ms",
+            DataTypeChoices.FLOAT.value,
+            "Metrics",
+            True,
+        ),
+        _export_field(
+            "response_time_ms",
+            "Response time (ms)",
+            "response_time_ms",
+            DataTypeChoices.FLOAT.value,
+            "Metrics",
+            True,
+        ),
+        _export_field(
+            "duration_seconds",
+            "Duration (seconds)",
+            "duration_seconds",
+            DataTypeChoices.FLOAT.value,
+            "Metrics",
+            True,
+        ),
+        _export_field(
+            "eval_metrics",
+            "Eval metrics",
+            "eval_metrics",
+            DataTypeChoices.JSON.value,
+            "Evals",
+            True,
+            kind="eval_metrics",
+        ),
+        _export_field(
+            "annotation_metrics",
+            "Annotation metrics",
+            "annotation_metrics",
+            DataTypeChoices.JSON.value,
+            "Annotations",
+            True,
+            kind="annotation_metrics",
+        ),
+        _export_field(
+            "item_notes",
+            "Item notes",
+            "item_notes",
+            group="Annotations",
+            default=True,
+        ),
+        _export_field("trace_id", "Trace ID", "trace_id", path="trace_id"),
+        _export_field("span_id", "Span ID", "span_id", path="span_id"),
+        _export_field("call_id", "Call ID", "call_id", path="call_id"),
+        _export_field("session_id", "Session ID", "session_id", path="session_id"),
+        _export_field("project_source", "Project source", "project_source", path="project_source"),
+        _export_field("observation_type", "Span type", "observation_type", path="observation_type"),
+        _export_field("model", "Model", "model", path="model"),
+        _export_field("provider", "Provider", "provider", path="provider"),
+        _export_field("cost", "Cost", "cost", DataTypeChoices.FLOAT.value, "Metrics", path="cost"),
+        _export_field(
+            "prompt_tokens",
+            "Prompt tokens",
+            "prompt_tokens",
+            DataTypeChoices.INTEGER.value,
+            "Metrics",
+            path="prompt_tokens",
+        ),
+        _export_field(
+            "completion_tokens",
+            "Completion tokens",
+            "completion_tokens",
+            DataTypeChoices.INTEGER.value,
+            "Metrics",
+            path="completion_tokens",
+        ),
+        _export_field(
+            "total_tokens",
+            "Total tokens",
+            "total_tokens",
+            DataTypeChoices.INTEGER.value,
+            "Metrics",
+            path="total_tokens",
+        ),
+        _export_field(
+            "start_time",
+            "Start time",
+            "start_time",
+            DataTypeChoices.DATETIME.value,
+            "Source",
+            path="start_time",
+        ),
+        _export_field(
+            "end_time",
+            "End time",
+            "end_time",
+            DataTypeChoices.DATETIME.value,
+            "Source",
+            path="end_time",
+        ),
+        _export_field(
+            "created_at",
+            "Source created at",
+            "source_created_at",
+            DataTypeChoices.DATETIME.value,
+            "Source",
+            path="created_at",
+        ),
+        _export_field("call_type", "Call type", "call_type", group="Voice", path="call_type"),
+        _export_field("phone_number", "Phone number", "phone_number", group="Voice", path="phone_number"),
+        _export_field("customer_number", "Customer number", "customer_number", group="Voice", path="customer_number"),
+        _export_field("ended_reason", "Ended reason", "ended_reason", group="Voice", path="ended_reason"),
+        _export_field("message_count", "Message count", "message_count", DataTypeChoices.INTEGER.value, "Voice", path="message_count"),
+        _export_field("user_wpm", "User WPM", "user_wpm", DataTypeChoices.FLOAT.value, "Voice", path="user_wpm"),
+        _export_field("agent_wpm", "Agent WPM", "agent_wpm", DataTypeChoices.FLOAT.value, "Voice", path="agent_wpm"),
+        _export_field("talk_ratio", "Talk ratio", "talk_ratio", DataTypeChoices.FLOAT.value, "Voice", path="talk_ratio"),
+        _export_field("call_summary", "Call summary", "call_summary", group="Voice", path="call_summary"),
+    ]
+
+
+def _build_annotation_queue_export_fields(queue, sample_items=None):
+    fields = []
+    used_columns = set()
+
+    for field in _base_export_field_defs():
+        field = dict(field)
+        field["column"] = _unique_export_column_name(field["column"], used_columns)
+        fields.append(field)
+
+    if sample_items is None:
+        sample_items = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .select_related(
+                "trace",
+                "observation_span",
+                "dataset_row",
+                "prototype_run",
+                "call_execution",
+                "trace_session",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "trace__observation_spans",
+                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
+                        "start_time", "created_at"
+                    ),
+                    to_attr="_queue_export_spans",
+                )
+            )
+            .order_by("order", "created_at")[:100]
+        )
+    sample_items = list(sample_items)
+
+    labels = list(
+        queue.queue_labels.filter(deleted=False)
+        .select_related("label")
+        .order_by("order", "created_at")
+    )
+    label_ids = [queue_label.label_id for queue_label in labels if queue_label.label_id]
+    slot_counts_by_label = {
+        str(label_id): max(int(queue.annotations_required or 1), 1)
+        for label_id in label_ids
+    }
+    scores_by_item = _scores_for_queue_items(sample_items, label_ids)
+    for item_scores in scores_by_item.values():
+        for label_id in label_ids:
+            label_key = str(label_id)
+            slot_counts_by_label[label_key] = max(
+                slot_counts_by_label.get(label_key, 1),
+                len(_label_scores(item_scores, label_id)),
+            )
+
+    for queue_label in labels:
+        label = queue_label.label
+        if not label:
+            continue
+        value_column = _unique_export_column_name(f"{label.name} values", used_columns)
+        fields.append(
+            _export_field(
+                f"label:{label.id}:value",
+                f"{label.name} all scores",
+                value_column,
+                LABEL_TYPE_TO_DATA_TYPE.get(label.type, DataTypeChoices.TEXT.value),
+                "Annotations",
+                False,
+                kind="value",
+                label_id=label.id,
+            )
+        )
+        label_fanout_fields = [
+            ("notes", f"{label.name} notes", DataTypeChoices.TEXT.value),
+            ("annotator_id", f"{label.name} annotator ID", DataTypeChoices.TEXT.value),
+            ("annotator_name", f"{label.name} annotator", DataTypeChoices.TEXT.value),
+            (
+                "annotator_email",
+                f"{label.name} annotator email",
+                DataTypeChoices.TEXT.value,
+            ),
+            ("score_source", f"{label.name} score source", DataTypeChoices.TEXT.value),
+            (
+                "created_at",
+                f"{label.name} annotated at",
+                DataTypeChoices.DATETIME.value,
+            ),
+            (
+                "annotation",
+                f"{label.name} annotation record",
+                DataTypeChoices.JSON.value,
+            ),
+        ]
+        for kind, label_text, data_type in label_fanout_fields:
+            fields.append(
+                _export_field(
+                    f"label:{label.id}:{kind}",
+                    label_text,
+                    _unique_export_column_name(label_text, used_columns),
+                    data_type,
+                    "Annotations",
+                    False,
+                    kind=kind,
+                    label_id=label.id,
+                )
+            )
+        slot_field_ids = []
+        for slot in range(1, slot_counts_by_label.get(str(label.id), 1) + 1):
+            for kind, slot_label, explicit_data_type in ANNOTATION_SLOT_FIELDS:
+                data_type = explicit_data_type or LABEL_TYPE_TO_DATA_TYPE.get(
+                    label.type, DataTypeChoices.TEXT.value
+                )
+                label_text = f"{label.name} annotation {slot} {slot_label}"
+                field_id = f"label:{label.id}:slot:{slot}:{kind}"
+                slot_field_ids.append(field_id)
+                fields.append(
+                    _export_field(
+                        field_id,
+                        label_text,
+                        _unique_export_column_name(label_text, used_columns),
+                        data_type,
+                        "Annotations",
+                        True,
+                        kind=kind,
+                        label_id=label.id,
+                        slot=slot,
+                    )
+                )
+        if slot_field_ids:
+            fields.append(
+                _export_field(
+                    f"label:{label.id}:annotation_columns",
+                    f"{label.name} annotation columns",
+                    f"{label.name} annotation columns",
+                    DataTypeChoices.JSON.value,
+                    "Annotations",
+                    False,
+                    kind="annotation_bundle",
+                    label_id=label.id,
+                    expand_fields=slot_field_ids,
+                )
+            )
+
+    attribute_roots = (
+        "fields",
+        "metadata",
+        "span_attributes",
+        "resource_attributes",
+        "eval_attributes",
+        "call_metadata",
+        "provider_call_data",
+        "monitor_call_data",
+        "analysis_data",
+        "evaluation_data",
+        "customer_latency_metrics",
+    )
+    sample_contents = [
+        (item, resolve_source_content(item))
+        for item in sample_items
+    ]
+    source_types = {
+        content.get("type") or item.source_type
+        for item, content in sample_contents
+        if content.get("type") or item.source_type
+    }
+    has_multiple_source_types = len(source_types) > 1
+    seen_attr_ids = set()
+    for item, content in sample_contents:
+        source_type = content.get("type") or item.source_type
+        for root in attribute_roots:
+            root_value = content.get(root)
+            for path, value in _flatten_export_attributes(root_value, root):
+                field_id = (
+                    f"attr:{source_type}:{path}"
+                    if has_multiple_source_types
+                    else f"attr:{path}"
+                )
+                if field_id in seen_attr_ids:
+                    continue
+                seen_attr_ids.add(field_id)
+                fields.append(
+                    {
+                        "id": field_id,
+                        "label": path.replace("_", " "),
+                        "column": _unique_export_column_name(path, used_columns),
+                        "data_type": _infer_dataset_type(value),
+                        "group": (
+                            f"From {_source_export_label(source_type)}"
+                            if has_multiple_source_types
+                            else "Attributes"
+                        ),
+                        "default": False,
+                        "path": path,
+                        **({"source_type": source_type} if has_multiple_source_types else {}),
+                    }
+                )
+
+    eval_metrics_by_item = _eval_metrics_for_queue_items(sample_items)
+    seen_eval_ids = set()
+    for metrics_by_key in eval_metrics_by_item.values():
+        for eval_key, entries in metrics_by_key.items():
+            if not entries:
+                continue
+            first_score = next(
+                (entry.get("score") for entry in entries if entry.get("score") is not None),
+                None,
+            )
+            eval_field_defs = [
+                ("score", f"{eval_key} eval score", _infer_dataset_type(first_score)),
+                ("explanation", f"{eval_key} eval explanation", DataTypeChoices.JSON.value),
+                ("error", f"{eval_key} eval error", DataTypeChoices.BOOLEAN.value),
+            ]
+            for kind, label_text, data_type in eval_field_defs:
+                field_id = f"eval:{eval_key}:{kind}"
+                if field_id in seen_eval_ids:
+                    continue
+                seen_eval_ids.add(field_id)
+                fields.append(
+                    _export_field(
+                        field_id,
+                        label_text,
+                        _unique_export_column_name(label_text, used_columns),
+                        data_type,
+                        "Evals",
+                        False,
+                        kind=kind,
+                        eval_key=eval_key,
+                    )
+                )
+
+    return {
+        "fields": fields,
+        "default_mapping": [
+            {
+                "field": field["id"],
+                "column": field["column"],
+                "enabled": True,
+            }
+            for field in fields
+            if field.get("default")
+        ],
+    }
+
+
+def _infer_attribute_field_data_type(field_id, sample_items):
+    source_type, path = _parse_attribute_field_id(field_id)
+    if not path:
+        return DataTypeChoices.TEXT.value
+
+    for item in sample_items or []:
+        if source_type and item.source_type != source_type:
+            continue
+        value = _nested_get(resolve_source_content(item), path)
+        if value not in (None, ""):
+            return _infer_dataset_type(value)
+    return DataTypeChoices.TEXT.value
+
+
+def _custom_attribute_export_field(field_id, sample_items=None):
+    if not field_id.startswith("attr:"):
+        return None
+    source_type, path = _parse_attribute_field_id(field_id)
+    if not path:
+        return None
+    return _export_field(
+        field_id,
+        path.replace("_", " "),
+        path,
+        _infer_attribute_field_data_type(field_id, sample_items),
+        f"From {_source_export_label(source_type)}" if source_type else "Attributes",
+        False,
+        path=path,
+        source_type=source_type,
+    )
+
+
+def _export_column_source(field_def):
+    if field_def["id"].startswith("label:"):
+        return SourceChoices.ANNOTATION_LABEL.value
+    if field_def["id"].startswith("eval:") or field_def["id"] == "eval_metrics":
+        return SourceChoices.EVALUATION.value
+    return SourceChoices.OTHERS.value
+
+
+def _resolve_export_field_value(item, content, runtime, mapping):
+    field_id = mapping["field"]
+    field_def = mapping.get("field_def") or {}
+    if field_id == "source_type":
+        return item.source_type or ""
+    if field_id == "source_id":
+        return _source_id_for_queue_item(item)
+    if field_id == "item_status":
+        return item.status
+    if field_id == "item_order":
+        return item.order
+    if field_id == "input":
+        return runtime["input_value"]
+    if field_id == "output":
+        return runtime["output_value"]
+    if field_id == "latency_ms":
+        return _first_existing(content, "latency_ms", "latency")
+    if field_id == "response_time_ms":
+        return content.get("response_time_ms")
+    if field_id == "duration_seconds":
+        return content.get("duration_seconds")
+    if field_id == "item_notes":
+        return runtime["item_notes"]
+    if field_id == "queue_requires_review":
+        return bool(getattr(item.queue, "requires_review", False))
+    if field_id == "review_status":
+        return item.review_status or ""
+    if field_id == "reviewed_by_name":
+        reviewer = getattr(item, "reviewed_by", None)
+        return reviewer.name if reviewer else ""
+    if field_id == "reviewed_by_email":
+        reviewer = getattr(item, "reviewed_by", None)
+        return reviewer.email if reviewer else ""
+    if field_id == "reviewed_by_id":
+        return str(item.reviewed_by_id) if item.reviewed_by_id else ""
+    if field_id == "reviewed_at":
+        return item.reviewed_at
+    if field_id == "review_notes":
+        return item.review_notes or ""
+    if field_id == "annotation_metrics":
+        return _annotation_metrics_for_scores(runtime["scores"])
+    if field_id == "eval_metrics":
+        return _eval_metrics_export_value(runtime["eval_metrics"])
+    if field_id.startswith("label:"):
+        if field_def.get("slot"):
+            return _label_slot_export_value(
+                runtime["scores"],
+                field_def.get("label_id"),
+                field_def.get("slot"),
+                field_def.get("kind"),
+            )
+        return _label_export_value(
+            runtime["scores"], field_def.get("label_id"), field_def.get("kind")
+        )
+    if field_id.startswith("eval:"):
+        return _eval_export_value(
+            runtime["eval_metrics"], field_def.get("eval_key"), field_def.get("kind")
+        )
+    if field_id.startswith("attr:"):
+        source_type = field_def.get("source_type")
+        if source_type and item.source_type != source_type:
+            return ""
+        path = field_def.get("path") or _parse_attribute_field_id(field_id)[1]
+        return _nested_get(content, path)
+    if field_def.get("path"):
+        return _nested_get(content, field_def["path"])
+    return ""
 
 
 # Dispatch table for filter-mode resolvers. Later phases (6, 8) extend this
@@ -234,6 +1313,26 @@ def _is_truthy(value) -> bool:
     return bool(value)
 
 
+def _check_annotation_queue_create_limit(org):
+    """Enforce Cloud plan limits before activating a new annotation queue."""
+    from tfc.ee_gating import EEResource, check_ee_can_create, is_oss
+
+    # Annotation queues are a core self-hosted/local feature. Pricing limits
+    # only apply when the EE/Cloud entitlement service is available.
+    if is_oss():
+        return
+
+    current_count = AnnotationQueue.objects.filter(
+        organization=org,
+        deleted=False,
+    ).count()
+    check_ee_can_create(
+        EEResource.ANNOTATION_QUEUES,
+        org_id=str(org.id),
+        current_count=current_count,
+    )
+
+
 class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AnnotationQueueSerializer
     permission_classes = [IsAuthenticated]
@@ -262,10 +1361,16 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             )
         )
 
-        status = self.request.query_params.get("status", None)
-        search = self.request.query_params.get("search", None)
+        is_list_action = getattr(self, "action", None) == "list"
+        status = (
+            self.request.query_params.get("status", None) if is_list_action else None
+        )
+        search = (
+            self.request.query_params.get("search", None) if is_list_action else None
+        )
         include_counts = (
-            self.request.query_params.get("include_counts", "").lower() == "true"
+            is_list_action
+            and self.request.query_params.get("include_counts", "").lower() == "true"
         )
 
         if status:
@@ -332,6 +1437,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 check_ee_feature(
                     EEFeature.REVIEW_WORKFLOW, org_id=str(org.id)
                 )
+            _check_annotation_queue_create_limit(org)
         except serializers.ValidationError as exc:
             msg = _flatten_validation_errors(exc.detail)
             return self._gm.custom_error_response(status_code=400, result=msg)
@@ -520,13 +1626,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "annotations_count": row["annotations_count"],
                 }
 
-        # Per-user progress: items assigned to the user OR items with no
-        # active assignments (available to everyone).
-        has_active_assignment = Q(assignments__deleted=False)
-        user_items = items_qs.filter(
-            Q(assignments__user=request.user, assignments__deleted=False)
-            | ~has_active_assignment
-        ).distinct()
+        user_items = _queue_item_user_scope(
+            items_qs,
+            request.user,
+            include_unassigned=(
+                queue.assignment_strategy == AssignmentStrategy.MANUAL.value
+            ),
+        )
         user_total = user_items.count()
         user_status_counts = {}
         for row in user_items.values("status").annotate(cnt=Count("id", distinct=True)):
@@ -587,53 +1693,66 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def export_annotations(self, request, pk=None):
         """Export all items with their annotations."""
         queue = self.get_object()
-        items_qs = QueueItem.objects.filter(queue=queue, deleted=False)
+        items_qs = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .select_related(
+                "queue",
+                "reviewed_by",
+                "trace",
+                "observation_span",
+                "dataset_row",
+                "prototype_run",
+                "call_execution",
+                "trace_session",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "trace__observation_spans",
+                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
+                        "start_time", "created_at"
+                    ),
+                    to_attr="_queue_export_spans",
+                )
+            )
+        )
 
-        status_filter = request.query_params.get("status")
+        status_filter = _normalize_export_status_filter(
+            request.query_params.get("status")
+        )
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
 
-        items_qs = items_qs.order_by("order")
-
-        # Batch-fetch all scores for this queue's items in a single query
-        all_scores = (
-            Score.objects.filter(
-                queue_item__queue=queue, queue_item__deleted=False, deleted=False
-            )
-            .select_related("annotator", "label")
-            .order_by("created_at")
+        items_list = list(items_qs.order_by("order", "created_at"))
+        queue_label_ids = list(
+            queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
         )
-        if status_filter:
-            all_scores = all_scores.filter(queue_item__status=status_filter)
-        scores_by_item = {}
-        for score in all_scores:
-            scores_by_item.setdefault(score.queue_item_id, []).append(score)
+        scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
+        item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
+        eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
 
         result = []
-        for item in items_qs:
-            annotations = scores_by_item.get(item.id, [])
+        for item in items_list:
+            content = resolve_source_content(item)
+            annotations = [
+                _serialize_score_for_export(score)
+                for score in scores_by_item.get(item.id, [])
+            ]
+            evals = _eval_metrics_export_value(eval_metrics_by_item.get(item.id, {}))
             result.append(
                 {
                     "item_id": str(item.id),
                     "source_type": item.source_type,
+                    "source_id": _source_id_for_queue_item(item),
                     "status": item.status,
                     "order": item.order,
-                    "annotations": [
-                        {
-                            "label_id": str(ann.label_id),
-                            "label_name": ann.label.name if ann.label else None,
-                            "value": ann.value,
-                            "score_source": ann.score_source,
-                            "notes": ann.notes,
-                            "annotator_name": (
-                                ann.annotator.name if ann.annotator else None
-                            ),
-                            "created_at": (
-                                ann.created_at.isoformat() if ann.created_at else None
-                            ),
-                        }
-                        for ann in annotations
-                    ],
+                    "review": _serialize_item_review(item),
+                    "item_notes": item_notes_by_id.get(item.id, ""),
+                    "annotations": annotations,
+                    "annotation_metrics": _annotation_metrics_for_scores(
+                        scores_by_item.get(item.id, [])
+                    ),
+                    "evals": evals,
+                    "source": content,
                 }
             )
 
@@ -801,36 +1920,29 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="export-fields")
+    def export_fields(self, request, pk=None):
+        """Return source/label/attribute fields available for dataset export."""
+        queue = self.get_object()
+        return self._gm.success_response(_build_annotation_queue_export_fields(queue))
+
     @action(detail=True, methods=["post"], url_path="export-to-dataset")
     def export_to_dataset(self, request, pk=None):
-        """Export annotated items to a dataset with columns and cells."""
-        from model_hub.models.choices import (
-            AnnotationTypeChoices,
-            DataTypeChoices,
-            SourceChoices,
-            StatusType,
-        )
+        """Export queue items to a dataset using a user-editable column mapping."""
         from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-
-        LABEL_TYPE_TO_DATA_TYPE = {
-            AnnotationTypeChoices.NUMERIC.value: DataTypeChoices.FLOAT.value,
-            AnnotationTypeChoices.TEXT.value: DataTypeChoices.TEXT.value,
-            AnnotationTypeChoices.CATEGORICAL.value: DataTypeChoices.ARRAY.value,
-            AnnotationTypeChoices.STAR.value: DataTypeChoices.FLOAT.value,
-            AnnotationTypeChoices.THUMBS_UP_DOWN.value: DataTypeChoices.TEXT.value,
-        }
 
         queue = self.get_object()
         dataset_id = request.data.get("dataset_id")
         dataset_name = request.data.get("dataset_name")
-        status_filter = request.data.get("status_filter", "completed")
+        status_filter = _normalize_export_status_filter(
+            request.data.get("status_filter", "completed")
+        )
 
         if not dataset_id and not dataset_name:
             return self._gm.bad_request(
                 "Either dataset_id or dataset_name is required."
             )
 
-        # Get or create dataset
         if dataset_id:
             try:
                 dataset = Dataset.objects.get(
@@ -848,19 +1960,108 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 user=request.user,
             )
 
-        # Filter items with select_related to avoid N+1 on source FK lookups
         items_qs = QueueItem.objects.filter(queue=queue, deleted=False).select_related(
+            "queue",
+            "reviewed_by",
             "trace",
             "observation_span",
             "dataset_row",
             "prototype_run",
             "call_execution",
             "trace_session",
+        ).prefetch_related(
+            Prefetch(
+                "trace__observation_spans",
+                queryset=ObservationSpan.objects.filter(deleted=False).order_by(
+                    "start_time", "created_at"
+                ),
+                to_attr="_queue_export_spans",
+            )
         )
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
+        items_list = list(items_qs.order_by("order", "created_at"))
 
-        # Get max order in dataset
+        export_field_defs = _build_annotation_queue_export_fields(
+            queue, sample_items=items_list[:100]
+        )
+        fields_by_id = {field["id"]: field for field in export_field_defs["fields"]}
+        requested_mapping = request.data.get("column_mapping") or []
+        if not requested_mapping:
+            requested_mapping = export_field_defs["default_mapping"]
+
+        column_mapping = []
+        used_columns = set()
+        for entry in requested_mapping:
+            if entry.get("enabled") is False:
+                continue
+            field_id = entry.get("field") or entry.get("id")
+            field_def = fields_by_id.get(field_id) or _custom_attribute_export_field(
+                field_id or "", items_list[:100]
+            )
+            if not field_def:
+                continue
+            if field_def.get("expand_fields"):
+                continue
+            column_name = (entry.get("column") or field_def["column"] or "").strip()
+            if not column_name:
+                continue
+            if column_name.lower() in used_columns:
+                return self._gm.bad_request(
+                    f"Duplicate export column name: {column_name}"
+                )
+            used_columns.add(column_name.lower())
+            column_mapping.append(
+                {
+                    "field": field_id,
+                    "field_def": field_def,
+                    "column": column_name,
+                    "data_type": field_def["data_type"],
+                    "source": _export_column_source(field_def),
+                }
+            )
+
+        if not column_mapping:
+            return self._gm.bad_request("Select at least one export column.")
+
+        existing_columns = {
+            col.name.lower(): col
+            for col in Column.objects.filter(dataset=dataset, deleted=False)
+        }
+        columns = {}
+        new_columns = []
+        for mapping in column_mapping:
+            column_name = mapping["column"]
+            existing_column = existing_columns.get(column_name.lower())
+            if existing_column:
+                columns[column_name] = existing_column
+                continue
+            column = Column(
+                name=column_name,
+                data_type=mapping["data_type"],
+                source=mapping["source"],
+                dataset=dataset,
+                status=StatusType.COMPLETED.value,
+            )
+            new_columns.append(column)
+            columns[column_name] = column
+
+        if new_columns:
+            Column.objects.bulk_create(new_columns)
+            column_order = list(dataset.column_order or [])
+            column_config = dict(dataset.column_config or {})
+            for column in new_columns:
+                column_id = str(column.id)
+                if column_id not in column_order:
+                    column_order.append(column_id)
+                column_config[column_id] = {
+                    "is_frozen": False,
+                    "is_visible": True,
+                }
+            dataset.column_order = column_order
+            dataset.column_config = column_config
+            dataset.save(update_fields=["column_order", "column_config"])
+
         max_order = (
             Row.objects.filter(dataset=dataset, deleted=False)
             .order_by("-order")
@@ -868,87 +2069,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .first()
         ) or 0
 
-        # Batch-fetch all scores for this queue's items in a single query
-        all_scores = Score.objects.filter(
-            queue_item__queue=queue, queue_item__deleted=False, deleted=False
-        ).select_related("label")
-        if status_filter:
-            all_scores = all_scores.filter(queue_item__status=status_filter)
-        scores_by_item = {}
-        for score in all_scores:
-            scores_by_item.setdefault(score.queue_item_id, []).append(score)
-
-        # --- Collect unique annotation labels ---
-        label_map = {}  # label_name -> label_type
-        for scores in scores_by_item.values():
-            for score in scores:
-                label_name = score.label.name if score.label else str(score.label_id)
-                label_type = score.label.type if score.label else "text"
-                label_map[label_name] = label_type
-
-        # --- Define and reuse/create columns ---
-        fixed_columns_def = [
-            ("source_type", "text", SourceChoices.OTHERS.value),
-            ("input", "text", SourceChoices.OTHERS.value),
-            ("output", "text", SourceChoices.OTHERS.value),
-        ]
-
-        existing_columns = {
-            col.name: col
-            for col in Column.objects.filter(dataset=dataset, deleted=False)
-        }
-
-        columns = {}  # name -> Column instance
-        new_columns = []
-
-        for col_name, data_type, source in fixed_columns_def:
-            if col_name in existing_columns:
-                columns[col_name] = existing_columns[col_name]
-            else:
-                col = Column(
-                    name=col_name,
-                    data_type=data_type,
-                    source=source,
-                    dataset=dataset,
-                    status=StatusType.COMPLETED.value,
-                )
-                new_columns.append(col)
-                columns[col_name] = col
-
-        for label_name, label_type in label_map.items():
-            data_type = LABEL_TYPE_TO_DATA_TYPE.get(label_type, "text")
-            if label_name in existing_columns:
-                columns[label_name] = existing_columns[label_name]
-            else:
-                col = Column(
-                    name=label_name,
-                    data_type=data_type,
-                    source=SourceChoices.ANNOTATION_LABEL.value,
-                    dataset=dataset,
-                    status=StatusType.COMPLETED.value,
-                )
-                new_columns.append(col)
-                columns[label_name] = col
-
-        if new_columns:
-            Column.objects.bulk_create(new_columns)
-
-        # Update column_order and column_config for new columns
-        if new_columns:
-            column_order = list(dataset.column_order or [])
-            column_config = dict(dataset.column_config or {})
-            for col in new_columns:
-                col_id_str = str(col.id)
-                column_order.append(col_id_str)
-                column_config[col_id_str] = {"is_frozen": False, "is_visible": True}
-            dataset.column_order = column_order
-            dataset.column_config = column_config
-            dataset.save(update_fields=["column_order", "column_config"])
-
-        # --- Create Rows (metadata preserved for auditability) ---
-        items_list = list(items_qs.order_by("order"))
         rows_to_create = []
+        item_runtime = {}
+        queue_label_ids = list(
+            queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
+        )
+        scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
+        item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
+        eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
         for i, item in enumerate(items_list):
+            content = resolve_source_content(item)
+            scores = scores_by_item.get(item.id, [])
+            annotations_metadata = {}
+            for score in scores:
+                label_id = str(score.label_id)
+                annotations_metadata.setdefault(label_id, []).append(
+                    _serialize_score_for_export(score)
+                )
+
             rows_to_create.append(
                 Row(
                     dataset=dataset,
@@ -956,103 +2094,55 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     metadata={
                         "queue_id": str(queue.id),
                         "queue_item_id": str(item.id),
+                        "source_type": item.source_type,
+                        "source_id": _source_id_for_queue_item(item),
+                        "annotations": annotations_metadata,
+                        "review": _serialize_item_review(item),
                     },
                 )
             )
+            item_runtime[item.id] = {
+                "content": content,
+                "scores": scores,
+                "item_notes": item_notes_by_id.get(item.id, ""),
+                "eval_metrics": eval_metrics_by_item.get(item.id, {}),
+            }
 
         if rows_to_create:
             Row.objects.bulk_create(rows_to_create, batch_size=500)
 
-        # --- Create Cells ---
-        def _to_cell_str(val):
-            if val is None:
-                return ""
-            if isinstance(val, str):
-                return val
-            return json.dumps(val, default=str)
-
-        def _extract_input_output(content):
-            source_type = content.get("type", "")
-            if source_type == "dataset_row":
-                fields = content.get("fields", {})
-                return _to_cell_str(fields.get("input", "")), _to_cell_str(
-                    fields.get("output", "")
-                )
-            elif source_type == "prototype_run":
-                return _to_cell_str(content.get("prompt")), _to_cell_str(
-                    content.get("response")
-                )
-            else:
-                return _to_cell_str(content.get("input")), _to_cell_str(
-                    content.get("output")
-                )
-
         cells_to_create = []
         for row, item in zip(rows_to_create, items_list):
-            # source_type cell
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["source_type"],
-                    value=item.source_type or "",
-                )
-            )
+            runtime = item_runtime[item.id]
+            content = runtime["content"]
+            input_value, output_value = _extract_input_output(content)
+            runtime["input_value"] = input_value
+            runtime["output_value"] = output_value
 
-            # input/output cells
-            content = resolve_source_content(item)
-            input_val, output_val = _extract_input_output(content)
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["input"],
-                    value=input_val,
-                )
-            )
-            cells_to_create.append(
-                Cell(
-                    dataset=dataset,
-                    row=row,
-                    column=columns["output"],
-                    value=output_val,
-                )
-            )
+            for mapping in column_mapping:
+                value = _resolve_export_field_value(item, content, runtime, mapping)
 
-            # Label cells — use first annotator's value
-            item_scores = scores_by_item.get(item.id, [])
-            label_first_value = {}
-            for score in item_scores:
-                label_name = score.label.name if score.label else str(score.label_id)
-                if label_name not in label_first_value:
-                    label_first_value[label_name] = score.value
-
-            for label_name in label_map:
-                if label_name in columns:
-                    value = label_first_value.get(label_name, "")
-                    cells_to_create.append(
-                        Cell(
-                            dataset=dataset,
-                            row=row,
-                            column=columns[label_name],
-                            value=_to_cell_str(value),
-                        )
+                cells_to_create.append(
+                    Cell(
+                        dataset=dataset,
+                        row=row,
+                        column=columns[mapping["column"]],
+                        value=_to_cell_str(value),
                     )
+                )
 
         if cells_to_create:
             Cell.objects.bulk_create(cells_to_create, batch_size=500)
 
-        # --- Backfill empty cells for pre-existing rows ---
         if new_columns:
             pre_existing_rows = Row.objects.filter(
                 dataset=dataset, deleted=False
-            ).exclude(id__in=[r.id for r in rows_to_create])
-            backfill_cells = []
-            for row in pre_existing_rows:
-                for col in new_columns:
-                    backfill_cells.append(
-                        Cell(dataset=dataset, row=row, column=col, value="")
-                    )
+            ).exclude(id__in=[row.id for row in rows_to_create])
+            backfill_cells = [
+                Cell(dataset=dataset, row=row, column=column, value="")
+                for row in pre_existing_rows
+                for column in new_columns
+            ]
             if backfill_cells:
                 Cell.objects.bulk_create(backfill_cells, batch_size=500)
 
@@ -1061,6 +2151,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "dataset_id": str(dataset.id),
                 "dataset_name": dataset.name,
                 "rows_created": len(rows_to_create),
+                "columns": [mapping["column"] for mapping in column_mapping],
             }
         )
 
@@ -1161,10 +2252,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 .first()
             )
             if archived:
+                _check_annotation_queue_create_limit(org)
                 _restore_archived_default_queue(archived)
                 queue = archived
                 action = "restored"
             else:
+                _check_annotation_queue_create_limit(org)
                 queue = AnnotationQueue.objects.create(
                     is_default=True,
                     name=f"Default - {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
@@ -1701,10 +2794,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if source_type:
             queryset = queryset.filter(source_type=source_type)
         if assigned_to == "me":
-            queryset = queryset.filter(
-                assignments__user=self.request.user,
-                assignments__deleted=False,
-            ).distinct()
+            queryset = _queue_item_user_scope(
+                queryset,
+                self.request.user,
+                include_unassigned=False,
+            )
 
         review_status = self.request.query_params.get("review_status")
         if review_status:
@@ -1951,20 +3045,55 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     def _get_next_pending_item(
         self, queue_id, exclude_id=None, exclude_ids=None, user=None
     ):
-        """Get the next pending item in the queue. Prefers items assigned to user. Skips reserved items."""
+        """Return the next unfinished work item, keeping queue order stable.
+
+        Older clients send the entire local history as ``exclude``. Treat the
+        last ID in that list as the current cursor instead of removing every
+        visited item; otherwise Submit/Next can jump over skipped or pending
+        rows until the page is refreshed.
+        """
         now = timezone.now()
+        current_item = None
+        cursor_id = exclude_id
+        if exclude_ids:
+            cursor_id = exclude_ids[-1]
+        if cursor_id:
+            current_item = (
+                QueueItem.objects.filter(
+                    queue_id=queue_id,
+                    pk=cursor_id,
+                    deleted=False,
+                )
+                .only("id", "order", "created_at")
+                .first()
+            )
+
         base_qs = QueueItem.objects.filter(
             queue_id=queue_id,
             status__in=[
+                QueueItemStatus.SKIPPED.value,
                 QueueItemStatus.PENDING.value,
                 QueueItemStatus.IN_PROGRESS.value,
             ],
             deleted=False,
         ).order_by("order", "created_at")
-        if exclude_ids:
-            base_qs = base_qs.exclude(id__in=exclude_ids)
-        elif exclude_id:
-            base_qs = base_qs.exclude(id=exclude_id)
+
+        queue = AnnotationQueue.objects.filter(pk=queue_id).first()
+        is_reviewer = (
+            user
+            and AnnotationQueueAnnotator.objects.filter(
+                queue_id=queue_id,
+                user=user,
+                role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
+                deleted=False,
+            ).exists()
+        )
+        if user and queue and not queue.auto_assign and not is_reviewer:
+            base_qs = _queue_item_user_scope(
+                base_qs,
+                user,
+                include_unassigned=True,
+            ).order_by("order", "created_at")
 
         # Exclude items reserved by others (unless expired)
         available_qs = base_qs.filter(
@@ -1972,6 +3101,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             | Q(reserved_by=user)
             | Q(reservation_expires_at__lt=now)
         )
+
+        if current_item:
+            after_current = available_qs.filter(
+                Q(order__gt=current_item.order)
+                | Q(order=current_item.order, created_at__gt=current_item.created_at)
+            ).exclude(pk=current_item.pk)
+            return after_current.first()
 
         return available_qs.first()
 
@@ -1988,7 +3124,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except AnnotationQueue.DoesNotExist:
             return self._gm.not_found("Queue not found.")
 
-        if queue.status != AnnotationQueueStatusChoices.ACTIVE.value:
+        is_completed_skipped_retry = (
+            queue.status == AnnotationQueueStatusChoices.COMPLETED.value
+            and QueueItem.objects.filter(
+                pk=pk,
+                queue_id=queue_id,
+                organization=request.organization,
+                deleted=False,
+                status=QueueItemStatus.SKIPPED.value,
+            ).exists()
+        )
+        if (
+            queue.status != AnnotationQueueStatusChoices.ACTIVE.value
+            and not is_completed_skipped_retry
+        ):
             return self._gm.bad_request(
                 "Annotations can only be submitted when the queue is active."
             )
@@ -2003,17 +3152,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except QueueItem.DoesNotExist:
             return self._gm.not_found("Queue item not found.")
 
+        if is_completed_skipped_retry:
+            queue.status = AnnotationQueueStatusChoices.ACTIVE.value
+            queue.save(update_fields=["status", "updated_at"])
+
         # Enforce assignment ownership: when auto_assign is False (manual mode),
         # only assigned annotators (or managers/reviewers) may submit.
         # When auto_assign is True, anyone can annotate any item.
         if not item.queue.auto_assign:
             has_assignments = QueueItemAssignment.objects.filter(
                 queue_item=item, deleted=False
-            ).exists()
+            ).exists() or bool(item.assigned_to_id)
             if has_assignments:
                 is_assigned = QueueItemAssignment.objects.filter(
                     queue_item=item, user=request.user, deleted=False
-                ).exists()
+                ).exists() or item.assigned_to_id == request.user.id
                 if not is_assigned:
                     is_manager = AnnotationQueueAnnotator.objects.filter(
                         queue_id=queue_id,
@@ -2116,15 +3269,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
     def _maybe_auto_complete_queue(self, queue_id):
         """Auto-complete queue if all items are done (not for default queues)."""
-        pending_count = QueueItem.objects.filter(
-            queue_id=queue_id,
-            deleted=False,
-            status__in=[
-                QueueItemStatus.PENDING.value,
-                QueueItemStatus.IN_PROGRESS.value,
-            ],
-        ).count()
-        if pending_count == 0:
+        remaining_count = (
+            QueueItem.objects.filter(queue_id=queue_id, deleted=False)
+            .exclude(status=QueueItemStatus.COMPLETED.value)
+            .count()
+        )
+        if remaining_count == 0:
             AnnotationQueue.objects.filter(
                 pk=queue_id,
                 status=AnnotationQueueStatusChoices.ACTIVE.value,
@@ -2414,8 +3564,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if user_span_note:
                 existing_notes = user_span_note.notes
 
-        # Compute overall progress (all items in queue, unfiltered).
+        # Manual queues show overall progress. Distributed queues show the
+        # current annotator's slice, so "2/4" means their assigned workload,
+        # not the whole team's queue.
         progress_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
+        if queue.assignment_strategy != AssignmentStrategy.MANUAL.value:
+            scoped_progress_qs = _queue_item_user_scope(
+                progress_qs,
+                viewing_annotator_id or request.user,
+                include_unassigned=False,
+            )
+            if viewing_annotator_id or scoped_progress_qs.exists():
+                progress_qs = scoped_progress_qs
         agg = progress_qs.aggregate(
             total=Count("id"),
             completed=Count("id", filter=Q(status=QueueItemStatus.COMPLETED.value)),
@@ -2425,15 +3585,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         completed = agg["completed"]
         current_position = (agg["before_current"] or 0) + 1
 
-        # Per-user progress: items assigned to the user or unassigned
-        has_active_assignment = Q(assignments__deleted=False)
-        user_items = (
-            QueueItem.objects.filter(queue_id=queue_id, deleted=False)
-            .filter(
-                Q(assignments__user=request.user, assignments__deleted=False)
-                | ~has_active_assignment
-            )
-            .distinct()
+        user_items = _queue_item_user_scope(
+            QueueItem.objects.filter(queue_id=queue_id, deleted=False),
+            viewing_annotator_id or request.user,
+            include_unassigned=queue.assignment_strategy
+            == AssignmentStrategy.MANUAL.value,
         )
         user_agg = user_items.aggregate(
             user_total=Count("id", distinct=True),
@@ -2453,11 +3609,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 queue_id=queue_id, deleted=False
             )
         else:
-            annotatable_qs = QueueItem.objects.filter(
-                queue_id=queue_id, deleted=False
-            ).filter(
-                Q(assignments__user=request.user, assignments__deleted=False)
-                | ~Q(assignments__deleted=False)
+            annotatable_qs = _queue_item_user_scope(
+                QueueItem.objects.filter(queue_id=queue_id, deleted=False),
+                request.user,
+                include_unassigned=True,
             )
         next_item = (
             annotatable_qs.filter(order__gt=item.order)

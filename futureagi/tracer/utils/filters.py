@@ -1356,13 +1356,6 @@ class FilterEngine:
                 except (ValueError, TypeError):
                     pass
 
-                # UI shows scores as 0-100 but DB stores output_float as 0-1.
-                # Divide by 100 for eval metric filters (not annotations or prompts).
-                if col_type == ColType.EVAL_METRIC.value and isinstance(
-                    _fv, (int, float)
-                ):
-                    _fv = _fv / 100.0
-
                 score_condition = None
 
                 # Create score conditions based on the modified column_id
@@ -1385,11 +1378,6 @@ class FilterEngine:
                         _hi = float(_hi)
                     except (ValueError, TypeError):
                         pass
-                    if col_type == ColType.EVAL_METRIC.value:
-                        if isinstance(_lo, (int, float)):
-                            _lo = _lo / 100.0
-                        if isinstance(_hi, (int, float)):
-                            _hi = _hi / 100.0
                     score_condition = Q(
                         **{
                             f"{metric_column_id}__gte": _lo,
@@ -1407,11 +1395,6 @@ class FilterEngine:
                         _hi = float(_hi)
                     except (ValueError, TypeError):
                         pass
-                    if col_type == ColType.EVAL_METRIC.value:
-                        if isinstance(_lo, (int, float)):
-                            _lo = _lo / 100.0
-                        if isinstance(_hi, (int, float)):
-                            _hi = _hi / 100.0
                     score_condition = ~Q(
                         **{
                             f"{metric_column_id}__gte": _lo,

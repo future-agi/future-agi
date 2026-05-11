@@ -110,8 +110,27 @@ const MOCK_QUEUES = [
     completed_count: 3,
     label_count: 2,
     annotators: [
-      { id: "a1", user_id: "user-1", name: "Alice", role: "manager" },
-      { id: "a2", user_id: "user-2", name: "Bob", role: "annotator" },
+      {
+        id: "a1",
+        user_id: "user-1",
+        name: "Alice",
+        email: "alice@example.com",
+        role: "manager",
+      },
+      {
+        id: "a2",
+        user_id: "user-2",
+        name: "Bob",
+        email: "bob@example.com",
+        role: "annotator",
+      },
+      {
+        id: "a3",
+        user_id: "user-3",
+        name: "Cara",
+        email: "cara@example.com",
+        role: "reviewer",
+      },
     ],
     created_at: "2025-01-01T00:00:00Z",
   },
@@ -151,7 +170,7 @@ describe("AnnotationQueueTable", () => {
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Progress")).toBeInTheDocument();
     expect(screen.getByText("Labels")).toBeInTheDocument();
-    expect(screen.getByText("Annotators")).toBeInTheDocument();
+    expect(screen.getByText("Members")).toBeInTheDocument();
     expect(screen.getByText("Created")).toBeInTheDocument();
   });
 
@@ -183,6 +202,31 @@ describe("AnnotationQueueTable", () => {
 
     expect(screen.getByText("2 labels")).toBeInTheDocument();
     expect(screen.getByText("1 labels")).toBeInTheDocument();
+  });
+
+  it("shows all queue members, including managers and reviewers", () => {
+    render(<AnnotationQueueTable {...defaultProps} />);
+
+    expect(screen.getAllByText("A").length).toBeGreaterThan(0);
+    expect(screen.getByText("B")).toBeInTheDocument();
+    expect(screen.getByText("C")).toBeInTheDocument();
+  });
+
+  it("shows queue members grouped by role on hover", async () => {
+    const user = userEvent.setup();
+    render(<AnnotationQueueTable {...defaultProps} />);
+
+    const avatarGroup = screen
+      .getByTestId("queue-members-q1")
+      .querySelector(".MuiAvatarGroup-root");
+    await user.hover(avatarGroup);
+
+    expect(await screen.findByText("Managers")).toBeInTheDocument();
+    expect(screen.getByText("Alice (alice@example.com)")).toBeInTheDocument();
+    expect(screen.getByText("Annotators")).toBeInTheDocument();
+    expect(screen.getByText("Bob (bob@example.com)")).toBeInTheDocument();
+    expect(screen.getByText("Reviewers")).toBeInTheDocument();
+    expect(screen.getByText("Cara (cara@example.com)")).toBeInTheDocument();
   });
 
   it("shows loading skeletons when loading", () => {

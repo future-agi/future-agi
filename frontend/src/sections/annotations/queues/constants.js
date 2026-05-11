@@ -3,3 +3,6 @@ export const QUEUE_ROLES = {
   REVIEWER: "reviewer",
   MANAGER: "manager",
 };
+
+export const isQueueAnnotatorRole = (annotator) =>
+  !annotator?.role || annotator.role === QUEUE_ROLES.ANNOTATOR;

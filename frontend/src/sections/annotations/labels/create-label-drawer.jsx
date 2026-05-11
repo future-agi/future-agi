@@ -76,9 +76,15 @@ CreateLabelDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   editLabel: PropTypes.object,
+  onCreated: PropTypes.func,
 };
 
-export default function CreateLabelDrawer({ open, onClose, editLabel }) {
+export default function CreateLabelDrawer({
+  open,
+  onClose,
+  editLabel,
+  onCreated,
+}) {
   const isEdit = editLabel && editLabel.id && !editLabel._isDuplicate;
   const { mutate: createLabel, isPending: isCreating } =
     useCreateAnnotationLabel();
@@ -160,7 +166,12 @@ export default function CreateLabelDrawer({ open, onClose, editLabel }) {
         { onSuccess: () => onClose() },
       );
     } else {
-      createLabel(payload, { onSuccess: () => onClose() });
+      createLabel(payload, {
+        onSuccess: (response) => {
+          onCreated?.(response?.data?.result || response?.data);
+          onClose();
+        },
+      });
     }
   };
 

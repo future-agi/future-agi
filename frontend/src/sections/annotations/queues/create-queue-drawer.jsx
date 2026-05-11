@@ -27,6 +27,7 @@ import {
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
+import { isQueueAnnotatorRole } from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -129,6 +130,7 @@ export default function CreateQueueDrawer({
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
 
   useEffect(() => {
     if (open && editQueue) {
@@ -390,8 +392,8 @@ export default function CreateQueueDrawer({
                       const n = Number(value);
                       if (!value && value !== 0) return "Required";
                       if (n < 1) return "Must be at least 1";
-                      if (annotators.length > 0 && n > annotators.length)
-                        return `Cannot exceed annotator count (${annotators.length})`;
+                      if (annotatorCount > 0 && n > annotatorCount)
+                        return `Cannot exceed annotator count (${annotatorCount})`;
                       return true;
                     },
                   }}

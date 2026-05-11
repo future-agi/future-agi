@@ -38,7 +38,7 @@ import LabelPanel from "./label-panel";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES } from "../constants";
+import { QUEUE_ROLES, isQueueAnnotatorRole } from "../constants";
 
 const MAX_HISTORY = 50;
 
@@ -121,6 +121,11 @@ export default function AnnotateWorkspaceView() {
 
   const canReview =
     myQueueRole === QUEUE_ROLES.REVIEWER || myQueueRole === QUEUE_ROLES.MANAGER;
+
+  const queueAnnotators = useMemo(
+    () => (queueDetail?.annotators || []).filter(isQueueAnnotatorRole),
+    [queueDetail?.annotators],
+  );
 
   const [viewingAnnotatorId, setViewingAnnotatorId] = useState(null);
 
@@ -557,7 +562,9 @@ export default function AnnotateWorkspaceView() {
 
   // Queue not active — block annotation
   const queueStatus = detail?.queue?.status;
-  if (queueStatus && queueStatus !== "active") {
+  const canResumeCompletedSkipped =
+    queueStatus === "completed" && detail?.item?.status === "skipped";
+  if (queueStatus && queueStatus !== "active" && !canResumeCompletedSkipped) {
     return (
       <Box
         sx={{
@@ -672,7 +679,7 @@ export default function AnnotateWorkspaceView() {
               annotations={detail?.annotations || []}
               labels={detail?.labels || []}
               spanNotes={detail?.span_notes || []}
-              annotators={queueDetail?.annotators || []}
+              annotators={queueAnnotators}
               currentUserId={currentUserId}
               viewingAnnotatorId={viewingAnnotatorId}
               onViewingAnnotatorChange={handleViewingAnnotatorChange}
@@ -718,7 +725,7 @@ export default function AnnotateWorkspaceView() {
               labels={detail?.labels || []}
               annotations={detail?.annotations || []}
               spanNotes={detail?.span_notes || []}
-              annotators={queueDetail?.annotators || []}
+              annotators={queueAnnotators}
               currentUserId={currentUserId}
               viewingAnnotatorId={viewingAnnotatorId}
               onViewingAnnotatorChange={handleViewingAnnotatorChange}
@@ -742,7 +749,7 @@ export default function AnnotateWorkspaceView() {
               onDirtyChange={handleDirtyChange}
               readOnly={labelPanelReadOnly}
               readOnlyReason={labelPanelReadOnlyReason}
-              annotators={canReview ? queueDetail?.annotators || [] : null}
+              annotators={canReview ? queueAnnotators : null}
               viewingAnnotatorId={viewingAnnotatorId}
               currentUserId={currentUserId}
               isAnnotatorSwitchPending={isAnnotatorSwitchPending}

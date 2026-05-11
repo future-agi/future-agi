@@ -1312,6 +1312,226 @@ class TestAutomationRulesE2E:
             == row_match.id
         )
 
+    def test_evaluate_rule_trace_observe_filter_payload(
+        self, auth_client, organization, workspace, user
+    ):
+        """Trace rules support Observe filters for span attrs, evals, annotations."""
+        from model_hub.models.evals_metric import EvalTemplate
+        from model_hub.models.score import Score
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalLogger, ObservationSpan
+
+        project = _create_project(organization, workspace, name="Trace Filter Rule")
+        label = _create_label(organization, workspace, name="trace_rule_quality", label_type="numeric")
+        template = EvalTemplate.objects.create(
+            name="trace_rule_eval",
+            organization=organization,
+            workspace=workspace,
+        )
+        config = CustomEvalConfig.objects.create(
+            name="Trace Rule Eval",
+            eval_template=template,
+            project=project,
+        )
+        match = _create_trace(project, "match-trace")
+        skip = _create_trace(project, "skip-trace")
+        match_span = ObservationSpan.objects.create(
+            id=f"rule-root-{match.id.hex}",
+            project=project,
+            trace=match,
+            name="match-root",
+            observation_type="chain",
+            span_attributes={"customer_tier": "vip"},
+            parent_span_id=None,
+        )
+        skip_span = ObservationSpan.objects.create(
+            id=f"rule-root-{skip.id.hex}",
+            project=project,
+            trace=skip,
+            name="skip-root",
+            observation_type="chain",
+            span_attributes={"customer_tier": "free"},
+            parent_span_id=None,
+        )
+        EvalLogger.objects.create(
+            trace=match,
+            observation_span=match_span,
+            custom_eval_config=config,
+            output_float=0.93,
+        )
+        EvalLogger.objects.create(
+            trace=skip,
+            observation_span=skip_span,
+            custom_eval_config=config,
+            output_float=0.95,
+        )
+        Score.objects.create(
+            source_type="trace",
+            trace=match,
+            label=label,
+            value={"value": 91},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        Score.objects.create(
+            source_type="trace",
+            trace=skip,
+            label=label,
+            value={"value": 95},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        queue_id = _create_queue(auth_client, name="Trace observe filter rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "VIP high quality traces",
+                "source_type": "trace",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": "customer_tier",
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "equals",
+                                "filter_value": "vip",
+                                "col_type": "SPAN_ATTRIBUTE",
+                            },
+                        },
+                        {
+                            "column_id": str(config.id),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than_or_equal",
+                                "filter_value": 80,
+                                "col_type": "EVAL_METRIC",
+                            },
+                        },
+                        {
+                            "column_id": str(label.id),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than",
+                                "filter_value": 80,
+                                "col_type": "ANNOTATION",
+                            },
+                        },
+                    ],
+                    "scope": {"project_id": str(project.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).trace_id == match.id
+
+    def test_evaluate_rule_span_observe_filter_payload(
+        self, auth_client, organization, workspace, user
+    ):
+        """Span rules support the same Observe-style filter payloads."""
+        from model_hub.models.score import Score
+        from tracer.models.observation_span import ObservationSpan
+
+        project = _create_project(organization, workspace, name="Span Filter Rule")
+        trace = _create_trace(project, "span-rule-trace")
+        label = _create_label(organization, workspace, name="span_rule_quality", label_type="numeric")
+        match = ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=trace,
+            name="match-span",
+            observation_type="llm",
+            span_attributes={"customer_tier": "vip"},
+            parent_span_id=None,
+        )
+        skip = ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=trace,
+            name="skip-span",
+            observation_type="tool",
+            span_attributes={"customer_tier": "free"},
+            parent_span_id=None,
+        )
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=match,
+            label=label,
+            value={"value": 92},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=skip,
+            label=label,
+            value={"value": 96},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        queue_id = _create_queue(auth_client, name="Span observe filter rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "VIP spans",
+                "source_type": "observation_span",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": "customer_tier",
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "equals",
+                                "filter_value": "vip",
+                                "col_type": "SPAN_ATTRIBUTE",
+                            },
+                        },
+                        {
+                            "column_id": str(label.id),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than",
+                                "filter_value": 80,
+                                "col_type": "ANNOTATION",
+                            },
+                        },
+                    ],
+                    "scope": {"project_id": str(project.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).observation_span_id == match.id
+
     # -----------------------------------------------------------------------
     # 23. Filter-mode scope without explicit filter rows
     # -----------------------------------------------------------------------

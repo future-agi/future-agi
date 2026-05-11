@@ -11,9 +11,14 @@ Tests cover:
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
+
+from model_hub.models.annotation_queues import AnnotationQueue
+from tfc.ee_gating import EEResource, FeatureUnavailable
+from tracer.models.project import Project
 
 QUEUE_URL = "/model-hub/annotation-queues/"
 LABEL_URL = "/model-hub/annotations-labels/"
@@ -183,6 +188,74 @@ class TestCreateQueue:
         create_queue(auth_client, name="Unique")
         resp = create_queue(auth_client, name="Unique")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_checks_queue_plan_limit(
+        self, auth_client, organization, user
+    ):
+        AnnotationQueue.objects.create(
+            name="Existing Queue",
+            organization=organization,
+            created_by=user,
+        )
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
+        ):
+            resp = create_queue(auth_client, name="Plan Counted Queue")
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        check_can_create.assert_called_once_with(
+            EEResource.ANNOTATION_QUEUES,
+            org_id=str(organization.id),
+            current_count=1,
+        )
+
+    def test_create_surfaces_queue_plan_limit_message(self, auth_client):
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "tfc.ee_gating.check_ee_can_create",
+                side_effect=FeatureUnavailable(
+                    EEResource.ANNOTATION_QUEUES.value,
+                    detail="You've reached the 3 queues limit",
+                    code="ENTITLEMENT_LIMIT",
+                ),
+            ),
+        ):
+            resp = create_queue(auth_client, name="Denied Queue")
+
+        assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED
+        assert "reached the 3 queues limit" in str(resp.data)
+        assert not AnnotationQueue.objects.filter(name="Denied Queue").exists()
+
+    def test_get_or_create_default_checks_queue_plan_limit(
+        self, auth_client, organization, workspace
+    ):
+        project = Project.objects.create(
+            name="Default Queue Limit Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
+        ):
+            resp = auth_client.post(
+                f"{QUEUE_URL}get-or-create-default/",
+                {"project_id": str(project.id)},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        check_can_create.assert_called_once_with(
+            EEResource.ANNOTATION_QUEUES,
+            org_id=str(organization.id),
+            current_count=0,
+        )
 
 
 # ---------------------------------------------------------------------------

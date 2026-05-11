@@ -26,6 +26,7 @@ import {
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import { getInitials } from "../annotation-queue-table";
+import { isQueueAnnotatorRole } from "../constants";
 import SourceBadge from "./source-badge";
 import ItemStatusBadge from "./item-status-badge";
 import { fToNow } from "src/utils/format-time";
@@ -69,6 +70,13 @@ function getPreviewText(preview) {
     default:
       return preview.type || "—";
   }
+}
+
+function formatMetric(value, suffix = "ms") {
+  if (value === null || value === undefined || value === "") return "—";
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return String(value);
+  return `${numeric}${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +135,24 @@ StatusCellRenderer.propTypes = {
   data: PropTypes.object,
 };
 
+function MetricCellRenderer({ data, valueGetter, suffix }) {
+  if (!data) return null;
+  const value = valueGetter?.(data.source_preview || {});
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Typography variant="body2" color="text.secondary">
+        {formatMetric(value, suffix)}
+      </Typography>
+    </Box>
+  );
+}
+
+MetricCellRenderer.propTypes = {
+  data: PropTypes.object,
+  valueGetter: PropTypes.func,
+  suffix: PropTypes.string,
+};
+
 function AssignedCellRenderer({ data, context }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
@@ -134,9 +160,34 @@ function AssignedCellRenderer({ data, context }) {
   if (!data) return null;
 
   const assignedUsers = data.assigned_users || [];
-  const annotators = context?.annotators || [];
+  const annotators = (context?.annotators || []).filter(isQueueAnnotatorRole);
   const assignItems = context?.onAssign;
-  const canAssign = Boolean(assignItems);
+  const isAutoAssign = Boolean(context?.autoAssign);
+  const canAssign = Boolean(assignItems) && !isAutoAssign;
+
+  if (isAutoAssign) {
+    const title =
+      annotators.length > 0
+        ? annotators.map((a) => a.name || a.email).join(", ")
+        : "All annotators";
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Tooltip title={title}>
+          <Chip
+            label={
+              annotators.length === 1
+                ? annotators[0].name || annotators[0].email
+                : "All annotators"
+            }
+            size="small"
+            variant="outlined"
+            color="primary"
+            sx={{ height: 24, fontSize: 12 }}
+          />
+        </Tooltip>
+      </Box>
+    );
+  }
 
   const handleClick = (e) => {
     if (!canAssign) return;
@@ -468,6 +519,53 @@ export default function QueueItemsTable({
         flex: 1,
         minWidth: 130,
         cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+      },
+      {
+        field: "latency",
+        headerName: "Latency",
+        flex: 0.8,
+        minWidth: 110,
+        cellRenderer: loading
+          ? SkeletonCell
+          : (params) => (
+              <MetricCellRenderer
+                {...params}
+                valueGetter={(preview) =>
+                  preview.latency_ms ?? preview.avg_agent_latency_ms
+                }
+                suffix="ms"
+              />
+            ),
+      },
+      {
+        field: "responseTime",
+        headerName: "Response Time",
+        flex: 0.9,
+        minWidth: 130,
+        cellRenderer: loading
+          ? SkeletonCell
+          : (params) => (
+              <MetricCellRenderer
+                {...params}
+                valueGetter={(preview) => preview.response_time_ms}
+                suffix="ms"
+              />
+            ),
+      },
+      {
+        field: "duration",
+        headerName: "Duration",
+        flex: 0.8,
+        minWidth: 110,
+        cellRenderer: loading
+          ? SkeletonCell
+          : (params) => (
+              <MetricCellRenderer
+                {...params}
+                valueGetter={(preview) => preview.duration_seconds}
+                suffix="s"
+              />
+            ),
       },
       {
         field: "assignedTo",
