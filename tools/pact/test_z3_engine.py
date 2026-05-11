@@ -211,6 +211,22 @@ def test_same_line_create_sites_keep_distinct_site_ids():
     assert {tuple(v.missing) for v in viols} == {("name",), ("title",)}
 
 
+def test_z3_answer_decoder_keeps_site_and_field_axes_distinct():
+    viols = _run("""
+        import django.db.models as m
+
+        class Widget(m.Model):
+            slug = m.CharField(max_length=100)
+            name = m.CharField(max_length=100)
+
+        Widget.objects.create(slug='ok')
+    """)
+
+    assert len(viols) == 1
+    assert viols[0].call == "Widget.objects.create"
+    assert viols[0].missing == ["name"]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Unknown model — no violation (open-world assumption)
 # ──────────────────────────────────────────────────────────────────────────────

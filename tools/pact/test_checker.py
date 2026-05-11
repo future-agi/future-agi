@@ -731,6 +731,70 @@ def test_optional_deref_bare_attribute_condition_is_flagged(tmp_path):
     assert optional_v, "attribute conditions are unsafe without an explicit object guard"
 
 
+def test_optional_deref_dict_get_is_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(data):
+            value = data.get("name")
+            return value.strip()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "value.strip"
+    ]
+    assert optional_v, "dict.get() may return None and must be guarded before dereference"
+
+
+def test_optional_deref_os_environ_get_is_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        import os
+
+        def run():
+            token = os.environ.get("TOKEN")
+            return token.strip()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "token.strip"
+    ]
+    assert optional_v, "os.environ.get() may return None and must be guarded before dereference"
+
+
+def test_optional_deref_dict_get_guard_suppresses_flag(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(data):
+            value = data.get("name")
+            if value is not None:
+                return value.strip()
+            return None
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v for v in violations if v.context == "optional_dereference"
+    ], "None guard must dominate dereference inside its branch"
+
+
 # ---------------------------------------------------------------------------
 # graph and scanner failure contracts
 # ---------------------------------------------------------------------------

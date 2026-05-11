@@ -180,13 +180,29 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             for target in targets:
                 self.guarded.discard(target.id)
                 self.optional_vars.pop(target.id, None)
-                if (
-                    isinstance(node.value, _ast.Call)
-                    and isinstance(node.value.func, _ast.Attribute)
-                    and node.value.func.attr in _OPTIONAL_RETURNING
-                ):
+                if isinstance(node.value, _ast.Call) and self._is_optional_source(node.value):
                     self.optional_vars[target.id] = node.lineno
             self.generic_visit(node)
+
+        def _call_name(self, node) -> str | None:
+            if isinstance(node, _ast.Name):
+                return node.id
+            if isinstance(node, _ast.Attribute):
+                base = self._call_name(node.value)
+                return node.attr if base is None else f"{base}.{node.attr}"
+            if isinstance(node, _ast.Call):
+                return self._call_name(node.func)
+            return None
+
+        def _is_optional_source(self, node) -> bool:
+            if not isinstance(node.func, _ast.Attribute):
+                return False
+            name = self._call_name(node.func)
+            return (
+                node.func.attr in _OPTIONAL_RETURNING
+                or node.func.attr in _OPTIONAL_SOURCES
+                or name in _OPTIONAL_SOURCES
+            )
 
         def visit_If(self, node):
             original_guarded = self.guarded
