@@ -444,8 +444,10 @@ export function RuleScopePicker({
   const needsProject = ["trace", "observation_span", "trace_session"].includes(
     sourceType,
   );
+  const needsAgentDefinition = sourceType === "call_execution";
   const queueDatasetId = getQueueScopeId(queue, "dataset");
   const queueProjectId = getQueueScopeId(queue, "project");
+  const queueAgentId = getQueueScopeId(queue, "agent_definition");
 
   const { data: datasets = [], isLoading: datasetsLoading } = useQuery({
     queryKey: ["datasets-list-simple"],
@@ -465,6 +467,18 @@ export function RuleScopePicker({
     enabled: needsProject,
     staleTime: 1000 * 60 * 5,
   });
+
+  const { data: agentDefinitions = [], isLoading: agentDefinitionsLoading } =
+    useQuery({
+      queryKey: ["agent-definitions-list-for-automation-rules"],
+      queryFn: () =>
+        axios.get(endpoints.agentDefinitions.list, {
+          params: { limit: 100 },
+        }),
+      select: (d) => d.data?.results || d.data?.result?.results || [],
+      enabled: needsAgentDefinition,
+      staleTime: 1000 * 60 * 5,
+    });
 
   if (needsDataset) {
     const effectiveDatasetId = scope.dataset_id || queueDatasetId || "";
@@ -529,6 +543,44 @@ export function RuleScopePicker({
             {...params}
             label="Project"
             placeholder="Choose project"
+            onFocus={onInteraction}
+          />
+        )}
+      />
+    );
+  }
+
+  if (needsAgentDefinition) {
+    const effectiveAgentDefinitionId = scope.project_id || queueAgentId || "";
+    return (
+      <Autocomplete
+        size="small"
+        options={agentDefinitions}
+        loading={agentDefinitionsLoading}
+        noOptionsText={
+          agentDefinitionsLoading
+            ? "Loading agent definitions..."
+            : "No agent definitions"
+        }
+        getOptionLabel={(agent) => agent?.agent_name || agent?.name || ""}
+        value={
+          agentDefinitions.find(
+            (agent) => agent.id === effectiveAgentDefinitionId,
+          ) || null
+        }
+        isOptionEqualToValue={(option, value) => option?.id === value?.id}
+        onChange={(_, agent) => {
+          onInteraction?.();
+          setScope((prev) => ({
+            ...prev,
+            project_id: agent?.id || "",
+          }));
+        }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label="Agent Definition"
+            placeholder="Choose agent definition"
             onFocus={onInteraction}
           />
         )}
@@ -1014,6 +1066,11 @@ export function isScopeReady(sourceType, scope, queue) {
   if (["trace", "observation_span", "trace_session"].includes(sourceType)) {
     return Boolean(scope.project_id || getQueueScopeId(queue, "project"));
   }
+  if (sourceType === "call_execution") {
+    return Boolean(
+      scope.project_id || getQueueScopeId(queue, "agent_definition"),
+    );
+  }
   return true;
 }
 
@@ -1029,6 +1086,7 @@ export function getRuleSubmitDisabledTooltipTitle(
     if (["trace", "observation_span", "trace_session"].includes(sourceType)) {
       return "Choose a project";
     }
+    if (sourceType === "call_execution") return "Choose an agent definition";
   }
   return "";
 }

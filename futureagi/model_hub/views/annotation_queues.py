@@ -2803,7 +2803,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if queue_id:
             queryset = queryset.filter(queue_id=queue_id)
 
-        status = self.request.query_params.get("status")
+        status = _normalize_export_status_filter(
+            self.request.query_params.get("status")
+        )
         source_type = self.request.query_params.get("source_type")
         assigned_to = self.request.query_params.get("assigned_to")
 
@@ -2818,7 +2820,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 include_unassigned=False,
             )
 
-        review_status = self.request.query_params.get("review_status")
+        review_status = _normalize_export_status_filter(
+            self.request.query_params.get("review_status")
+        )
         if review_status:
             queryset = queryset.filter(review_status=review_status)
 

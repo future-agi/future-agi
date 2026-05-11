@@ -153,6 +153,16 @@ class TestListItems:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3  # All are pending by default
 
+    def test_status_all_does_not_filter_items(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """The UI sends status=all for All Statuses; treat it as no filter."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        resp = auth_client.get(items_url(queue), {"status": "all"})
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+
     def test_filter_by_source_type(self, auth_client, queue, dataset_with_rows):
         """TC-9: Filter by source_type."""
         _, rows = dataset_with_rows

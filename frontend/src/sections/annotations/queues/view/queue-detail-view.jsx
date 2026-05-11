@@ -116,8 +116,9 @@ export default function QueueDetailView() {
 
   const isManager = useMemo(() => {
     if (!queue || !user) return false;
+    const currentUserId = String(user.id || user.pk || user.user_id || "");
     const annotators = queue.annotators || [];
-    const me = annotators.find((a) => a.user_id === (user.id || user.pk));
+    const me = annotators.find((a) => String(a.user_id) === currentUserId);
     return hasQueueRole(me, QUEUE_ROLES.MANAGER);
   }, [queue, user]);
 

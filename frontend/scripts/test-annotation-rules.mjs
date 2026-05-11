@@ -107,11 +107,11 @@ const SOURCE_SCENARIOS = [
     payloadScreenshotName: "trace-status-multi-checkbox-payload.png",
   },
   {
-    key: "trace-created-at-between",
-    sourceLabel: "Trace",
+    key: "simulation-created-at-between",
+    sourceLabel: "Simulation",
     scheduleLabel: "Every hour",
     scheduleValue: "hourly",
-    projectRequired: true,
+    agentDefinitionRequired: true,
     filter: {
       propertyName: "Created At",
       propertyId: "created_at",
@@ -169,6 +169,7 @@ const SOURCE_SCENARIOS = [
     sourceLabel: "Simulation",
     scheduleLabel: "Monthly",
     scheduleValue: "monthly",
+    agentDefinitionRequired: true,
     filter: { propertyName: "Status", value: "completed", kind: "choice" },
   },
 ];
@@ -187,6 +188,10 @@ function datasetDisplayName(dataset) {
   );
 }
 
+function agentDefinitionDisplayName(agent) {
+  return agent?.agent_name || agent?.name || agent?.label || "";
+}
+
 function columnDisplayName(column) {
   return column?.name || column?.column_name || column?.id || "";
 }
@@ -197,6 +202,7 @@ function assert(condition, message) {
 
 function normalizeText(text) {
   return String(text || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -331,6 +337,31 @@ async function cleanupCreatedRule(
   console.log(`CLEANUP created test rule ${ruleId}`);
 }
 
+async function cleanupCreatedQueueItems(apiBase, accessToken, items = []) {
+  if (KEEP_RULES || !items.length) return;
+  const itemIds = [...new Set(items.map((item) => item?.id).filter(Boolean))];
+  const chunkSize = 100;
+  for (let index = 0; index < itemIds.length; index += chunkSize) {
+    const chunk = itemIds.slice(index, index + chunkSize);
+    if (!chunk.length) continue;
+    await apiPost(
+      apiBase,
+      accessToken,
+      `/model-hub/annotation-queues/${QUEUE_ID}/items/bulk-remove/`,
+      { item_ids: chunk },
+    );
+  }
+  console.log(`CLEANUP created queue items ${itemIds.length}`);
+}
+
+function forgetQueueItems(pendingItems, cleanedItems = []) {
+  if (!cleanedItems.length) return;
+  const cleanedIds = new Set(cleanedItems.map((item) => item?.id));
+  for (let index = pendingItems.length - 1; index >= 0; index -= 1) {
+    if (cleanedIds.has(pendingItems[index]?.id)) pendingItems.splice(index, 1);
+  }
+}
+
 async function login(apiBase) {
   if (process.env.FUTURE_AGI_ACCESS_TOKEN) {
     return {
@@ -371,6 +402,28 @@ async function getProject(apiBase, accessToken, queue) {
     projects[0];
   assert(project?.id, "No observe project was available for rule testing");
   return project;
+}
+
+async function getAgentDefinition(apiBase, accessToken, queue) {
+  const queueAgentId =
+    typeof queue?.agent_definition === "object"
+      ? queue.agent_definition?.id
+      : queue?.agent_definition;
+  const response = await apiGet(
+    apiBase,
+    accessToken,
+    "/simulate/agent-definitions/?limit=100",
+  );
+  const agents = asArray(response);
+  const agent =
+    agents.find((item) => item.id === queueAgentId) ||
+    agents.find((item) => agentDefinitionDisplayName(item)) ||
+    agents[0];
+  assert(agent?.id, "No agent definition was available for simulation rules");
+  return {
+    ...agent,
+    name: agentDefinitionDisplayName(agent) || agent.id,
+  };
 }
 
 async function getDatasetWithColumn(apiBase, accessToken) {
@@ -453,7 +506,14 @@ function asArray(value) {
 
 async function waitForText(page, text, timeout = 15000) {
   await page.waitForFunction(
-    (needle) => document.body.innerText.includes(needle),
+    (needle) => {
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      return normalize(document.body.innerText).includes(normalize(needle));
+    },
     { timeout },
     text,
   );
@@ -461,8 +521,15 @@ async function waitForText(page, text, timeout = 15000) {
 
 async function waitForAnyText(page, texts, timeout = 15000) {
   await page.waitForFunction(
-    (needles) =>
-      needles.some((needle) => document.body.innerText.includes(needle)),
+    (needles) => {
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const body = normalize(document.body.innerText);
+      return needles.some((needle) => body.includes(normalize(needle)));
+    },
     { timeout },
     texts,
   );
@@ -515,6 +582,7 @@ async function clickByText(
     ({ targetText: expected, selector: targetSelector, exact: exactMatch }) => {
       const normalize = (value) =>
         String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
           .replace(/\s+/g, " ")
           .trim();
       const isVisible = (element) => {
@@ -543,6 +611,7 @@ async function clickByText(
     ({ targetText: expected, selector: targetSelector, exact: exactMatch }) => {
       const normalize = (value) =>
         String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
           .replace(/\s+/g, " ")
           .trim();
       const isVisible = (element) => {
@@ -577,6 +646,49 @@ async function clickByText(
     { targetText, selector, exact },
   );
   assert(clicked, `Could not click text: ${text}`);
+}
+
+async function clickVisibleButtonText(page, text, { exact = true } = {}) {
+  const targetText = normalizeText(text);
+  const clicked = await page.evaluate(
+    ({ targetText: expected, exact: exactMatch }) => {
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none"
+        );
+      };
+      const candidates = [...document.querySelectorAll("button")].filter(
+        (element) => {
+          if (!isVisible(element)) return false;
+          const textValue = normalize(element.innerText || element.textContent);
+          return exactMatch
+            ? textValue === expected
+            : textValue.includes(expected);
+        },
+      );
+      candidates.sort((a, b) => {
+        const aRect = a.getBoundingClientRect();
+        const bRect = b.getBoundingClientRect();
+        return bRect.top - aRect.top || bRect.left - aRect.left;
+      });
+      const element = candidates[0];
+      if (!element) return false;
+      element.click();
+      return true;
+    },
+    { targetText, exact },
+  );
+  assert(clicked, `Could not click visible button text: ${text}`);
 }
 
 async function selectMuiOption(page, testId, optionText) {
@@ -879,11 +991,32 @@ async function setCustomPickerValue(page, value, screenshotName) {
     ["Search values", "Select values", "Value"],
     value,
   );
-  await waitForText(page, `+ Add custom value: ${value}`, 10000);
-  await clickByText(page, `+ Add custom value: ${value}`, {
-    selector: "div, span, p, li",
-    exact: false,
-  });
+  const customValueLabels = [
+    `+ Add custom value: ${value}`,
+    `+ Specify: ${value}`,
+  ];
+  try {
+    await page.waitForFunction(
+      (labels) =>
+        labels.some((label) => document.body?.innerText?.includes(label)),
+      { timeout: 4000 },
+      customValueLabels,
+    );
+    const customValueLabel = await page.evaluate(
+      (labels) =>
+        labels.find((label) => document.body?.innerText?.includes(label)),
+      customValueLabels,
+    );
+    await clickByText(page, customValueLabel, {
+      selector: "div, span, p, li",
+      exact: false,
+    });
+  } catch {
+    await clickByText(page, String(value), {
+      selector: "div, span, p, li",
+      exact: true,
+    });
+  }
   if (screenshotName) {
     const screenshotPath = path.join(ARTIFACT_DIR, screenshotName);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -927,10 +1060,38 @@ async function setMultiChoiceValues(page, values, screenshotName) {
 }
 
 async function chooseOperator(page, currentLabel, nextLabel) {
-  await clickByText(page, currentLabel, {
-    selector: "div, span, button, [role='combobox']",
-    exact: true,
-  });
+  const marker = `data-e2e-operator-select-${Date.now()}`;
+  const marked = await page.evaluate(
+    ({ label, marker: markerAttribute }) => {
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none"
+        );
+      };
+      const select = [
+        ...document.querySelectorAll(".MuiSelect-select, [role='combobox']"),
+      ].find(
+        (element) =>
+          isVisible(element) && normalize(element.innerText) === label,
+      );
+      if (!select) return false;
+      select.setAttribute(markerAttribute, "true");
+      return true;
+    },
+    { label: currentLabel, marker },
+  );
+  assert(marked, `Could not find operator select: ${currentLabel}`);
+  await page.click(`[${marker}="true"]`);
   await clickByText(page, nextLabel, {
     selector: "li, div, span, [role='option']",
     exact: true,
@@ -960,6 +1121,13 @@ async function setDateTimeRange(page, [start, end]) {
   );
   await page.evaluate(
     ({ startValue, endValue }) => {
+      const setNativeInputValue = (input, value) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        setter?.call(input, value);
+      };
       const isVisible = (element) => {
         const rect = element.getBoundingClientRect();
         const style = window.getComputedStyle(element);
@@ -975,15 +1143,208 @@ async function setDateTimeRange(page, [start, end]) {
       ]
         .filter(isVisible)
         .slice(0, 2);
-      inputs[0].value = startValue;
+      setNativeInputValue(inputs[0], startValue);
       inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
       inputs[0].dispatchEvent(new Event("change", { bubbles: true }));
-      inputs[1].value = endValue;
+      setNativeInputValue(inputs[1], endValue);
       inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
       inputs[1].dispatchEvent(new Event("change", { bubbles: true }));
     },
     { startValue: start, endValue: end },
   );
+  await page.waitForFunction(
+    ({ startValue, endValue }) => {
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none"
+        );
+      };
+      const inputs = [
+        ...document.querySelectorAll('input[type="datetime-local"]'),
+      ]
+        .filter(isVisible)
+        .slice(0, 2);
+      return inputs[0]?.value === startValue && inputs[1]?.value === endValue;
+    },
+    { timeout: 5000 },
+    { startValue: start, endValue: end },
+  );
+}
+
+async function chooseFilterProperty(page, propertyName, propertyId = null) {
+  await clickByText(page, "Property", { selector: "button", exact: false });
+  const marker = `data-e2e-property-search-${Date.now()}`;
+  const marked = await markFirstVisibleInput(
+    page,
+    ["Search properties"],
+    marker,
+  );
+  assert(marked, "Could not find property picker search input");
+  const searchValue = propertyId || propertyName;
+  const categories = [
+    ...(propertyId === "created_at" || propertyId === "status"
+      ? ["System"]
+      : []),
+    "All",
+    "Dataset",
+    "System",
+    "Attributes",
+    "Annotations",
+    "Evals",
+  ];
+  const uniqueCategories = Array.from(new Set(categories));
+
+  for (const categoryLabel of uniqueCategories) {
+    await page.evaluate(
+      ({ markerAttribute, category }) => {
+        const normalize = (value) =>
+          String(value || "")
+            .replace(/[\u200B-\u200D\uFEFF]/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        const isVisible = (element) => {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none"
+          );
+        };
+        const input =
+          document.querySelector(`[${markerAttribute}="true"]`) ||
+          [
+            ...document.querySelectorAll(
+              'input[placeholder="Search properties..."]',
+            ),
+          ]
+            .filter(isVisible)
+            .at(-1);
+        const paper = input?.closest(".MuiPaper-root");
+        const categoryRow = [...(paper?.querySelectorAll("div") || [])].find(
+          (element) =>
+            isVisible(element) &&
+            normalize(element.innerText).startsWith(`${category} `),
+        );
+        categoryRow?.click();
+      },
+      { markerAttribute: marker, category: categoryLabel },
+    );
+
+    await sleep(150);
+    const activeSearchMarker = `data-e2e-active-property-search-${Date.now()}`;
+    const focused = await page.evaluate(
+      ({ markerAttribute, activeMarker }) => {
+        const isVisible = (element) => {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none"
+          );
+        };
+        const input =
+          document.querySelector(`[${markerAttribute}="true"]`) ||
+          [
+            ...document.querySelectorAll(
+              'input[placeholder="Search properties..."]',
+            ),
+          ]
+            .filter(isVisible)
+            .at(-1);
+        if (!input) return false;
+        document
+          .querySelectorAll(`[${activeMarker}]`)
+          .forEach((element) => element.removeAttribute(activeMarker));
+        input.setAttribute(activeMarker, "true");
+        return true;
+      },
+      { markerAttribute: marker, activeMarker: activeSearchMarker },
+    );
+    assert(focused, "Could not refocus property picker search input");
+    await page.click(`[${activeSearchMarker}="true"]`, { clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type(searchValue);
+
+    const found = await page
+      .waitForFunction(
+        ({ expectedName, expectedSearchValue }) => {
+          const normalize = (value) =>
+            String(value || "")
+              .replace(/[\u200B-\u200D\uFEFF]/g, "")
+              .replace(/\s+/g, " ")
+              .trim();
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+            return (
+              rect.width > 0 &&
+              rect.height > 0 &&
+              style.visibility !== "hidden" &&
+              style.display !== "none"
+            );
+          };
+          const input = [
+            ...document.querySelectorAll(
+              'input[placeholder="Search properties..."]',
+            ),
+          ]
+            .filter(isVisible)
+            .at(-1);
+          const paper = input?.closest(".MuiPaper-root");
+          if (!paper) return false;
+          if (
+            normalize(input.value).toLowerCase() !==
+            normalize(expectedSearchValue).toLowerCase()
+          ) {
+            return false;
+          }
+          const flexPane = [...paper.children].find((element) => {
+            const style = window.getComputedStyle(element);
+            return style.display === "flex";
+          });
+          const optionPane = flexPane?.lastElementChild;
+          const options = [...(optionPane?.children || [])].filter(isVisible);
+          const exactOption = options.find((element) => {
+            const optionText = normalize(element.innerText);
+            return (
+              optionText === expectedName ||
+              optionText.startsWith(`${expectedName} `)
+            );
+          });
+          if (!exactOption) return false;
+          document
+            .querySelectorAll("[data-e2e-property-option]")
+            .forEach((element) =>
+              element.removeAttribute("data-e2e-property-option"),
+            );
+          exactOption.setAttribute("data-e2e-property-option", "true");
+          return true;
+        },
+        { timeout: 3000 },
+        {
+          expectedName: propertyName,
+          expectedSearchValue: searchValue,
+        },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (found) {
+      await page.click('[data-e2e-property-option="true"]');
+      return;
+    }
+  }
+
+  throw new Error(`Could not select property ${propertyName}`);
 }
 
 async function applyFilter(page, filter) {
@@ -991,11 +1352,7 @@ async function applyFilter(page, filter) {
     page,
     '[data-testid="automation-rule-filter-button"]',
   );
-  await clickByText(page, "Property", { selector: "button", exact: false });
-  await clickByText(page, filter.propertyName, {
-    selector: "div, span, p",
-    exact: false,
-  });
+  await chooseFilterProperty(page, filter.propertyName, filter.propertyId);
 
   if (filter.kind === "number") {
     await typeIntoVisibleInput(page, ["Value"], filter.value);
@@ -1084,7 +1441,7 @@ async function applyFilter(page, filter) {
     await page.screenshot({ path: filter.chipScreenshotPath, fullPage: true });
   }
 
-  await clickByText(page, "Apply", { selector: "button", exact: true });
+  await clickVisibleButtonText(page, "Apply", { exact: true });
   await sleep(250);
   if (
     filter.kind === "free-text-no-enter" ||
@@ -1205,7 +1562,7 @@ async function openRulesTab(page) {
 }
 
 async function listQueueItems(apiBase, accessToken, sourceType) {
-  const params = new URLSearchParams({ limit: "500" });
+  const params = new URLSearchParams({ limit: "2500" });
   if (sourceType) params.set("source_type", sourceType);
   return asArray(
     await apiGet(
@@ -1279,6 +1636,7 @@ async function createRuleScenario({
   accessToken,
   scenario,
   project,
+  agentDefinition,
   datasetInfo,
   runId,
 }) {
@@ -1313,6 +1671,14 @@ async function createRuleScenario({
 
   if (scenario.projectRequired) {
     await chooseAutocompleteByLabel(page, "Project", project.name);
+  }
+
+  if (scenario.agentDefinitionRequired) {
+    await chooseAutocompleteByLabel(
+      page,
+      "Agent Definition",
+      agentDefinition.name,
+    );
   }
 
   if (scenario.scheduleValue !== "manual") {
@@ -1409,6 +1775,10 @@ async function createRuleScenario({
       sourceType,
       beforeItemIds,
     });
+  assert(
+    !evaluation?.error,
+    `Rule evaluation failed for ${scenario.key}: ${evaluation?.error}`,
+  );
 
   const screenshotPath = path.join(
     ARTIFACT_DIR,
@@ -1733,7 +2103,7 @@ async function ensureQueueItemsViaApiRule({
     },
   );
   try {
-    await evaluateRuleAndCollectItems({
+    return await evaluateRuleAndCollectItems({
       apiBase,
       accessToken,
       ruleId: rule.id,
@@ -1832,7 +2202,25 @@ async function assertCallExecutionAnnotator(
     const text = Array.isArray(firstTurn.messages)
       ? firstTurn.messages.join(" ")
       : firstTurn.content || firstTurn.message || "";
-    await waitForText(page, normalizeText(text).slice(0, 60), 60000);
+    const needle = normalizeText(text).slice(0, 60);
+    const bodyText = normalizeText(await visibleText(page));
+    if (!bodyText.includes(needle)) {
+      await waitForAnyText(
+        page,
+        isChat
+          ? ["Chat Log Details", "Messages", "Transcript", "Logs"]
+          : [
+              "Recording",
+              "Transcript",
+              "Logs",
+              "FAGI Simulator",
+              "Bot",
+              "Voice call data not available.",
+            ],
+        60000,
+      );
+      return;
+    }
   } else if (!isChat) {
     await waitForAnyText(page, ["Recording", "Transcript"], 60000);
   } else {
@@ -1865,6 +2253,23 @@ async function collectAnnotatorTargets({
 
   const targets = {};
   for (const item of itemMap.values()) {
+    const itemSourceType = item.source_type;
+    if (itemSourceType === "dataset_row" && targets.datasetRow) continue;
+    if (itemSourceType === "observation_span" && targets.observationSpan) {
+      continue;
+    }
+    if (itemSourceType === "trace_session" && targets.traceSession) continue;
+    if (itemSourceType === "trace" && targets.trace && targets.traceVoice) {
+      continue;
+    }
+    if (
+      itemSourceType === "call_execution" &&
+      targets.callExecutionVoice &&
+      targets.callExecutionChat
+    ) {
+      continue;
+    }
+
     let detail;
     try {
       detail = await getAnnotateDetail(apiBase, accessToken, item.id);
@@ -1919,10 +2324,14 @@ async function runAnnotatorWalk({
   project,
   scenarioResults,
 }) {
+  const cleanupQueueItems = [];
   const completedVoice = await ensureCompletedVoiceCallInQueue(
     apiBase,
     accessToken,
   );
+  if (completedVoice.status === "added" && completedVoice.queueItem) {
+    cleanupQueueItems.push(completedVoice.queueItem);
+  }
   if (completedVoice.status === "added") {
     console.log(
       `DEV_DB_COMPLETED_VOICE_CALL added ${completedVoice.call.id} item ${completedVoice.queueItem?.id}`,
@@ -1945,6 +2354,9 @@ async function runAnnotatorWalk({
     apiBase,
     accessToken,
   );
+  if (completedChat.status === "added" && completedChat.queueItem) {
+    cleanupQueueItems.push(completedChat.queueItem);
+  }
   if (completedChat.status === "added") {
     console.log(
       `DEV_DB_COMPLETED_CHAT_CALL added ${completedChat.call.id} item ${completedChat.queueItem?.id}`,
@@ -1968,6 +2380,9 @@ async function runAnnotatorWalk({
     accessToken,
     project?.id,
   );
+  if (traceSession.status === "added" && traceSession.queueItem) {
+    cleanupQueueItems.push(traceSession.queueItem);
+  }
   if (traceSession.status === "added") {
     console.log(
       `DEV_DB_TRACE_SESSION added ${traceSession.candidate.sourceId} item ${traceSession.queueItem?.id}`,
@@ -1984,112 +2399,120 @@ async function runAnnotatorWalk({
     );
   }
 
-  await ensureQueueItemsViaApiRule({
+  const datasetFallback = await ensureQueueItemsViaApiRule({
     apiBase,
     accessToken,
     sourceType: "dataset_row",
   }).catch((error) => {
     console.log(`ANNOTATOR_WALK_DATASET_FALLBACK ${error.message}`);
+    return null;
   });
-
-  const targets = await collectAnnotatorTargets({
-    apiBase,
-    accessToken,
-    scenarioResults,
-  });
-  if (completedVoice.queueItem?.id && completedVoice.detail) {
-    targets.callExecutionVoice = {
-      item: completedVoice.queueItem,
-      detail: completedVoice.detail,
-    };
-  }
-  if (completedChat.queueItem?.id && completedChat.detail) {
-    targets.callExecutionChat = {
-      item: completedChat.queueItem,
-      detail: completedChat.detail,
-    };
-  }
-  if (traceSession.queueItem?.id && traceSession.detail) {
-    targets.traceSession = {
-      item: traceSession.queueItem,
-      detail: traceSession.detail,
-    };
+  if (datasetFallback?.newQueueItems?.length) {
+    cleanupQueueItems.push(...datasetFallback.newQueueItems);
   }
 
-  const scenarios = [
-    {
-      key: "annotator-dataset-row",
-      target: targets.datasetRow,
-      assertFn: (detail) => assertDatasetRowAnnotator(page, detail),
-    },
-    {
-      key: "annotator-trace",
-      target: targets.trace,
-      assertFn: () => assertInlineTraceAnnotator(page),
-    },
-    {
-      key: "annotator-trace-voice-project",
-      target: targets.traceVoice,
-      assertFn: () => assertVoiceTraceAnnotator(page),
-    },
-    {
-      key: "annotator-observation-span",
-      target: targets.observationSpan,
-      assertFn: () => assertInlineTraceAnnotator(page),
-    },
-    {
-      key: "annotator-trace-session",
-      target: targets.traceSession,
-      assertFn: () => assertSessionAnnotator(page),
-    },
-    {
-      key: "annotator-call-execution-voice",
-      target: targets.callExecutionVoice,
-      assertFn: (detail) =>
-        assertCallExecutionAnnotator(page, detail, apiBase, accessToken),
-    },
-    {
-      key: "annotator-call-execution-chat",
-      target: targets.callExecutionChat,
-      assertFn: (detail) =>
-        assertCallExecutionAnnotator(page, detail, apiBase, accessToken),
-    },
-  ];
-
-  const walkResults = [];
-  for (const scenario of scenarios) {
-    if (!scenario.target?.item?.id) {
-      const result = {
-        scenario: scenario.key,
-        status: "skipped",
-        reason: "No matching queue item in dev DB",
+  try {
+    const targets = await collectAnnotatorTargets({
+      apiBase,
+      accessToken,
+      scenarioResults,
+    });
+    if (completedVoice.queueItem?.id && completedVoice.detail) {
+      targets.callExecutionVoice = {
+        item: completedVoice.queueItem,
+        detail: completedVoice.detail,
       };
-      walkResults.push(result);
-      console.log(`SKIP ${scenario.key} ${result.reason}`);
-      continue;
+    }
+    if (completedChat.queueItem?.id && completedChat.detail) {
+      targets.callExecutionChat = {
+        item: completedChat.queueItem,
+        detail: completedChat.detail,
+      };
+    }
+    if (traceSession.queueItem?.id && traceSession.detail) {
+      targets.traceSession = {
+        item: traceSession.queueItem,
+        detail: traceSession.detail,
+      };
     }
 
-    await page.goto(
-      `${FRONTEND_URL}/dashboard/annotations/queues/${QUEUE_ID}/annotate?itemId=${scenario.target.item.id}`,
-      { waitUntil: "domcontentloaded" },
-    );
-    await waitForAnnotatorShell(page);
-    await scenario.assertFn(scenario.target.detail);
-    const screenshotPath = path.join(ARTIFACT_DIR, `${scenario.key}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    const result = {
-      scenario: scenario.key,
-      status: "passed",
-      itemId: scenario.target.item.id,
-      screenshotPath,
-    };
-    walkResults.push(result);
-    console.log(
-      `PASS ${scenario.key} ${scenario.target.item.id} ${screenshotPath}`,
-    );
-  }
+    const scenarios = [
+      {
+        key: "annotator-dataset-row",
+        target: targets.datasetRow,
+        assertFn: (detail) => assertDatasetRowAnnotator(page, detail),
+      },
+      {
+        key: "annotator-trace",
+        target: targets.trace,
+        assertFn: () => assertInlineTraceAnnotator(page),
+      },
+      {
+        key: "annotator-trace-voice-project",
+        target: targets.traceVoice,
+        assertFn: () => assertVoiceTraceAnnotator(page),
+      },
+      {
+        key: "annotator-observation-span",
+        target: targets.observationSpan,
+        assertFn: () => assertInlineTraceAnnotator(page),
+      },
+      {
+        key: "annotator-trace-session",
+        target: targets.traceSession,
+        assertFn: () => assertSessionAnnotator(page),
+      },
+      {
+        key: "annotator-call-execution-voice",
+        target: targets.callExecutionVoice,
+        assertFn: (detail) =>
+          assertCallExecutionAnnotator(page, detail, apiBase, accessToken),
+      },
+      {
+        key: "annotator-call-execution-chat",
+        target: targets.callExecutionChat,
+        assertFn: (detail) =>
+          assertCallExecutionAnnotator(page, detail, apiBase, accessToken),
+      },
+    ];
 
-  return walkResults;
+    const walkResults = [];
+    for (const scenario of scenarios) {
+      if (!scenario.target?.item?.id) {
+        const result = {
+          scenario: scenario.key,
+          status: "skipped",
+          reason: "No matching queue item in dev DB",
+        };
+        walkResults.push(result);
+        console.log(`SKIP ${scenario.key} ${result.reason}`);
+        continue;
+      }
+
+      await page.goto(
+        `${FRONTEND_URL}/dashboard/annotations/queues/${QUEUE_ID}/annotate?itemId=${scenario.target.item.id}`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await waitForAnnotatorShell(page);
+      await scenario.assertFn(scenario.target.detail);
+      const screenshotPath = path.join(ARTIFACT_DIR, `${scenario.key}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      const result = {
+        scenario: scenario.key,
+        status: "passed",
+        itemId: scenario.target.item.id,
+        screenshotPath,
+      };
+      walkResults.push(result);
+      console.log(
+        `PASS ${scenario.key} ${scenario.target.item.id} ${screenshotPath}`,
+      );
+    }
+
+    return walkResults;
+  } finally {
+    await cleanupCreatedQueueItems(apiBase, accessToken, cleanupQueueItems);
+  }
 }
 
 async function testCreateRuleNameValidation({ page, datasetInfo, runId }) {
@@ -2185,6 +2608,7 @@ async function main() {
   );
   await cleanupExistingTestRules(apiBase, accessToken);
   const project = await getProject(apiBase, accessToken, queue);
+  const agentDefinition = await getAgentDefinition(apiBase, accessToken, queue);
   const datasetInfo = await getDatasetWithColumn(apiBase, accessToken);
   const chromePath = await findChromeExecutable();
   const browser = await puppeteer.launch({
@@ -2194,6 +2618,7 @@ async function main() {
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const createdRuleIds = [];
+  const pendingQueueItemCleanup = [];
   const results = [];
   let page;
 
@@ -2245,10 +2670,12 @@ async function main() {
         accessToken,
         scenario,
         project,
+        agentDefinition,
         datasetInfo,
         runId,
       });
       createdRuleIds.push(result.ruleId);
+      pendingQueueItemCleanup.push(...(result.newQueueItems || []));
       results.push(result);
       console.log(
         `PASS ${result.scenario} ${result.schedule} ${result.ruleId} ${result.screenshotPath}`,
@@ -2259,6 +2686,12 @@ async function main() {
         createdRuleIds,
         result.ruleId,
       );
+      await cleanupCreatedQueueItems(
+        apiBase,
+        accessToken,
+        result.newQueueItems,
+      );
+      forgetQueueItems(pendingQueueItemCleanup, result.newQueueItems);
     }
 
     const annotatorWalkResults = await runAnnotatorWalk({
@@ -2282,6 +2715,11 @@ async function main() {
     throw error;
   } finally {
     await browser.close();
+    await cleanupCreatedQueueItems(
+      apiBase,
+      accessToken,
+      pendingQueueItemCleanup,
+    );
     if (!KEEP_RULES) {
       for (const ruleId of createdRuleIds) {
         await apiDelete(

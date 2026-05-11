@@ -509,6 +509,17 @@ async function runAudioWorkflow({ page, apiBase, accessToken }) {
   };
 }
 
+async function findAnnotationLabelByName(apiBase, accessToken, name) {
+  const rows = asArray(
+    await apiGet(
+      apiBase,
+      accessToken,
+      `/model-hub/annotations-labels/?search=${encodeURIComponent(name)}`,
+    ),
+  );
+  return rows.find((label) => label.name === name);
+}
+
 async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
   const suffix = Date.now().toString(36);
   const name = `codex lifecycle label ${suffix}`;
@@ -521,41 +532,52 @@ async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
     settings: { placeholder: "Lifecycle", min_length: 0, max_length: 500 },
     allow_notes: false,
   });
+  const createdLabel =
+    created?.id ? created : await findAnnotationLabelByName(apiBase, accessToken, name);
+  assert(createdLabel?.id, "Created annotation label could not be resolved");
+  let deleted = false;
 
-  await openQueue(page, "Settings");
-  await typeIntoInput(page, ["Search labels"], name);
-  await waitForText(page, name, 30000);
-  const createdScreenshotPath = await screenshot(page, "lifecycle-settings-label-created.png");
+  try {
+    await openQueue(page, "Settings");
+    await typeIntoInput(page, ["Search labels"], name);
+    await waitForText(page, name, 30000);
+    const createdScreenshotPath = await screenshot(page, "lifecycle-settings-label-created.png");
 
-  await apiPut(apiBase, accessToken, `/model-hub/annotations-labels/${created.id}/`, {
-    name: renamed,
-    type: "text",
-    description: "Renamed by lifecycle e2e",
-    settings: { placeholder: "Lifecycle", min_length: 0, max_length: 500 },
-    allow_notes: false,
-  });
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await waitForText(page, "Settings", 45000);
-  await clickByText(page, "Settings", { selector: "[role='tab'], button" });
-  await typeIntoInput(page, ["Search labels"], renamed);
-  await waitForText(page, renamed, 30000);
-  const renamedScreenshotPath = await screenshot(page, "lifecycle-settings-label-renamed.png");
+    await apiPut(apiBase, accessToken, `/model-hub/annotations-labels/${createdLabel.id}/`, {
+      name: renamed,
+      type: "text",
+      description: "Renamed by lifecycle e2e",
+      settings: { placeholder: "Lifecycle", min_length: 0, max_length: 500 },
+      allow_notes: false,
+    });
+    await openQueue(page, "Settings");
+    await typeIntoInput(page, ["Search labels"], renamed);
+    await waitForText(page, renamed, 30000);
+    const renamedScreenshotPath = await screenshot(page, "lifecycle-settings-label-renamed.png");
 
-  await apiDelete(apiBase, accessToken, `/model-hub/annotations-labels/${created.id}/`);
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await waitForText(page, "Settings", 45000);
-  await clickByText(page, "Settings", { selector: "[role='tab'], button" });
-  await typeIntoInput(page, ["Search labels"], renamed);
-  await waitForText(page, "No labels found", 30000);
-  const deletedScreenshotPath = await screenshot(page, "lifecycle-settings-label-deleted.png");
+    await apiDelete(apiBase, accessToken, `/model-hub/annotations-labels/${createdLabel.id}/`);
+    deleted = true;
+    await openQueue(page, "Settings");
+    await typeIntoInput(page, ["Search labels"], renamed);
+    await waitForText(page, "No labels found", 30000);
+    const deletedScreenshotPath = await screenshot(page, "lifecycle-settings-label-deleted.png");
 
-  return {
-    scenario: "settings-labels-crud",
-    status: "passed",
-    labelId: created.id,
-    screenshotPath: deletedScreenshotPath,
-    screenshots: [createdScreenshotPath, renamedScreenshotPath, deletedScreenshotPath],
-  };
+    return {
+      scenario: "settings-labels-crud",
+      status: "passed",
+      labelId: createdLabel.id,
+      screenshotPath: deletedScreenshotPath,
+      screenshots: [createdScreenshotPath, renamedScreenshotPath, deletedScreenshotPath],
+    };
+  } finally {
+    if (!deleted) {
+      await apiDelete(
+        apiBase,
+        accessToken,
+        `/model-hub/annotations-labels/${createdLabel.id}/`,
+      ).catch(() => {});
+    }
+  }
 }
 
 async function runMultiConditionEdit({ page, apiBase, accessToken }) {

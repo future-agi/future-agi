@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildConditionsForRule,
+  isScopeReady,
   ruleConditionsToFilters,
 } from "../create-rule-dialog";
 
@@ -168,5 +169,36 @@ describe("create rule Observe filter serialization", () => {
         { project: "project-1" },
       ).scope,
     ).toEqual({ project_id: "project-1" });
+  });
+
+  it("uses agent definition scope for simulation rules", () => {
+    const filters = [
+      {
+        id: "status",
+        columnId: "status",
+        filterConfig: {
+          filterType: "categorical",
+          filterOp: "equals",
+          filterValue: "completed",
+        },
+      },
+    ];
+
+    expect(
+      buildConditionsForRule(
+        "call_execution",
+        filters,
+        {},
+        { agent_definition: { id: "agent-1" } },
+      ).scope,
+    ).toEqual({ project_id: "agent-1" });
+    expect(isScopeReady("call_execution", {}, {})).toBe(false);
+    expect(
+      isScopeReady(
+        "call_execution",
+        {},
+        { agent_definition: { id: "agent-1" } },
+      ),
+    ).toBe(true);
   });
 });
