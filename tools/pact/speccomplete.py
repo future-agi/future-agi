@@ -91,6 +91,8 @@ def spec_complete(
         system=_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
+    if not response.content:
+        raise RuntimeError("API returned empty content — check model, key, and rate limits")
     completed = response.content[0].text.strip()
 
     # Strip markdown code fences if the model adds them
