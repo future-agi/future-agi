@@ -204,9 +204,11 @@ Next ==
    ========================================================= *)
 
 Fairness ==
+    /\ WF_vars(Authenticate)
     /\ WF_vars(AuthSucceeds)
     /\ WF_vars(StartExecution)
     /\ WF_vars(PollTerminates)
+    /\ WF_vars(PollTimeout)
     /\ WF_vars(SummaryPass \/ SummaryFail \/ SummarySkipped)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -233,7 +235,7 @@ ExitCodeOnlyWhenTerminal ==
 
 \* Once a terminal phase is reached, it is stable (no transitions out)
 TerminalIsStable ==
-    [][phase \in TerminalPhases => phase' = phase]_phase
+    [][phase \notin TerminalPhases \/ phase' = phase]_phase
 
 (* =========================================================
    Liveness properties
