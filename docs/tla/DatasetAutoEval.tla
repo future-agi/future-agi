@@ -139,9 +139,13 @@ Next ==
     \/ WorkflowFail
 
 \* Fairness: the system must eventually process pending rows (no infinite debounce).
+\* WorkflowSuccess uses SF because WorkflowFail can cycle (disabling/re-enabling
+\* WorkflowSuccess), so WF alone cannot prevent infinite retries.  SF says:
+\* if WorkflowSuccess is infinitely often enabled it must eventually fire —
+\* the physical assumption is that a retryable workflow eventually succeeds.
 Fairness ==
     /\ WF_vars(DebounceExpires)
-    /\ WF_vars(WorkflowSuccess)
+    /\ SF_vars(WorkflowSuccess)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
