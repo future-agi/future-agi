@@ -1,0 +1,54 @@
+name: TLA+ Model Checking
+
+on:
+  pull_request:
+    paths:
+      - 'docs/tla/**'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/tla/**'
+
+jobs:
+  tlc:
+    name: TLC model checker
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Download tla2tools
+        run: |
+          curl -sL "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar" \
+            -o /tmp/tla2tools.jar
+
+      - name: Run TLC on all specs with .cfg files
+        working-directory: docs/tla
+        run: |
+          set -e
+          FAILED=0
+          for cfg in *.cfg; do
+            spec="${cfg%.cfg}"
+            if [ ! -f "${spec}.tla" ]; then
+              echo "::warning::${cfg} has no matching ${spec}.tla — skipping"
+              continue
+            fi
+            echo "::group::TLC: ${spec}"
+            if java -XX:+UseParallelGC -jar /tmp/tla2tools.jar \
+                -config "${cfg}" -deadlock "${spec}" 2>&1; then
+              echo "✓  ${spec}: no errors"
+            else
+              echo "::error::TLC found errors in ${spec}"
+              FAILED=1
+            fi
+            echo "::endgroup::"
+            # Clean TLC output artifacts
+            rm -rf states/ "${spec}"_TTrace_*.tla "${spec}"_TTrace_*.bin
+          done
+          exit $FAILED
