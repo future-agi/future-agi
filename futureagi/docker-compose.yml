@@ -62,6 +62,10 @@ services:
       # - PGBOUNCER_READ_HOST=pgbouncer
       # - PGBOUNCER_READ_PORT=6432
     depends_on:
+      pgbouncer:
+        condition: service_started
+      temporal:
+        condition: service_healthy
       db:
         condition: service_healthy
       clickhouse:
