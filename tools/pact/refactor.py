@@ -253,11 +253,14 @@ def suggest_refactors(
         if func is None:
             continue
 
-        # Callers: merge both qualified and short names to avoid or-shortcircuit drop
-        callers = (
-            callee_to_callers.get(func_name, [])
-            + callee_to_callers.get(func.name.split(".")[-1], [])
-        )
+        # Callers: merge both qualified and short names to avoid or-shortcircuit drop,
+        # then deduplicate by object identity (callee_to_callers inserts each CallSite
+        # under both the qualified key and the short key when they differ, so a plain
+        # + concatenation would double-count and corrupt unsafe_conditions counts).
+        short = func.name.split(".")[-1]
+        callers = list({id(cs): cs for cs in (
+            callee_to_callers.get(func_name, []) + callee_to_callers.get(short, [])
+        )}.values())
 
         # Z3 safety check
         z3_safe: Optional[bool] = None
