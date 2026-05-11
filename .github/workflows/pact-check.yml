@@ -1,0 +1,51 @@
+name: Pact Static Analysis
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**/*.py"
+      - "tools/pact/**"
+
+jobs:
+  pact:
+    name: pact / python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pact dependencies
+        run: pip install z3-solver hypothesis
+
+      - name: Run pact (diff mode on PR)
+        id: pact
+        run: |
+          python -m tools.pact.cli check futureagi/ \
+            --json \
+            --diff \
+            2>/dev/null | tee /tmp/pact_violations.json
+          COUNT=$(python3 -c "import json; d=json.load(open('/tmp/pact_violations.json')); print(len(d))")
+          echo "violation_count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Annotate violations
+        if: steps.pact.outputs.violation_count != '0'
+        run: |
+          python3 -c "
+          import json
+          data = json.load(open('/tmp/pact_violations.json'))
+          for v in data:
+              f = v.get('file','?')
+              l = v.get('line', 1)
+              mode = v.get('context','pact')
+              msg = ', '.join(v.get('missing', [v.get('call','?')]))
+              print(f'::warning file={f},line={l},title={mode}::{msg}')
+          "
+
+      - name: Fail if violations found
+        if: steps.pact.outputs.violation_count != '0'
+        run: |
+          echo "Pact found ${{ steps.pact.outputs.violation_count }} violation(s). See annotations."
+          exit 1
