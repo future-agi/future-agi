@@ -5,12 +5,12 @@ const NODE_TYPE_CONFIG = {
     iconSrc: "/assets/icons/ic_chat_single.svg",
     color: "orange.500",
   },
-  agent: {
+  [NODE_TYPES.AGENT]: {
     iconSrc: "/assets/icons/navbar/ic_agents.svg",
     color: "purple.500",
   },
-  eval: {
-    iconSrc: "/assets/icons/ic_rounded_square.svg",
+  [NODE_TYPES.EVAL]: {
+    iconSrc: "/assets/icons/ic_check.svg",
     color: "green.600",
   },
   default: {

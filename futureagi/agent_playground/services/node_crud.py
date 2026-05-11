@@ -174,6 +174,7 @@ def create_node(
     source_node_id = data.get("source_node_id")
     prompt_data = data.get("prompt_template")
     ports_data = data.get("ports", [])
+    config = data.get("config") or {}
 
     node_template = None
     ref_graph_version = None
@@ -193,7 +194,7 @@ def create_node(
         ref_graph_version=ref_graph_version,
         type=node_type,
         name=name,
-        config={},
+        config=config,
         position=position,
     )
     node.save(skip_validation=True)
@@ -277,6 +278,8 @@ def update_node(
         node.name = data["name"]
     if "position" in data:
         node.position = data["position"]
+    if "config" in data:
+        node.config = data["config"] or {}
 
     # Handle ref_graph_version_id update (subgraph nodes)
     if "ref_graph_version_id" in data:
@@ -422,7 +425,9 @@ def _resolve_or_create_pt_ptv(
 
     # Build variable_names dict from messages (model_hub convention)
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
     pv_metadata = prompt_data.get("metadata") or {}
@@ -618,7 +623,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
     """
     now = timezone.now()
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     new_vars = _extract_variables(messages, template_format=_tf)
 
     existing_input_ports = list(
@@ -675,7 +682,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create ports for an LLM prompt node from its messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     # Input ports for each variable
@@ -703,7 +712,9 @@ def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_input_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create input ports for an LLM prompt node from variables in messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     for var in variables:
@@ -1079,7 +1090,9 @@ def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
     _create_ports_from_fe_array(node, ports_data)
 
 
-def _extract_variables(messages: list[dict], template_format: str | None = None) -> list[str]:
+def _extract_variables(
+    messages: list[dict], template_format: str | None = None
+) -> list[str]:
     """Extract unique variable names from message contents, preserving order.
 
     When template_format is "jinja" or "jinja2", uses Jinja2 AST analysis to

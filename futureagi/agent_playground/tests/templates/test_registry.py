@@ -17,6 +17,7 @@ class TestGetAllTemplates:
     def test_returns_llm_prompt(self):
         templates = get_all_templates()
         assert "llm_prompt" in templates
+        assert "evaluation" in templates
 
     def test_returns_copy(self):
         """Modifying the returned dict does not affect the registry."""

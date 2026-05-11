@@ -5,7 +5,7 @@ import { NODE_TYPES } from "../../utils/constants";
 
 const FORM_COMPONENTS = {
   [NODE_TYPES.LLM_PROMPT]: PromptNodeForm,
-  eval: EvalsNodeForm,
+  [NODE_TYPES.EVAL]: EvalsNodeForm,
   [NODE_TYPES.AGENT]: AgentNodeForm,
 };
 
@@ -20,7 +20,10 @@ export default function NodeConfigurationForm({ nodeType, nodeId }) {
 }
 
 NodeConfigurationForm.propTypes = {
-  nodeType: PropTypes.oneOf([NODE_TYPES.LLM_PROMPT, "eval", NODE_TYPES.AGENT])
-    .isRequired,
+  nodeType: PropTypes.oneOf([
+    NODE_TYPES.LLM_PROMPT,
+    NODE_TYPES.EVAL,
+    NODE_TYPES.AGENT,
+  ]).isRequired,
   nodeId: PropTypes.string.isRequired,
 };

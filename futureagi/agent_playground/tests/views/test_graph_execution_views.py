@@ -420,6 +420,164 @@ class TestGraphExecutionRetrieve:
 
 
 # =============================================================================
+# Graph execution evaluation
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGraphExecutionEvaluate:
+    """Tests for POST /graphs/<graph_id>/executions/<execution_id>/evaluate/."""
+
+    def test_runs_agent_level_eval_against_mapped_node_outputs(
+        self,
+        authenticated_client,
+        graph,
+        active_graph_version,
+        node_template,
+        monkeypatch,
+    ):
+        node = Node.no_workspace_objects.create(
+            graph_version=active_graph_version,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name="Answer Node",
+            config={},
+            position={"x": 0, "y": 0},
+        )
+        output_port = Port.no_workspace_objects.create(
+            node=node,
+            key="output1",
+            display_name="answer",
+            direction=PortDirection.OUTPUT,
+            data_schema={"type": "string"},
+            required=True,
+        )
+        execution = GraphExecution.no_workspace_objects.create(
+            graph_version=active_graph_version,
+            status=GraphExecutionStatus.SUCCESS,
+            output_payload={},
+        )
+        node_execution = NodeExecution.no_workspace_objects.create(
+            graph_execution=execution,
+            node=node,
+            status=NodeExecutionStatus.SUCCESS,
+        )
+        ExecutionData.no_workspace_objects.create(
+            node_execution=node_execution,
+            port=output_port,
+            payload="Paris",
+        )
+
+        observed = {}
+
+        def fake_run_agent_evaluation_batch(
+            evaluators,
+            graph_execution,
+            execution_context,
+            threshold,
+            fallback_mappings=None,
+        ):
+            observed.update(
+                {
+                    "evaluators": evaluators,
+                    "graph_execution": graph_execution,
+                    "threshold": threshold,
+                    "execution_context": execution_context,
+                    "fallback_mappings": fallback_mappings,
+                }
+            )
+            return {
+                "score": 0.91,
+                "passed": True,
+                "threshold": threshold,
+                "results": [{"name": "accuracy", "score": 0.91, "passed": True}],
+            }
+
+        monkeypatch.setattr(
+            "agent_playground.views.graph_execution.run_agent_evaluation_batch",
+            fake_run_agent_evaluation_batch,
+        )
+
+        url = reverse(
+            "graph-execution-evaluate",
+            kwargs={"graph_id": graph.id, "execution_id": execution.id},
+        )
+        response = authenticated_client.post(
+            url,
+            {
+                "evaluators": [{"templateId": str(uuid.uuid4()), "name": "accuracy"}],
+                "threshold": 0.8,
+                "mappings": {"output": f"{node.id}.output1"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.data["result"]
+        assert result["score"] == 0.91
+        assert result["passed"] is True
+        assert result["history"][0]["score"] == 0.91
+        assert observed["graph_execution"] == execution
+        assert observed["fallback_mappings"] == {"output": f"{node.id}.output1"}
+        assert observed["threshold"] == 0.8
+
+        execution.refresh_from_db()
+        assert execution.output_payload["agent_evaluations"][0]["passed"] is True
+
+    def test_returns_400_for_missing_mapped_output(
+        self,
+        authenticated_client,
+        graph,
+        active_graph_version,
+    ):
+        execution = GraphExecution.no_workspace_objects.create(
+            graph_version=active_graph_version,
+            status=GraphExecutionStatus.SUCCESS,
+        )
+        url = reverse(
+            "graph-execution-evaluate",
+            kwargs={"graph_id": graph.id, "execution_id": execution.id},
+        )
+        response = authenticated_client.post(
+            url,
+            {
+                "evaluators": [{"templateId": str(uuid.uuid4())}],
+                "mappings": {"output": f"{uuid.uuid4()}.answer"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Missing execution outputs" in response.data["result"]
+
+    def test_returns_400_for_incomplete_execution(
+        self,
+        authenticated_client,
+        graph,
+        active_graph_version,
+    ):
+        execution = GraphExecution.no_workspace_objects.create(
+            graph_version=active_graph_version,
+            status=GraphExecutionStatus.RUNNING,
+        )
+        url = reverse(
+            "graph-execution-evaluate",
+            kwargs={"graph_id": graph.id, "execution_id": execution.id},
+        )
+        response = authenticated_client.post(
+            url,
+            {
+                "evaluators": [{"templateId": str(uuid.uuid4())}],
+                "mappings": {"output": f"{uuid.uuid4()}.answer"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "successful execution" in response.data["result"]
+
+
+# =============================================================================
 # Node execution detail
 # =============================================================================
 

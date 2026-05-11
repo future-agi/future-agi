@@ -225,8 +225,8 @@ describe("getNodeFormSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("returns eval schema for eval type", () => {
-    const schema = getNodeFormSchema("eval");
+  it("returns eval schema for evaluation type", () => {
+    const schema = getNodeFormSchema(NODE_TYPES.EVAL);
     const result = schema.safeParse({ name: "eval_node" });
     expect(result.success).toBe(true);
   });

@@ -3,6 +3,7 @@ export const NODE_X_OFFSET = 450;
 
 export const NODE_TYPES = {
   LLM_PROMPT: "llm_prompt",
+  EVAL: "evaluation",
   AGENT: "agent",
 };
 
@@ -21,6 +22,13 @@ export const NODE_TYPE_CONFIG = {
     description: "Run a prompt against an LLM",
     iconSrc: "/assets/icons/ic_chat_single.svg",
     color: "orange.500",
+  },
+  [NODE_TYPES.EVAL]: {
+    id: NODE_TYPES.EVAL,
+    title: "Evaluation",
+    description: "Run evals against upstream data",
+    iconSrc: "/assets/icons/ic_check.svg",
+    color: "green.500",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
 };

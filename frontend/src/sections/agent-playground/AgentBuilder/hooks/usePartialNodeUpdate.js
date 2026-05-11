@@ -30,6 +30,27 @@ function buildAgentPatchPayload(updateData) {
   return patch;
 }
 
+export function buildEvaluationPatchPayload(updateData) {
+  const config = updateData.config || {};
+  const ports = (config.payload?.ports || updateData.ports || []).filter(
+    (port) => port.direction === PORT_DIRECTION.OUTPUT,
+  );
+  const patch = {
+    config: {
+      evaluators: config.evaluators || updateData.evaluators || [],
+      threshold: config.threshold ?? updateData.threshold ?? 0.5,
+      fail_action:
+        config.fail_action ||
+        config.failAction ||
+        updateData.failAction ||
+        "continue",
+    },
+  };
+  if (updateData.label) patch.name = updateData.label;
+  if (ports.length > 0) patch.ports = ports;
+  return patch;
+}
+
 /**
  * Wraps the partial update API.
  * Transforms store-shaped nodeUpdate into contract-shaped PATCH payload
@@ -48,7 +69,9 @@ export default function usePartialNodeUpdate() {
       const apiPayload =
         node?.type === NODE_TYPES.LLM_PROMPT
           ? buildPatchPayload(updateData, config)
-          : buildAgentPatchPayload(updateData);
+          : node?.type === NODE_TYPES.EVAL
+            ? buildEvaluationPatchPayload(updateData)
+            : buildAgentPatchPayload(updateData);
 
       return mutateAsync({ graphId, versionId, nodeId, data: apiPayload });
     },

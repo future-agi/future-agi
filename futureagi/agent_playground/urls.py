@@ -48,6 +48,7 @@ dataset_execute = GraphDatasetViewSet.as_view({"post": "execute"})
 
 execution_list = GraphExecutionViewSet.as_view({"get": "list"})
 execution_detail = GraphExecutionViewSet.as_view({"get": "retrieve"})
+execution_evaluate = GraphExecutionViewSet.as_view({"post": "evaluate"})
 node_execution_detail = GraphExecutionViewSet.as_view({"get": "node_detail"})
 
 version_activate = GraphViewSet.as_view(
@@ -130,6 +131,11 @@ urlpatterns = [
         "graphs/<uuid:graph_id>/executions/<uuid:execution_id>/",
         execution_detail,
         name="graph-execution-detail",
+    ),
+    path(
+        "graphs/<uuid:graph_id>/executions/<uuid:execution_id>/evaluate/",
+        execution_evaluate,
+        name="graph-execution-evaluate",
     ),
     path(
         "executions/<uuid:execution_id>/nodes/<uuid:node_execution_id>/",

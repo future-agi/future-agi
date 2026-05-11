@@ -35,8 +35,8 @@ import logger from "src/utils/logger";
 
 const nodeTypes = {
   [NODE_TYPES.LLM_PROMPT]: PromptNode,
-  agent: AgentNode,
-  eval: EvalNode,
+  [NODE_TYPES.AGENT]: AgentNode,
+  [NODE_TYPES.EVAL]: EvalNode,
 };
 
 const edgeTypes = {

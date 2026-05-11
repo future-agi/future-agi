@@ -8,11 +8,13 @@ import { useWorkflowRunStoreShallow } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
+import AgentEvaluationPanel from "./AgentEvaluationPanel";
 
 const MIN_PANEL_HEIGHT = 200;
 const MAX_PANEL_HEIGHT = 600;
 
 export default function RunAgentPanel({
+  graphId,
   panelHeight,
   onResize,
   executionId,
@@ -163,10 +165,19 @@ export default function RunAgentPanel({
             name="NodeOutputDetail"
             onRetry={() => setSelectedNodeId(null)}
           >
-            <NodeOutputDetail
-              executionId={resolvedExecutionId}
-              nodeExecutionId={selectedNodeExecutionId}
-            />
+            <Box
+              sx={{ height: "100%", display: "flex", flexDirection: "column" }}
+            >
+              <AgentEvaluationPanel
+                graphId={graphId}
+                executionId={executionId}
+                executionData={executionData}
+              />
+              <NodeOutputDetail
+                executionId={resolvedExecutionId}
+                nodeExecutionId={selectedNodeExecutionId}
+              />
+            </Box>
           </PanelErrorBoundary>
         }
       />
@@ -175,6 +186,7 @@ export default function RunAgentPanel({
 }
 
 RunAgentPanel.propTypes = {
+  graphId: PropTypes.string,
   panelHeight: PropTypes.number.isRequired,
   onResize: PropTypes.func.isRequired,
   executionId: PropTypes.string,

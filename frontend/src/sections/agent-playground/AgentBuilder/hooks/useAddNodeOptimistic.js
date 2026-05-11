@@ -108,6 +108,13 @@ export default function useAddNodeOptimistic() {
                   ],
             },
           }),
+          ...(payload.type === NODE_TYPES.EVAL && {
+            config: {
+              evaluators: config?.evaluators || [],
+              threshold: config?.threshold ?? 0.5,
+              fail_action: config?.failAction || config?.fail_action || "continue",
+            },
+          }),
         },
       })
         .then((apiResult) => {

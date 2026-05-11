@@ -40,6 +40,11 @@ const ExecutionNode = ({ data }) => {
 
   const inputPorts = ports.filter((p) => p.direction === "input");
   const outputPorts = ports.filter((p) => p.direction === "output");
+  const evaluationResult = nodeExecution?.evaluation_result;
+  const evaluationScore =
+    typeof evaluationResult?.score === "number"
+      ? Math.round(evaluationResult.score * 100)
+      : null;
 
   return (
     <Box sx={{ position: "relative", opacity: isPending ? 0.4 : 1 }}>
@@ -124,14 +129,26 @@ const ExecutionNode = ({ data }) => {
               }}
             />
           </Box>
-          <Typography
-            typography="s2_1"
-            fontWeight="fontWeightMedium"
-            color="text.primary"
-            noWrap
-          >
-            {label}
-          </Typography>
+          <Stack sx={{ minWidth: 0, flex: 1 }} gap={0.25}>
+            <Typography
+              typography="s2_1"
+              fontWeight="fontWeightMedium"
+              color="text.primary"
+              noWrap
+            >
+              {label}
+            </Typography>
+            {evaluationResult && (
+              <Typography
+                typography="s2"
+                color={evaluationResult.passed ? "success.main" : "error.main"}
+                noWrap
+              >
+                {evaluationResult.passed ? "Pass" : "Fail"}
+                {evaluationScore !== null ? ` · ${evaluationScore}%` : ""}
+              </Typography>
+            )}
+          </Stack>
         </Stack>
       </Box>
 
@@ -151,6 +168,7 @@ ExecutionNode.propTypes = {
     selected: PropTypes.bool,
     nodeExecution: PropTypes.shape({
       status: PropTypes.string,
+      evaluation_result: PropTypes.object,
     }),
     ports: PropTypes.array,
   }).isRequired,

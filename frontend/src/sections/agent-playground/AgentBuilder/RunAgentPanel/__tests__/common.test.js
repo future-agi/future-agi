@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getNodeConfig } from "../common";
+import { NODE_TYPES } from "../../../utils/constants";
 
 describe("getNodeConfig", () => {
   it("returns prompt config for 'llm_prompt' type", () => {
@@ -14,9 +15,9 @@ describe("getNodeConfig", () => {
     expect(config.color).toBe("purple.500");
   });
 
-  it("returns eval config for 'eval' type", () => {
-    const config = getNodeConfig("eval");
-    expect(config.iconSrc).toContain("ic_rounded_square");
+  it("returns eval config for evaluation type", () => {
+    const config = getNodeConfig(NODE_TYPES.EVAL);
+    expect(config.iconSrc).toContain("ic_check");
     expect(config.color).toBe("green.600");
   });
 

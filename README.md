@@ -429,6 +429,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 - [x] LiveKit Configuration via UI
 - [x] System Metric Filtering for Voice
 - [x] Agent Playground
+- [x] Agent Playground eval nodes
 - [x] Dashboards
 - [x] Access platform via MCP
 - [x] Annotation Queues

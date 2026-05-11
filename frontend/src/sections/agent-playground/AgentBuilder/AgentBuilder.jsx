@@ -305,6 +305,7 @@ export default function AgentBuilder() {
             {/* Run Agent Panel - Shows output after workflow run */}
             {hasNodes && showOutput && !isLoadingTemplate && (
               <RunAgentPanel
+                graphId={graphId}
                 panelHeight={outputPanelHeight}
                 onResize={setOutputPanelHeight}
                 onClose={handleCloseRunPanel}

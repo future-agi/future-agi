@@ -131,7 +131,7 @@ export const agentNodeFormSchema = z.object({
  * Schema for Eval Node Form
  */
 export const evalNodeFormSchema = z.object({
-  nodeType: z.literal("eval").optional(),
+  nodeType: z.literal(NODE_TYPES.EVAL).optional(),
   nodeId: z.string().optional(),
   name: z
     .string()
@@ -142,6 +142,11 @@ export const evalNodeFormSchema = z.object({
     )
     .trim(),
   evaluators: z.array(z.any()).optional(),
+  threshold: z.number().min(0).max(1).optional().default(0.5),
+  failAction: z
+    .enum(["continue", "stop", "route_fallback"])
+    .optional()
+    .default("continue"),
 });
 
 /**
@@ -155,7 +160,7 @@ export function getNodeFormSchema(nodeType) {
       return getPromptNodeFormSchema();
     case NODE_TYPES.AGENT:
       return agentNodeFormSchema;
-    case "eval":
+    case NODE_TYPES.EVAL:
       return evalNodeFormSchema;
     default:
       // Return a basic schema for unknown types
