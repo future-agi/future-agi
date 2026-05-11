@@ -145,11 +145,66 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
             for m in column_span_mapping_data
         )
 
+        # Check if any mapping needs virtual eval/annotation fields
+        needs_eval_metrics = any(
+            (m.get("span_field") or m.get("column_name")) == "eval_metrics"
+            for m in column_span_mapping_data
+        )
+        needs_annotation_metrics = any(
+            (m.get("span_field") or m.get("column_name")) == "annotation_metrics"
+            for m in column_span_mapping_data
+        )
+
         # Pre-fetch child span trees if needed
         child_spans_cache = {}
         if needs_child_spans:
             for span_id in span_ids:
                 child_spans_cache[span_id] = _serialize_span_tree(span_id)
+
+        # Pre-fetch eval metrics (EvalLogger) if needed — single bulk query, no N+1
+        from collections import defaultdict
+
+        eval_metrics_cache = defaultdict(dict)
+        if needs_eval_metrics:
+            from tracer.models.observation_span import EvalLogger
+
+            for log in EvalLogger.objects.filter(
+                observation_span_id__in=span_ids
+            ).order_by(
+                "created_at"
+            ):  # ascending → most recent wins per key
+                key = log.eval_type_id or str(log.id)
+                if log.output_float is not None:
+                    score = log.output_float
+                elif log.output_bool is not None:
+                    score = log.output_bool
+                elif log.output_str:
+                    score = log.output_str
+                else:
+                    score = log.output_str_list
+                eval_metrics_cache[log.observation_span_id][key] = {
+                    "score": score,
+                    "explanation": log.results_explanation,
+                    "error": log.error,
+                    "error_message": log.error_message if log.error else None,
+                }
+
+        # Pre-fetch annotation metrics (Score) if needed — single bulk query, no N+1
+        annotation_metrics_cache = defaultdict(dict)
+        if needs_annotation_metrics:
+            from model_hub.models.score import Score
+
+            for score in (
+                Score.objects.filter(
+                    observation_span_id__in=span_ids,
+                    deleted=False,
+                )
+                .select_related("label")
+                .order_by("created_at")
+            ):  # ascending → most recent wins per label
+                annotation_metrics_cache[score.observation_span_id][
+                    score.label.name
+                ] = score.value
 
         # Create all Row objects for this chunk (in memory - no DB operation)
         for i, observation_span in enumerate(observation_spans):
@@ -175,6 +230,12 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
                     if field_name == "child_spans":
                         # Virtual field: recursively collected child span data
                         value = child_spans_cache.get(observation_span.id, [])
+                    elif field_name == "eval_metrics":
+                        value = dict(eval_metrics_cache.get(observation_span.id, {}))
+                    elif field_name == "annotation_metrics":
+                        value = dict(
+                            annotation_metrics_cache.get(observation_span.id, {})
+                        )
                     else:
                         try:
                             value = getattr(observation_span, field_name, None)
@@ -203,6 +264,7 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
         # Emit storage usage event for dataset row creation
         try:
             from model_hub.models.develop_dataset import Database
+
             try:
                 from ee.usage.schemas.events import UsageEvent
             except ImportError:

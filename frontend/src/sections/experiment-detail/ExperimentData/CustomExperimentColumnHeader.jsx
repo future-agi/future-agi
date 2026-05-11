@@ -6,6 +6,8 @@ import { ShowComponent } from "src/components/show/ShowComponent";
 import SvgColor from "src/components/svg-color";
 import { getUniqueColorPalette } from "src/utils/utils";
 import { useRerunColumnInExperimentStoreShallow } from "./states";
+import { EXPERIMENT_COLUMN_STATUS } from "./constants";
+
 const iconStyle = {
   color: "text.secondary",
 };
@@ -152,7 +154,11 @@ export const CustomExperimentColumnHeader = (props) => {
           onClick={() => {
             setSelectedSourceId(col?.sourceId);
           }}
-          disabled={col?.status === "Running"}
+          disabled={[
+            EXPERIMENT_COLUMN_STATUS.RUNNING,
+            EXPERIMENT_COLUMN_STATUS.NOT_STARTED,
+            EXPERIMENT_COLUMN_STATUS.QUEUED,
+          ].includes(col?.status)}
           sx={{
             display: "none",
             ":hover ": {

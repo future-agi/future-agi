@@ -118,15 +118,8 @@ async def convert_audio_url_to_s3_async(
         logger.info(f"{url_type} URL is already S3: {audio_url}")
         return audio_url
 
-    # Check if it's a Vapi URL (we only convert Vapi URLs)
-    if "vapi.ai" not in str(audio_url):
-        logger.info(
-            f"{url_type} URL is not a Vapi URL, skipping conversion: {audio_url}"
-        )
-        return audio_url
-
     try:
-        logger.info(f"Converting {url_type} URL from Vapi to S3: {audio_url}")
+        logger.info(f"Converting {url_type} URL to S3: {audio_url}")
 
         # Async download
         audio_bytes = await download_audio_from_url_async(audio_url)

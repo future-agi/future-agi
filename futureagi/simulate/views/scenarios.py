@@ -358,13 +358,12 @@ class CreateScenarioView(APIView):
         """
         Create a new scenario by copying the specified dataset
         """
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None) or request.user.organization
+        check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
+
         try:
-            from tfc.ee_gating import EEFeature, check_ee_feature
-
-            org = getattr(request, "organization", None) or request.user.organization
-            check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
-
-            # Phase 0: all validation (including 0.1.1–0.1.3) now lives in the serializer
             serializer = ScenarioCreateRequestSerializer(
                 data=request.data, context={"request": request}
             )
@@ -419,9 +418,8 @@ class CreateScenarioView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to create scenario: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to create scenario: {str(e)}"
             )
 
     def _create_temp_scenario(self, request, validated_data):

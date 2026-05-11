@@ -276,6 +276,12 @@ class TraceErrorGroup(BaseModel):
             models.Index(fields=["project", "source"]),
             models.Index(fields=["project", "issue_group"]),
             models.Index(fields=["status"]),
+            models.Index(
+                fields=["project", "-last_seen"],
+                condition=models.Q(deleted=False),
+                name="tracer_teg_proj_last_seen_idx",
+            ),
+            models.Index(fields=["project", "fix_layer"]),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -486,4 +492,8 @@ class ErrorClusterTraces(BaseModel):
             models.Index(fields=["span"]),
             models.Index(fields=["scan_issue"]),
             models.Index(fields=["eval_logger"]),
+            models.Index(
+                fields=["cluster", "-created_at"],
+                name="tracer_ect_cluster_created_idx",
+            ),
         ]

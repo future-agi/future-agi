@@ -381,9 +381,7 @@ class ClickHouseFilterBuilder:
         if col_id == "user_id":
             if filter_value is None or filter_value == "":
                 return None
-            values = (
-                filter_value if isinstance(filter_value, list) else [filter_value]
-            )
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
             values = [str(v) for v in values if v not in (None, "")]
             if not values:
                 return None
@@ -414,8 +412,10 @@ class ClickHouseFilterBuilder:
         if col_type == self.SYSTEM_METRIC and col_id not in self.SYSTEM_METRIC_MAP:
             try:
                 import uuid as _uuid
+
                 _uuid.UUID(str(col_id))
                 from model_hub.models.evals_metric import EvalTemplate
+
                 if EvalTemplate.no_workspace_objects.filter(
                     id=col_id, deleted=False
                 ).exists():
@@ -497,9 +497,8 @@ class ClickHouseFilterBuilder:
             # column so OTel attribute aliases (e.g.
             # ``gen_ai.usage.total_tokens``) are caught.
             mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
-            is_root_only = (
-                col_id in self.ROOT_ONLY_SYSTEM_METRICS
-                or (mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS)
+            is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
+                mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
             )
             root_clause = (
                 "AND (parent_span_id IS NULL OR parent_span_id = '') "
@@ -731,8 +730,8 @@ class ClickHouseFilterBuilder:
         dispatches on the template's output type (SCORE / PASS_FAIL / CHOICE)
         to compare the correct column in ``tracer_eval_logger``.
         """
-        from tracer.models.custom_eval_config import CustomEvalConfig
         from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
 
         project_ids = getattr(self, "project_ids", None)
 
@@ -747,9 +746,11 @@ class ClickHouseFilterBuilder:
                 cfg_qs = cfg_qs.filter(project_id__in=project_ids)
             config_ids = [str(x) for x in cfg_qs.values_list("id", flat=True)]
 
-            tmpl = EvalTemplate.no_workspace_objects.filter(
-                id=eval_id, deleted=False
-            ).values("config").first()
+            tmpl = (
+                EvalTemplate.no_workspace_objects.filter(id=eval_id, deleted=False)
+                .values("config")
+                .first()
+            )
             if tmpl and isinstance(tmpl.get("config"), dict):
                 ot = (
                     (tmpl["config"].get("output") or "")
@@ -933,6 +934,40 @@ class ClickHouseFilterBuilder:
                 f"AND JSONExtractString(value, 'value') = {bool_match})"
             )
 
+        elif filter_type == "thumbs":
+            # Thumbs labels are stored as {"value": "up"|"down"} on the
+            # Score row — distinct from categorical's {"selected": [...]}.
+            # Multi-select on the FE arrives as an array of display labels;
+            # normalize to the storage tokens before querying.
+            _TOKENS = {
+                "thumbs up": "up",
+                "thumbs down": "down",
+                "thumbs_up": "up",
+                "thumbs_down": "down",
+                "up": "up",
+                "down": "down",
+            }
+            raw_values = (
+                filter_value if isinstance(filter_value, list) else [filter_value]
+            )
+            tokens = []
+            for v in raw_values:
+                if v is None:
+                    continue
+                t = _TOKENS.get(str(v).strip().lower())
+                if t is not None and t not in tokens:
+                    tokens.append(t)
+            if not tokens:
+                return None
+            param = self._next_param("ann")
+            self._params[param] = tuple(tokens)
+            negate = filter_op in ("not_in", "not_equals", "is_not")
+            sql_op = "NOT IN" if negate else "IN"
+            return (
+                f"trace_id IN ({base_where} "
+                f"AND JSONExtractString(value, 'value') {sql_op} %({param})s)"
+            )
+
         elif filter_type == "text":
             param = self._next_param("ann")
             text_expr = "JSONExtractString(value, 'text')"
@@ -989,22 +1024,43 @@ class ClickHouseFilterBuilder:
             # Categorical annotations: value JSON has a "selected" key
             # containing an array like ["choice1","choice2"].
             # Use has() on the extracted array to check membership.
+            #
+            # Backward-compat shim: legacy saved views stored thumbs filters
+            # as filter_type="categorical" with values like "Thumbs Up" /
+            # "Thumbs Down". The canonical path is now filter_type="thumbs"
+            # (FE auto-migrates on panel open), but until those views are
+            # re-applied, we OR-in a check against the thumbs storage shape
+            # ({"value":"up"|"down"}) so the first page load still matches.
+            # Mirrors _THUMBS_MAP in tracer/utils/filters.py and can be
+            # removed once no in-flight payloads use this combination.
             selected_expr = "JSONExtract(value, 'selected', 'Array(String)')"
-            if isinstance(filter_value, list):
-                sub_conditions = []
-                for value in filter_value:
-                    p = self._next_param("ann")
-                    self._params[p] = value
-                    sub_conditions.append(f"has({selected_expr}, %({p})s)")
-                combined = " OR ".join(sub_conditions)
-                return f"trace_id IN ({base_where} AND ({combined}))"
-            else:
-                param = self._next_param("ann")
-                self._params[param] = filter_value
-                return (
-                    f"trace_id IN ({base_where} "
-                    f"AND has({selected_expr}, %({param})s))"
+            value_expr = "JSONExtractString(value, 'value')"
+            _LEGACY_THUMBS = {
+                "thumbs up": "up",
+                "thumbs down": "down",
+                "thumbs_up": "up",
+                "thumbs_down": "down",
+            }
+
+            def _build_one(v: Any) -> str:
+                p = self._next_param("ann")
+                self._params[p] = v
+                cond = f"has({selected_expr}, %({p})s)"
+                thumbs = (
+                    _LEGACY_THUMBS.get(v.strip().lower())
+                    if isinstance(v, str)
+                    else None
                 )
+                if thumbs is not None:
+                    tp = self._next_param("ann")
+                    self._params[tp] = thumbs
+                    cond = f"({cond} OR {value_expr} = %({tp})s)"
+                return cond
+
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
+            sub_conditions = [_build_one(v) for v in values]
+            combined = " OR ".join(sub_conditions)
+            return f"trace_id IN ({base_where} AND ({combined}))"
 
         elif filter_type == "annotator":
             # Per-label annotator filter: check if specific user(s) annotated

@@ -56,6 +56,7 @@ from model_hub.serializers.experiments import (
 )
 from model_hub.services.dataset_snapshot import create_dataset_snapshot
 from model_hub.tasks.experiment_runner import process_experiments
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
@@ -1149,13 +1150,9 @@ class DatasetExperimentsView(APIView):
                             em = eval_metric_map.get(eval_id) if eval_id else None
                             if em:
                                 col_status = em.status
-                                output_type = em.template.config.get("output")
-                                data_type = {
-                                    "reason": "text",
-                                    "score": "float",
-                                    "numeric": "float",
-                                    "choices": "array",
-                                }.get(output_type, "boolean")
+                                data_type = infer_eval_result_column_data_type(
+                                    em.template
+                                )
                                 choices_map = em.template.config.get("choices_map", {})
                                 group = {
                                     "id": str(eval_id),
@@ -1460,7 +1457,7 @@ class GetRowDiffV2View(APIView):
                 ExperimentsTable, id=experiment_id, deleted=False
             )
 
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             if experiment.dataset.organization_id != organization.id:
                 return self._gm.bad_request("Experiment not found.")
 
@@ -3388,7 +3385,7 @@ class ExperimentsTableV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, experiment_id):
-        organization = request.user.organization
+        organization = getattr(request, "organization", None) or request.user.organization
 
         try:
             experiment = (
@@ -3428,7 +3425,7 @@ class ExperimentsTableV2View(APIView):
             return self._gm.bad_request(parse_serialized_errors(serializer))
 
         data = serializer.validated_data
-        organization = request.user.organization
+        organization = getattr(request, "organization", None) or request.user.organization
 
         try:
             # Validate dataset belongs to org
@@ -3748,7 +3745,7 @@ class ExperimentsTableV2View(APIView):
             return self._gm.bad_request(parse_serialized_errors(serializer))
 
         data = serializer.validated_data
-        organization = request.user.organization
+        organization = getattr(request, "organization", None) or request.user.organization
 
         try:
             experiment = ExperimentsTable.objects.get(
@@ -4777,7 +4774,7 @@ class ExperimentJsonSchemaView(APIView):
         try:
             from model_hub.views.develop_dataset import get_json_column_schemas
 
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             experiment = ExperimentsTable.objects.select_related(
                 "dataset", "snapshot_dataset"
             ).get(
@@ -4815,7 +4812,7 @@ class ExperimentDerivedVariablesView(APIView):
                 get_dataset_derived_variables,
             )
 
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             experiment = ExperimentsTable.objects.select_related(
                 "dataset", "snapshot_dataset"
             ).get(
@@ -4855,7 +4852,7 @@ class ExperimentDeleteV2View(APIView):
             if not experiment_ids:
                 return self._gm.bad_request(get_error_message("MISSING_EXP_IDS"))
 
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             experiments = ExperimentsTable.objects.filter(
                 id__in=experiment_ids,
                 dataset__organization=organization,
@@ -4930,7 +4927,7 @@ class ExperimentRerunV2View(APIView):
 
             experiment_ids = serializer.validated_data["experiment_ids"]
             max_concurrent_rows = request.data.get("max_concurrent_rows", 10)
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
 
             experiments = ExperimentsTable.objects.filter(
                 id__in=experiment_ids,
@@ -4980,7 +4977,7 @@ class ExperimentRerunCellsV2View(APIView):
             if not serializer.is_valid():
                 return self._gm.bad_request(parse_serialized_errors(serializer))
 
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             experiment = ExperimentsTable.objects.filter(
                 id=experiment_id,
                 dataset__organization=organization,
@@ -5513,7 +5510,7 @@ class ExperimentStopV2View(APIView):
 
     def post(self, request, experiment_id):
         try:
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             experiment = ExperimentsTable.objects.filter(
                 id=experiment_id,
                 dataset__organization=organization,
@@ -5589,7 +5586,7 @@ class ExperimentNameSuggestionView(APIView):
 
     def get(self, request, dataset_id):
         try:
-            organization = request.user.organization
+            organization = getattr(request, "organization", None) or request.user.organization
             dataset = Dataset.objects.filter(
                 id=dataset_id,
                 organization=organization,
@@ -5646,7 +5643,7 @@ class ExperimentNameValidationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        organization = request.user.organization
+        organization = getattr(request, "organization", None) or request.user.organization
         dataset_id = request.query_params.get("dataset_id")
         name = request.query_params.get("name", "").strip()
 

@@ -8,6 +8,7 @@ import { useLocation, useNavigate } from "react-router";
 import { useParams } from "src/routes/hooks";
 import { enqueueSnackbar } from "notistack";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
 
 import Results from "./PromptGenerate/Results";
 import Workbench from "./PromptGenerate/Workbench";
@@ -22,6 +23,7 @@ const transformToPayload = (
   isRunTemplate,
   appliedVariableData,
   currentTitle,
+  templateFormat,
 ) => {
   const configuration = {
     temperature: modelData?.temperature || 0.7,
@@ -33,6 +35,7 @@ const transformToPayload = (
     response_format: modelData?.responseFormat || "text",
     tool_choice: modelData?.toolChoice === "none" ? "" : modelData?.toolChoice,
     tools: modelData?.tools || [],
+    template_format: templateFormat || "mustache",
   };
 
   const messages = checkVal.map((item) => {
@@ -74,6 +77,7 @@ const AddNewPromptView = () => {
   const location = useLocation();
   const [modelData, setModelData] = useState({});
   const [extractedVars, setExtractedVars] = useState([]);
+  const [templateFormat, setTemplateFormat] = useState("mustache");
   const debounceTimeout = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [titles, setTitles] = useState([]);
@@ -231,6 +235,7 @@ const AddNewPromptView = () => {
         isRun,
         appliedVariableData,
         currentTitle,
+        templateFormat,
       );
       trackEvent(Events.runPromptInitiated, {
         [PropertyName.formFields]: payload,
@@ -358,9 +363,13 @@ const AddNewPromptView = () => {
 
     for (const item of content) {
       if (item.type === "text") {
-        const match = item.text.match(/{{(.*?)}}/g);
-        if (match) {
-          variables.push(...match.map((v) => v.replace(/{{|}}/g, "").trim()));
+        if (templateFormat === "jinja") {
+          variables.push(...extractJinjaVariables(item.text));
+        } else {
+          const match = item.text.match(/{{(.*?)}}/g);
+          if (match) {
+            variables.push(...match.map((v) => v.replace(/{{|}}/g, "").trim()));
+          }
         }
       }
     }
@@ -393,6 +402,9 @@ const AddNewPromptView = () => {
       setCurrentTitle(currentResult?.name);
       setEvalsConfigs(currentResult?.evaluationConfigs ?? []);
       setModelData(currentResult?.promptConfig[0]?.configuration);
+      const savedFormat =
+        currentResult?.promptConfig[0]?.configuration?.template_format;
+      setTemplateFormat(savedFormat || "mustache");
       updateVersionList();
       if (
         JSON.stringify(appliedVariableData) !==
@@ -427,7 +439,7 @@ const AddNewPromptView = () => {
 
     return () => clearTimeout(debounceTimeout.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(checkVal)]);
+  }, [JSON.stringify(checkVal), templateFormat]);
 
   useEffect(() => {
     const newEvalsConfigs = versionList[versionIndex]?.evaluationConfigs;
@@ -518,6 +530,8 @@ const AddNewPromptView = () => {
             ? versions?.data?.data?.count + 1
             : versions?.data?.data?.count
         }
+        templateFormat={templateFormat}
+        setTemplateFormat={setTemplateFormat}
       />
       <Box sx={{ display: "flex", height: "calc(100% - 55px)", pb: "17px" }}>
         <Workbench

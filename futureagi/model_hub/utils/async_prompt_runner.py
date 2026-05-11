@@ -87,6 +87,7 @@ async def run_template_async(
                     prompt_messages,
                     variable_combination,
                     config.get("configuration", {}).get("model"),
+                    template_format=config.get("configuration", {}).get("template_format"),
                 )
                 messages_with_replacement = remove_empty_text_from_messages(
                     messages_with_replacement

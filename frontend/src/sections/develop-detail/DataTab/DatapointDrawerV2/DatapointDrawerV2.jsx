@@ -48,6 +48,7 @@ import AnnotationSidebarContent from "src/components/traceDetailDrawer/Annotatio
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 
 const SkeletonLoader = () => (
   <Box
@@ -61,6 +62,9 @@ const SkeletonLoader = () => (
     <Skeleton sx={{ width: "100%", height: "10px" }} variant="rounded" />
   </Box>
 );
+
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
 
 const ViewDetailsCellRenderer = (props) => {
   const { data = {}, node, setRunEval, disabled } = props;
@@ -761,8 +765,7 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      evalOpen?.cellValue &&
-                      evalOpen?.cellValue !== "" && (
+                      hasRenderableCellValue(evalOpen?.cellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
@@ -855,10 +858,41 @@ const DatapointDrawerChild = () => {
                       borderRadius: "4px",
                     }}
                   >
-                    {evalOpen?.valueInfos?.reason?.trim() ? (
+                    {Array.isArray(evalOpen?.valueInfos?.children) &&
+                    evalOpen.valueInfos.children.length > 0 ? (
+                      (() => {
+                        /** @type {any[]} */
+                        const compositeChildren =
+                          evalOpen.valueInfos.children || [];
+                        return (
+                          <CompositeResultView
+                            compositeResult={{
+                              ...evalOpen.valueInfos,
+                              total_children:
+                                evalOpen.valueInfos.total_children ??
+                                compositeChildren.length,
+                              completed_children:
+                                evalOpen.valueInfos.completed_children ??
+                                compositeChildren.filter(
+                                  (child) => child.status === "completed",
+                                ).length,
+                              failed_children:
+                                evalOpen.valueInfos.failed_children ??
+                                compositeChildren.filter(
+                                  (child) => child.status === "failed",
+                                ).length,
+                            }}
+                          />
+                        );
+                      })()
+                    ) : evalOpen?.valueInfos?.reason?.trim() ||
+                      evalOpen?.valueInfos?.summary ? (
                       <CellMarkdown
                         spacing={0}
-                        text={evalOpen?.valueInfos?.reason}
+                        text={
+                          evalOpen?.valueInfos?.reason ||
+                          evalOpen?.valueInfos?.summary
+                        }
                       />
                     ) : (
                       "Unable to fetch Explanation"

@@ -1,6 +1,8 @@
 import {
   REDDIT_PIXEL_ID,
   REDDIT_ADS_ENABLED,
+  AD_CONVERSION_VALUE,
+  AD_CONVERSION_CURRENCY,
 } from "src/config-global";
 import logger from "src/utils/logger";
 
@@ -62,14 +64,8 @@ export function initReddit() {
   initialized = true;
 }
 
-/**
- * Fire a Reddit signup conversion with Advanced Matching (email).
- * Called after a real account is created (email or OAuth/SSO).
- *
- * `transactionId` dedupes repeats server-side on Reddit's end.
- * `email` is hashed by Reddit for match-back against their user graph.
- */
-export function trackRedditSignup({ email, method = "email", userId } = {}) {
+
+export function trackRedditSignup({ email, userId } = {}) {
   if (!rdtReady()) return;
   if (!isEnabled()) return;
 
@@ -77,12 +73,17 @@ export function trackRedditSignup({ email, method = "email", userId } = {}) {
   if (!normalizedEmail) return;
 
   try {
-    window.rdt("track", "SignUp", {
-      currency: "USD",
-      value: 75.0,
-      transactionId: String(userId || normalizedEmail),
+    window.rdt("init", REDDIT_PIXEL_ID, {
+      optOut: false,
+      useDecimalCurrencyValues: true,
       email: normalizedEmail,
-      customEventName: method,
+      externalId: String(userId || ""),
+    });
+
+    window.rdt("track", "SignUp", {
+      currency: AD_CONVERSION_CURRENCY,
+      value: AD_CONVERSION_VALUE,
+      conversionId: String(userId || normalizedEmail),
     });
   } catch (err) {
     logger.error("Reddit signup conversion failed", err);

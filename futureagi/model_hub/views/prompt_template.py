@@ -272,7 +272,7 @@ def handle_media(item: dict, model_name: str):
 
 
 def replace_variables(
-    messages: list[dict], variable_names: dict, model_name: str
+    messages: list[dict], variable_names: dict, model_name: str, template_format: str = None
 ) -> list[dict]:
     """
     Replace variables in message content with their corresponding values.
@@ -280,12 +280,45 @@ def replace_variables(
     Args:
         messages (List[dict]): List of message dictionaries with 'role' and 'content'
         variable_names (dict): Dictionary of variable names and their values
+        model_name (str): The model name (for media handling)
+        template_format (str): "jinja" to use Jinja2 engine, otherwise simple replacement.
 
     Returns:
         List[dict]: Messages with variables replaced in content
     """
-    # if not variable_names:
-    #     return messages
+    from model_hub.views.run_prompt import render_template, TEMPLATE_FORMAT_JINJA2
+
+    use_jinja = template_format in ("jinja", "jinja2")
+
+    if use_jinja:
+        # Parse JSON strings into native types so Jinja2 can iterate/access them.
+        # e.g. '["a","b"]' becomes a real list, '{"k":"v"}' becomes a real dict.
+        import json as _json
+
+        jinja_context = {}
+        for k, v in variable_names.items():
+            if isinstance(v, str):
+                try:
+                    parsed = _json.loads(v)
+                    if isinstance(parsed, (list, dict)):
+                        jinja_context[k] = parsed
+                    else:
+                        jinja_context[k] = v
+                except (ValueError, TypeError):
+                    jinja_context[k] = v
+            else:
+                jinja_context[k] = v
+    else:
+        jinja_context = None
+
+    def _render(text):
+        if use_jinja:
+            return render_template(text, jinja_context, TEMPLATE_FORMAT_JINJA2)
+        # Default: simple placeholder replacement (original behaviour)
+        for var_name, var_value in variable_names.items():
+            placeholder = f"{{{{{var_name}}}}}"
+            text = text.replace(placeholder, str(var_value))
+        return text
 
     processed_messages = []
     for message in messages:
@@ -301,27 +334,14 @@ def replace_variables(
                     )
 
                 if item["type"] == "text":
-                    text = item["text"]
-                    for var_name, var_value in variable_names.items():
-                        placeholder = f"{{{{{var_name}}}}}"
-
-                        text = text.replace(
-                            placeholder, str(var_value)
-                        )  # Replace placeholder
-
+                    text = _render(item["text"])
                     processed_content.append({"type": "text", "text": text})
 
                 else:
                     processed_content.append(handle_media(item, model_name))
 
         elif isinstance(content, str):
-            # Replace variables in string content
-            text = content
-            for var_name, var_value in variable_names.items():
-                placeholder = f"{{{{{var_name}}}}}"
-
-                text = text.replace(placeholder, str(var_value))  # Replace placeholder
-
+            text = _render(content)
             processed_content.append({"type": "text", "text": text})
 
         processed_messages.append(
@@ -641,82 +661,23 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             serializer = self.get_serializer(instance)
             response = Response(serializer.data)
 
-            if (
-                PromptVersion.objects.filter(
-                    original_template=instance,
-                    original_template__organization=getattr(
-                        self.request, "organization", None
-                    )
-                    or self.request.user.organization,
-                    deleted=False,
-                    is_default=True,
-                )
-                .order_by("-is_default", "-created_at")
-                .exists()
-            ):
-                execution = (
-                    PromptVersion.objects.filter(
-                        original_template=instance,
-                        original_template__organization=getattr(
-                            self.request, "organization", None
-                        )
-                        or self.request.user.organization,
-                        deleted=False,
-                        is_default=True,
-                    )
-                    .order_by("-is_default", "-created_at")
-                    .first()
-                )
-            elif (
-                PromptVersion.objects.filter(
-                    original_template=instance,
-                    original_template__organization=getattr(
-                        self.request, "organization", None
-                    )
-                    or self.request.user.organization,
-                    deleted=False,
-                    is_draft=False,
-                )
-                .order_by("-is_default", "-created_at")
-                .exists()
-            ):
-                execution = (
-                    PromptVersion.objects.filter(
-                        original_template=instance,
-                        original_template__organization=getattr(
-                            self.request, "organization", None
-                        )
-                        or self.request.user.organization,
-                        deleted=False,
-                        is_draft=False,
-                    )
-                    .order_by("-is_default", "-created_at")
-                    .first()
-                )
-            elif (
-                PromptVersion.objects.filter(
-                    original_template=instance,
-                    original_template__organization=getattr(
-                        self.request, "organization", None
-                    )
-                    or self.request.user.organization,
-                    deleted=False,
-                )
-                .order_by("-is_default", "-created_at")
-                .exists()
-            ):
-                execution = (
-                    PromptVersion.objects.filter(
-                        original_template=instance,
-                        original_template__organization=getattr(
-                            self.request, "organization", None
-                        )
-                        or self.request.user.organization,
-                        deleted=False,
-                    )
-                    .order_by("-is_default", "-created_at")
-                    .first()
-                )
+            # Prioritize draft versions — they contain the latest unsaved edits
+            # (e.g. template_format changes) that haven't been committed yet.
+            org = getattr(self.request, "organization", None) or self.request.user.organization
+            base_qs = PromptVersion.objects.filter(
+                original_template=instance,
+                original_template__organization=org,
+                deleted=False,
+            )
+            draft_execution = base_qs.filter(is_draft=True).order_by("-created_at").first()
+            if draft_execution:
+                execution = draft_execution
+            elif base_qs.filter(is_default=True).exists():
+                execution = base_qs.filter(is_default=True).order_by("-is_default", "-created_at").first()
+            elif base_qs.filter(is_draft=False).exists():
+                execution = base_qs.filter(is_draft=False).order_by("-is_default", "-created_at").first()
+            elif base_qs.exists():
+                execution = base_qs.order_by("-is_default", "-created_at").first()
             else:
                 dummy_data = {
                     "name": "",
@@ -1892,6 +1853,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         prompt_messages,
                         variable_combination,
                         config.get("configuration", {}).get("model"),
+                        template_format=config.get("configuration", {}).get("template_format"),
                     )
                     messages_with_replacement = remove_empty_text_from_messages(
                         messages_with_replacement
@@ -2905,6 +2867,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 config.get("messages"),
                 variable_combination,
                 model_name=config.get("configuration", {}).get("model"),
+                template_format=config.get("configuration", {}).get("template_format"),
             )
             response = (
                 execution.output[i]

@@ -83,6 +83,21 @@ function buildDropdownOptions(datasetColumns, jsonSchemas = {}) {
         });
       }
     }
+
+    // Expand json/text columns with top-level array data
+    const colSchema = jsonSchemas?.[colId];
+    if (col.data_type !== "images" && colSchema?.max_array_count) {
+      const count = Math.min(colSchema.max_array_count, 2);
+      for (let idx = 0; idx < count; idx++) {
+        options.push({
+          id: `${colId}[${idx}]`,
+          value: `${col.name}[${idx}]`,
+          dataType: "array_index",
+          isJsonPath: true,
+          parentColumn: col.name,
+        });
+      }
+    }
   });
 
   return options;
@@ -112,6 +127,15 @@ function buildValidVariableSet(datasetColumns, jsonSchemas = {}) {
     const imagesSchema = jsonSchemas?.[colId];
     if (col.data_type === "images" && imagesSchema?.max_images_count) {
       for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
+        validSet.add(`${col.name}[${idx}]`.toLowerCase());
+      }
+    }
+
+    // Add array indexed access for json/text columns with top-level arrays
+    const colSchema = jsonSchemas?.[colId];
+    if (col.data_type !== "images" && colSchema?.max_array_count) {
+      const count = Math.min(colSchema.max_array_count, 2);
+      for (let idx = 0; idx < count; idx++) {
         validSet.add(`${col.name}[${idx}]`.toLowerCase());
       }
     }

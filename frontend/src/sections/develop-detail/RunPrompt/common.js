@@ -220,6 +220,7 @@ export const transformDefaultData = (editConfigData, allColumns) => {
       // maxTokens: editConfigData?.maxTokens,
       // presencePenalty: editConfigData?.presencePenalty,
       // frequencyPenalty: editConfigData?.frequencyPenalty,
+      template_format: runPromptConfig?.template_format || "mustache",
       prompt: "",
       promptVersion: "",
       // toolChoice: editConfigData?.toolChoice || "none",
@@ -270,6 +271,18 @@ export const extractVariableFromAllCols = (
       const imagesSchema = jsonSchemas?.[col?.field];
       if (col?.dataType === "images" && imagesSchema?.maxImagesCount) {
         for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+          const indexedPath = `${col.headerName}[${idx}]`;
+          if (!res[indexedPath]) {
+            res[indexedPath] = ["1"];
+          }
+        }
+      }
+
+      // For json/text columns with top-level array data, add indexed access
+      const colSchema = jsonSchemas?.[col?.field];
+      if (col?.dataType !== "images" && colSchema?.maxArrayCount) {
+        const count = Math.min(colSchema.maxArrayCount, 2);
+        for (let idx = 0; idx < count; idx++) {
           const indexedPath = `${col.headerName}[${idx}]`;
           if (!res[indexedPath]) {
             res[indexedPath] = ["1"];
@@ -345,6 +358,24 @@ export const getDropdownOptionsFromCols = (
           value: `${col?.headerName}[${idx}]`,
           dataType: "images_index",
           isImagesIndex: true,
+          parentColumn: col?.headerName,
+        });
+      }
+    }
+
+    // If this is a json/text column with top-level array data, add indexed options
+    const colSchema = jsonSchemas?.[col?.field];
+    if (
+      col?.dataType !== "images" &&
+      colSchema?.maxArrayCount
+    ) {
+      const count = Math.min(colSchema.maxArrayCount, 2);
+      for (let idx = 0; idx < count; idx++) {
+        options.push({
+          id: `${col?.field}[${idx}]`,
+          value: `${col?.headerName}[${idx}]`,
+          dataType: "array_index",
+          isJsonPath: true,
           parentColumn: col?.headerName,
         });
       }
@@ -453,7 +484,7 @@ export function findInvalidVariables(
       }
     }
 
-    // Check if it's a valid images indexed access (columnName[index])
+    // Check if it's a valid indexed access (columnName[index])
     const bracketMatch = rawVar.match(/^(.+?)\[(\d+)\]$/);
     if (bracketMatch) {
       const baseColumn = bracketMatch[1];
@@ -474,6 +505,11 @@ export function findInvalidVariables(
           return;
         }
         // Even if index exceeds maxImagesCount, allow it (will resolve to empty at runtime)
+        return;
+      }
+
+      // Allow indexed access for json/text columns with top-level array data
+      if (column && jsonSchemas?.[column.field]?.maxArrayCount) {
         return;
       }
     }
@@ -651,25 +687,29 @@ export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchema
       return;
     }
 
-    // Check for images indexed access (e.g., images[0])
+    // Check for indexed access (e.g., images[0], myarray[1])
     const bracketMatch = rawVar.match(/^(.+?)\[(\d+)\]$/);
     if (bracketMatch) {
       const baseColumn = bracketMatch[1];
       const index = bracketMatch[2];
-      const imagesColumn = allColumns.find(
+      const matchedColumn = allColumns.find(
         ({ headerName }) =>
           normalizeForComparison(headerName).toLowerCase() ===
           normalizeForComparison(baseColumn).toLowerCase(),
       );
 
-      if (imagesColumn?.dataType === "images") {
+      // Allow indexed access for images columns and json/text columns with top-level arrays
+      if (
+        matchedColumn?.dataType === "images" ||
+        (matchedColumn && jsonSchemas?.[matchedColumn.field]?.maxArrayCount)
+      ) {
         const replacePattern = new RegExp(
           `{{\\s*${rawVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*}}`,
           "g",
         );
         updatedText = updatedText.replace(
           replacePattern,
-          `{{${imagesColumn.field}[${index}]}}`,
+          `{{${matchedColumn.field}[${index}]}}`,
         );
         return;
       }

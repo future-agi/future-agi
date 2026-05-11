@@ -22,6 +22,9 @@ const getScorePercentage = (s, decimalPlaces = 0) => {
   return Number(score.toFixed(decimalPlaces));
 };
 
+const hasRenderableValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
 // Normalise the `value_infos` blob into an object regardless of whether
 // the caller passed camelCase, snake_case, or a JSON string. The cell
 // layer upstream is inconsistent across grids (the backend returns a
@@ -51,6 +54,7 @@ const EvaluateCell = ({
 }) => {
   const output = cellData?.valueInfos?.output || outputType;
 
+
   // Detect composite eval cells. The Phase B runner writes a `composite_id`
   // key and a `children` array into `value_infos` alongside the aggregate
   // score. Use either as a liveness signal so both newer (composite_id)
@@ -59,11 +63,12 @@ const EvaluateCell = ({
     () => parseValueInfos(cellData),
     [cellData],
   );
+
   const isComposite = Boolean(
     parsedValueInfos?.composite_id ||
-      (Array.isArray(parsedValueInfos?.children) &&
-        parsedValueInfos.children.length > 0 &&
-        parsedValueInfos.children[0]?.child_id),
+    (Array.isArray(parsedValueInfos?.children) &&
+      parsedValueInfos.children.length > 0 &&
+      parsedValueInfos.children[0]?.child_id),
   );
   const [compositeDialogOpen, setCompositeDialogOpen] = useState(false);
 
@@ -138,6 +143,30 @@ const EvaluateCell = ({
   if (output === OutputTypes.NUMERIC) {
     return <NumericCell value={value} />;
   }
+  if (output === OutputTypes.SCORE) {
+    const result = parsedValueInfos?.data?.result;
+    if (hasRenderableValue(result)) {
+      return (
+        <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
+          <Chip
+            label={result}
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: "purple.500",
+              color: "purple.500",
+              fontWeight: 500,
+              maxWidth: 240,
+              "& .MuiChip-label": {
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              },
+            }}
+          />
+        </Box>
+      );
+    }
+  }
   if (dataType === "boolean") {
     const bgColor = value
       ? value === "Failed"
@@ -169,8 +198,8 @@ const EvaluateCell = ({
     );
   }
   if (dataType === "float") {
-    // console.log("float", cellData.cellValue, value);
-    const bgColor = cellData?.cellValue
+    const hasValue = hasRenderableValue(cellData?.cellValue);
+    const bgColor = hasValue
       ? interpolateColorBasedOnScore(value, 1)
       : "";
     return (
@@ -185,7 +214,7 @@ const EvaluateCell = ({
             alignItems: "center",
           }}
         >
-          {cellData?.cellValue ? `${getScorePercentage(value)}%` : ""}
+          {hasValue ? `${getScorePercentage(value)}%` : ""}
           {compositeBadge}
           <RenderMeta
             originType={originType}

@@ -34,32 +34,8 @@ class _RegexpReplace(Func):
     output_field = models.TextField()
 
 
-def _walk_dotted_path(root, path):
-    """
-    Walk a dotted path through nested dicts/lists. Returns None if any
-    segment misses.
-
-    Used by `get_usage` to resolve an eval template's variable mapping
-    (e.g. `{"prompt": "input.value", "expected": "output.0.text"}`)
-    against a span's attributes so the side panel can show the actual
-    values that were fed into the eval, not just the field paths.
-    """
-    if not isinstance(path, str) or not path:
-        return None
-    current = root
-    for part in path.split("."):
-        if current is None:
-            return None
-        if isinstance(current, dict):
-            current = current.get(part)
-        elif isinstance(current, list):
-            try:
-                current = current[int(part)]
-            except (ValueError, IndexError):
-                return None
-        else:
-            return None
-    return current
+# Re-exported for back-compat; canonical definition lives in `tracer.utils.eval`.
+from tracer.utils.eval import _walk_dotted_path  # noqa: E402, F401
 
 
 # Per-variable size cap to keep the panel payload bounded — a single
@@ -656,9 +632,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "input": input_str,
                         "result": result_label,
                         "score": score,
-                        "reason": (
-                            (reason[:200] + "...") if len(reason) > 200 else reason
-                        ),
+                        "reason": reason,
                         "status": status,
                         "source": "eval_task",
                         "created_at": (

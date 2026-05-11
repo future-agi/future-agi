@@ -13,6 +13,8 @@ from django.db.models import Avg, Count, Max, Prefetch, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -61,6 +63,10 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
+from simulate.serializers.requests.call_execution import (
+    CallExecutionFilterSerializer,
+    CallExecutionStatusUpdateSerializer,
+)
 from simulate.serializers.requests.run_test import (
     CreateRunTestSerializer,
     RunTestFilterSerializer,
@@ -72,6 +78,14 @@ from simulate.serializers.requests.run_test_evals import (
     EvalSummaryComparisonFilterSerializer,
     EvalSummaryFilterSerializer,
     RunNewEvalsOnTestExecutionSerializer,
+)
+from simulate.serializers.requests.test_execution import (
+    CallExecutionRerunSerializer,
+)
+from simulate.serializers.response.call_execution import (
+    CallExecutionDeleteResponseSerializer,
+    CallExecutionErrorResponseSerializer,
+    CallExecutionLogsResponseSerializer,
 )
 from simulate.serializers.response.run_test import (
     AddEvalConfigResponseSerializer,
@@ -92,12 +106,16 @@ from simulate.serializers.response.run_test_evals import (
     EvalSummaryResponseSerializer,
     RunNewEvalsResponseSerializer,
 )
+from simulate.serializers.response.test_execution import (
+    CancelTestExecutionResponseSerializer,
+    ErrorResponseSerializer,
+    RerunCallsResponseSerializer,
+)
 from simulate.serializers.run_test import (
     RunTestSerializer,
 )
 from simulate.serializers.test_execution import (
     CallExecutionDetailSerializer,
-    CallExecutionRerunSerializer,
     CallExecutionSerializer,
     CallExecutionSnapshotSerializer,
     PerformanceSummarySerializer,
@@ -133,6 +151,7 @@ from simulate.utils.sql_query import (
     get_kpi_metrics_query,
 )
 from simulate.utils.test_execution_utils import TestExecutionUtils
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.error_codes import get_error_message
@@ -858,6 +877,14 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: CancelTestExecutionResponseSerializer,
+            400: ErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id=None, test_execution_id=None, *args, **kwargs):
         """Cancel a test execution"""
         try:
@@ -910,7 +937,17 @@ class TestExecutionCancelView(APIView):
                 )
 
             if result["success"]:
-                return Response(result, status=status.HTTP_200_OK)
+                response_data = {
+                    "success": True,
+                    "message": result.get(
+                        "message", "Test execution cancellation initiated"
+                    ),
+                    "test_execution_id": result.get("test_execution_id"),
+                }
+                return Response(
+                    CancelTestExecutionResponseSerializer(response_data).data,
+                    status=status.HTTP_200_OK,
+                )
             else:
                 return self.gm.bad_request(result.get("error", "Failed to cancel test"))
 
@@ -1195,10 +1232,11 @@ class CallExecutionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
+        query_serializer=CallExecutionFilterSerializer,
         responses={
             200: CallExecutionSerializer(many=True),
-            404: RunTestErrorResponseSerializer,
-            500: RunTestErrorResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
         },
     )
     def get(self, request, *args, **kwargs):
@@ -1223,12 +1261,23 @@ class CallExecutionAPIView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            status_filter = request.query_params.get("status", "").strip()
-            test_execution_id = request.query_params.get(
-                "test_execution_id", ""
-            ).strip()
+            # Validate and parse query parameters
+            filter_serializer = CallExecutionFilterSerializer(data=request.query_params)
+            if not filter_serializer.is_valid():
+                return Response(
+                    {
+                        "error": "Invalid query parameters",
+                        "details": filter_serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            search_query = filter_serializer.validated_data.get("search", "").strip()
+            status_filter = filter_serializer.validated_data.get("status", "").strip()
+            test_execution_id = (
+                str(filter_serializer.validated_data["test_execution_id"])
+                if filter_serializer.validated_data.get("test_execution_id")
+                else ""
+            )
 
             # Filter call executions by organization
             call_executions = CallExecution.objects.filter(
@@ -1284,6 +1333,13 @@ class RunTestKPIsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Get combined KPI values for a specific run test
@@ -1841,6 +1897,13 @@ class TestExecutionDetailView(APIView):
     permission_classes = [IsAuthenticated]
     utils = TestExecutionUtils()
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Get a specific test execution with all its details and paginated call executions
@@ -2446,6 +2509,13 @@ class PerformanceSummaryView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: PerformanceSummarySerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Get performance summary data for a specific test execution
@@ -3049,6 +3119,13 @@ class CallExecutionDetailView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionDetailSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         """Get a specific call execution with all its details"""
         try:
@@ -3162,6 +3239,15 @@ class CallExecutionDetailView(APIView):
             )
 
     # used only for marking call failed.
+    @swagger_auto_schema(
+        request_body=CallExecutionStatusUpdateSerializer,
+        responses={
+            200: CallExecutionSerializer,
+            400: CallExecutionErrorResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def patch(self, request, call_execution_id, *args, **kwargs):
         """Update the status of a specific call execution"""
         try:
@@ -3182,24 +3268,14 @@ class CallExecutionDetailView(APIView):
             )
 
             # Validate request data
-            new_status = request.data.get("status")
-
-            if isinstance(new_status, str):
-                new_status = new_status.lower()
+            request_serializer = CallExecutionStatusUpdateSerializer(data=request.data)
+            if not request_serializer.is_valid():
+                return self.gm.bad_request(request_serializer.errors)
+            new_status = request_serializer.validated_data["status"]
             # Do NOT persist raw error details from the client into DB.
             # Use a safe generic reason instead (prevents leaking internal errors/stacktraces).
             generic_failure_reason = "Error processing simulation"
-            ended_reason = request.data.get("ended_reason")
-
-            if not new_status:
-                return self.gm.bad_request("Status is required")
-
-            # Validate status is a valid choice
-            valid_statuses = [choice[0] for choice in CallExecution.CallStatus.choices]
-            if new_status not in valid_statuses:
-                return self.gm.bad_request(
-                    f"Invalid status. Valid choices are: {', '.join(valid_statuses)}"
-                )
+            ended_reason = request_serializer.validated_data.get("ended_reason")
 
             # Update status atomically
             with transaction.atomic():
@@ -3296,6 +3372,13 @@ class CallExecutionLogsView(APIView):
         self.gm = GeneralMethods()
         self.pagination_class = ExtendedPageNumberPagination()
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionLogsResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         try:
             user_organization = (
@@ -3391,12 +3474,10 @@ class CallExecutionLogsView(APIView):
                 for entry in paginated_entries
             ]
 
-            return paginator.get_paginated_response(
-                {
-                    "results": results,
-                    "source": source,
-                }
+            logs_serializer = CallExecutionLogsResponseSerializer(
+                {"results": results, "source": source}
             )
+            return paginator.get_paginated_response(logs_serializer.data)
 
         except Exception as e:  # noqa: BLE001
             logger.exception("Failed to fetch call execution logs")
@@ -3628,6 +3709,13 @@ class CallExecutionDeleteView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            204: CallExecutionDeleteResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def delete(self, request, call_execution_id, *args, **kwargs):
         """
         Delete a specific call execution
@@ -3657,10 +3745,10 @@ class CallExecutionDeleteView(APIView):
             call_execution.deleted_at = timezone.now()
             call_execution.save()
 
-            return Response(
-                {"message": "Call execution deleted successfully"},
-                status=status.HTTP_204_NO_CONTENT,
+            response_serializer = CallExecutionDeleteResponseSerializer(
+                {"message": "Call execution deleted successfully"}
             )
+            return Response(response_serializer.data, status=status.HTTP_204_NO_CONTENT)
 
         except Exception as e:
             return Response(
@@ -4455,7 +4543,9 @@ class GetEvalConfigStructureView(APIView):
                 "kb_id": str(eval_config.kb_id.id) if eval_config.kb_id else None,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "api_key_available": api_key_available,
             }
 
@@ -5397,6 +5487,13 @@ class RunTestEvalExplanationSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Fetch the evaluation explanation summary from the database.
@@ -5805,6 +5902,15 @@ class CallExecutionRerunView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=CallExecutionRerunSerializer,
+        responses={
+            200: RerunCallsResponseSerializer,
+            400: ErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def post(self, request, test_execution_id):
         """
         Rerun multiple call executions (either evaluation only or call + evaluation)
@@ -6020,17 +6126,18 @@ class CallExecutionRerunView(APIView):
                         f"for test execution {test_execution.id}"
                     )
 
+            response_data = {
+                "message": f"Bulk call execution rerun initiated successfully ({rerun_type})",
+                "test_execution_id": str(test_execution_id),
+                "rerun_type": rerun_type,
+                "total_processed": len(successful_reruns) + len(failed_reruns),
+                "successful_reruns": successful_reruns,
+                "failed_reruns": failed_reruns,
+                "success_count": len(successful_reruns),
+                "failure_count": len(failed_reruns),
+            }
             return Response(
-                {
-                    "message": f"Bulk call execution rerun initiated successfully ({rerun_type})",
-                    "test_execution_id": str(test_execution_id),
-                    "rerun_type": rerun_type,
-                    "total_processed": len(successful_reruns) + len(failed_reruns),
-                    "successful_reruns": successful_reruns,
-                    "failed_reruns": failed_reruns,
-                    "success_count": len(successful_reruns),
-                    "failure_count": len(failed_reruns),
-                },
+                RerunCallsResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
 

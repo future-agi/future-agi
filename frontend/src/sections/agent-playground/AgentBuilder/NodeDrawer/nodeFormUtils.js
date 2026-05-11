@@ -96,6 +96,11 @@ export function getDefaultValues(nodeData) {
           mergedConfig.payload?.promptConfig?.[0]?.configuration
             ?.outputFormat ||
           "string",
+        templateFormat:
+          mergedConfig.templateFormat ||
+          mergedConfig.payload?.promptConfig?.[0]?.configuration
+            ?.template_format ||
+          "mustache",
         modelConfig: mergedConfig.modelConfig || PROMPT_DEFAULT_MODEL_CONFIG,
         messages: mergedConfig.messages || [
           {
@@ -117,6 +122,7 @@ export function getDefaultValues(nodeData) {
       prompt_version_id: null,
       prompt_template_id: null,
       outputFormat: "string",
+      templateFormat: "mustache",
       modelConfig: PROMPT_DEFAULT_MODEL_CONFIG,
       messages: [
         {
@@ -194,6 +200,7 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
         prompt_template_id: pt.promptTemplateId,
         prompt_version_id: pt.promptVersionId,
         outputFormat: pt.outputFormat || "string",
+        templateFormat: pt.templateFormat || pt.template_format || "mustache",
         modelConfig: {
           model: pt.model || "",
           modelDetail:

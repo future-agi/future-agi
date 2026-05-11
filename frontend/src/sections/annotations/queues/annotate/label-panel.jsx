@@ -153,6 +153,8 @@ const LabelPanel = forwardRef(function LabelPanel(
     queueId,
     itemId,
     onDirtyChange,
+    readOnly = false,
+    readOnlyReason = null,
   },
   ref,
 ) {
@@ -187,6 +189,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   const handleChange = useCallback(
     (labelId, value) => {
+      if (readOnly) return;
       setValues((prev) => {
         const next = { ...prev, [labelId]: value };
         valuesRef.current = next;
@@ -200,10 +203,11 @@ const LabelPanel = forwardRef(function LabelPanel(
       });
       onDirtyChange?.(true);
     },
-    [onDirtyChange],
+    [onDirtyChange, readOnly],
   );
 
   const handleSubmit = useCallback(() => {
+    if (readOnly) return;
     // Flush any pending debounced text inputs so valuesRef is up-to-date
     Object.values(textFlushRefs.current).forEach((r) => r?.flush?.());
 
@@ -247,7 +251,7 @@ const LabelPanel = forwardRef(function LabelPanel(
       onDirtyChange?.(false);
       onSubmit({ annotations: annotationsList, notes });
     }
-  }, [notes, onSubmit, labels, onDirtyChange]);
+  }, [notes, onSubmit, labels, onDirtyChange, readOnly]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
@@ -271,6 +275,9 @@ const LabelPanel = forwardRef(function LabelPanel(
         setShowShortcuts((p) => !p);
         return;
       }
+
+      // In read-only mode, only the help overlay shortcut is allowed.
+      if (readOnly) return;
 
       // Tab / Shift+Tab → navigate labels
       if (e.key === "Tab") {
@@ -340,7 +347,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [labels, focusedIndex, values, handleChange]);
+  }, [labels, focusedIndex, values, handleChange, readOnly]);
 
   return (
     <Box
@@ -355,6 +362,32 @@ const LabelPanel = forwardRef(function LabelPanel(
     >
       {showShortcuts && (
         <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {readOnly && readOnlyReason && (
+        <Box
+          sx={{
+            mb: 2,
+            px: 1.5,
+            py: 1,
+            borderRadius: 0.5,
+            bgcolor: "action.hover",
+            border: "1px solid",
+            borderColor: "divider",
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
+          <Iconify
+            icon="mingcute:lock-fill"
+            width={16}
+            sx={{ color: "text.secondary" }}
+          />
+          <Typography variant="caption" color="text.secondary">
+            {readOnlyReason}
+          </Typography>
+        </Box>
       )}
 
       {/* Shortcuts toggle + Instructions row */}
@@ -438,13 +471,22 @@ const LabelPanel = forwardRef(function LabelPanel(
       )}
 
       {/* Label inputs */}
-      <Stack spacing={2} sx={{ flex: 1 }}>
+      <Stack
+        spacing={2}
+        sx={{
+          flex: 1,
+          ...(readOnly && {
+            pointerEvents: "none",
+            opacity: 0.7,
+          }),
+        }}
+      >
         {labels.map((ql, i) => {
           const labelId = ql.label_id;
           return (
             <Box
               key={ql.id}
-              onClick={() => setFocusedIndex(i)}
+              onClick={() => !readOnly && setFocusedIndex(i)}
               sx={{ cursor: "default" }}
             >
               <LabelInput
@@ -484,9 +526,11 @@ const LabelPanel = forwardRef(function LabelPanel(
           placeholder="Notes (optional)"
           value={notes}
           onChange={(e) => {
+            if (readOnly) return;
             setNotes(e.target.value);
             onDirtyChange?.(true);
           }}
+          InputProps={{ readOnly }}
           sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
         />
       </Box>
@@ -494,24 +538,28 @@ const LabelPanel = forwardRef(function LabelPanel(
       {/* Annotation History */}
       <AnnotationHistory queueId={queueId} itemId={itemId} />
 
-      {/* Submit */}
-      <Tooltip title="Ctrl+Enter" placement="top">
-        <span>
-          <Button
-            variant="contained"
-            fullWidth
-            color="primary"
-            sx={{ mt: 2 }}
-            onClick={handleSubmit}
-            disabled={isPending || !hasValues}
-            startIcon={
-              isPending ? <CircularProgress size={16} color="inherit" /> : null
-            }
-          >
-            Submit & Next
-          </Button>
-        </span>
-      </Tooltip>
+      {/* Submit (hidden in read-only mode) */}
+      {!readOnly && (
+        <Tooltip title="Ctrl+Enter" placement="top">
+          <span>
+            <Button
+              variant="contained"
+              fullWidth
+              color="primary"
+              sx={{ mt: 2 }}
+              onClick={handleSubmit}
+              disabled={isPending || !hasValues}
+              startIcon={
+                isPending ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : null
+              }
+            >
+              Submit & Next
+            </Button>
+          </span>
+        </Tooltip>
+      )}
     </Box>
   );
 });
@@ -525,6 +573,8 @@ LabelPanel.propTypes = {
   queueId: PropTypes.string,
   itemId: PropTypes.string,
   onDirtyChange: PropTypes.func,
+  readOnly: PropTypes.bool,
+  readOnlyReason: PropTypes.string,
 };
 
 export default LabelPanel;

@@ -68,6 +68,11 @@ class EvalResult:
     end_time: float | None = None
     duration: float | None = None
 
+    # Cost tracking (populated from the evaluator instance post-run so callers
+    # can emit billing events without having to hold the instance themselves).
+    cost: dict | None = None
+    token_usage: dict | None = None
+
 
 def run_eval(request: EvalRequest) -> EvalResult:
     """
@@ -179,4 +184,6 @@ def run_eval(request: EvalRequest) -> EvalResult:
         start_time=start_time,
         end_time=end_time,
         duration=end_time - start_time,
+        cost=getattr(eval_instance, "cost", None),
+        token_usage=getattr(eval_instance, "token_usage", None),
     )

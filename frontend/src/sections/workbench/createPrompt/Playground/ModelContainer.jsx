@@ -24,6 +24,7 @@ import logger from "src/utils/logger";
 import { useModelParams } from "src/api/develop/prompt";
 import { useVoiceOptions } from "src/api/develop/develop-detail";
 import ResponseFormatSelector from "./ResponseFormatSelector";
+import TemplateFormatSelector from "./TemplateFormatSelector";
 import { ShowComponent } from "../../../../components/show";
 
 const modelTypeByValueType = {
@@ -48,7 +49,8 @@ const ModelContainer = ({
 }) => {
   const theme = useTheme();
   const { id } = useParams();
-  const { selectedVersions } = usePromptWorkbenchContext();
+  const { selectedVersions, templateFormat, setTemplateFormat } =
+    usePromptWorkbenchContext();
   const { role: userRole } = useAuthContext();
   const modelContainerRef = useRef(null);
   const { setSelectTemplateDrawerOpen, setSelectedPromptIndex } =
@@ -403,6 +405,11 @@ const ModelContainer = ({
             }
           />
         </ShowComponent>
+        <TemplateFormatSelector
+          value={templateFormat}
+          onChange={setTemplateFormat}
+          disabled={!RolePermission.PROMPTS[PERMISSIONS.DELETE][userRole]}
+        />
       </Box>
     </React.Fragment>
   );

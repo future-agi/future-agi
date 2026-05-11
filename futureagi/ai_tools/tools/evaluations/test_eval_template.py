@@ -13,13 +13,13 @@ class TestEvalTemplateInput(PydanticBaseModel):
     eval_template_id: UUID = Field(description="The UUID of the eval template to test")
     mapping: dict = Field(
         description=(
-            "Mapping of template keys to test values. "
-            'Example: {"response": "The capital of France is Paris.", "query": "What is the capital of France?"}'
+            "Mapping of template variable names to test values. "
+            'Example: {"input": "What is the capital of France?", "output": "Paris is the capital."}'
         )
     )
     model: Optional[str] = Field(
         default=None,
-        description="Override model for the test run",
+        description="Override model for the test run (optional).",
     )
 
 
@@ -29,6 +29,7 @@ class TestEvalTemplateTool(BaseTool):
     description = (
         "Runs a dry-run test of an evaluation template with provided input data. "
         "Returns the evaluation result without persisting anything. "
+        "Works with LLM, code, and agent eval types. "
         "Use this to validate template configuration before applying to datasets."
     )
     category = "evaluations"
@@ -41,17 +42,16 @@ class TestEvalTemplateTool(BaseTool):
 
         from model_hub.models.evals_metric import EvalTemplate
 
-        # Look up the user template
+        # Look up the template (user-owned or system)
         try:
-            user_template = EvalTemplate.no_workspace_objects.get(
+            template = EvalTemplate.no_workspace_objects.get(
                 Q(organization=context.organization) | Q(organization__isnull=True),
                 id=params.eval_template_id,
             )
         except EvalTemplate.DoesNotExist:
             return ToolResult.not_found("Eval Template", str(params.eval_template_id))
 
-        config = user_template.config or {}
-        template_type = config.get("template_type", "")
+        config = template.config or {}
         required_keys = config.get("required_keys", [])
 
         # Validate required keys are present in mapping
@@ -70,14 +70,13 @@ class TestEvalTemplateTool(BaseTool):
             "output": config.get("output", "Pass/Fail"),
         }
 
-        if user_template.criteria:
-            eval_config["criteria"] = user_template.criteria
-        if user_template.choices:
-            eval_config["choices"] = user_template.choices
+        if template.criteria:
+            eval_config["criteria"] = template.criteria
+        if template.choices:
+            eval_config["choices"] = template.choices
 
-        model = params.model or user_template.model
+        model = params.model or template.model
 
-        # Try to run the evaluation
         try:
             from model_hub.models.evals_metric import EvalTemplate as ET
             from model_hub.views.separate_evals import (
@@ -85,7 +84,7 @@ class TestEvalTemplateTool(BaseTool):
                 run_eval_func,
             )
 
-            # Get the deterministic_evals base template
+            # Get the base template for eval execution
             try:
                 base_template = ET.no_workspace_objects.get(name="deterministic_evals")
             except ET.DoesNotExist:
@@ -94,9 +93,19 @@ class TestEvalTemplateTool(BaseTool):
                     error_code="CONFIGURATION_ERROR",
                 )
 
-            # Build the validated_data structure that prepare_user_eval_config expects
+            # Resolve eval_type_id from the template's eval_type or config
+            eval_type_id = config.get("eval_type_id", "")
+            if not eval_type_id:
+                _type_map = {
+                    "agent": "AgentEvaluator",
+                    "llm": "CustomPromptEvaluator",
+                    "code": "CustomCodeEval",
+                }
+                eval_type_id = _type_map.get(template.eval_type or "llm", "CustomPromptEvaluator")
+
+            # Build validated_data for prepare_user_eval_config
             validated_data = {
-                "template_type": template_type or "futureagi",
+                "template_type": "futureagi" if eval_type_id == "AgentEvaluator" else "llm",
                 "config": eval_config,
                 "model": model,
                 "input_data_types": {},
@@ -105,13 +114,10 @@ class TestEvalTemplateTool(BaseTool):
             prepared_config = prepare_user_eval_config(validated_data, True)
             prepared_config["output"] = config.get("output", "Pass/Fail")
 
-            if template_type == "llm":
+            if eval_type_id in ("CustomPromptEvaluator", "AgentEvaluator"):
                 data_config = prepared_config.get("config", {})
                 data_config["organization_id"] = str(context.organization.id)
                 prepared_config["config"] = data_config
-                eval_id = "CustomPromptEvaluator"
-            else:
-                eval_id = "DeterministicEvaluator"
 
             response = run_eval_func(
                 prepared_config,
@@ -121,7 +127,7 @@ class TestEvalTemplateTool(BaseTool):
                 input_data_types={},
                 type="user_built",
                 model=model,
-                eval_id=eval_id,
+                eval_id=eval_type_id,
                 test=True,
                 source="mcp_tool_test",
                 workspace=context.workspace,
@@ -135,20 +141,19 @@ class TestEvalTemplateTool(BaseTool):
             else:
                 result_info.append(("Result", truncate(str(response), 500)))
 
+            eval_type_labels = {"llm": "LLM", "code": "Code", "agent": "Agent"}
             info = key_value_block(
                 [
-                    (
-                        "Template",
-                        f"{user_template.name} (`{str(user_template.id)}`)",
-                    ),
+                    ("Template", f"{template.name} (`{str(template.id)}`)"),
+                    ("Type", eval_type_labels.get(template.eval_type or "llm", template.eval_type or "—")),
                     ("Model", model or "default"),
                 ]
                 + result_info
             )
 
             return ToolResult(
-                content=section("Eval Template Test Result", info),
-                data={"template_id": str(user_template.id), "result": response},
+                content=section("Eval Test Result", info),
+                data={"template_id": str(template.id), "result": response},
             )
 
         except Exception as e:

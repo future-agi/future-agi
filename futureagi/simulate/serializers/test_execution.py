@@ -13,6 +13,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+
 try:
     from ee.voice.services.voice_service_manager import VoiceServiceManager
 except ImportError:
@@ -1265,12 +1266,6 @@ class TestExecutionRequestSerializer(serializers.Serializer):
     execution_metadata = serializers.JSONField(required=False)
 
 
-class TestExecutionCancelSerializer(serializers.Serializer):
-    """Serializer for test execution cancellation request"""
-
-    run_test_id = serializers.UUIDField()
-
-
 class AllActiveTestsSerializer(serializers.Serializer):
     """Serializer for all active tests response"""
 
@@ -1321,37 +1316,6 @@ class TestExecutionAnalyticsSerializer(serializers.Serializer):
     )
 
     metadata = serializers.DictField(help_text="Metadata about the analytics data")
-
-
-class CallExecutionRerunSerializer(serializers.Serializer):
-    """Serializer for call execution rerun requests"""
-
-    rerun_type = serializers.ChoiceField(
-        choices=[
-            ("eval_only", "Evaluation Only"),
-            ("call_and_eval", "Call and Evaluation"),
-        ],
-        help_text="Type of rerun: evaluation only or call plus evaluation",
-    )
-
-    call_execution_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-        help_text="List of specific call execution IDs to rerun",
-    )
-
-    select_all = serializers.BooleanField(
-        default=False,
-        help_text="Whether to rerun all call executions in the test execution",
-    )
-
-    def validate(self, data):
-        """Validate that either call_execution_ids or select_all is provided"""
-        if not data.get("select_all") and not data.get("call_execution_ids"):
-            raise serializers.ValidationError(
-                "Either 'select_all' must be True or 'call_execution_ids' must be provided"
-            )
-        return data
 
 
 class TestExecutionRerunSerializer(serializers.Serializer):

@@ -17,6 +17,7 @@ import {
 import { useSnackbar } from "notistack";
 import React, { useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
 import RunEvaluation from "src/sections/develop-detail/Evaluation/RunEvaluation";
 import PropTypes from "prop-types";
 import { action } from "src/theme/palette";
@@ -43,6 +44,8 @@ const RightMenu = ({
   setVersionList,
   total,
   currentTitle,
+  templateFormat,
+  setTemplateFormat,
 }) => {
   const { enqueueSnackbar } = useSnackbar();
   const gridApiRef = useRef(null);
@@ -243,6 +246,11 @@ const RightMenu = ({
         flexItem
       />
 
+      <TemplateFormatSelector
+        value={templateFormat}
+        onChange={setTemplateFormat}
+      />
+
       <Box sx={{ display: "flex", alignItems: "center", gap: "4px" }}>
         {ICON_BTNS.map(({ label, icon, color }) => (
           <Tooltip key={label} title={label} placement="bottom" arrow>
@@ -424,4 +432,6 @@ RightMenu.propTypes = {
   setVersionIndex: PropTypes.func,
   total: PropTypes.number,
   currentTitle: PropTypes.string,
+  templateFormat: PropTypes.string,
+  setTemplateFormat: PropTypes.func,
 };

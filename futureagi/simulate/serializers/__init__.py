@@ -17,6 +17,9 @@ from .requests.run_test import (
     CreateRunTestSerializer,
     UpdateRunTestSerializer,
 )
+from .requests.test_execution import (
+    TestExecutionCancelSerializer,
+)
 
 # Response serializers
 from .response.agent_definition import (
@@ -51,7 +54,6 @@ from .test_execution import (
     AllActiveTestsSerializer,
     CallExecutionSerializer,
     CallTranscriptSerializer,
-    TestExecutionCancelSerializer,
     TestExecutionRequestSerializer,
     TestExecutionSerializer,
     TestExecutionStatusSerializer,

@@ -16,6 +16,12 @@ from .agent_version import (
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
 )
+from .call_execution import (
+    CallExecutionDeleteResponseSerializer,
+    CallExecutionErrorResponseSerializer,
+    CallExecutionLogsResponseSerializer,
+    CallLogEntryResponseSerializer,
+)
 from .run_test import (
     AddEvalConfigResponseSerializer,
     RunTestErrorResponseSerializer,
@@ -49,6 +55,12 @@ from .scenarios import (
     ScenarioMultiDatasetResponseSerializer,
     ScenarioPromptsUpdateResponseSerializer,
     ScenarioResponseSerializer,
+)
+from .test_execution import (
+    CancelTestExecutionResponseSerializer,
+    ErrorResponseSerializer,
+    FailedRerunItemSerializer,
+    RerunCallsResponseSerializer,
 )
 
 # from .persona import (
@@ -101,6 +113,14 @@ __all__ = [
     "RunTestScenarioItemResponseSerializer",
     "RunTestMessageResponseSerializer",
     "RunTestErrorResponseSerializer",
+    "CallExecutionDeleteResponseSerializer",
+    "CallExecutionErrorResponseSerializer",
+    "CallExecutionLogsResponseSerializer",
+    "CallLogEntryResponseSerializer",
+    "ErrorResponseSerializer",
+    "CancelTestExecutionResponseSerializer",
+    "FailedRerunItemSerializer",
+    "RerunCallsResponseSerializer",
     # "PersonaResponseSerializer",
     # "PersonaListSerializer",
     # "PersonaDeleteResponseSerializer",
