@@ -124,6 +124,62 @@ def test_optional_field_not_flagged(tmp_path):
     assert not any(v.call == "Note.objects.create" for v in violations)
 
 
+def test_required_foreign_key_field_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Author(models.Model):
+            class Meta: app_label = 'x'
+        class Book(models.Model):
+            author = models.ForeignKey(Author, on_delete=models.CASCADE)
+            class Meta: app_label = 'x'
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make():
+            Book.objects.create()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    book_v = [v for v in violations if v.call == "Book.objects.create"]
+    assert book_v, "required ForeignKey fields are required create() inputs"
+    assert any("author" in missing for missing in book_v[0].missing)
+
+
+def test_literal_none_for_required_field_flagged(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Widget(models.Model):
+            name = models.CharField(max_length=64)
+            class Meta: app_label = 'x'
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make():
+            Widget.objects.create(name=None)
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    widget_v = [v for v in violations if v.call == "Widget.objects.create"]
+    assert widget_v, "literal None violates a required non-null field"
+    assert any("name" in missing and "None" in missing for missing in widget_v[0].missing)
+
+
 def test_save_guard_without_assignment_does_not_make_field_optional(tmp_path):
     _write_src(
         tmp_path,
@@ -278,6 +334,35 @@ def test_encoder_kwonly_arg_not_satisfied_by_extra_positional():
 
     assert violation is not None
     assert violation.missing == ["role"]
+
+
+def test_same_named_functions_checked_against_file_local_manifest(tmp_path):
+    _write_src(
+        tmp_path,
+        "a.py",
+        """
+        def send(value):
+            pass
+        def run():
+            send("ok")
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "b.py",
+        """
+        def send(value, channel):
+            pass
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v
+        for v in violations
+        if v.context == "required_arg_missing" and "send" in v.call
+    ]
 
 
 # ---------------------------------------------------------------------------

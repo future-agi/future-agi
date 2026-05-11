@@ -251,7 +251,9 @@ def _check_required_arg(
 ) -> list[FailureEvidence]:
     if call.is_create_call:
         return []
-    func = functions.get(call.callee_name)
+    func = functions.get(f"{call.file}:{call.callee_name}") or functions.get(
+        call.callee_name
+    )
     if not func or not func.required_args:
         return []
     # Only non-kwonly required args can be covered by positional args.

@@ -56,7 +56,14 @@ def check_codebase(
         models, functions, call_sites = extract_from_codebase(root)
 
     model_index: dict[str, ModelManifest] = {m.name: m for m in models}
-    func_index: dict[str, FunctionManifest] = {f.name: f for f in functions}
+    name_counts = {
+        f.name: sum(1 for candidate in functions if candidate.name == f.name)
+        for f in functions
+    }
+    func_index: dict[str, FunctionManifest] = {
+        f"{f.file}:{f.name}": f for f in functions
+    }
+    func_index.update({f.name: f for f in functions if name_counts[f.name] == 1})
     scanned_files = {str(path) for path in iter_python_files(root)}
     call_files = {call.file for call in call_sites}
     file_sentinels = [

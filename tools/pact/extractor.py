@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+_UNKNOWN = object()
+
 
 @dataclass
 class FieldConstraint:
@@ -88,6 +90,8 @@ def _is_django_field(node: ast.expr) -> Optional[str]:
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr.endswith("Field"):
         return func.attr
+    if isinstance(func, ast.Attribute) and func.attr == "ForeignKey":
+        return func.attr
     return None
 
 
@@ -111,13 +115,13 @@ def _int_literal(node: ast.expr) -> Optional[int]:
 
 
 def _literal_value(node: ast.expr) -> object:
-    """Recursively extract a Python value from a literal AST node. Returns None for non-literals."""
+    """Recursively extract a Python literal value."""
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, (ast.List, ast.Tuple)):
         items = [_literal_value(e) for e in node.elts]
-        return items if None not in items else None
-    return None
+        return items if _UNKNOWN not in items else _UNKNOWN
+    return _UNKNOWN
 
 
 def _extract_choices(node: ast.expr) -> Optional[list]:
@@ -127,14 +131,14 @@ def _extract_choices(node: ast.expr) -> Optional[list]:
     values = []
     for elt in node.elts:
         # 2-tuple (value, display) — take the first element
-        if isinstance(elt, (ast.List, ast.Tuple)) and elt.elts:
-            v = _literal_value(elt.elts[0])
-            if v is not None:
-                values.append(v)
-        else:
-            v = _literal_value(elt)
-            if v is not None:
-                values.append(v)
+            if isinstance(elt, (ast.List, ast.Tuple)) and elt.elts:
+                v = _literal_value(elt.elts[0])
+                if v is not _UNKNOWN:
+                    values.append(v)
+            else:
+                v = _literal_value(elt)
+                if v is not _UNKNOWN:
+                    values.append(v)
     return values or None
 
 
@@ -407,9 +411,11 @@ class _CallVisitor(ast.NodeVisitor):
     def _make_site(self, node: ast.Call) -> Optional[CallSite]:
         kwargs = {kw.arg for kw in node.keywords if kw.arg is not None}
         kwarg_values = {
-            kw.arg: _literal_value(kw.value)
+            kw.arg: value
             for kw in node.keywords
-            if kw.arg is not None and _literal_value(kw.value) is not None
+            if kw.arg is not None
+            for value in [_literal_value(kw.value)]
+            if value is not _UNKNOWN
         }
         positional = len(node.args)
         func = node.func

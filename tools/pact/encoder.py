@@ -55,8 +55,9 @@ def _check_field(fc: FieldConstraint, provided: bool, value: object) -> list[str
             violations.append(f"missing required field '{fc.name}'")
         return violations   # no value → can't check further
 
-    # Value unknown (computed expression) — presence verified, value-level skipped
     if value is None:
+        if fc.required and not fc.null:
+            violations.append(f"'{fc.name}' cannot be None")
         return violations
 
     if not _HAS_Z3:
