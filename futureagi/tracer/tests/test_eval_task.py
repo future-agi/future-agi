@@ -420,12 +420,19 @@ class TestEvalTaskRowTypePersistence:
         data = get_result(response)
         assert data["row_type"] == "traces"
 
-    def test_update_eval_task_changes_row_type(
+    def test_update_eval_task_rejects_row_type_change(
         self, auth_client, eval_task
     ):
-        """PATCH update_eval_task updates row_type."""
-        # eval_task fixture defaults to row_type='spans'
-        assert eval_task.row_type == "spans"
+        """row_type is immutable after task creation.
+
+        Pins the API contract: clients can't change row_type on an
+        existing task. The dispatcher / target_type wiring / dedup
+        index all depend on row_type being stable for the task's
+        lifetime, so the endpoint rejects any explicit row_type in
+        an update request (matching or not).
+        """
+        original_row_type = eval_task.row_type
+        assert original_row_type == "spans"
 
         response = auth_client.patch(
             "/tracer/eval-task/update_eval_task/",
@@ -436,7 +443,7 @@ class TestEvalTaskRowTypePersistence:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
         eval_task.refresh_from_db()
-        assert eval_task.row_type == "sessions"
+        assert eval_task.row_type == original_row_type

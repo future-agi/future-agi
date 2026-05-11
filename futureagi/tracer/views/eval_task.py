@@ -1084,7 +1084,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(f"Error updating evaluation task: {str(e)}")
 
     def _extract_update_fields(self, validated_data):
-        """Extract valid update fields from validated data"""
+        """Extract valid update fields from validated data.
+
+        ``row_type`` is intentionally absent from the allow-list — it's
+        immutable after task creation (the serializer rejects it earlier,
+        this is a belt-and-braces guard so any future code path that
+        bypasses the serializer still can't write it through).
+        """
         update_fields = {}
         allowed_fields = [
             "name",
@@ -1093,7 +1099,6 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             "spans_limit",
             "evals",
             "run_type",
-            "row_type",
         ]
 
         for field in allowed_fields:
