@@ -48,7 +48,7 @@ import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { isQueueAnnotatorRole } from "../constants";
+import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -118,7 +118,7 @@ export default function QueueDetailView() {
     if (!queue || !user) return false;
     const annotators = queue.annotators || [];
     const me = annotators.find((a) => a.user_id === (user.id || user.pk));
-    return me?.role === "manager";
+    return hasQueueRole(me, QUEUE_ROLES.MANAGER);
   }, [queue, user]);
 
   const queueAnnotators = useMemo(

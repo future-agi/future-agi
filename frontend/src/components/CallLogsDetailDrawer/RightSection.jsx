@@ -53,7 +53,17 @@ const RightSection = ({ data, hideAnnotations = false }) => {
     return { evalsMetrics: transformedEvalMetrics };
   }, [data]);
 
-  const observationSpan = data?.observation_span?.[0];
+  const observationSpan = useMemo(() => {
+    const spans = data?.observation_span;
+    if (!Array.isArray(spans) || spans.length === 0) return undefined;
+    return (
+      spans.find(
+        (s) => !s?.parent_span_id && s?.observation_type === "conversation",
+      ) ||
+      spans.find((s) => !s?.parent_span_id) ||
+      spans[0]
+    );
+  }, [data?.observation_span]);
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(data?.status, data?.simulationCallType);
@@ -112,6 +122,7 @@ const RightSection = ({ data, hideAnnotations = false }) => {
             sourceId={sourceId}
             secondarySourceType={secondarySourceType}
             secondarySourceId={secondarySourceId}
+            openQueueItemOnRowClick
           />
         </ShowComponent>
       </ShowComponent>

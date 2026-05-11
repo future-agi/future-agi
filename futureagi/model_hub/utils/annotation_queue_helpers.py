@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 from django.db.models import DateTimeField, F, FloatField, Q
 from django.db.models.functions import Cast
 
-from model_hub.models.choices import AutomationRuleTriggerFrequency, QueueItemSourceType
+from model_hub.models.choices import (
+    AnnotatorRole,
+    AutomationRuleTriggerFrequency,
+    QueueItemSourceType,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -512,10 +516,13 @@ def resolve_source_content(item):
 
 def auto_assign_items(queue, items):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
-    from model_hub.models.annotation_queues import QueueItem
+    from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
 
     annotator_ids = list(
-        queue.queue_annotators.filter(deleted=False).values_list("user_id", flat=True)
+        queue.queue_annotators.filter(deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+        .values_list("user_id", flat=True)
+        .distinct()
     )
     if not annotator_ids or queue.assignment_strategy == "manual":
         return
@@ -1050,6 +1057,7 @@ def _finalize_automation_items(rule, created_items):
         AnnotationQueueAnnotator,
         QueueItem,
         QueueItemAssignment,
+        annotation_queue_role_q,
     )
     from model_hub.models.choices import AnnotationQueueStatusChoices
 
@@ -1063,7 +1071,10 @@ def _finalize_automation_items(rule, created_items):
         member_ids = list(
             AnnotationQueueAnnotator.objects.filter(
                 queue=queue, deleted=False
-            ).values_list("user_id", flat=True)
+            )
+            .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+            .values_list("user_id", flat=True)
+            .distinct()
         )
         if member_ids:
             QueueItemAssignment.objects.bulk_create(

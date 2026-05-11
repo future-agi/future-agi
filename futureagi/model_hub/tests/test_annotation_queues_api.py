@@ -16,7 +16,8 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
-from model_hub.models.annotation_queues import AnnotationQueue
+from model_hub.models.annotation_queues import AnnotationQueue, AnnotationQueueAnnotator
+from model_hub.models.choices import AnnotatorRole
 from tfc.ee_gating import EEResource, FeatureUnavailable
 from tracer.models.project import Project
 
@@ -153,6 +154,29 @@ class TestCreateQueue:
         resp = create_queue(auth_client, name="Simple Queue")
         assert resp.status_code == status.HTTP_201_CREATED
         assert resp.data["status"] == "draft"
+
+    def test_create_gives_creator_all_roles(self, auth_client, user):
+        """Creator can manage, annotate, and review the queue by default."""
+        resp = create_queue(auth_client, name="Creator Roles Queue")
+        assert resp.status_code == status.HTTP_201_CREATED
+
+        creator = next(
+            a for a in resp.data["annotators"] if str(a["user_id"]) == str(user.id)
+        )
+        assert creator["role"] == AnnotatorRole.MANAGER.value
+        assert set(creator["roles"]) == {
+            AnnotatorRole.MANAGER.value,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.ANNOTATOR.value,
+        }
+
+        membership = AnnotationQueueAnnotator.objects.get(
+            queue_id=resp.data["id"],
+            user=user,
+            deleted=False,
+        )
+        assert membership.role == AnnotatorRole.MANAGER.value
+        assert set(membership.roles) == set(creator["roles"])
 
     def test_create_with_labels_and_annotators(self, auth_client, user):
         """TC-8: Create with label_ids and annotator_ids."""
@@ -321,6 +345,33 @@ class TestUpdateQueue:
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
+
+    def test_update_annotator_multiple_roles(self, auth_client, user):
+        """Queue settings can store multiple roles for one member."""
+        create_queue(auth_client, name="Multi Role Queue")
+        queue_id = get_queue_id(auth_client, "Multi Role Queue")
+        resp = auth_client.patch(
+            queue_detail_url(queue_id),
+            {
+                "annotator_ids": [str(user.id)],
+                "annotator_roles": {
+                    str(user.id): [
+                        AnnotatorRole.MANAGER.value,
+                        AnnotatorRole.ANNOTATOR.value,
+                    ]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        member = next(
+            a for a in resp.data["annotators"] if str(a["user_id"]) == str(user.id)
+        )
+        assert member["role"] == AnnotatorRole.MANAGER.value
+        assert member["roles"] == [
+            AnnotatorRole.MANAGER.value,
+            AnnotatorRole.ANNOTATOR.value,
+        ]
 
     def test_update_status_via_patch(self, auth_client):
         """TC-17: Update status via PATCH (not transition endpoint)."""

@@ -27,7 +27,7 @@ import {
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
-import { isQueueAnnotatorRole } from "./constants";
+import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -139,6 +139,7 @@ export default function CreateQueueDrawer({
         editQueue.annotators?.map((a) => ({
           userId: a.user_id,
           role: a.role || "annotator",
+          roles: queueRoleList(a),
         })) || [];
       reset({
         name: editQueue.name || "",
@@ -161,7 +162,17 @@ export default function CreateQueueDrawer({
       reset({
         ...DEFAULT_VALUES,
         annotators: currentUserId
-          ? [{ userId: String(currentUserId), role: "manager" }]
+          ? [
+              {
+                userId: String(currentUserId),
+                role: QUEUE_ROLES.MANAGER,
+                roles: [
+                  QUEUE_ROLES.MANAGER,
+                  QUEUE_ROLES.REVIEWER,
+                  QUEUE_ROLES.ANNOTATOR,
+                ],
+              },
+            ]
           : [],
       });
       setAdvancedOpen(false);
@@ -181,7 +192,7 @@ export default function CreateQueueDrawer({
       label_ids: formData.label_ids,
       annotator_ids: formData.annotators.map((a) => a.userId),
       annotator_roles: Object.fromEntries(
-        formData.annotators.map((a) => [a.userId, a.role]),
+        formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
       ),
     };
 

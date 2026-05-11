@@ -25,7 +25,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
 import "src/styles/clean-data-table.css";
-import { QUEUE_ROLES } from "./constants";
+import { QUEUE_ROLES, hasQueueRole, queueRoleList } from "./constants";
 
 // Skeleton cell renderer shown during loading
 const SkeletonCell = () => (
@@ -177,19 +177,19 @@ function memberDisplayName(member) {
 function groupQueueMembers(members) {
   const knownGroups = MEMBER_ROLE_GROUPS.map((group) => ({
     ...group,
-    members: members.filter((member) =>
-      group.role === QUEUE_ROLES.ANNOTATOR
-        ? !member.role || member.role === group.role
-        : member.role === group.role,
-    ),
+    members: members.filter((member) => hasQueueRole(member, group.role)),
   })).filter((group) => group.members.length > 0);
 
   const knownRoles = new Set(MEMBER_ROLE_GROUPS.map((group) => group.role));
   const unknownGroups = Object.entries(
     members
-      .filter((member) => member.role && !knownRoles.has(member.role))
-      .reduce((acc, member) => {
-        acc[member.role] = [...(acc[member.role] || []), member];
+      .flatMap((member) =>
+        queueRoleList(member)
+          .filter((role) => !knownRoles.has(role))
+          .map((role) => ({ role, member })),
+      )
+      .reduce((acc, { role, member }) => {
+        acc[role] = [...(acc[role] || []), member];
         return acc;
       }, {}),
   ).map(([role, groupMembers]) => ({
@@ -315,7 +315,7 @@ function ActionsCellRenderer({ data, context }) {
   const myEntry = annotators.find(
     (a) => String(a.user_id) === String(currentUserId),
   );
-  const isQueueManager = myEntry?.role === "manager";
+  const isQueueManager = hasQueueRole(myEntry, QUEUE_ROLES.MANAGER);
   // Show menu only for queue managers
   if (!isQueueManager) return null;
   return (

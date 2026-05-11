@@ -65,9 +65,16 @@ export default function ScoresListSection({
   const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId);
   const { data: secondaryScores, isLoading: secondaryLoading } =
     useScoresForSource(secondarySourceType, secondarySourceId);
-  const { data: spanNotes = [] } = useSpanNotes(
-    sourceType === "observation_span" ? sourceId : null,
+  const spanNotesSourceId = useMemo(
+    () =>
+      sourceType === "observation_span"
+        ? sourceId
+        : secondarySourceType === "observation_span"
+          ? secondarySourceId
+          : null,
+    [secondarySourceId, secondarySourceType, sourceId, sourceType],
   );
+  const { data: spanNotes = [] } = useSpanNotes(spanNotesSourceId);
   const queueTargetSources = useMemo(
     () =>
       openQueueItemOnRowClick
@@ -405,8 +412,8 @@ export default function ScoresListSection({
         </TableContainer>
       )}
 
-      {/* Span Notes table — only for observation_span sources */}
-      {sourceType === "observation_span" && spanNotes.length > 0 && (
+      {/* Whole-item notes live on the source span, even when scores live on trace. */}
+      {spanNotes.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
             Span Notes

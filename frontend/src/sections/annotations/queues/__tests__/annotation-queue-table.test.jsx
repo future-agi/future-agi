@@ -229,6 +229,40 @@ describe("AnnotationQueueTable", () => {
     expect(screen.getByText("Cara (cara@example.com)")).toBeInTheDocument();
   });
 
+  it("shows the same member under each assigned role", async () => {
+    const user = userEvent.setup();
+    render(
+      <AnnotationQueueTable
+        {...defaultProps}
+        data={[
+          {
+            ...MOCK_QUEUES[0],
+            annotators: [
+              {
+                id: "a1",
+                user_id: "user-1",
+                name: "Alice",
+                email: "alice@example.com",
+                role: "manager",
+                roles: ["manager", "reviewer", "annotator"],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const avatarGroup = screen
+      .getByTestId("queue-members-q1")
+      .querySelector(".MuiAvatarGroup-root");
+    await user.hover(avatarGroup);
+
+    expect(await screen.findByText("Managers")).toBeInTheDocument();
+    expect(screen.getByText("Annotators")).toBeInTheDocument();
+    expect(screen.getByText("Reviewers")).toBeInTheDocument();
+    expect(screen.getAllByText("Alice (alice@example.com)")).toHaveLength(3);
+  });
+
   it("shows loading skeletons when loading", () => {
     const { container } = render(
       <AnnotationQueueTable {...defaultProps} loading={true} />,

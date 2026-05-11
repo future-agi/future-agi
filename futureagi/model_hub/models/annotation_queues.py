@@ -36,6 +36,54 @@ VALID_STATUS_TRANSITIONS = {
     },
 }
 
+ANNOTATOR_ROLE_PRIORITY = [
+    AnnotatorRole.MANAGER.value,
+    AnnotatorRole.REVIEWER.value,
+    AnnotatorRole.ANNOTATOR.value,
+]
+
+
+def normalize_annotator_roles(value, default=AnnotatorRole.ANNOTATOR.value):
+    """Return a stable, valid role list from legacy strings or new arrays."""
+    if value is None or value == "":
+        raw_roles = []
+    elif isinstance(value, str):
+        raw_roles = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_roles = list(value)
+    else:
+        raw_roles = []
+
+    valid_roles = {role.value for role in AnnotatorRole}
+    roles = []
+    for role in raw_roles:
+        if role in valid_roles and role not in roles:
+            roles.append(role)
+
+    if not roles and default:
+        roles = [default]
+
+    return [
+        role for role in ANNOTATOR_ROLE_PRIORITY if role in roles
+    ] + [role for role in roles if role not in ANNOTATOR_ROLE_PRIORITY]
+
+
+def primary_annotator_role(roles):
+    normalized = normalize_annotator_roles(roles)
+    return normalized[0] if normalized else AnnotatorRole.ANNOTATOR.value
+
+
+def annotation_queue_role_q(*roles):
+    """Match memberships where a role is stored in legacy `role` or new `roles`."""
+    normalized = normalize_annotator_roles(
+        list(roles),
+        default=None,
+    )
+    query = Q(role__in=normalized)
+    for role in normalized:
+        query |= Q(roles__contains=[role])
+    return query
+
 
 class AnnotationQueue(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -208,6 +256,11 @@ class AnnotationQueueAnnotator(BaseModel):
         choices=AnnotatorRole.get_choices(),
         default=AnnotatorRole.ANNOTATOR.value,
     )
+    roles = models.JSONField(default=list, blank=True)
+
+    @property
+    def normalized_roles(self):
+        return normalize_annotator_roles(self.roles or self.role)
 
     class Meta:
         constraints = [

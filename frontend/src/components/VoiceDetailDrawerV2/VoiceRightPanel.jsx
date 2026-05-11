@@ -444,6 +444,7 @@ const VoiceRightPanel = ({
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              openQueueItemOnRowClick={!isSimulate}
               title=""
               renderActions={
                 onAction ? (

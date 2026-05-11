@@ -383,6 +383,88 @@ class TestVoiceAnnotationRegressionE2E:
         assert queue_entry["existing_scores"][str(thumbs_label.id)] == {"value": "up"}
         assert queue_entry["existing_notes"] == "whole call note"
 
+    def test_th4861_trace_item_notes_do_not_backfill_label_notes_on_submit(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        queue = _queue(
+            "TH-4861 trace note separation queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=observe_trace,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        submit_resp = auth_client.post(
+            _submit_url(queue, item),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(thumbs_label.id),
+                        "value": {"value": "up"},
+                    }
+                ],
+                "notes": "trace-level-only note",
+            },
+            format="json",
+        )
+
+        assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
+        score = Score.objects.get(
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=observe_trace,
+            label=thumbs_label,
+            annotator=user,
+            deleted=False,
+        )
+        assert score.notes in ("", None)
+        assert SpanNotes.objects.get(
+            span=root_conversation_span,
+            created_by_user=user,
+        ).notes == "trace-level-only note"
+
+        detail_resp = auth_client.get(_annotate_detail_url(queue, item))
+        assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
+        detail = detail_resp.data["result"]
+        assert detail["existing_notes"] == "trace-level-only note"
+        assert detail["annotations"][0]["notes"] in ("", None)
+
+        for_source_resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": QueueItemSourceType.TRACE.value,
+                            "source_id": str(observe_trace.id),
+                            "span_notes_source_id": root_conversation_span.id,
+                        }
+                    ]
+                )
+            },
+        )
+        assert for_source_resp.status_code == status.HTTP_200_OK, for_source_resp.data
+        queue_entry = for_source_resp.data["result"][0]
+        assert queue_entry["existing_scores"][str(thumbs_label.id)] == {"value": "up"}
+        assert queue_entry["existing_notes"] == "trace-level-only note"
+        assert queue_entry["existing_label_notes"] == {}
+
     def test_th4055_old_observe_span_add_annotations_syncs_default_queue(
         self,
         auth_client,

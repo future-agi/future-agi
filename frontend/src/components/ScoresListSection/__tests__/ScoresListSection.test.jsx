@@ -4,6 +4,8 @@ import ScoresListSection from "../ScoresListSection";
 
 const mockState = vi.hoisted(() => ({
   scoresBySource: {},
+  spanNotesBySource: {},
+  spanNoteSourceIds: [],
   queueEntries: [],
 }));
 
@@ -22,7 +24,10 @@ vi.mock("src/api/scores/scores", () => ({
     isLoading: false,
     data: mockState.scoresBySource[sourceType] || [],
   })),
-  useSpanNotes: vi.fn(() => ({ data: [] })),
+  useSpanNotes: vi.fn((spanId) => {
+    mockState.spanNoteSourceIds.push(spanId);
+    return { data: mockState.spanNotesBySource[spanId] || [] };
+  }),
 }));
 
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
@@ -55,6 +60,8 @@ describe("ScoresListSection", () => {
         },
       ],
     };
+    mockState.spanNotesBySource = {};
+    mockState.spanNoteSourceIds = [];
     mockState.queueEntries = [];
   });
 
@@ -138,5 +145,30 @@ describe("ScoresListSection", () => {
       "_blank",
       "noopener,noreferrer",
     );
+  });
+
+  it("shows whole-item notes from the secondary observation span for trace scores", () => {
+    mockState.spanNotesBySource = {
+      "span-1": [
+        {
+          id: "note-1",
+          notes: "whole item note",
+          annotator: "Kartik",
+        },
+      ],
+    };
+
+    render(
+      <ScoresListSection
+        sourceType="trace"
+        sourceId="trace-1"
+        secondarySourceType="observation_span"
+        secondarySourceId="span-1"
+      />,
+    );
+
+    expect(mockState.spanNoteSourceIds).toContain("span-1");
+    expect(screen.getByText("Span Notes")).toBeInTheDocument();
+    expect(screen.getByText("whole item note")).toBeInTheDocument();
   });
 });

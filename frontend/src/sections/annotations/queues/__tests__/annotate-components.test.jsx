@@ -306,6 +306,42 @@ describe("LabelPanel", () => {
     });
   });
 
+  it("does not use whole-item notes as label notes", async () => {
+    render(
+      <LabelPanel
+        labels={[
+          {
+            id: "ql-1",
+            label_id: "label-1",
+            name: "Content",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: true,
+          },
+        ]}
+        annotations={[
+          {
+            label_id: "label-1",
+            value: { value: "up" },
+          },
+        ]}
+        initialItemNotes="trace-level-only note"
+        onSubmit={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Add notes for this item..."),
+      ).toHaveValue("trace-level-only note");
+      expect(
+        screen.getByPlaceholderText("Add notes for this label..."),
+      ).toHaveValue("");
+    });
+  });
+
   it("shows reviewer feedback on returned items", () => {
     render(
       <LabelPanel

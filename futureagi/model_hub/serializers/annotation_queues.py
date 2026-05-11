@@ -10,6 +10,8 @@ from model_hub.models.annotation_queues import (
     AutomationRule,
     ItemAnnotation,
     QueueItem,
+    normalize_annotator_roles,
+    primary_annotator_role,
 )
 from model_hub.models.choices import AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
@@ -37,13 +39,17 @@ class QueueAnnotatorNestedSerializer(serializers.ModelSerializer):
     user_id = serializers.UUIDField(source="user.id")
     name = serializers.CharField(source="user.name", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
+    roles = serializers.SerializerMethodField()
 
     role = serializers.CharField(default="annotator")
 
     class Meta:
         model = AnnotationQueueAnnotator
-        fields = ["id", "user_id", "name", "email", "role"]
+        fields = ["id", "user_id", "name", "email", "role", "roles"]
         read_only_fields = ["id"]
+
+    def get_roles(self, obj):
+        return obj.normalized_roles
 
 
 class AnnotationQueueSerializer(serializers.ModelSerializer):
@@ -60,7 +66,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         default=list,
     )
     annotator_roles = serializers.DictField(
-        child=serializers.ChoiceField(choices=[r.value for r in AnnotatorRole]),
+        child=serializers.JSONField(),
         write_only=True,
         required=False,
         default=dict,
@@ -156,6 +162,17 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                 )
         return value
 
+    def validate_annotator_roles(self, value):
+        normalized = {}
+        for user_id, roles in (value or {}).items():
+            role_list = normalize_annotator_roles(roles, default=None)
+            if not role_list:
+                raise serializers.ValidationError(
+                    f"Invalid roles for annotator {user_id}."
+                )
+            normalized[str(user_id)] = role_list
+        return normalized
+
     def _sync_labels(self, queue, label_ids):
         existing = set(
             queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
@@ -192,10 +209,13 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         # 2. Update role for existing annotators if role changed
         to_keep = existing & incoming
         for annotator in existing_qs.filter(user_id__in=to_keep):
-            new_role = roles.get(str(annotator.user_id))
-            if new_role and annotator.role != new_role:
-                annotator.role = new_role
-                annotator.save(update_fields=["role", "updated_at"])
+            new_roles = roles.get(str(annotator.user_id))
+            if new_roles:
+                primary_role = primary_annotator_role(new_roles)
+                if annotator.role != primary_role or annotator.normalized_roles != new_roles:
+                    annotator.role = primary_role
+                    annotator.roles = new_roles
+                    annotator.save(update_fields=["role", "roles", "updated_at"])
 
         # 3. Create new annotators with role from dict, defaulting to "annotator"
         to_add = incoming - existing
@@ -206,7 +226,12 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                     AnnotationQueueAnnotator(
                         queue=queue,
                         user=user,
-                        role=roles.get(str(user.id), AnnotatorRole.ANNOTATOR.value),
+                        role=primary_annotator_role(
+                            roles.get(str(user.id), [AnnotatorRole.ANNOTATOR.value])
+                        ),
+                        roles=normalize_annotator_roles(
+                            roles.get(str(user.id), [AnnotatorRole.ANNOTATOR.value])
+                        ),
                     )
                     for user in users
                 ]
@@ -227,14 +252,19 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         creator = queue.created_by
         if creator:
             creator_id = str(creator.pk)
+            creator_roles = [
+                AnnotatorRole.MANAGER.value,
+                AnnotatorRole.REVIEWER.value,
+                AnnotatorRole.ANNOTATOR.value,
+            ]
             annotator_ids_str = [str(aid) for aid in annotator_ids]
             if creator_id not in annotator_ids_str:
-                # Creator not explicitly listed — add them as manager
-                annotator_roles[creator_id] = AnnotatorRole.MANAGER.value
+                # Creator not explicitly listed — add them with full access.
+                annotator_roles[creator_id] = creator_roles
                 annotator_ids = list(annotator_ids) + [creator.pk]
             else:
-                # Creator was listed — ensure their role is manager
-                annotator_roles[creator_id] = AnnotatorRole.MANAGER.value
+                # Creator was listed — ensure they keep full access.
+                annotator_roles[creator_id] = creator_roles
 
         if annotator_ids:
             self._sync_annotators(queue, annotator_ids, annotator_roles)

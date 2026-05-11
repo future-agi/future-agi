@@ -38,7 +38,7 @@ import LabelPanel from "./label-panel";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES, isQueueAnnotatorRole } from "../constants";
+import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 
 const MAX_HISTORY = 50;
 
@@ -111,16 +111,16 @@ export default function AnnotateWorkspaceView() {
   const { data: queueDetail } = useAnnotationQueueDetail(queueId);
   const currentUserId = String(user?.id || user?.pk || "");
 
-  const myQueueRole = useMemo(() => {
+  const myQueueMembership = useMemo(() => {
     if (!queueDetail?.annotators || !user) return null;
-    const currentUser = queueDetail.annotators.find(
+    return queueDetail.annotators.find(
       (a) => String(a.user_id) === currentUserId,
     );
-    return currentUser?.role || null;
   }, [queueDetail, user, currentUserId]);
 
   const canReview =
-    myQueueRole === QUEUE_ROLES.REVIEWER || myQueueRole === QUEUE_ROLES.MANAGER;
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) ||
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
 
   const queueAnnotators = useMemo(
     () => (queueDetail?.annotators || []).filter(isQueueAnnotatorRole),

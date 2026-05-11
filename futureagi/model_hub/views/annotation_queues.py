@@ -21,6 +21,7 @@ from model_hub.models.annotation_queues import (
     AutomationRule,
     QueueItem,
     QueueItemAssignment,
+    annotation_queue_role_q,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
@@ -1201,9 +1202,18 @@ FILTER_MODE_RESOLVERS = {
 
 def _is_queue_manager(queue, user):
     return AnnotationQueueAnnotator.objects.filter(
+        annotation_queue_role_q(AnnotatorRole.MANAGER.value),
         queue=queue,
         user=user,
-        role=AnnotatorRole.MANAGER.value,
+        deleted=False,
+    ).exists()
+
+
+def _has_queue_role(queue_id, user, *roles):
+    return AnnotationQueueAnnotator.objects.filter(
+        annotation_queue_role_q(*roles),
+        queue_id=queue_id,
+        user=user,
         deleted=False,
     ).exists()
 
@@ -1265,7 +1275,10 @@ def _finalize_bulk_add(queue, items_to_create):
         member_ids = list(
             AnnotationQueueAnnotator.objects.filter(
                 queue=queue, deleted=False
-            ).values_list("user_id", flat=True)
+            )
+            .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+            .values_list("user_id", flat=True)
+            .distinct()
         )
         if member_ids:
             assignments = [
@@ -1459,9 +1472,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Only managers of the queue may update queue settings."""
         instance = self.get_object()
         is_manager = AnnotationQueueAnnotator.objects.filter(
+            annotation_queue_role_q(AnnotatorRole.MANAGER.value),
             queue=instance,
             user=request.user,
-            role=AnnotatorRole.MANAGER.value,
             deleted=False,
         ).exists()
         if not is_manager:
@@ -2270,12 +2283,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 )
                 action = "created"
 
-        # Auto-add creator as manager so they can see Settings/Agreement tabs
+        # Auto-add creator with full access so default queues are immediately usable.
         if action == "created":
             AnnotationQueueAnnotator.objects.create(
                 queue=queue,
                 user=request.user,
                 role=AnnotatorRole.MANAGER.value,
+                roles=[
+                    AnnotatorRole.MANAGER.value,
+                    AnnotatorRole.REVIEWER.value,
+                    AnnotatorRole.ANNOTATOR.value,
+                ],
             )
 
         queue_labels = (
@@ -3081,12 +3099,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         queue = AnnotationQueue.objects.filter(pk=queue_id).first()
         is_reviewer = (
             user
-            and AnnotationQueueAnnotator.objects.filter(
-                queue_id=queue_id,
-                user=user,
-                role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
-                deleted=False,
-            ).exists()
+            and _has_queue_role(
+                queue_id,
+                user,
+                AnnotatorRole.REVIEWER.value,
+                AnnotatorRole.MANAGER.value,
+            )
         )
         if user and queue and not queue.auto_assign and not is_reviewer:
             base_qs = _queue_item_user_scope(
@@ -3168,15 +3186,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     queue_item=item, user=request.user, deleted=False
                 ).exists() or item.assigned_to_id == request.user.id
                 if not is_assigned:
-                    is_manager = AnnotationQueueAnnotator.objects.filter(
-                        queue_id=queue_id,
-                        user=request.user,
-                        role__in=[
-                            AnnotatorRole.MANAGER.value,
-                            AnnotatorRole.REVIEWER.value,
-                        ],
-                        deleted=False,
-                    ).exists()
+                    is_manager = _has_queue_role(
+                        queue_id,
+                        request.user,
+                        AnnotatorRole.MANAGER.value,
+                        AnnotatorRole.REVIEWER.value,
+                    )
                     if not is_manager:
                         return self._gm.forbidden_response(
                             "This item is assigned to another annotator."
@@ -3186,18 +3201,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         annotations_data = serializer.validated_data["annotations"]
-        fallback_notes = serializer.validated_data.get("notes", "")
+        legacy_notes = serializer.validated_data.get("notes", "")
         item_notes = serializer.validated_data.get("item_notes")
         submitted = 0
 
         # Resolve source FK for Score creation
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
         source_obj = getattr(item, source_fk_field) if source_fk_field else None
-        span_notes_target = (
-            _span_notes_target_for_queue_item(item)
-            if item_notes is not None
-            else None
-        )
+        span_notes_target = _span_notes_target_for_queue_item(item)
+        # Older clients sent one top-level `notes` field. For trace/span items that
+        # can store whole-item notes, treat that legacy field as the item note so it
+        # never gets copied into every label note by accident.
+        if item_notes is None and legacy_notes and span_notes_target is not None:
+            item_notes = legacy_notes
+            label_notes_fallback = ""
+        else:
+            label_notes_fallback = legacy_notes
 
         # Pre-fetch valid label IDs for this queue
         queue_label_ids = set(
@@ -3220,7 +3239,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 continue
 
             per_label_notes = (
-                ann_data.get("notes", fallback_notes) if label.allow_notes else ""
+                ann_data.get("notes", label_notes_fallback)
+                if label.allow_notes
+                else ""
             )
 
             # Upsert Score (unified annotation primitive)
@@ -3244,7 +3265,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 )
                 submitted += 1
 
-        if span_notes_target is not None:
+        if span_notes_target is not None and item_notes is not None:
             if item_notes:
                 SpanNotes.objects.update_or_create(
                     span=span_notes_target,
@@ -3510,12 +3531,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # the role is the privacy boundary, and view-only mode would be
         # useless without the values it's trying to display. Regular
         # annotators only see their own scores.
-        is_reviewer = AnnotationQueueAnnotator.objects.filter(
-            queue_id=queue_id,
-            user=request.user,
-            role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
-            deleted=False,
-        ).exists()
+        is_reviewer = _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        )
         annotations_qs = _scores_for_queue_item(item).select_related("label")
         raw_annotator_id = request.query_params.get("annotator_id") or None
         viewing_annotator_id = None
@@ -3833,12 +3854,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             pass
 
         # Verify requesting user has reviewer or manager role
-        if not AnnotationQueueAnnotator.objects.filter(
-            queue_id=queue_id,
-            user=request.user,
-            role__in=[AnnotatorRole.REVIEWER.value, AnnotatorRole.MANAGER.value],
-            deleted=False,
-        ).exists():
+        if not _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        ):
             return self._gm.forbidden_response(
                 "Only reviewers or managers can review items."
             )

@@ -33,7 +33,7 @@ import RHFTextField from "src/components/hook-form/rhf-text-field";
 import { RHFCheckbox } from "src/components/hook-form/rhf-checkbox";
 import LabelPicker from "../components/label-picker";
 import AnnotatorPicker from "../components/annotator-picker";
-import { isQueueAnnotatorRole } from "../constants";
+import { isQueueAnnotatorRole, queueRoleList } from "../constants";
 
 /** @type {Record<string, { label: string; hint: string }>} */
 const ALL_STATUS_OPTIONS = {
@@ -115,6 +115,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
         queue.annotators?.map((a) => ({
           userId: a.user_id,
           role: a.role || "annotator",
+          roles: queueRoleList(a),
         })) || [];
       reset({
         name: queue.name || "",
@@ -146,7 +147,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       label_ids: formData.label_ids,
       annotator_ids: formData.annotators.map((a) => a.userId),
       annotator_roles: Object.fromEntries(
-        formData.annotators.map((a) => [a.userId, a.role]),
+        formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
       ),
     };
 
