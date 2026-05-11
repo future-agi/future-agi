@@ -8,6 +8,10 @@ from pathlib import Path
 from .checker import check_codebase
 from .extractor import extract_from_codebase
 from .refactor import suggest_refactors
+from .visualize import (
+    format_pr_comment, render_mermaid, render_reduction_sequence,
+    render_test_coverage_mermaid,
+)
 
 
 def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
@@ -67,6 +71,18 @@ def main(argv=None) -> int:
         "--suggest-min", type=int, default=1, metavar="N",
         help="Minimum violations to include in refactor suggestions (default: 1)",
     )
+    p.add_argument(
+        "--graph", action="store_true",
+        help="Print the violation call graph as a Mermaid flowchart",
+    )
+    p.add_argument(
+        "--graph-tests", action="store_true",
+        help="Print a separate test coverage graph (test→production edges)",
+    )
+    p.add_argument(
+        "--pr-comment", action="store_true",
+        help="Print a full GitHub PR comment body (call graph + reduction sequence + test coverage)",
+    )
     args = p.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -106,18 +122,45 @@ def main(argv=None) -> int:
                 print(f"  {v}")
             print()
 
-    if args.suggest:
+    suggestions: list = []
+    if args.suggest or args.pr_comment:
         suggestions = suggest_refactors(
             violations, functions, call_sites,
             min_violations=args.suggest_min,
         )
-        if suggestions:
-            print(f"\n⚡ pact: {len(suggestions)} refactor suggestion(s)\n")
-            for s in suggestions:
-                print(s.summary())
-                print()
+        if args.suggest:
+            if suggestions:
+                print(f"\n⚡ pact: {len(suggestions)} refactor suggestion(s)\n")
+                for s in suggestions:
+                    print(s.summary())
+                    print()
+            else:
+                print("\n✓  pact: no refactor targets above threshold")
+
+    if args.graph:
+        # Use suggestion data for accurate attribution if available; else compute
+        if not suggestions and violations:
+            _graph_suggestions = suggest_refactors(violations, functions, call_sites, verify=False)
         else:
-            print("\n✓  pact: no refactor targets above threshold")
+            _graph_suggestions = suggestions
+        vcounts = {s.func_name: s.violation_count for s in _graph_suggestions}
+        diagram = render_mermaid(
+            violations, functions, call_sites,
+            highlight={s.func_name for s in _graph_suggestions},
+            violation_counts=vcounts,
+        )
+        print("\n```mermaid")
+        print(diagram)
+        print("```\n")
+
+    if args.graph_tests:
+        diagram = render_test_coverage_mermaid(functions, call_sites)
+        print("\n```mermaid")
+        print(diagram)
+        print("```\n")
+
+    if args.pr_comment:
+        print(format_pr_comment(suggestions, violations, functions, call_sites))
 
     return 1 if (violations and args.strict) else 0
 
