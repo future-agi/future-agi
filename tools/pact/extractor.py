@@ -244,6 +244,26 @@ def _class_has_django_fields(node: ast.ClassDef) -> bool:
 def _save_auto_assigned(class_node: ast.ClassDef) -> set[str]:
     """Fields auto-assigned in save() via `if not self.field: self.field = ...` pattern."""
     auto: set[str] = set()
+
+    def assigns_self_attr(statements: list[ast.stmt], attr: str) -> bool:
+        for body_stmt in statements:
+            targets: list[ast.expr] = []
+            if isinstance(body_stmt, ast.Assign):
+                targets = list(body_stmt.targets)
+            elif isinstance(body_stmt, ast.AnnAssign):
+                targets = [body_stmt.target]
+            elif isinstance(body_stmt, ast.AugAssign):
+                targets = [body_stmt.target]
+            for target in targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
+                    and target.attr == attr
+                ):
+                    return True
+        return False
+
     for item in ast.walk(class_node):
         if not isinstance(item, ast.FunctionDef) or item.name != "save":
             continue
@@ -259,6 +279,7 @@ def _save_auto_assigned(class_node: ast.ClassDef) -> set[str]:
                 and isinstance(attr_test, ast.Attribute)
                 and isinstance(attr_test.value, ast.Name)
                 and attr_test.value.id == "self"
+                and assigns_self_attr(stmt.body, attr_test.attr)
             ):
                 auto.add(attr_test.attr)
     return auto

@@ -124,6 +124,37 @@ def test_optional_field_not_flagged(tmp_path):
     assert not any(v.call == "Note.objects.create" for v in violations)
 
 
+def test_save_guard_without_assignment_does_not_make_field_optional(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Widget(models.Model):
+            slug = models.CharField(max_length=64)
+            class Meta: app_label = 'x'
+            def save(self, *args, **kwargs):
+                if not self.slug:
+                    validate_slug_source()
+                return super().save(*args, **kwargs)
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make():
+            Widget.objects.create()
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    widget_v = [v for v in violations if v.call == "Widget.objects.create"]
+    assert widget_v, "save guards only suppress required fields when they assign them"
+    assert any("slug" in missing for missing in widget_v[0].missing)
+
+
 # ---------------------------------------------------------------------------
 # required_arg_missing mode
 # ---------------------------------------------------------------------------
