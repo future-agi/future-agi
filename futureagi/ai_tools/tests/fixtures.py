@@ -99,7 +99,7 @@ def make_dataset_with_rows(tool_context, *, row_data=None, **ds_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def make_eval_template(tool_context, *, name="Test Eval", owner="system", **kwargs):
+def make_eval_template(tool_context, *, name="test-eval", owner="system", **kwargs):
     """Create an EvalTemplate."""
     from model_hub.models.evals_metric import EvalTemplate
 

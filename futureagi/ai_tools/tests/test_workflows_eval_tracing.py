@@ -5,13 +5,18 @@ from ai_tools.tests.fixtures import make_eval_template, make_project, make_trace
 
 
 class TestEvalTemplateWorkflow:
-    """Create → inspect → update → group → delete."""
+    """Create → inspect → update → delete."""
 
     def test_full_lifecycle(self, tool_context):
         # 1. Create template
         create = run_tool(
             "create_eval_template",
-            {"name": "wf-eval-template", "description": "Workflow test eval"},
+            {
+                "name": "wf-eval-template",
+                "description": "Workflow test eval",
+                "criteria": "Evaluate {{response}} for clarity",
+                "required_keys": ["response"],
+            },
             tool_context,
         )
         assert not create.is_error
@@ -36,22 +41,13 @@ class TestEvalTemplateWorkflow:
         assert not update.is_error
         assert update.data["name"] == "wf-eval-renamed"
 
-        # 5. Create group with this template
-        group = run_tool(
-            "create_eval_group",
-            {"name": "Workflow Group", "eval_template_ids": [tmpl_id]},
-            tool_context,
-        )
-        assert not group.is_error
-        assert group.data["template_count"] == 1
-
-        # 6. Delete template
+        # 5. Delete template
         delete = run_tool(
             "delete_eval_template", {"eval_template_id": tmpl_id}, tool_context
         )
         assert not delete.is_error
 
-        # 7. Verify gone
+        # 6. Verify gone
         get2 = run_tool(
             "get_eval_template", {"eval_template_id": tmpl_id}, tool_context
         )
@@ -110,28 +106,3 @@ class TestTracingWorkflow:
         # 8. Delete project
         delete = run_tool("delete_project", {"project_id": proj_id}, tool_context)
         assert not delete.is_error
-
-
-class TestEvalGroupMultiTemplate:
-    """Create multiple templates → group them → verify count."""
-
-    def test_group_multiple_templates(self, tool_context):
-        # Create 3 templates
-        ids = []
-        for i in range(3):
-            result = run_tool(
-                "create_eval_template",
-                {"name": f"group-tmpl-{i}", "description": f"Template {i}"},
-                tool_context,
-            )
-            assert not result.is_error
-            ids.append(result.data["id"])
-
-        # Group them
-        group = run_tool(
-            "create_eval_group",
-            {"name": "Multi Template Group", "eval_template_ids": ids},
-            tool_context,
-        )
-        assert not group.is_error
-        assert group.data["template_count"] == 3

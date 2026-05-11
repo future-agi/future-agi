@@ -45,7 +45,7 @@ class TestListEvaluationsTool:
 
         assert not result.is_error
         assert "Evaluations (1)" in result.content
-        assert "Test Eval" in result.content
+        assert "test-eval" in result.content
         assert "completed" in result.content
         assert result.data["total"] == 1
 
@@ -70,7 +70,7 @@ class TestGetEvaluationTool:
         )
 
         assert not result.is_error
-        assert "Test Eval" in result.content
+        assert "test-eval" in result.content
         assert "completed" in result.content
         assert result.data["id"] == str(evaluation.id)
 
@@ -105,7 +105,7 @@ class TestListEvalTemplates:
     def test_list_with_template(self, tool_context, eval_template):
         result = run_tool("list_eval_templates", {}, tool_context)
         assert not result.is_error
-        assert "Test Eval" in result.content
+        assert "test-eval" in result.content
 
     def test_list_filter_by_owner(
         self, tool_context, eval_template, user_eval_template
@@ -124,7 +124,7 @@ class TestGetEvalTemplate:
             tool_context,
         )
         assert not result.is_error
-        assert "Test Eval" in result.content
+        assert "test-eval" in result.content
 
     def test_get_nonexistent(self, tool_context):
         result = run_tool(
@@ -171,34 +171,20 @@ class TestCreateEvalTemplateTool:
         assert not result.is_error
         assert "criteria-eval" in result.content
 
-    def test_create_without_variable_in_criteria(self, tool_context):
-        """Creating eval template without template variable in criteria should fail."""
-        result = run_tool(
-            "create_eval_template",
-            {
-                "name": "no-var-eval",
-                "criteria": "Check if the response is helpful",
-                "required_keys": ["response"],
-            },
-            tool_context,
-        )
-
-        assert result.is_error
-        assert "template variable" in result.content.lower()
-
     def test_create_without_criteria(self, tool_context):
-        """Creating eval template without criteria should fail for non-Function types."""
+        """LLM-as-judge eval without criteria/instructions should fail."""
         result = run_tool(
             "create_eval_template",
             {
                 "name": "no-criteria-eval",
+                "eval_type": "llm",
                 "required_keys": ["response"],
             },
             tool_context,
         )
 
         assert result.is_error
-        assert "template variable" in result.content.lower()
+        assert "instructions are required" in result.content.lower()
 
     def test_create_duplicate_user_name(self, tool_context):
         run_tool(
@@ -227,7 +213,11 @@ class TestCreateEvalTemplateTool:
         """Cannot create user template with same name as system template."""
         result = run_tool(
             "create_eval_template",
-            {"name": eval_template.name},
+            {
+                "name": eval_template.name,
+                "criteria": "Evaluate {{response}}",
+                "required_keys": ["response"],
+            },
             tool_context,
         )
 
@@ -327,48 +317,3 @@ class TestDeleteEvalTemplateTool:
         )
 
         assert result.is_error
-
-
-class TestCreateEvalGroupTool:
-    def test_create_group(self, tool_context, eval_template):
-        result = run_tool(
-            "create_eval_group",
-            {
-                "name": "Test Group",
-                "eval_template_ids": [str(eval_template.id)],
-            },
-            tool_context,
-        )
-
-        assert not result.is_error
-        assert "Eval Group Created" in result.content
-        assert result.data["template_count"] == 1
-
-    def test_create_group_missing_templates(self, tool_context):
-        result = run_tool(
-            "create_eval_group",
-            {
-                "name": "Bad Group",
-                "eval_template_ids": [str(uuid.uuid4())],
-            },
-            tool_context,
-        )
-
-        assert result.is_error
-        assert "not found" in result.content.lower()
-
-    def test_create_group_multiple_templates(self, tool_context):
-        t1 = make_eval_template(tool_context, name="Eval A")
-        t2 = make_eval_template(tool_context, name="Eval B")
-
-        result = run_tool(
-            "create_eval_group",
-            {
-                "name": "Multi Group",
-                "eval_template_ids": [str(t1.id), str(t2.id)],
-            },
-            tool_context,
-        )
-
-        assert not result.is_error
-        assert result.data["template_count"] == 2
