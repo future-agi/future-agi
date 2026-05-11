@@ -93,5 +93,6 @@ class TestSeedNodeTemplatesCommand:
 
     def test_template_filter_unknown(self, db):
         """--template with unknown name prints error and creates nothing."""
+        existing_count = NodeTemplate.no_workspace_objects.count()
         call_command("seed_node_templates", template="nonexistent")
-        assert NodeTemplate.no_workspace_objects.count() == 0
+        assert NodeTemplate.no_workspace_objects.count() == existing_count

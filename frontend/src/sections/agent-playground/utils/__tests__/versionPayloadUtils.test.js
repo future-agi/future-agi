@@ -125,6 +125,7 @@ describe("buildVersionPayload", () => {
               display_name: "inputs",
               direction: "input",
               data_schema: { type: "object" },
+              required: false,
             },
             {
               temp_id: "code-out",
@@ -132,6 +133,7 @@ describe("buildVersionPayload", () => {
               display_name: "result",
               direction: "output",
               data_schema: { type: "object" },
+              required: true,
             },
           ],
         },
@@ -153,6 +155,7 @@ describe("buildVersionPayload", () => {
         display_name: "inputs",
         direction: "input",
         data_schema: { type: "object" },
+        required: false,
       },
       {
         id: "code-out",
@@ -160,6 +163,7 @@ describe("buildVersionPayload", () => {
         display_name: "result",
         direction: "output",
         data_schema: { type: "object" },
+        required: true,
       },
     ]);
   });

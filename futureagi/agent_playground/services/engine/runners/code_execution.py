@@ -37,6 +37,7 @@ _SANDBOX_UNAVAILABLE = (
 _IMAGE_UNAVAILABLE = "SANDBOX_UNAVAILABLE: Docker image '{image}' is not available and could not be pulled."
 _IMAGE_PULL_TIMEOUT_MS = 120000
 _OUTPUT_LIMIT_BYTES = 131072
+_RESULT_TAIL_BYTES = 65536
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class SandboxResult:
 class BoundedProcessResult:
     returncode: int | None
     stdout: str
+    stdout_for_parser: str
     stderr: str
     stdout_truncated: bool
     stderr_truncated: bool
@@ -240,7 +242,10 @@ class DockerCodeSandbox:
                     error=f"SANDBOX_EXECUTION_FAILED: {exc}",
                 )
 
-            stdout, value, found_marker = self._parse_stdout(completed.stdout)
+            payload, found_marker = self._parse_result_payload(
+                completed.stdout_for_parser
+            )
+            stdout = self._strip_result_marker(completed.stdout)
             error = None if completed.returncode == 0 else completed.stderr.strip()
             if completed.returncode != 0 and not error:
                 error = "Execution failed without stderr."
@@ -249,7 +254,7 @@ class DockerCodeSandbox:
 
             return SandboxResult(
                 ok=completed.returncode == 0 and found_marker,
-                value=value,
+                value=payload.get("result") if payload else None,
                 stdout=stdout,
                 stderr=completed.stderr,
                 exit_code=completed.returncode,
@@ -398,24 +403,31 @@ class DockerCodeSandbox:
             ]
         )
 
-    def _parse_stdout(self, stdout: str) -> tuple[str, Any, bool]:
-        lines = stdout.splitlines()
-        marker_index = None
-        payload = None
-        for index in range(len(lines) - 1, -1, -1):
-            line = lines[index]
-            if not line.startswith(_RESULT_MARKER):
-                continue
-            try:
-                payload = json.loads(line[len(_RESULT_MARKER) :])
-            except json.JSONDecodeError:
-                continue
-            marker_index = index
-            break
-        if marker_index is None:
-            return stdout, None, False
-        visible_stdout = "\n".join([*lines[:marker_index], *lines[marker_index + 1 :]])
-        return visible_stdout, payload.get("result"), True
+    def _parse_result_payload(self, stdout: str) -> tuple[dict[str, Any] | None, bool]:
+        marker_index = stdout.rfind(_RESULT_MARKER)
+        if marker_index == -1:
+            return None, False
+        decoder = json.JSONDecoder()
+        try:
+            payload, _ = decoder.raw_decode(stdout[marker_index + len(_RESULT_MARKER) :])
+        except json.JSONDecodeError:
+            return None, False
+        if not isinstance(payload, dict):
+            return None, False
+        return payload, True
+
+    def _strip_result_marker(self, stdout: str) -> str:
+        marker_index = stdout.rfind(_RESULT_MARKER)
+        if marker_index == -1:
+            return stdout
+        decoder = json.JSONDecoder()
+        payload_start = marker_index + len(_RESULT_MARKER)
+        try:
+            _, payload_end = decoder.raw_decode(stdout[payload_start:])
+        except json.JSONDecodeError:
+            return stdout
+        visible = stdout[:marker_index] + stdout[payload_start + payload_end :]
+        return visible.lstrip("\n") if marker_index == 0 else visible.rstrip("\n")
 
     def _remove_container(self, container_name: str) -> None:
         try:
@@ -509,12 +521,19 @@ def _run_bounded_subprocess(
 
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
+    stdout_tail = bytearray()
     stdout_state = {"size": 0, "truncated": False}
     stderr_state = {"size": 0, "truncated": False}
 
     stdout_thread = threading.Thread(
         target=_drain_bounded_stream,
-        args=(process.stdout, stdout_chunks, stdout_state, output_limit_bytes),
+        args=(
+            process.stdout,
+            stdout_chunks,
+            stdout_state,
+            output_limit_bytes,
+            stdout_tail,
+        ),
         daemon=True,
     )
     stderr_thread = threading.Thread(
@@ -539,6 +558,10 @@ def _run_bounded_subprocess(
     return BoundedProcessResult(
         returncode=None if timed_out else returncode,
         stdout=_coerce_subprocess_text(b"".join(stdout_chunks)),
+        stdout_for_parser=_coerce_subprocess_text(
+            b"".join(stdout_chunks)
+            + (bytes(stdout_tail) if stdout_state["truncated"] else b"")
+        ),
         stderr=_coerce_subprocess_text(b"".join(stderr_chunks)),
         stdout_truncated=stdout_state["truncated"],
         stderr_truncated=stderr_state["truncated"],
@@ -546,7 +569,13 @@ def _run_bounded_subprocess(
     )
 
 
-def _drain_bounded_stream(stream, chunks: list[bytes], state: dict, limit: int) -> None:
+def _drain_bounded_stream(
+    stream,
+    chunks: list[bytes],
+    state: dict,
+    limit: int,
+    tail: bytearray | None = None,
+) -> None:
     if stream is None:
         return
     while True:
@@ -558,6 +587,10 @@ def _drain_bounded_stream(stream, chunks: list[bytes], state: dict, limit: int) 
             chunks.append(chunk[:remaining])
         if len(chunk) > remaining:
             state["truncated"] = True
+        if tail is not None:
+            tail.extend(chunk)
+            if len(tail) > _RESULT_TAIL_BYTES:
+                del tail[: len(tail) - _RESULT_TAIL_BYTES]
         state["size"] += len(chunk)
 
 

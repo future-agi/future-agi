@@ -234,18 +234,57 @@ def test_code_execution_runner_can_return_structured_error_for_test_mode():
 def test_docker_sandbox_uses_last_valid_result_marker():
     sandbox = DockerCodeSandbox()
 
-    stdout, value, found_marker = sandbox._parse_stdout(
-        "\n".join(
-            [
-                "__FAGI_CODE_RESULT__not-json",
-                "visible",
-                '__FAGI_CODE_RESULT__{"ok": true, "result": {"answer": 42}}',
-            ]
-        )
+    stdout = "\n".join(
+        [
+            "__FAGI_CODE_RESULT__not-json",
+            "visible",
+            '__FAGI_CODE_RESULT__{"ok": true, "result": {"answer": 42}}',
+        ]
     )
+    payload, found_marker = sandbox._parse_result_payload(stdout)
+    visible_stdout = sandbox._strip_result_marker(stdout)
 
-    assert stdout == "__FAGI_CODE_RESULT__not-json\nvisible"
-    assert value == {"answer": 42}
+    assert visible_stdout == "__FAGI_CODE_RESULT__not-json\nvisible"
+    assert payload["result"] == {"answer": 42}
+    assert found_marker is True
+
+
+def test_docker_sandbox_parses_result_marker_without_trailing_newline():
+    sandbox = DockerCodeSandbox()
+    stdout = 'debug__FAGI_CODE_RESULT__{"ok": true, "result": 7}'
+
+    payload, found_marker = sandbox._parse_result_payload(stdout)
+    visible_stdout = sandbox._strip_result_marker(stdout)
+
+    assert visible_stdout == "debug"
+    assert payload["result"] == 7
+    assert found_marker is True
+
+
+def test_docker_sandbox_parses_result_marker_from_truncated_tail(monkeypatch):
+    monkeypatch.setenv("FAGI_CODE_EXECUTION_OUTPUT_LIMIT_BYTES", "1024")
+
+    result = _run_bounded_subprocess(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                [
+                    "import sys",
+                    "sys.stdout.write('x' * 2048)",
+                    "sys.stdout.write('__FAGI_CODE_RESULT__' + '{\"ok\": true, \"result\": 5}')",
+                ]
+            ),
+        ],
+        timeout=5,
+        output_limit_bytes=1024,
+    )
+    sandbox = DockerCodeSandbox()
+    payload, found_marker = sandbox._parse_result_payload(result.stdout_for_parser)
+
+    assert result.stdout_truncated is True
+    assert len(result.stdout) == 1024
+    assert payload["result"] == 5
     assert found_marker is True
 
 
@@ -264,6 +303,7 @@ def test_docker_sandbox_fails_when_runner_marker_is_missing(monkeypatch):
         lambda *args, **kwargs: BoundedProcessResult(
             returncode=0,
             stdout="visible only",
+            stdout_for_parser="visible only",
             stderr="",
             stdout_truncated=False,
             stderr_truncated=False,
@@ -321,6 +361,7 @@ def test_docker_sandbox_pulls_missing_image_before_execution(monkeypatch):
         or BoundedProcessResult(
             returncode=0,
             stdout='__FAGI_CODE_RESULT__{"result": 1}',
+            stdout_for_parser='__FAGI_CODE_RESULT__{"result": 1}',
             stderr="",
             stdout_truncated=False,
             stderr_truncated=False,
@@ -393,6 +434,7 @@ def test_docker_sandbox_marks_timeout_metadata(monkeypatch):
         lambda *args, **kwargs: BoundedProcessResult(
             returncode=None,
             stdout="partial",
+            stdout_for_parser="partial",
             stderr="",
             stdout_truncated=False,
             stderr_truncated=False,
@@ -432,6 +474,7 @@ def test_docker_sandbox_decodes_timeout_output_bytes(monkeypatch):
         lambda *args, **kwargs: BoundedProcessResult(
             returncode=None,
             stdout="partial stdout",
+            stdout_for_parser="partial stdout",
             stderr="partial stderr",
             stdout_truncated=False,
             stderr_truncated=False,
@@ -582,6 +625,7 @@ def test_docker_sandbox_runs_with_least_privilege_flags(monkeypatch):
         or BoundedProcessResult(
             returncode=0,
             stdout='__FAGI_CODE_RESULT__{"result": 1}',
+            stdout_for_parser='__FAGI_CODE_RESULT__{"result": 1}',
             stderr="",
             stdout_truncated=False,
             stderr_truncated=False,

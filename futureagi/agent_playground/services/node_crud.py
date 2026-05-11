@@ -130,7 +130,16 @@ def _auto_create_edges_for_node(
                             )
             else:
                 # Simple variable: match by display_name
-                out_port = output_ports_by_name.get(in_port.display_name)
+                if node.node_template and node.node_template.name == "code_execution":
+                    out_port = (
+                        Port.no_workspace_objects.filter(
+                            node=nc.source_node, direction=PortDirection.OUTPUT
+                        )
+                        .order_by("created_at")
+                        .first()
+                    )
+                else:
+                    out_port = output_ports_by_name.get(in_port.display_name)
                 if out_port:
                     try:
                         Edge(

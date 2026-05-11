@@ -418,6 +418,76 @@ class TestUpdateVersionContent:
         edges = Edge.no_workspace_objects.filter(graph_version=graph_version)
         assert edges.count() == 1
 
+    def test_auto_creates_code_execution_input_edge(self, graph, graph_version, db):
+        producer = NodeTemplate.no_workspace_objects.create(
+            name="vc_code_source",
+            display_name="Code Source",
+            description="test",
+            categories=["test"],
+            input_definition=[],
+            output_definition=[
+                {
+                    "key": "response",
+                    "display_name": "response",
+                    "data_schema": {"type": "object"},
+                },
+            ],
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={},
+        )
+        code_template, _ = NodeTemplate.no_workspace_objects.get_or_create(
+            name="code_execution",
+            defaults={
+                "display_name": "Code Execution",
+                "description": "test",
+                "categories": ["code"],
+                "input_definition": [
+                    {
+                        "key": "inputs",
+                        "display_name": "inputs",
+                        "data_schema": {"type": "object"},
+                        "required": False,
+                    },
+                ],
+                "output_definition": [],
+                "input_mode": PortMode.STRICT,
+                "output_mode": PortMode.STRICT,
+                "config_schema": {},
+            },
+        )
+        source_id = str(uuid.uuid4())
+        code_id = str(uuid.uuid4())
+
+        update_version_content(
+            graph=graph,
+            version=graph_version,
+            nodes_data=[
+                {
+                    "id": source_id,
+                    "type": NodeType.ATOMIC,
+                    "name": "source",
+                    "node_template_id": str(producer.id),
+                },
+                {
+                    "id": code_id,
+                    "type": NodeType.ATOMIC,
+                    "name": "code",
+                    "node_template_id": str(code_template.id),
+                    "config": {"language": "python", "code": "result = inputs"},
+                },
+            ],
+            new_status=GraphVersionStatus.DRAFT,
+            commit_message=None,
+            node_connections_data=[
+                {"source_node_id": source_id, "target_node_id": code_id}
+            ],
+        )
+
+        edge = Edge.no_workspace_objects.get(graph_version=graph_version)
+        assert edge.source_port.display_name == "response"
+        assert edge.target_port.display_name == "inputs"
+
     def test_no_edges_when_names_dont_match(self, graph, graph_version, db):
         """Test that no edges are created when display_names don't match."""
         producer = NodeTemplate.no_workspace_objects.create(

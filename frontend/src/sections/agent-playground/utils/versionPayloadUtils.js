@@ -91,6 +91,7 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
           display_name: port.display_name,
           direction: port.direction,
           data_schema: port.data_schema || port.dataSchema || {},
+          required: port.required ?? true,
           ...(port.ref_port_id && { ref_port_id: port.ref_port_id }),
         }));
       }
