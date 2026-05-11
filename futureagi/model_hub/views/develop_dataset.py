@@ -3887,9 +3887,35 @@ class DeleteColumnView(APIView):
                             f"Failed to cleanup derived variables for column {column.name}: {cleanup_error}"
                         )
                 if column.source == SourceChoices.EVALUATION.value:
-                    UserEvalMetric.objects.filter(id=column.source_id).update(
-                        deleted=True
-                    )
+                    eval_metric = UserEvalMetric.objects.filter(
+                        id=column.source_id
+                    ).first()
+                    if eval_metric and eval_metric.status in (
+                        StatusType.RUNNING.value,
+                        StatusType.NOT_STARTED.value,
+                        StatusType.EXPERIMENT_EVALUATION.value,
+                    ):
+                        try:
+                            from tfc.utils.distributed_state import (
+                                evaluation_tracker,
+                            )
+
+                            evaluation_tracker.request_cancel(
+                                eval_metric.id, reason="eval_column_deleted"
+                            )
+                        except Exception:
+                            pass
+                        from model_hub.utils.eval_cell_status import (
+                            mark_eval_cells_stopped,
+                        )
+
+                        mark_eval_cells_stopped(
+                            eval_metric,
+                            reason="Evaluation column deleted by user",
+                        )
+                    if eval_metric:
+                        eval_metric.deleted = True
+                        eval_metric.save(update_fields=["deleted"])
                 if column.source == SourceChoices.ANNOTATION_LABEL.value:
                     source_parts = column.source_id.split("-sourceid-")
 
@@ -3936,28 +3962,30 @@ class DeleteColumnView(APIView):
                     Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
                 ).values_list("id", flat=True)
 
+                col_ids_to_remove = {str(c) for c in columns_to_delete}
                 dataset.column_order = [
                     col_id
                     for col_id in dataset.column_order
-                    if col_id not in map(str, columns_to_delete)
+                    if col_id not in col_ids_to_remove
                 ]
                 dataset.save(update_fields=["column_order"])
 
-            # Delete the columns (this will cascade delete related cells)
-            Column.objects.filter(
-                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).update(deleted=True)
-
-            # Delete the column (this will cascade delete related cells)
-            column.deleted = True
-            column.save()
+            # Update metrics BEFORE deleting columns — get_metrics_using_column
+            # scopes by dataset via the Column row, which must still be
+            # visible (deleted=False) for BaseModelManager to find it.
             metrics = UserEvalMetric.get_metrics_using_column(
                 getattr(request, "organization", None) or request.user.organization.id,
                 column_id,
             )
-            for metric in metrics:
-                metric.column_deleted = True
-                metric.save()
+            if metrics:
+                UserEvalMetric.objects.filter(
+                    id__in=[m.id for m in metrics]
+                ).update(column_deleted=True)
+
+            # Now safe to delete columns
+            Column.objects.filter(
+                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+            ).update(deleted=True)
 
             return self._gm.success_response("Column deleted successfully")
 
@@ -7208,6 +7236,26 @@ class DeleteEvalsView(APIView):
                         "An experiment must have at least one evaluation."
                     )
 
+            # Stop any in-flight eval runner before deleting columns
+            if delete_column and eval_metric.status in (
+                StatusType.RUNNING.value,
+                StatusType.NOT_STARTED.value,
+                StatusType.EXPERIMENT_EVALUATION.value,
+            ):
+                try:
+                    from tfc.utils.distributed_state import evaluation_tracker
+
+                    evaluation_tracker.request_cancel(
+                        eval_metric.id, reason="eval_deleted"
+                    )
+                except Exception:
+                    pass
+                from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
+
+                mark_eval_cells_stopped(
+                    eval_metric, reason="Evaluation deleted by user"
+                )
+
             if delete_column:
                 if experiment_id:
                     # Experiment evals: one EXPERIMENT_EVALUATION column per EDT
@@ -7252,9 +7300,6 @@ class DeleteEvalsView(APIView):
                         source_id=eval_metric.id, deleted=False
                     ).first()
                     if column:
-                        # Get the main column
-                        column = get_object_or_404(Column, source_id=eval_metric.id)
-
                         # Delete all cells associated with the column and its dependent columns
                         Cell.objects.filter(
                             Q(column=column)
@@ -7275,12 +7320,15 @@ class DeleteEvalsView(APIView):
                                 deleted=False,
                             ).values_list("id", flat=True)
 
-                            dataset.column_order = [
+                            col_ids_to_remove = {str(c) for c in columns_to_delete}
+                            new_column_order = [
                                 col_id
                                 for col_id in dataset.column_order
-                                if col_id not in map(str, columns_to_delete)
+                                if col_id not in col_ids_to_remove
                             ]
-                            dataset.save()
+                            Dataset.objects.filter(id=dataset.id).update(
+                                column_order=new_column_order
+                            )
 
                         # Update metrics BEFORE deleting columns — the
                         # lookup scopes by dataset via the Column row, which
@@ -7291,9 +7339,10 @@ class DeleteEvalsView(APIView):
                             or request.user.organization.id,
                             column.id,
                         )
-                        for metric in metrics:
-                            metric.column_deleted = True
-                            metric.save()
+                        if metrics:
+                            UserEvalMetric.objects.filter(
+                                id__in=[m.id for m in metrics]
+                            ).update(column_deleted=True)
 
                         # Delete all related columns
                         Column.objects.filter(
