@@ -1,3 +1,5 @@
+import uuid
+
 import django.contrib.postgres.fields
 import django.db.models.deletion
 from django.conf import settings
@@ -19,7 +21,7 @@ class Migration(migrations.Migration):
                 (
                     "id",
                     models.UUIDField(
-                        default=None,
+                        default=uuid.uuid4,
                         editable=False,
                         primary_key=True,
                         serialize=False,

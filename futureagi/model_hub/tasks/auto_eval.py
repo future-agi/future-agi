@@ -32,6 +32,27 @@ _PENDING_KEY = "auto_eval:{config_id}:pending"
 _LOCK_KEY = "auto_eval:{config_id}:lock"
 
 
+def _atomic_drain(pending_key: str) -> list:
+    """
+    Fetch and delete the pending list in one operation to eliminate the
+    get→delete race window.  Uses Redis GETDEL when django-redis is available;
+    falls back to non-atomic get+delete for other backends (e.g. test locmem).
+    """
+    try:
+        import pickle
+
+        from django_redis import get_redis_connection
+
+        r = get_redis_connection("default")
+        versioned = cache.make_key(pending_key)
+        raw = r.execute_command("GETDEL", versioned)
+        return pickle.loads(raw) if raw else []
+    except Exception:
+        val = cache.get(pending_key)
+        cache.delete(pending_key)
+        return val or []
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def flush_auto_eval_batch(self, config_id: str):
     """
@@ -43,7 +64,7 @@ def flush_auto_eval_batch(self, config_id: str):
 
     try:
         config = DatasetEvalConfig.objects.select_related(
-            "eval_template", "dataset"
+            "eval_template", "dataset", "created_by"
         ).get(id=config_id, deleted=False)
     except DatasetEvalConfig.DoesNotExist:
         logger.warning("auto_eval_config_not_found", extra={"config_id": config_id})
@@ -58,8 +79,7 @@ def flush_auto_eval_batch(self, config_id: str):
     pending_key = _PENDING_KEY.format(config_id=config_id)
     lock_key = _LOCK_KEY.format(config_id=config_id)
 
-    raw = cache.get(pending_key) or []
-    cache.delete(pending_key)
+    raw = _atomic_drain(pending_key)
     cache.delete(lock_key)
 
     row_ids = list(dict.fromkeys(raw))  # deduplicate, preserve order
@@ -77,17 +97,20 @@ def flush_auto_eval_batch(self, config_id: str):
         },
     )
 
+    # Create evaluation records before starting the workflow.  Separated from
+    # the workflow-start try/except so a workflow failure triggers deletion of
+    # these records rather than re-creating them on retry (TLA+ NoDuplicateEval).
+    evaluation_ids = _create_evaluations_from_rows(config, row_ids)
+    if not evaluation_ids:
+        logger.warning(
+            "auto_eval_no_evaluations_created",
+            extra={"config_id": config_id, "row_count": len(row_ids)},
+        )
+        return
+
+    from tfc.temporal.evaluations.client import start_evaluation_batch_workflow
+
     try:
-        evaluation_ids = _create_evaluations_from_rows(config, row_ids)
-        if not evaluation_ids:
-            logger.warning(
-                "auto_eval_no_evaluations_created",
-                extra={"config_id": config_id, "row_count": len(row_ids)},
-            )
-            return
-
-        from tfc.temporal.evaluations.client import start_evaluation_batch_workflow
-
         start_evaluation_batch_workflow(
             evaluation_ids=evaluation_ids,
             max_concurrent=config.max_concurrent,
@@ -98,6 +121,10 @@ def flush_auto_eval_batch(self, config_id: str):
             "auto_eval_workflow_start_failed",
             extra={"config_id": config_id, "error": str(exc)},
         )
+        # Delete the just-created evaluations so the retry starts clean.
+        from model_hub.models.evaluation import Evaluation
+
+        Evaluation.objects.filter(id__in=evaluation_ids).delete()
         # Re-queue rows for next window (TLA+ WorkflowFail action).
         _requeue_rows(config_id, row_ids, config.debounce_seconds)
         raise self.retry(exc=exc)
@@ -193,6 +220,7 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
             Evaluation(
                 eval_template=config.eval_template,
                 input_data=input_data,
+                user=config.created_by,
                 organization=config.organization,
                 workspace=config.workspace,
                 status=StatusChoices.PENDING,
