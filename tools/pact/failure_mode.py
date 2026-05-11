@@ -252,12 +252,59 @@ REQUIRED_ARG_MISSING = FailureMode(
 # --- 4. Bare except that swallows all exceptions ---------------------------
 # Detects `except:` or `except Exception: pass` — silent failure patterns.
 
+@functools.lru_cache(maxsize=None)
+def _scan_file_bare_except(path: str) -> list[FailureEvidence]:
+    """File-level scan for bare except: and silent except Exception: pass."""
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    try:
+        source = _Path(path).read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(source, filename=path)
+    except (SyntaxError, OSError):
+        return []
+
+    evidence = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.ExceptHandler):
+            continue
+        if node.type is None:
+            # bare `except:` — catches KeyboardInterrupt, SystemExit, everything
+            evidence.append(FailureEvidence(
+                mode_name="bare_except",
+                file=path,
+                line=node.lineno,
+                call="except:",
+                message="bare `except:` catches all exceptions including KeyboardInterrupt",
+            ))
+        elif isinstance(node.type, _ast.Name) and node.type.id == "Exception":
+            # `except Exception: pass` or `except Exception: ...` — silent swallow
+            body = node.body
+            is_silent = len(body) == 1 and (
+                isinstance(body[0], _ast.Pass)
+                or (
+                    isinstance(body[0], _ast.Expr)
+                    and isinstance(body[0].value, _ast.Constant)
+                    and body[0].value.value is ...
+                )
+            )
+            if is_silent:
+                evidence.append(FailureEvidence(
+                    mode_name="bare_except",
+                    file=path,
+                    line=node.lineno,
+                    call="except Exception: pass",
+                    message="`except Exception: pass` silently swallows all errors",
+                ))
+    return evidence
+
+
 def _check_bare_except(
     call: CallSite,
     models: dict[str, ModelManifest],
     functions: dict[str, FunctionManifest],
 ) -> list[FailureEvidence]:
-    return []  # file-level scan, not call-site; handled in flow_scanner.py
+    return _scan_file_bare_except(call.file)
 
 
 BARE_EXCEPT = FailureMode(
@@ -270,6 +317,49 @@ BARE_EXCEPT = FailureMode(
 )
 
 
+# --- 5. save() without update_fields ---------------------------------------
+# Django model .save() without update_fields re-writes every column,
+# clobbering concurrent partial updates.
+
+_SAFE_SAVE_SUFFIXES = ("form", "serializer", "fs", "storage", "file")
+
+
+def _check_save_without_update_fields(
+    call: CallSite,
+    models: dict[str, ModelManifest],
+    functions: dict[str, FunctionManifest],
+) -> list[FailureEvidence]:
+    if not call.callee_name.endswith(".save"):
+        return []
+    if "update_fields" in call.provided_kwargs:
+        return []
+    # Skip form/serializer/storage saves — intentional full saves.
+    # Match on suffix so compound names like `image_dataset_serializer` match.
+    receiver = call.callee_name.rsplit(".", 1)[0].split(".")[-1].lower()
+    if any(receiver.endswith(safe) for safe in _SAFE_SAVE_SUFFIXES):
+        return []
+    return [FailureEvidence(
+        mode_name="save_without_update_fields",
+        file=call.file,
+        line=call.line,
+        call=call.callee_name,
+        message=(
+            ".save() without update_fields re-writes every column; "
+            "use save(update_fields=[...]) to prevent clobbering concurrent writes"
+        ),
+    )]
+
+
+SAVE_WITHOUT_UPDATE_FIELDS = FailureMode(
+    name="save_without_update_fields",
+    description=(
+        "Django model .save() called without update_fields. "
+        "Re-writes every column, clobbering concurrent partial updates."
+    ),
+    check=_check_save_without_update_fields,
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — all active failure modes
 # ---------------------------------------------------------------------------
@@ -278,4 +368,6 @@ DEFAULT_MODES: list[FailureMode] = [
     REQUIRED_FIELD_MISSING,
     REQUIRED_ARG_MISSING,
     OPTIONAL_DEREF,
+    BARE_EXCEPT,
+    SAVE_WITHOUT_UPDATE_FIELDS,
 ]

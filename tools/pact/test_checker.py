@@ -136,3 +136,100 @@ def test_kwonly_required_arg_flagged(tmp_path):
     ]
     assert kwonly_v, "missing required kwarg-only arg should be flagged"
     assert "role" in kwonly_v[0].missing
+
+
+# ---------------------------------------------------------------------------
+# bare_except mode
+# ---------------------------------------------------------------------------
+
+def test_bare_except_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        def process(data):
+            try:
+                do_work(data)
+            except:
+                pass
+    """)
+    violations = check_codebase(tmp_path)
+    bare_v = [v for v in violations if v.context == "bare_except"]
+    assert bare_v, "bare except: should be flagged"
+    assert any("except:" in v.call for v in bare_v)
+
+
+def test_silent_except_exception_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        def process(data):
+            try:
+                do_work(data)
+            except Exception:
+                pass
+    """)
+    violations = check_codebase(tmp_path)
+    bare_v = [v for v in violations if v.context == "bare_except"]
+    assert bare_v, "silent except Exception: pass should be flagged"
+
+
+def test_except_exception_with_logging_not_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        import logging
+        logger = logging.getLogger(__name__)
+        def process(data):
+            try:
+                do_work(data)
+            except Exception as exc:
+                logger.exception("failed", error=str(exc))
+    """)
+    violations = check_codebase(tmp_path)
+    bare_v = [v for v in violations if v.context == "bare_except"]
+    assert not bare_v, "except with logging body should not be flagged"
+
+
+def test_specific_exception_not_flagged(tmp_path):
+    _write_src(tmp_path, "handler.py", """
+        def process(data):
+            try:
+                do_work(data)
+            except ValueError:
+                pass
+    """)
+    violations = check_codebase(tmp_path)
+    bare_v = [v for v in violations if v.context == "bare_except"]
+    assert not bare_v, "specific exception type should not be flagged"
+
+
+# ---------------------------------------------------------------------------
+# save_without_update_fields mode
+# ---------------------------------------------------------------------------
+
+def test_save_without_update_fields_flagged(tmp_path):
+    _write_src(tmp_path, "views.py", """
+        def update(obj):
+            obj.name = "new"
+            obj.save()
+    """)
+    violations = check_codebase(tmp_path)
+    save_v = [v for v in violations if v.context == "save_without_update_fields"]
+    assert save_v, "save() without update_fields should be flagged"
+
+
+def test_save_with_update_fields_not_flagged(tmp_path):
+    _write_src(tmp_path, "views.py", """
+        def update(obj):
+            obj.name = "new"
+            obj.save(update_fields=["name"])
+    """)
+    violations = check_codebase(tmp_path)
+    save_v = [v for v in violations if v.context == "save_without_update_fields"]
+    assert not save_v, "save(update_fields=[...]) should not be flagged"
+
+
+def test_form_save_not_flagged(tmp_path):
+    _write_src(tmp_path, "views.py", """
+        def handle(request):
+            form = MyForm(request.POST)
+            if form.is_valid():
+                form.save()
+    """)
+    violations = check_codebase(tmp_path)
+    save_v = [v for v in violations if v.context == "save_without_update_fields"]
+    assert not save_v, "form.save() should not be flagged"
