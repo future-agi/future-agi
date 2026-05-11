@@ -126,7 +126,6 @@ class CustomPromptEvaluator(LLM):
                         "explanation": {"type": "string"},
                     },
                     "required": ["result", "explanation"],
-                    "additionalProperties": False,
                 },
             },
         }

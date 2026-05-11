@@ -74,11 +74,11 @@ class TestBuildResponseFormat:
         assert result_schema["type"] == "string"
         assert "enum" not in result_schema
 
-    def test_schema_disallows_additional_properties(self, make_evaluator):
+    def test_schema_has_no_additional_properties(self, make_evaluator):
         ev = make_evaluator(output_type="score")
         fmt = ev._build_response_format()
 
-        assert fmt["json_schema"]["schema"]["additionalProperties"] is False
+        assert "additionalProperties" not in fmt["json_schema"]["schema"]
 
     def test_schema_name_is_eval_result(self, make_evaluator):
         ev = make_evaluator(output_type="score")
