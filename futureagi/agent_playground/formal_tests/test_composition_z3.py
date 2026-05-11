@@ -183,9 +183,11 @@ class TestLevelMonotonicity:
     """
 
     def test_levels_computed(self):
+        # G3 is a leaf (no outgoing refs) → level 0.
+        # G1 is the top-level embedder → highest level.
         levels = infer_composed_levels(GRAPH_IDS, REFS)
-        assert levels["G1"] < levels["G2"]
-        assert levels["G2"] < levels["G3"]
+        assert levels["G1"] > levels["G2"]
+        assert levels["G2"] > levels["G3"]
 
     def test_leaf_at_level_zero(self):
         levels = infer_composed_levels(GRAPH_IDS, REFS)
