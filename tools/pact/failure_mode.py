@@ -222,8 +222,12 @@ def _check_required_arg(
     func = functions.get(call.callee_name)
     if not func or not func.required_args:
         return []
+    # Only non-kwonly required args can be covered by positional args.
+    # Enumerate positional-only required args separately so a kwonly arg at
+    # index i is never falsely marked covered because positional_count > i.
+    positional_required = [a for a in func.required_args if not a.kwonly]
     positional_covered = {
-        arg.name for i, arg in enumerate(func.required_args)
+        arg.name for i, arg in enumerate(positional_required)
         if i < call.positional_count
     }
     provided = call.provided_kwargs | positional_covered

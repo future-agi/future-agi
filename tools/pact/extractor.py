@@ -44,6 +44,7 @@ class ArgConstraint:
     name: str
     required: bool
     has_default: bool = False
+    kwonly: bool = False   # keyword-only (after *); cannot be filled by positional args
 
 
 @dataclass
@@ -311,7 +312,7 @@ class _FunctionVisitor(ast.NodeVisitor):
             if arg.arg in ("self", "cls"):
                 continue
             has_default = kw_defaults[i] is not None
-            constraints.append(ArgConstraint(name=arg.arg, required=not has_default, has_default=has_default))
+            constraints.append(ArgConstraint(name=arg.arg, required=not has_default, has_default=has_default, kwonly=True))
 
         qual = ".".join(self._class_stack + [node.name])
         self.functions.append(
@@ -333,10 +334,17 @@ class _CallVisitor(ast.NodeVisitor):
     def __init__(self, file_path: str) -> None:
         self.file = file_path
         self.call_sites: list[CallSite] = []
-        self._func_stack: list[str] = []  # qualified names of enclosing functions
+        self._class_stack: list[str] = []   # class names (mirrors _FunctionVisitor)
+        self._func_stack: list[str] = []    # qualified function names within classes
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._class_stack.append(node.name)
+        self.generic_visit(node)
+        self._class_stack.pop()
 
     def _enter_func(self, node):
-        qual = self._func_stack[-1] + "." + node.name if self._func_stack else node.name
+        # Build the same qualified name as _FunctionVisitor: Class.method
+        qual = ".".join(self._class_stack + [node.name])
         self._func_stack.append(qual)
         self.generic_visit(node)
         self._func_stack.pop()
