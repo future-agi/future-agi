@@ -448,6 +448,14 @@ def extract_from_file(
     return mv.models, fv.functions, cv.call_sites
 
 
+def iter_python_files(root: Path):
+    """Yield every non-skipped .py file under root. Shared by extractor and checker."""
+    for path in root.rglob("*.py"):
+        if any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        yield path
+
+
 def extract_from_codebase(
     root: Path,
 ) -> tuple[list[ModelManifest], list[FunctionManifest], list[CallSite]]:
@@ -455,9 +463,7 @@ def extract_from_codebase(
     all_funcs: list[FunctionManifest] = []
     all_calls: list[CallSite] = []
 
-    for path in root.rglob("*.py"):
-        if any(part in _SKIP_DIRS for part in path.parts):
-            continue
+    for path in iter_python_files(root):
         models, funcs, calls = extract_from_file(path)
         all_models.extend(models)
         all_funcs.extend(funcs)

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from .encoder import Violation
-from .extractor import FunctionManifest, ModelManifest, extract_from_codebase
+from .extractor import FunctionManifest, ModelManifest, extract_from_codebase, iter_python_files
 from .failure_mode import DEFAULT_MODES, FailureEvidence, FailureMode
 
 
@@ -67,17 +67,14 @@ def check_codebase(
             for evidence in mode.check(call, model_index, func_index):
                 _add(evidence)
 
-    # File-level checks — run on every file the extractor touched, so modes
-    # that scan for definitions (not calls) catch files with zero call sites.
+    # File-level checks — run on every Python file under root (via the same
+    # iterator the extractor uses), so modes that scan definitions catch files
+    # with zero call sites, models, or functions.
     file_modes = [m for m in modes if m.file_check is not None]
     if file_modes:
-        all_files: set[str] = set()
-        all_files.update(c.file for c in call_sites)
-        all_files.update(m.file for m in models)
-        all_files.update(f.file for f in functions)
-        for path in all_files:
+        for path in iter_python_files(root):
             for mode in file_modes:
-                for evidence in mode.file_check(path):  # type: ignore[misc]
+                for evidence in mode.file_check(str(path)):  # type: ignore[misc]
                     _add(evidence)
 
     return violations
