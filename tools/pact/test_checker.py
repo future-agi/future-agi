@@ -180,6 +180,64 @@ def test_literal_none_for_required_field_flagged(tmp_path):
     assert any("name" in missing and "None" in missing for missing in widget_v[0].missing)
 
 
+def test_computed_required_field_value_is_not_treated_as_none(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Widget(models.Model):
+            name = models.CharField(max_length=64)
+            class Meta: app_label = 'x'
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def make(source):
+            Widget.objects.create(name=source.name)
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v for v in violations if v.call == "Widget.objects.create"
+    ], "computed values prove presence but should not be checked as literal None"
+
+
+def test_foreign_key_accepts_python_attribute_or_id_kwarg(tmp_path):
+    _write_src(
+        tmp_path,
+        "models.py",
+        """
+        from django.db import models
+        class Author(models.Model):
+            class Meta: app_label = 'x'
+        class Book(models.Model):
+            author = models.ForeignKey(Author, on_delete=models.CASCADE)
+            class Meta: app_label = 'x'
+    """,
+    )
+    _write_src(
+        tmp_path,
+        "factory.py",
+        """
+        def by_object(author):
+            Book.objects.create(author=author)
+        def by_id(author_id):
+            Book.objects.create(author_id=author_id)
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v for v in violations if v.call == "Book.objects.create"
+    ], "Django ForeignKey create() accepts both field and field_id kwargs"
+
+
 def test_save_guard_without_assignment_does_not_make_field_optional(tmp_path):
     _write_src(
         tmp_path,
@@ -576,6 +634,29 @@ def test_optional_deref_guard_does_not_cross_function_scope(tmp_path):
         if v.context == "optional_dereference" and v.call == "user.email"
     ]
     assert optional_v, "optional guards are lexical to their function scope"
+
+
+def test_optional_deref_guard_does_not_dominate_after_if(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(users):
+            user = users.first()
+            if user is not None:
+                user.email
+            return user.name
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    optional_v = [
+        v
+        for v in violations
+        if v.context == "optional_dereference" and v.call == "user.name"
+    ]
+    assert optional_v, "a branch-local guard must not dominate later unguarded use"
 
 
 # ---------------------------------------------------------------------------

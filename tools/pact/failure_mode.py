@@ -189,12 +189,16 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             self.generic_visit(node)
 
         def visit_If(self, node):
-            # If the test references an optional var, mark it guarded
             src = _ast.unparse(node.test) if hasattr(_ast, "unparse") else ""
-            for var in list(self.optional_vars):
-                if var in src:
-                    self.guarded.add(var)
-            self.generic_visit(node)
+            guarded_here = {var for var in self.optional_vars if var in src}
+            original_guarded = self.guarded
+            self.visit(node.test)
+            self.guarded = original_guarded | guarded_here
+            for child in node.body:
+                self.visit(child)
+            self.guarded = original_guarded
+            for child in node.orelse:
+                self.visit(child)
 
         def visit_Attribute(self, node):
             # var.something — flag if var is unguarded optional

@@ -12,6 +12,8 @@ from typing import Optional
 
 from .extractor import CallSite, FieldConstraint, FunctionManifest, ModelManifest
 
+_UNKNOWN_VALUE = object()
+
 try:
     from z3 import (
         Bool, IntVal, Not, Or, Solver,
@@ -127,8 +129,18 @@ def check_model_create(call: CallSite, model: ModelManifest) -> list[Violation]:
     for fc in model.fields:
         if fc.field_type in ("ManyToManyField", "ManyToManyRel", "ManyToOneRel", "OneToOneRel"):
             continue
-        provided = fc.name in call.provided_kwargs
-        value = call.kwarg_values.get(fc.name)   # None = not provided or computed
+        field_names = [fc.name]
+        if fc.field_type == "ForeignKey":
+            field_names.append(f"{fc.name}_id")
+        provided = any(name in call.provided_kwargs for name in field_names)
+        value = next(
+            (call.kwarg_values[name] for name in field_names if name in call.kwarg_values),
+            _UNKNOWN_VALUE,
+        )
+        if value is _UNKNOWN_VALUE:
+            if provided:
+                continue
+            value = None
         violations = _check_field(fc, provided, value)
         all_missing.extend(violations)
 
