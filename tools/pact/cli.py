@@ -8,6 +8,7 @@ from pathlib import Path
 from .checker import check_codebase, check_codebase_incremental
 from .extractor import extract_from_codebase
 from .refactor import suggest_refactors
+from .specgen import spec_gen
 from .visualize import (
     format_pr_comment, render_mermaid, render_reduction_sequence,
     render_test_coverage_mermaid,
@@ -44,7 +45,44 @@ def _changed_files_on_branch(base: str = "main", cwd: Path = None) -> set[str]:
         raise DiffResolutionError(detail) from exc
 
 
+def _spec_cmd(argv) -> int:
+    """Entry point for `pact spec gen <file>`."""
+    p = argparse.ArgumentParser(
+        prog="pact spec",
+        description="Synthesize a TLA+ specification skeleton from Python source.",
+    )
+    sub = p.add_subparsers(dest="spec_cmd", required=True)
+
+    gen_p = sub.add_parser("gen", help="Generate a TLA+ skeleton from a Python file")
+    gen_p.add_argument("file", metavar="FILE", help="Python source file to analyze")
+    gen_p.add_argument(
+        "--output", "-o", metavar="OUT", default=None,
+        help="Write spec to OUT instead of stdout",
+    )
+    args = p.parse_args(argv)
+
+    src = Path(args.file).resolve()
+    if not src.is_file():
+        print(f"error: {src} is not a file", file=sys.stderr)
+        return 2
+
+    out_path = Path(args.output).resolve() if args.output else None
+    spec = spec_gen(src, out_path)
+
+    if out_path:
+        print(f"✓  pact spec gen: wrote {out_path}")
+    else:
+        print(spec)
+    return 0
+
+
 def main(argv=None) -> int:
+    # Top-level: if first arg is "spec", delegate to spec subcommand
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "spec":
+        return _spec_cmd(argv[1:])
+
     p = argparse.ArgumentParser(
         prog="pact",
         description="Python AST Constraint Tool — verify constraints across a codebase using Z3.",
