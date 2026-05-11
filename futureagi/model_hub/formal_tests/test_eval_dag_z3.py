@@ -185,30 +185,44 @@ class TestCriticalPath:
 
     def test_z3_no_longer_path_exists(self):
         """
-        Z3 refutation: assert there exists a path longer than critical_path cost.
-        Should be UNSAT — proving our critical_path is optimal.
+        Z3 refutation: assert there exists a path whose node-cost sum exceeds the
+        critical-path cost.  Should be UNSAT — proving our critical_path is optimal.
+
+        Strategy: enumerate all root-to-sink paths in Python (the graph is finite and
+        acyclic), then add each path's cost as a Z3 integer literal.  Ask Z3 whether
+        any of those costs can exceed self.cost.  Because every literal is a concrete
+        integer, Z3 immediately resolves this as UNSAT when the critical path is correct.
         """
+        # Enumerate all root-to-sink paths via DFS.
+        adj = build_adjacency(EDGES)
+        sources = [n for n in NODES if not any(c == n for _, c, _ in EDGES)]
+        sinks   = [n for n in NODES if n not in adj or not adj[n]]
+
+        all_paths = []
+        def dfs(node, current):
+            if node in sinks:
+                all_paths.append(list(current))
+                return
+            for child, _ in adj.get(node, []):
+                dfs(child, current + [child])
+
+        for src in sources:
+            dfs(src, [src])
+
+        # Compute the integer cost of each path.
+        path_costs = [sum(COSTS[n] for n in p) for p in all_paths]
+
+        # Z3 refutation: assert some concrete path cost exceeds the critical-path cost.
+        # All path costs are ground integers, so Z3 checks pure arithmetic — UNSAT iff
+        # no path cost is strictly greater than self.cost.
         s = Solver()
-        node_sort, node_consts = EnumSort("Node", NODES)
-        node_map = {n: c for n, c in zip(NODES, node_consts)}
-
-        # Encode edge relation as boolean function
-        edge_fn = Function("edge", node_sort, node_sort, IntSort())
-        for n1 in NODES:
-            for n2 in NODES:
-                w = next((int(wt) for p, c, wt in EDGES if p == n1 and c == n2), 0)
-                s.add(edge_fn(node_map[n1], node_map[n2]) == w)
-
-        # Encode node costs
-        cost_fn = Function("cost", node_sort, IntSort())
-        for n in NODES:
-            s.add(cost_fn(node_map[n]) == COSTS[n])
-
-        # Assert: the computed critical path cost is an upper bound.
-        # We check this is satisfiable (cost IS achievable).
         path_cost = Int("path_cost")
-        s.add(path_cost == self.cost)
-        assert s.check() == sat, "Critical path cost is not achievable"
+        s.add(Or([path_cost == c for c in path_costs]))
+        s.add(path_cost > self.cost)
+        assert s.check() == unsat, (
+            f"Found a path longer than critical_path cost ({self.cost}) — "
+            f"optimality proof failed. Path costs: {sorted(path_costs, reverse=True)}"
+        )
 
 
 class TestDebounceProtocol:
