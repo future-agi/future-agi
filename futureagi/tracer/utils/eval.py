@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models.workspace import Workspace
+from common.utils.data_injection import normalize as _di_normalize
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
@@ -47,6 +48,40 @@ from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 # here each provider would require a hand-written mapping per span.
 # When the exact attribute isn't present we probe these fallbacks in
 # order — first match wins.
+def _walk_dotted_path(root, path):
+    """Walk a dotted path through nested dicts/lists; return None on miss."""
+    if not isinstance(path, str) or not path:
+        return None
+    current = root
+    for part in path.split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+# Sentinel: ``None`` is a legitimate stored value, so we can't use it for "miss".
+_MISSING = object()
+
+
+def _resolve_attr(span_attrs: dict, candidate: str):
+    """Literal lookup, then dotted-path walk. Returns ``_MISSING`` on miss."""
+    if candidate in span_attrs:
+        return span_attrs[candidate]
+    walked = _walk_dotted_path(span_attrs, candidate)
+    if walked is not None:
+        return walked
+    return _MISSING
+
+
 _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
     "recording_url": [
         # Vapi ingestion (``tracer.utils.vapi._extract_recording_urls``)
@@ -78,6 +113,7 @@ _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
         "gen_ai.voice.transcript",
         "voice_transcript",
         "call.transcript",
+        "provider_transcript",
     ],
     "call_summary": [
         "conversation.summary",
@@ -131,22 +167,23 @@ def _process_mapping(
         # shorthands (``recording_url``, ``transcript``, …) resolve to
         # one of several provider-specific attribute names via the
         # ``_ATTRIBUTE_ALIASES`` table above — first hit wins.
-        resolved_attr = None
         candidates = [attribute, f"{attribute}.value"]
         for alias in _ATTRIBUTE_ALIASES.get(attribute, []):
             candidates.append(alias)
             candidates.append(f"{alias}.value")
+
+        resolved_value = _MISSING
         for candidate in candidates:
-            if candidate in span_attrs:
-                resolved_attr = candidate
+            value = _resolve_attr(span_attrs, candidate)
+            if value is not _MISSING:
+                resolved_value = value
                 break
 
-        if resolved_attr is not None:
-            value = span_attrs.get(resolved_attr, "")
-            if isinstance(value, str):
-                parsed_mapping[key] = value
+        if resolved_value is not _MISSING:
+            if isinstance(resolved_value, str):
+                parsed_mapping[key] = resolved_value
             else:
-                parsed_mapping[key] = json.dumps(value)
+                parsed_mapping[key] = json.dumps(resolved_value)
         else:
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
@@ -564,12 +601,35 @@ def _execute_evaluation(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Build context for data_injection support ---
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["span_context"]:
+        _eval_inputs["span_context"] = {
+            "id": str(observation_span.id),
+            "name": observation_span.name,
+            "observation_type": observation_span.observation_type,
+            "status": observation_span.status,
+            "status_message": observation_span.status_message,
+            "model": observation_span.model,
+            "latency_ms": observation_span.latency_ms,
+            "total_tokens": observation_span.total_tokens,
+            "cost": float(observation_span.cost) if observation_span.cost else None,
+        }
+    if _di["trace_context"]:
+        _eval_inputs["trace_context"] = {
+            "id": str(observation_span.trace_id),
+            "span_id": str(observation_span.id),
+        }
+
     # --- Run eval via unified engine ---
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_model,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
@@ -972,15 +1032,19 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # Cluster this project's unclustered eval results (idempotent —
-        # if another call already clustered everything, this is a no-op).
-        try:
-            from tracer.tasks.eval_clustering import cluster_eval_results_task
-
-            project_id = str(observation_span.project_id)
-            cluster_eval_results_task.delay(project_id)
-        except Exception:
-            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+        # DISABLED 2026-04-30 — per-row enqueue caused Aurora CPU saturation
+        # under load (incident: cron-driven historical EvalTask × N×M fan-out
+        # → 60+ cluster_eval_results_task/sec → embedding service connection
+        # resets → workflow pile-up). Re-enable only after per-project debounce
+        # is implemented (Temporal workflow ID dedup or Redis lock).
+        #
+        # try:
+        #     from tracer.tasks.eval_clustering import cluster_eval_results_task
+        #
+        #     project_id = str(observation_span.project_id)
+        #     cluster_eval_results_task.delay(project_id)
+        # except Exception:
+        #     logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
     except ValueError as e:

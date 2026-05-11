@@ -5,7 +5,7 @@
  * variables are external inputs vs loop-scoped, set-scoped, or built-in.
  * This mirrors the backend's jinja2.meta.find_undeclared_variables().
  */
-import * as nunjucks from "nunjucks";
+import nunjucks from "nunjucks";
 
 /**
  * Extract top-level input variable names from a Jinja2 template string.

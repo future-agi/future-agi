@@ -1559,8 +1559,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 organization=getattr(self.request, "organization", None)
                 or self.request.user.organization,
             )
-            if project.trace_type not in ("observe", "experiment"):
-                raise Exception("Project should be of type observe or experiment")
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1733,16 +1731,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             ),
                             default=None,
                             output_field=JSONField(),
-                        ),
-                        # Per-span reason (latest EvalLogger for this config).
-                        # Feeds the "{eval} - Reason" column added in TH-4136.
-                        f"metric_reason_{config.id}": Subquery(
-                            EvalLogger.objects.filter(
-                                observation_span_id=OuterRef("id"),
-                                custom_eval_config_id=config.id,
-                            )
-                            .order_by("-created_at")
-                            .values("eval_explanation")[:1]
                         ),
                     }
                 )
@@ -1937,9 +1925,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     elif data:
                         for key, value in data.items():
                             result[str(config.id) + "**" + key] = value["score"]
-                    reason = getattr(span, f"metric_reason_{config.id}", None)
-                    if reason:
-                        result[f"{config.id}__reason"] = reason
 
                 for label in annotation_labels:
                     ann_data = getattr(span, f"annotation_{label.id}", None)
@@ -2094,7 +2079,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if has_more:
             result.data = result.data[:page_size]
 
-        # Phase 1b: Fetch input/output for the page
+        # Phase 1b: Fetch input/output/span_attributes_raw for the page
         span_ids = [str(row.get("id", "")) for row in result.data]
         if span_ids:
             content_query, content_params = builder.build_content_query(span_ids)
@@ -2107,6 +2092,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     c = content_map.get(str(row.get("id", "")), {})
                     row["input"] = c.get("input", "")
                     row["output"] = c.get("output", "")
+                    row["span_attributes_raw"] = c.get("span_attributes_raw", "{}")
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -2259,9 +2245,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     entry[config_id] = val
                     if isinstance(value, dict):
                         entry[config_id] = value.get("score")
-                        reason = value.get("reason")
-                        if reason:
-                            entry[f"{config_id}__reason"] = reason
                     else:
                         entry[config_id] = value
 
@@ -2449,9 +2432,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 elif isinstance(val, dict):
                     entry[config_id] = val.get("score")
-                    reason = val.get("reason")
-                    if reason:
-                        entry[f"{config_id}__reason"] = reason
                 else:
                     entry[config_id] = val
 

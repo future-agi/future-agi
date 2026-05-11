@@ -175,6 +175,7 @@ export default function AnnotateWorkspaceView() {
   const isAssignedToMe = assignedUsers.some(
     (a) => String(a.id) === currentUserId,
   );
+  const isManualAssignment = queueDetail?.auto_assign === false;
   const assignedToName =
     hasAssignments && !isAssignedToMe
       ? assignedUsers
@@ -182,8 +183,9 @@ export default function AnnotateWorkspaceView() {
           .filter(Boolean)
           .join(", ") || "other annotators"
       : null;
-  // User cannot edit annotations when the item is assigned to someone else.
-  const cannotAnnotate = hasAssignments && !isAssignedToMe;
+  // In manual-assignment queues, only explicitly assigned users may annotate.
+  // Auto-assign queues implicitly assign everyone, so they never block.
+  const cannotAnnotate = isManualAssignment && !isAssignedToMe;
   // Reviewers/managers see assigned-to-other items in read-only mode (when
   // not actively reviewing). Other members are fully blocked.
   const isViewOnlyForReviewer = canReview && cannotAnnotate && !isReviewMode;
@@ -325,7 +327,12 @@ export default function AnnotateWorkspaceView() {
       return;
     }
 
-    // Otherwise, fetch the next pending item from the API
+    // detail.next_item_id is status-agnostic — works for view-only managers.
+    if (detail?.next_item_id) {
+      dispatch({ type: "push", id: detail.next_item_id });
+      return;
+    }
+
     if (isFetchingNext) return;
     setIsFetchingNext(true);
     nextAbortRef.current?.abort();
@@ -349,7 +356,7 @@ export default function AnnotateWorkspaceView() {
     } finally {
       setIsFetchingNext(false);
     }
-  }, [historyIndex, itemHistory, queueId, isFetchingNext]);
+  }, [historyIndex, itemHistory, queueId, isFetchingNext, detail]);
 
   const handleKeyboardSubmit = useCallback(() => {
     if (isViewOnlyForReviewer || isBlockedAssignedToOther) return;

@@ -11,6 +11,9 @@ from .requests.agent_definition import (
 from .requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
+from .requests.test_execution import (
+    TestExecutionCancelSerializer,
+)
 
 # Response serializers
 from .response.agent_definition import (
@@ -49,7 +52,6 @@ from .test_execution import (
     AllActiveTestsSerializer,
     CallExecutionSerializer,
     CallTranscriptSerializer,
-    TestExecutionCancelSerializer,
     TestExecutionRequestSerializer,
     TestExecutionSerializer,
     TestExecutionStatusSerializer,

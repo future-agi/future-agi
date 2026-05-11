@@ -141,6 +141,7 @@ from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import (
     FUNCTION_CONFIG_EVALS,
     NOT_UI_EVALS,
@@ -168,9 +169,11 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
+from sdk.utils.helpers import _get_api_call_type
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 
 # Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
@@ -6768,7 +6771,9 @@ class GetEvalConfigView(APIView):
                 "model": template.model,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
@@ -6839,7 +6844,9 @@ class GetEvalConfigView(APIView):
                 "function_params_schema": function_params_schema,
                 "output": template.config.get("output", ""),
                 "config_params_desc": template.config.get("config_params_desc", {}),
-                "config_params_option": template.config.get("config_params_option", {}),
+                "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
                 "check_internet": template.config.get("check_internet", False),
@@ -6931,7 +6938,9 @@ class GetEvalStructureView(APIView):
             "models": template.config.get("models", ""),
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
             "kb_id": None,
             "error_localizer": template.error_localizer_enabled,
             "choices": template.choices,
@@ -6994,6 +7003,7 @@ class GetEvalStructureView(APIView):
             "template_id": str(template.id),
             "name": eval.name,
             "eval_type_id": eval_type_id,
+            "eval_type": template.eval_type,
             "reason_column": eval.config.get("reason_column", False),
             "eval_tags": template.eval_tags,
             "description": template.description,
@@ -7012,7 +7022,10 @@ class GetEvalStructureView(APIView):
             "kb_id": eval.kb_id,
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
-            "config_params_option": template.config.get("config_params_option", {}),
+            "config_params_option": strip_turing_from_config_options(
+                    template.config.get("config_params_option", {})
+                ),
+            "run_config": eval.config.get("run_config", {}),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7092,11 +7105,7 @@ class StartEvalsProcess(APIView):
             column_order_changed = False
 
             for user_eval_metric in eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(user_eval_metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(user_eval_metric.template)
 
                 source_id = str(user_eval_metric.id)
                 column = existing_columns.get(str(source_id))
@@ -7273,14 +7282,10 @@ class DeleteEvalsView(APIView):
                             ]
                             dataset.save()
 
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True)
-
-                        # Update metrics for all affected columns
+                        # Update metrics BEFORE deleting columns — the
+                        # lookup scopes by dataset via the Column row, which
+                        # must still be visible (deleted=False) for
+                        # BaseModelManager to find it.
                         metrics = UserEvalMetric.get_metrics_using_column(
                             getattr(request, "organization", None)
                             or request.user.organization.id,
@@ -7289,6 +7294,13 @@ class DeleteEvalsView(APIView):
                         for metric in metrics:
                             metric.column_deleted = True
                             metric.save()
+
+                        # Delete all related columns
+                        Column.objects.filter(
+                            Q(id=column.id)
+                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                            deleted=False,
+                        ).update(deleted=True)
 
                 # Delete the eval_metric itself when delete_column is True
                 eval_metric.deleted = True
@@ -7344,9 +7356,13 @@ class EditAndRunUserEvalView(APIView):
         return bool(value)
 
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7501,19 +7517,27 @@ class EditAndRunUserEvalView(APIView):
                             "Failed to rebuild column_order after edit-eval"
                         )
                 else:
-                    column = Column.objects.get(source_id=eval_metric.id)
-                    reason_column, created = Column.objects.get_or_create(
-                        name=f"{eval_metric.name}-reason",
-                        data_type=DataTypeChoices.TEXT.value,
-                        source=SourceChoices.EVALUATION_REASON.value,
-                        dataset=eval_metric.dataset,
-                        source_id=f"{column.id}-sourceid-{eval_metric.id}",
-                    )
-                    if created:
-                        column_order = eval_metric.dataset.column_order
-                        column_order.append(str(reason_column.id))
-                        eval_metric.dataset.column_order = column_order
-                        eval_metric.dataset.save()
+                    column = Column.objects.filter(
+                        source_id=eval_metric.id, deleted=False
+                    ).first()
+                    if not column:
+                        # Column doesn't exist yet (eval was added with run=false
+                        # and never run). Skip reason-column creation — it will
+                        # be created when the eval actually runs for the first time.
+                        pass
+                    else:
+                        reason_column, created = Column.objects.get_or_create(
+                            name=f"{eval_metric.name}-reason",
+                            data_type=DataTypeChoices.TEXT.value,
+                            source=SourceChoices.EVALUATION_REASON.value,
+                            dataset=eval_metric.dataset,
+                            source_id=f"{column.id}-sourceid-{eval_metric.id}",
+                        )
+                        if created:
+                            column_order = eval_metric.dataset.column_order
+                            column_order.append(str(reason_column.id))
+                            eval_metric.dataset.column_order = column_order
+                            eval_metric.dataset.save()
 
             # Eval columns live under different source types depending on scope:
             # dataset evals → SourceChoices.EVALUATION
@@ -7594,9 +7618,13 @@ class AddUserEvalView(CreateAPIView):
         return bool(value)
 
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 
@@ -7775,17 +7803,7 @@ class AddUserEvalView(CreateAPIView):
                     dataset = Dataset.no_workspace_objects.select_for_update().get(
                         id=id1
                     )
-                    # Composite evals: aggregation-on → float, off → text.
-                    # Single evals: derive from config.output.
-                    if template.template_type == "composite":
-                        data_type = "float" if template.aggregation_enabled else "text"
-                    else:
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                    data_type = infer_eval_result_column_data_type(template)
 
                     column = Column.objects.create(
                         name=validated_data.get("name"),
@@ -10807,10 +10825,40 @@ def run_evaluation_task(evaluation_data):
             }
 
         futures = []
+        blocked_metric_ids = set()
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(metric_id)
                 if metric:
+                    try:
+                        from ee.usage.services.metering import check_usage
+                    except ImportError:
+                        check_usage = None
+
+                    if check_usage is not None:
+                        api_call_type = _get_api_call_type(
+                            metric.model or ModelChoices.TURING_LARGE.value
+                        )
+                        usage_check = check_usage(
+                            str(metric.organization.id), api_call_type
+                        )
+                        if not usage_check.allowed:
+                            from model_hub.tasks.user_evaluation import (
+                                _mark_cells_usage_limit_error,
+                            )
+
+                            UserEvalMetric.objects.filter(id=metric_id).update(
+                                status=StatusType.FAILED.value
+                            )
+                            blocked_metric_ids.add(str(metric_id))
+                            _mark_cells_usage_limit_error(metric, usage_check)
+                            logger.warning(
+                                "dataset_eval_rerun_usage_limit_exceeded",
+                                eval_id=str(metric_id),
+                                reason=usage_check.reason,
+                            )
+                            continue
+
                     properties = get_mixpanel_properties(
                         org=metric.organization,
                         eval=metric,
@@ -10826,9 +10874,24 @@ def run_evaluation_task(evaluation_data):
                     logger.info(
                         " ----- INSIDE run_evaluation_task | Initializing the EvaluationRunner for each metric -----"
                     )
+                    runner_args = dict(args)
+                    if not runner_args.get("source"):
+                        runner_args["source"] = "dataset_evaluation"
+                    if not runner_args.get("source_id"):
+                        runner_args["source_id"] = metric.template.id
+                    runner_source_configs = dict(
+                        runner_args.get("source_configs") or {}
+                    )
+                    if metric.dataset_id:
+                        runner_source_configs.setdefault(
+                            "dataset_id", str(metric.dataset_id)
+                        )
+                    runner_source_configs.setdefault("source", "dataset")
+                    runner_args["source_configs"] = runner_source_configs
+
                     evaluation_runner = EvaluationRunner(
                         user_eval_metric_id=metric_id,
-                        **args,
+                        **runner_args,
                     )
 
                     # Wrap function with OTel context propagation for thread safety
@@ -10873,9 +10936,15 @@ def run_evaluation_task(evaluation_data):
                 )
 
         # Update status to completed for successful metrics
-        UserEvalMetric.objects.filter(id__in=metric_ids).update(
-            status=StatusType.COMPLETED.value
-        )
+        completed_metric_ids = [
+            metric_id
+            for metric_id in metric_ids
+            if str(metric_id) not in blocked_metric_ids
+        ]
+        if completed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
+                status=StatusType.COMPLETED.value
+            )
     except Exception as e:
         # Handle exceptions and log errors
         UserEvalMetric.objects.filter(id__in=metric_ids).update(
@@ -13249,12 +13318,9 @@ class AddCompareExperimentEvalView(APIView):
                         dataset = Dataset.no_workspace_objects.select_for_update().get(
                             id=dataset_id
                         )
-                        output_type = user_eval_metric.template.config.get("output")
-                        data_type = {
-                            "reason": "text",
-                            "score": "float",
-                            "choices": "array",
-                        }.get(output_type, "boolean")
+                        data_type = infer_eval_result_column_data_type(
+                            user_eval_metric.template
+                        )
 
                         column = Column.objects.create(
                             name=validated_data.get("name"),
@@ -13341,11 +13407,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
 
             # Process each metric for column creation
             for metric in user_eval_metrics:
-                data_type = {
-                    "reason": "text",
-                    "score": "float",
-                    "choices": "array",
-                }.get(metric.template.config.get("output"), "boolean")
+                data_type = infer_eval_result_column_data_type(metric.template)
 
                 # Get or create evaluation column
                 column, created = Column.objects.get_or_create(

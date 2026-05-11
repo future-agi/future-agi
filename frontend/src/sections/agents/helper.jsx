@@ -640,6 +640,7 @@ export const getCallLogsColumnDefs = (
       flex: 0,
       minWidth: 120,
       cellRenderer: TalkRatioCell,
+      hide: true,
     },
 
     // ── Resources ─────────────────────────────────────────────────────

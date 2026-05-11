@@ -80,14 +80,37 @@ export const identifyPostHogUser = (userData = {}) => {
   if (!id) return;
 
   try {
+
+    const setOnce = {};
+    try {
+      const utmString =
+        typeof window !== "undefined" &&
+        window.localStorage?.getItem("utm_params");
+      if (utmString) {
+        const stored = new URLSearchParams(utmString);
+        const utmSource = stored.get("utm_source");
+        const utmMedium = stored.get("utm_medium");
+        const utmCampaign = stored.get("utm_campaign");
+        if (utmSource) setOnce.$initial_utm_source = utmSource;
+        if (utmMedium) setOnce.$initial_utm_medium = utmMedium;
+        if (utmCampaign) setOnce.$initial_utm_campaign = utmCampaign;
+      }
+    } catch (storageError) {
+      logger.debug("PostHog: could not read utm_params from storage", storageError);
+    }
+
     // Identify user
-    posthog.identify(id, {
-      email,
-      name,
-      workspace_id: defaultWorkspaceId,
-      workspace_role: defaultWorkspaceRole,
-      organization_role: organizationRole,
-    });
+    posthog.identify(
+      id,
+      {
+        email,
+        name,
+        workspace_id: defaultWorkspaceId,
+        workspace_role: defaultWorkspaceRole,
+        organization_role: organizationRole,
+      },
+      Object.keys(setOnce).length ? setOnce : undefined,
+    );
 
     // Group: Organization (type 0)
     if (organization?.id) {

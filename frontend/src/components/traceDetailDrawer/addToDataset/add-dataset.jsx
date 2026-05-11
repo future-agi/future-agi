@@ -90,7 +90,14 @@ const AddDataset = ({
       defaultSpanFields.includes(field.name),
     );
 
-    setGetobservationFields(matchedFields);
+    // Inject virtual fields that are not real model fields on the backend.
+    // These are computed per-span in the dataset task from EvalLogger and Score.
+    const VIRTUAL_FIELDS = [
+      { name: "eval_metrics", type: "json" },
+      { name: "annotation_metrics", type: "json" },
+    ];
+
+    setGetobservationFields([...matchedFields, ...VIRTUAL_FIELDS]);
   }, [observationFields]);
 
   return (

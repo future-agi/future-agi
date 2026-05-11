@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { extractVariables, normalizeForComparison } from "../Playground/common";
 
-export const useExtractAllVariables = (prompts) => {
+export const useExtractAllVariables = (prompts, templateFormat) => {
   // Use memoization to avoid re-running this expensive operation unless prompts change
   return useMemo(() => {
     // Use Map to store unique variables while preserving original formatting
@@ -19,7 +19,7 @@ export const useExtractAllVariables = (prompts) => {
         // }
         // Combine existing variables with newly extracted ones
         // extractVariables finds all text within {{ }} in the content
-        return [...acc, ...extractVariables(content)];
+        return [...acc, ...extractVariables(content, templateFormat)];
       }, []);
 
       // Process each extracted variable
@@ -36,5 +36,5 @@ export const useExtractAllVariables = (prompts) => {
 
     // Convert Map values to array, giving us deduplicated variables with original formatting
     return Array.from(variableMap.values());
-  }, [prompts]);
+  }, [prompts, templateFormat]);
 };

@@ -75,8 +75,14 @@ const SOURCE_LABELS = {
 };
 
 const EvalPickerCreateNew = ({ onBack, onSave }) => {
-  const { source, sourceId, sourceColumns, setSelectedEval, setStep } =
-    useEvalPickerContext();
+  const {
+    source,
+    sourceId,
+    sourceRowType,
+    sourceColumns,
+    setSelectedEval,
+    setStep,
+  } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -112,6 +118,29 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Union of every child template's required_keys — drives the top
   // TestPlayground so the user sees inputs for all child variables.
   const compositeUnionKeys = useCompositeChildrenUnionKeys(selectedChildren);
+  const compositeAdhocConfig = useMemo(
+    () =>
+      mode !== "composite"
+        ? null
+        : {
+            child_template_ids: selectedChildren.map((c) => c.child_id),
+            aggregation_enabled: aggregationEnabled,
+            aggregation_function: aggregationFunction,
+            composite_child_axis: compositeChildAxis || "",
+            child_weights:
+              Object.keys(childWeights || {}).length > 0 ? childWeights : null,
+            pass_threshold: passThreshold ?? 0.5,
+          },
+    [
+      mode,
+      selectedChildren,
+      aggregationEnabled,
+      aggregationFunction,
+      compositeChildAxis,
+      childWeights,
+      passThreshold,
+    ],
+  );
 
   // Draft management
   const [draftId, setDraftId] = useState(null);
@@ -282,8 +311,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         "Instructions must contain at least one template variable (e.g. {{input}})";
     }
 
-    // Mapping
-    if (!sourceReady) next.mapping = "Map all variables before saving";
+    // Mapping — no dataset to map against in the composite child-picker flow,
+    // so skip this check. Matches the canSave bypass below.
+    if (!sourceReady && source !== "composite") {
+      next.mapping = "Map all variables before saving";
+    }
 
     // pass_threshold must be 0–1
     if (passThreshold < 0 || passThreshold > 1) {
@@ -313,6 +345,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     code,
     instructions,
     sourceReady,
+    source,
     passThreshold,
     outputType,
     choiceScores,
@@ -494,11 +527,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   ]);
 
   const isComposite = mode === "composite";
+  // `source === "composite"` means this drawer was opened from a composite's
+  // child picker with no dataset bound — there's no variable mapping to
+  // complete here, so don't gate saving on `sourceReady`.
   const canSave = isComposite
     ? !!name.trim() && selectedChildren.length > 0
     : name.trim() &&
       (evalType === "code" ? code.trim() : instructions.trim()) &&
-      sourceReady;
+      (source === "composite" || sourceReady);
 
   // Variables from instructions
   const variables = useMemo(() => {
@@ -690,10 +726,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   compositeChildAxis={compositeChildAxis}
                   childWeights={childWeights}
                   children={selectedChildren}
-                  // Forward the dataset context so the inner child
+                  // Forward the source context so the inner child
                   // picker shows the variable-mapping screen for each
-                  // child instead of directly appending it.
+                  // child against the same source the parent composite
+                  // was opened from (task, dataset, tracing, ...).
+                  pickerSource={source}
                   pickerSourceId={sourceId}
+                  pickerSourceRowType={sourceRowType}
                   pickerSourceColumns={sourceColumns}
                   onNameChange={setName}
                   onDescriptionChange={setDescription}
@@ -934,7 +973,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               <Box sx={{ flex: 1, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
-                  source === "task" ||
                   source === "custom" ||
                   source === "run-experiment" ||
                   source === "run-optimization") && (
@@ -948,9 +986,24 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
+                  />
+                )}
+                {source === "task" && (
+                  <TracingTestMode
+                    ref={sourceRef}
+                    templateId={draftId}
+                    variables={isComposite ? compositeUnionKeys : variables}
+                    onTestResult={handleTestResult}
+                    onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
+                    initialProjectId={sourceId}
+                    initialRowType={sourceRowType}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {source === "tracing" && (
@@ -960,6 +1013,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {(source === "simulation" ||
@@ -971,6 +1026,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {/* Fallback: no source context (standalone composite create page) */}
@@ -995,6 +1052,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}
                       isComposite
+                      compositeAdhocConfig={compositeAdhocConfig}
                       showVersions={false}
                       onTestResult={handleTestResult}
                       onColumnsLoaded={handleColumnsLoaded}

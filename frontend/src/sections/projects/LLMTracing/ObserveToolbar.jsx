@@ -60,6 +60,9 @@ const ObserveToolbar = ({
   onApplyExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
+  // prepends the matching id filter(s) to its property picker.
+  tab,
   // Columns
   columns,
   onColumnVisibilityChange,
@@ -84,6 +87,7 @@ const ObserveToolbar = ({
   onToggleNonAnnotated,
   // Group
   groupBy,
+  hiddenGroupByOptions,
   onGroupByChange,
   // Grid
   rowCount,
@@ -111,6 +115,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Spans view — swaps "Trace Name" filter label to "Span Name"
+  isSpansView = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -231,20 +237,35 @@ const ObserveToolbar = ({
       };
       const rawColType =
         gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      const rawFilterType = gf.filter_config?.filter_type;
+      // Auto-migrate legacy saved views: thumbs annotations used to be
+      // stored as filter_type=categorical with values like ["Thumbs Up",
+      // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
+      // so the BE thumbs branch handles them and the panel renders the
+      // right operators/picker.
+      const looksLikeThumbsValues = (() => {
+        if (rawColType !== "ANNOTATION") return false;
+        if (rawFilterType !== "categorical") return false;
+        const vals = Array.isArray(value) ? value : value ? [value] : [];
+        if (vals.length === 0) return false;
+        const tokens = new Set(["thumbs up", "thumbs down", "up", "down"]);
+        return vals.every((v) => tokens.has(String(v).trim().toLowerCase()));
+      })();
       return {
         field: gf.column_id,
         fieldName: gf.display_name,
         fieldCategory: colTypeReverseMap[rawColType] || "system",
         fieldType: isNumberOp
           ? "number"
-          : gf.filter_config?.filter_type === "number"
+          : rawFilterType === "number"
             ? "number"
-            : gf.filter_config?.filter_type === "categorical"
-              ? "categorical"
-              : gf.filter_config?.filter_type === "text" &&
-                  rawColType === "ANNOTATION"
-                ? "text"
-                : "string",
+            : rawFilterType === "thumbs" || looksLikeThumbsValues
+              ? "thumbs"
+              : rawFilterType === "categorical"
+                ? "categorical"
+                : rawFilterType === "text" && rawColType === "ANNOTATION"
+                  ? "text"
+                  : "string",
         operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
         value,
       };
@@ -383,7 +404,9 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
+            tab={tab}
             isSimulator={isSimulator}
+            isSpansView={isSpansView}
             source={
               mode === "sessions"
                 ? "sessions"
@@ -422,6 +445,7 @@ const ObserveToolbar = ({
                 number: "number",
                 boolean: "boolean",
                 categorical: "categorical",
+                thumbs: "thumbs",
                 text: "text",
               };
               const colTypeMap = {
@@ -541,6 +565,7 @@ const ObserveToolbar = ({
             onToggleNonAnnotated={onToggleNonAnnotated}
             groupBy={groupBy}
             onGroupByChange={onGroupByChange}
+            hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
@@ -608,6 +633,7 @@ ObserveToolbar.propTypes = {
   showNonAnnotated: PropTypes.bool,
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onGroupByChange: PropTypes.func,
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
@@ -623,12 +649,14 @@ ObserveToolbar.propTypes = {
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(ObserveToolbar);

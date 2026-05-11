@@ -84,7 +84,11 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
 
     if workspace is not None:
         obj_ws = _get_source_workspace(obj)
-        if obj_ws is None or obj_ws != workspace:
+        ws_match = (
+            obj_ws == workspace
+            or (obj_ws is None and getattr(workspace, "is_default", False))
+        )
+        if not ws_match:
             logger.warning(
                 "source_workspace_mismatch",
                 source_type=source_type,
