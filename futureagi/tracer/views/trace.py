@@ -1170,6 +1170,48 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             per_choice.append(choice_key)
                     metric_entry["output"] = per_choice
 
+                # New agent-evaluator path: when the legacy fields are empty and
+                # the eval template's output type is "choices", read the chosen
+                # bucket from EvalLogger.output_str (stored as a Python dict
+                # literal like "{'score': 0.0, 'choice': 'never'}").
+                if metric_entry.get("output") in (None, [], ""):
+                    tpl = getattr(config, "eval_template", None)
+                    tpl_output = (
+                        (getattr(tpl, "config", None) or {}).get("output")
+                        if tpl is not None
+                        else None
+                    )
+                    if tpl_output == "choices":
+                        log = (
+                            EvalLogger.objects.filter(
+                                trace_id=trace.id,
+                                custom_eval_config_id=config.id,
+                                deleted=False,
+                            )
+                            .order_by("-created_at")
+                            .only("output_str")
+                            .first()
+                        )
+                        if log and log.output_str:
+                            try:
+                                import ast as _ast_mod
+                                parsed = _ast_mod.literal_eval(log.output_str)
+                                choice = (
+                                    parsed.get("choice")
+                                    if isinstance(parsed, dict)
+                                    else None
+                                )
+                                if choice:
+                                    metric_entry["output"] = [choice]
+                                    metric_entry["output_type"] = "choices"
+                                    # Mirror as top-level `score` so the drawer's
+                                    # `e?.score ?? e?.output ?? e?.value` lookup
+                                    # hits a string and renders the bucket name —
+                                    # avoids needing a frontend renderer change.
+                                    metric_entry["score"] = choice
+                            except (ValueError, SyntaxError):
+                                pass
+
                 metrics[str(config.id)] = metric_entry
             if metrics:
                 result["eval_outputs"] = metrics
@@ -3672,9 +3714,29 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "error": log.error,
                 }
                 if log.output_str_list:
+                    # Legacy categorical eval — pre-agent-evaluator path
                     metric_entry["output"] = log.output_str_list
                 elif output_type == "Pass/Fail" and log.output_bool is not None:
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
+                elif output_type == "choices" and log.output_str:
+                    # New agent-evaluator path: output_str holds a Python dict
+                    # literal like "{'score': 0.0, 'choice': 'never'}". Surface
+                    # the chosen bucket as a one-element list so the grid's
+                    # choices renderer (array → chips) lights up, AND also
+                    # mirror it as a top-level `score` string so the drawer's
+                    # rawValue lookup (score ?? output ?? value) hits a string
+                    # and renders the bucket verbatim — no frontend change.
+                    try:
+                        import ast as _ast_mod
+                        parsed = _ast_mod.literal_eval(log.output_str)
+                        choice = parsed.get("choice") if isinstance(parsed, dict) else None
+                        if choice:
+                            metric_entry["output"] = [choice]
+                            metric_entry["score"] = choice
+                        else:
+                            metric_entry["output"] = None
+                    except (ValueError, SyntaxError):
+                        metric_entry["output"] = None
                 elif log.output_float is not None:
                     metric_entry["output"] = round(log.output_float * 100, 2)
                 else:
