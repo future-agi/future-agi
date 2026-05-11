@@ -125,6 +125,15 @@ def infer_composed_levels(
     if processed < len(graph_ids):
         raise ValueError("Cross-graph reference DAG contains a cycle")
 
+    # Invert so that level 0 = leaves (no outgoing references) and
+    # level k = graphs that transitively depend on k other layers.
+    # BFS from sources assigns 0 to embedders and max to leaves; inversion
+    # makes level[g] = max_level - bfs_level[g], satisfying the invariant
+    # that for every edge (src → tgt), level[src] > level[tgt].
+    if levels:
+        max_level = max(levels.values())
+        levels = {g: max_level - lv for g, lv in levels.items()}
+
     return levels
 
 
@@ -237,9 +246,12 @@ def is_dag(adjacency: Adjacency, nodes: List[NodeId]) -> bool:
     Return True if the directed graph defined by adjacency is acyclic (is a DAG).
     Uses Kahn's algorithm.
     """
+    node_set = set(nodes)
     in_degree = {n: 0 for n in nodes}
     for src in nodes:
         for tgt in adjacency.get(src, []):
+            if tgt not in node_set:
+                continue
             in_degree[tgt] = in_degree.get(tgt, 0) + 1
 
     queue: deque[NodeId] = deque(n for n in nodes if in_degree[n] == 0)
@@ -248,6 +260,8 @@ def is_dag(adjacency: Adjacency, nodes: List[NodeId]) -> bool:
         current = queue.popleft()
         processed += 1
         for neighbor in adjacency.get(current, []):
+            if neighbor not in node_set:
+                continue
             in_degree[neighbor] -= 1
             if in_degree[neighbor] == 0:
                 queue.append(neighbor)

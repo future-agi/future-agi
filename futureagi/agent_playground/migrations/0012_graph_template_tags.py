@@ -9,6 +9,7 @@ No data migration needed — tags defaults to [].
 """
 
 import django.contrib.postgres.fields
+from django.contrib.postgres.indexes import GinIndex
 from django.db import migrations, models
 
 
@@ -35,6 +36,13 @@ class Migration(migrations.Migration):
             index=models.Index(
                 fields=["is_template", "organization"],
                 name="agentpg_graph_tpl_org_idx",
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="graph",
+            index=GinIndex(
+                fields=["tags"],
+                name="graph_tags_gin_idx",
             ),
         ),
     ]

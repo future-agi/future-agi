@@ -133,9 +133,11 @@ class TemplateViewSet(ViewSet):
         try:
             with transaction.atomic():
                 source.is_template = True
+                source.workspace = None  # templates must not have a workspace
                 source.name = serializer.validated_data.get("name", source.name)
                 source.description = serializer.validated_data.get("description", source.description)
                 source.tags = serializer.validated_data.get("tags", source.tags)
+                source.full_clean()
                 source.save()
         except ValidationError as e:
             return _gm.error_response(str(e), status_code=status.HTTP_400_BAD_REQUEST)
@@ -143,7 +145,7 @@ class TemplateViewSet(ViewSet):
         logger.info("template_published", graph_id=str(source.id), org=str(request.organization.id))
         return _gm.success_response(
             TemplateListSerializer(source).data,
-            status_code=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED,
         )
 
     @action(detail=True, methods=["post"], url_path="instantiate")
@@ -258,5 +260,5 @@ class TemplateViewSet(ViewSet):
                 "ref_graph_version_id": str(active_version.id),
                 "template_id": str(template.id),
             },
-            status_code=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED,
         )
