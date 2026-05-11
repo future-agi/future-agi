@@ -659,6 +659,26 @@ def test_optional_deref_guard_does_not_dominate_after_if(tmp_path):
     assert optional_v, "a branch-local guard must not dominate later unguarded use"
 
 
+def test_optional_deref_condition_access_uses_condition_guard(tmp_path):
+    _write_src(
+        tmp_path,
+        "views.py",
+        """
+        def run(users):
+            user = users.first()
+            if user and user.email:
+                return user.email
+            return None
+    """,
+    )
+
+    violations = check_codebase(tmp_path)
+
+    assert not [
+        v for v in violations if v.context == "optional_dereference"
+    ], "condition-side guarded attribute access must not be reported"
+
+
 # ---------------------------------------------------------------------------
 # graph and scanner failure contracts
 # ---------------------------------------------------------------------------

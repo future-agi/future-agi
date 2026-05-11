@@ -100,10 +100,10 @@ def main(argv=None) -> int:
     else:
         if not violations:
             label = f"(diff vs {args.diff})" if args.diff else ""
-            print(f"✓  pact: no constraint violations {label}".strip())
+            print(f"✓  pact: no constraint violations {label}".rstrip(" "))
         else:
             label = f"(diff vs {args.diff})" if args.diff else ""
-            print(f"✗  pact: {len(violations)} violation(s) {label}\n".strip())
+            print(f"✗  pact: {len(violations)} violation(s) {label}\n".rstrip(" "))
             for v in violations:
                 print(f"  {v}")
             print()
