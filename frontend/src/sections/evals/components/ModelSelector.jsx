@@ -10,6 +10,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  alpha,
 } from "@mui/material";
 import {
   useInfiniteQuery,
@@ -147,6 +148,67 @@ const FAGI_MODELS = [
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
+const CHIP_STYLES = {
+  backgroundColor: (theme) =>
+    alpha(
+      theme.palette.primary.main,
+      theme.palette.mode === "dark" ? 0.24 : 0.1,
+    ),
+  "&:hover": {
+    backgroundColor: (theme) =>
+      alpha(
+        theme.palette.primary.main,
+        theme.palette.mode === "dark" ? 0.32 : 0.16,
+      ),
+  },
+  color: (theme) =>
+    theme.palette.mode === "dark"
+      ? theme.palette.primary.light
+      : theme.palette.primary.main,
+  border: "1px solid",
+  borderColor: (theme) =>
+    alpha(
+      theme.palette.primary.main,
+      theme.palette.mode === "dark" ? 0.4 : 0.2,
+    ),
+  borderRadius: "4px",
+  fontWeight: 500,
+  fontSize: "11px",
+  height: 22,
+  "& .MuiChip-label": { px: 0.75 },
+  // MUI's default Chip styles target .MuiChip-icon separately from the chip's
+  // `color`, so without this the leading icons render in MUI's muted default
+  // and disappear against the violet background. Force the icon to inherit
+  // the chip's foreground color.
+  "& .MuiChip-icon": {
+    color: "inherit",
+  },
+  // Delete-icon container styling. The icon itself is passed per-chip as
+  // `deleteIcon={DELETE_ICON}` (a thin Iconify X) — MUI's default
+  // CancelIcon ships as a heavy filled circle, which reads as a button
+  // rather than a tertiary affordance. Stays readable on both light and
+  // dark chip backgrounds: dark mode uses primary.contrastText, light
+  // mode keeps the violet primary.
+  "& .MuiChip-deleteIcon": {
+    margin: "0 4px 0 -2px",
+    color: (theme) =>
+      theme.palette.mode === "dark"
+        ? theme.palette.primary.light
+        : theme.palette.primary.main,
+    transition: "color 0.15s ease",
+    "&:hover": {
+      color: (theme) =>
+        theme.palette.mode === "dark"
+          ? theme.palette.primary.contrastText
+          : theme.palette.primary.dark,
+    },
+  },
+};
+
+// Shared thin-X delete icon for capability chips. Replaces MUI's default
+// CancelIcon (a filled circle with X cutout) which feels like a button.
+const DELETE_ICON = <Iconify icon="mdi:close" width={12} />;
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Summary Chip — resolves name for both presets and custom templates
@@ -179,7 +241,8 @@ function SummaryChip({ activeSummary, onClick, onDelete }) {
       label={chipLabel}
       onClick={onClick}
       onDelete={onDelete}
-      sx={{ height: 22, fontSize: "11px", fontWeight: 500, cursor: "pointer" }}
+      deleteIcon={DELETE_ICON}
+      sx={{ ...CHIP_STYLES, cursor: "pointer" }}
     />
   );
 }
@@ -802,7 +865,8 @@ const ModelSelector = ({
           icon={<Iconify icon="mdi:web" width={12} sx={{ ml: 0.5 }} />}
           label="Internet"
           onDelete={() => setUseInternet(false)}
-          sx={{ height: 22, fontSize: "11px", fontWeight: 500 }}
+          deleteIcon={DELETE_ICON}
+          sx={CHIP_STYLES}
         />
       )}
       {showPlus && activeSummary && activeSummary !== "concise" && (
@@ -859,7 +923,8 @@ const ModelSelector = ({
               onDelete={() =>
                 setActiveConnectorIds((p) => p.filter((x) => x !== cId))
               }
-              sx={{ height: 22, fontSize: "11px", fontWeight: 500 }}
+              deleteIcon={DELETE_ICON}
+              sx={CHIP_STYLES}
             />
           );
         })}
@@ -897,12 +962,8 @@ const ModelSelector = ({
               setPlusSubmenu("knowledge");
             }}
             onDelete={() => setSelectedKBs([])}
-            sx={{
-              height: 22,
-              fontSize: "11px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
+            deleteIcon={DELETE_ICON}
+            sx={{ ...CHIP_STYLES, cursor: "pointer" }}
           />
         </Tooltip>
       )}
@@ -944,12 +1005,8 @@ const ModelSelector = ({
                 setPlusSubmenu("injection");
               }}
               onDelete={() => setActiveContextOptions(["variables_only"])}
-              sx={{
-                height: 22,
-                fontSize: "11px",
-                fontWeight: 500,
-                cursor: "pointer",
-              }}
+              deleteIcon={DELETE_ICON}
+              sx={{ ...CHIP_STYLES, cursor: "pointer" }}
             />
           </Tooltip>
         )}
@@ -1552,7 +1609,8 @@ const ModelSelector = ({
                               prev.filter((x) => x !== kbId),
                             )
                           }
-                          sx={{ height: 20, fontSize: "11px" }}
+                          deleteIcon={DELETE_ICON}
+                          sx={{ ...CHIP_STYLES, height: 20 }}
                         />
                       );
                     })}
@@ -1634,16 +1692,16 @@ const ModelSelector = ({
                       onClick={() => {
                         setActiveContextOptions((prev) => {
                           if (opt.isDefault) {
-                            // Clicking "variables_only" deselects everything else
+                            // Clicking "variables_only" clears any active context.
                             return ["variables_only"];
                           }
-                          // Toggle the clicked option
-                          let next = prev.includes(opt.value)
-                            ? prev.filter((x) => x !== opt.value)
-                            : [...prev.filter((x) => x !== "variables_only"), opt.value];
-                          // If nothing left, revert to variables_only
-                          if (next.length === 0) next = ["variables_only"];
-                          return next;
+                          // Single-select: clicking a non-default option replaces
+                          // whatever was active. Clicking the already-active one
+                          // toggles it off and reverts to variables_only.
+                          if (prev.includes(opt.value)) {
+                            return ["variables_only"];
+                          }
+                          return [opt.value];
                         });
                       }}
                       sx={{
