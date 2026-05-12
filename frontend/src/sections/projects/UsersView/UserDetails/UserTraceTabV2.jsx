@@ -65,7 +65,11 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (Array.isArray(saved) && saved.length > 0) {
-        pendingCustomColumnsRef.current = saved;
+        // Shallow-clone each col so the pending ref (and `columns` it
+        // drains into) doesn't share object identity with the parsed
+        // localStorage payload. Cheap defensive isolation matching the
+        // LLMTracingView / Sessions-view pattern.
+        pendingCustomColumnsRef.current = saved.map((c) => ({ ...c }));
         skipNextSaveRef.current = true;
       }
     } catch {
