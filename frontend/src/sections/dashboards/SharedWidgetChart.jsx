@@ -405,9 +405,10 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
     );
   }
 
+  const isDark = theme.palette.mode === "dark";
+
   if (isPie) {
-    const isDarkPie = theme.palette.mode === "dark";
-    const txtColor = isDarkPie ? "#fff" : "#1a1a2e";
+    const txtColor = isDark ? "#fff" : "#1a1a2e";
     const pieTotal = pieValues.reduce((a, b) => a + b, 0);
     const fmtTotal =
       pieTotal >= 1000000
@@ -454,7 +455,7 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
       },
       dataLabels: { enabled: false },
       legend: { show: false, height: 0 },
-      stroke: { width: 4, colors: [isDarkPie ? "#1e1e2e" : "#fff"] },
+      stroke: { width: 4, colors: [isDark ? "#1e1e2e" : "#fff"] },
       states: {
         hover: { filter: { type: "darken", value: 0.92 } },
         active: { filter: { type: "none" } },
@@ -640,7 +641,7 @@ export default function SharedWidgetChart({ widget, preFetchedData }) {
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDarkPie
+                      bgcolor: isDark
                         ? "rgba(255,255,255,0.04)"
                         : "rgba(0,0,0,0.02)",
                       borderRadius: "3px",

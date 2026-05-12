@@ -485,12 +485,6 @@ function SharedDashboardView({ sharedData, token }) {
     if (token && widgets.length > 0) fetchAll();
   }, [token, widgets]);
 
-  // Attach query data to widgets
-  const widgetsWithData = useMemo(
-    () => widgets.map((w) => ({ ...w, _queryData: widgetData[w.id] })),
-    [widgets, widgetData],
-  );
-
   if (widgets.length === 0) {
     return (
       <Box
@@ -532,7 +526,7 @@ function SharedDashboardView({ sharedData, token }) {
               sx={{
                 display: "flex",
                 gap: 2,
-                height: rowHeight ? `${rowHeight * 80}px` : undefined,
+                height: rowHeight ? `${rowHeight}px` : undefined,
               }}
             >
               {row.map((widget) => {

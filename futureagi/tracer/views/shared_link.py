@@ -226,7 +226,7 @@ def query_shared_widget(request, token):
 
     viewset = DashboardWidgetViewSet()
     viewset._gm = GeneralMethods()
-    return viewset._execute_ch_query_config(widget.query_config, request.workspace)
+    return viewset._execute_ch_query_config(widget.query_config, widget.workspace)
 
 
 # --------------------------------------------------------------------------
