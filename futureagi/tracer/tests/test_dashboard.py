@@ -497,6 +497,93 @@ class TestMetricsEndpoint:
         ]
         assert str(label.id) not in annotation_ids
 
+    # ------------------------------------------------------------------
+    # /filter_values endpoint — name / span_name col_map coverage.
+    # The handler whitelists allowed system metric column ids; "name"
+    # and "span_name" were missing so the FE picker showed empty
+    # suggestions for Trace Name / Span Name filters.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "metric_name", ["name", "span_name", "service_name"]
+    )
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_accepts_name_aliases(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        metric_name,
+        auth_client,
+        observe_project,
+    ):
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "agent.handle_request"}, {"val": "chain.run"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name={metric_name}"
+            "&metric_type=system_metric"
+            f"&project_ids={observe_project.id}"
+            "&source=traces"
+        )
+        assert response.status_code == 200
+        values = response.json()["result"]["values"]
+        labels = [v["label"] for v in values]
+        assert labels == ["agent.handle_request", "chain.run"]
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_name_restricts_to_root_spans(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """`metric_name=name` (Trace Name) must scope to root spans."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name=name&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "parent_span_id IS NULL" in sql_arg
+
+    @pytest.mark.parametrize("metric_name", ["span_name", "service_name"])
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_span_name_does_not_restrict_to_root(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        metric_name,
+        auth_client,
+        observe_project,
+    ):
+        """span_name / service_name should NOT add the root-span clause."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name={metric_name}&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "parent_span_id" not in sql_arg
+
 
 # ===========================================================================
 # DashboardQueryBuilder
