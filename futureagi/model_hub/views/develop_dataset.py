@@ -6450,7 +6450,7 @@ class GetEvalsListView(APIView):
         )
 
         eval_templates = EvalTemplate.no_workspace_objects.filter(
-            organization__isnull=True, deleted=False
+            organization__isnull=True, deleted=False, visible_ui=True
         )
 
         # IMPORTANT: do NOT call insert_evals_template() here.
@@ -6573,10 +6573,13 @@ class GetEvalsListView(APIView):
                 organization=organization,
                 deleted=False,
                 template__deleted=False,
+                template__visible_ui=True,
             )
         else:
             # Filter by show_in_sidebar even when user_evals is provided
-            user_evals = user_evals.filter(show_in_sidebar=True)
+            user_evals = user_evals.filter(
+                show_in_sidebar=True, template__visible_ui=True
+            )
 
         if search_text:
             user_evals = user_evals.filter(name__icontains=search_text)
@@ -6598,7 +6601,10 @@ class GetEvalsListView(APIView):
         )
 
         eval_templates = EvalTemplate.objects.filter(
-            organization=organization, owner=OwnerChoices.USER.value, deleted=False
+            organization=organization,
+            owner=OwnerChoices.USER.value,
+            deleted=False,
+            visible_ui=True,
         ).prefetch_related("evaluators__user", "versions__created_by")
 
         if search_text:
@@ -6658,7 +6664,7 @@ class GetEvalsListView(APIView):
         self, validated_data, organization, search_text
     ):
         eval_templates = EvalTemplate.objects.filter(
-            organization=organization, deleted=False
+            organization=organization, deleted=False, visible_ui=True
         )
         if search_text:
             eval_templates = eval_templates.filter(Q(name__icontains=search_text))
