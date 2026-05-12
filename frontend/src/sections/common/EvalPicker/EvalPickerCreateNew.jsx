@@ -47,6 +47,23 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import { contextOptionsForRowType } from "./evalPickerConfigUtils";
+const dataInjectionFromContextOptions = (opts) => {
+  if (
+    !opts ||
+    opts.length === 0 ||
+    (opts.length === 1 && opts[0] === "variables_only")
+  ) {
+    return { variables_only: true };
+  }
+  const flags = {};
+  if (opts.includes("dataset_row")) flags.full_row = true;
+  if (opts.includes("span_context")) flags.span_context = true;
+  if (opts.includes("trace_context")) flags.trace_context = true;
+  if (opts.includes("session_context")) flags.session_context = true;
+  if (opts.includes("call_context")) flags.call_context = true;
+  return Object.keys(flags).length > 0 ? flags : { variables_only: true };
+};
 
 const PYTHON_CODE_TEMPLATE = `from typing import Any
 
@@ -90,6 +107,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     onFiltersChange,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
+  console.log("EvalPickerCreateNew source info", { source, sourceId, sourceRowType, sourceColumns });
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -114,6 +132,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [templateFormat, setTemplateFormat] = useState("mustache");
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
+  const [contextOptions, setContextOptions] = useState(
+    () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
+  );
 
   const localFormFilters = useWatch({
     control: localFilterForm.control,
@@ -248,6 +269,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      data_injection:
+        evalType === "agent"
+          ? dataInjectionFromContextOptions(contextOptions)
+          : undefined,
     }),
     [
       evalType,
@@ -261,6 +286,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       messages,
       fewShotExamples,
       templateFormat,
+      contextOptions,
     ],
   );
 
@@ -441,7 +467,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       if (source === "task" && onFiltersChange) {
         onFiltersChange(localFilterForm.getValues("filters") || []);
       }
-      // Now add to the current context
+      // Now add to the current context. data_injection (seeded from
+      // sourceRowType) is forwarded so the consumer's serializeEvalConfig
+      // captures it inside config.run_config — same shape an existing
+      // eval would emit through EvalPickerConfigFull.
       onSave({
         templateId: draftId,
         evalTemplateId: draftId,
@@ -451,6 +480,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        data_injection:
+          evalType === "agent"
+            ? dataInjectionFromContextOptions(contextOptions)
+            : undefined,
       });
     } catch (error) {
       enqueueSnackbar(error?.message || "Failed to save", { variant: "error" });
@@ -471,6 +504,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     evalType,
     outputType,
     instructions,
+    contextOptions,
     enqueueSnackbar,
     isOSS,
     source,
@@ -843,6 +877,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
                     mappedVariables={sourceMapping}
+                    activeContextOptions={contextOptions}
+                    onActiveContextOptionsChange={setContextOptions}
                   />
                   {errors.instructions && (
                     <Typography variant="caption" color="error.main">
