@@ -1223,18 +1223,39 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     (config) => {
       if (projectSource === PROJECT_SOURCE.SIMULATOR && config?.length > 0) {
         setColumns((prev) => {
-          // Preserve existing custom columns when grid reports its base columns
-          const preserveCustom = (key) => {
+          // Preserve existing custom columns AND drain pending custom cols
+          // queued by the localStorage hydrate / saved-view apply effect.
+          // Voice projects render through CallLogsGrid (not TraceGrid), so
+          // there's no merge logic on the grid side to drain those refs —
+          // this callback is the only path that writes to columns["*-trace"]
+          // for voice, so it has to handle the drain itself. Without this,
+          // custom cols loaded from localStorage or a saved view sit in the
+          // pending ref forever and never appear in the grid.
+          const drainPending = (key, ref) => {
             const existing = prev[key] || [];
             const customCols = existing.filter(
               (c) => c.groupBy === "Custom Columns",
             );
-            return [...config, ...customCols];
+            const pending = ref?.current || [];
+            const existingIds = new Set(customCols.map((c) => c.id));
+            const dedupedPending = pending.filter(
+              (c) => !existingIds.has(c.id),
+            );
+            if (pending.length > 0 && ref) {
+              ref.current = [];
+            }
+            return [...config, ...customCols, ...dedupedPending];
           };
           return {
             ...prev,
-            "primary-trace": preserveCustom("primary-trace"),
-            "compare-trace": preserveCustom("compare-trace"),
+            "primary-trace": drainPending(
+              "primary-trace",
+              primaryTracePendingRef,
+            ),
+            "compare-trace": drainPending(
+              "compare-trace",
+              compareTracePendingRef,
+            ),
           };
         });
       }
@@ -1696,7 +1717,85 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
       pendingColumnStateRef.current = null;
-      pendingCustomColumnsRef.current = [];
+      primaryTracePendingRef.current = [];
+      compareTracePendingRef.current = [];
+      primarySpansPendingRef.current = [];
+      compareSpansPendingRef.current = [];
+      // Strip saved-view custom cols from all grid slots so they don't
+      // linger on the default tab.
+      setColumns((prev) => {
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          next[ck] = (prev[ck] || []).filter(
+            (c) => c.groupBy !== "Custom Columns",
+          );
+        });
+        return next;
+      });
+      // Re-hydrate default-tab custom cols from localStorage. The mount-
+      // time useEffect that normally does this is keyed on
+      // displayStorageKey (project-scoped), so it doesn't re-fire on a
+      // same-project tab toggle.
+      try {
+        const raw = localStorage.getItem(displayStorageKey);
+        const saved = raw ? JSON.parse(raw) : null;
+        if (saved?.customColumns) {
+          // Legacy array shape: customs apply to whatever tab is active.
+          // New object shape: customs are pre-split by tab type — hydrate
+          // both refs for each tab so a compare-mode toggle later picks
+          // up the right set without another localStorage read.
+          if (Array.isArray(saved.customColumns)) {
+            if (saved.customColumns.length > 0) {
+              if (selectedTab === "trace") {
+                primaryTracePendingRef.current = saved.customColumns;
+                compareTracePendingRef.current = saved.customColumns;
+              } else {
+                primarySpansPendingRef.current = saved.customColumns;
+                compareSpansPendingRef.current = saved.customColumns;
+              }
+            }
+          } else {
+            const traceCols = saved.customColumns.trace || [];
+            const spansCols = saved.customColumns.spans || [];
+            if (traceCols.length > 0) {
+              primaryTracePendingRef.current = traceCols;
+              compareTracePendingRef.current = traceCols;
+            }
+            if (spansCols.length > 0) {
+              primarySpansPendingRef.current = spansCols;
+              compareSpansPendingRef.current = spansCols;
+            }
+          }
+        }
+      } catch {
+        /* ignore corrupted localStorage */
+      }
+      // Voice/simulator: drain the freshly-populated pending refs into
+      // columns state directly. handleSimulatorConfigLoaded fires only on
+      // backend column-count changes, which doesn't happen on a saved-view
+      // → default transition, so without this the localStorage customs
+      // we just queued would never reach the grid.
+      if (projectSource === PROJECT_SOURCE.SIMULATOR) {
+        const draining = primaryTracePendingRef.current || [];
+        if (draining.length > 0) {
+          setColumns((prev) => {
+            const merge = (key) => {
+              const existing = prev[key] || [];
+              const stripped = existing.filter(
+                (c) => c.groupBy !== "Custom Columns",
+              );
+              return [...stripped, ...draining];
+            };
+            return {
+              ...prev,
+              "primary-trace": merge("primary-trace"),
+              "compare-trace": merge("compare-trace"),
+            };
+          });
+          primaryTracePendingRef.current = [];
+          compareTracePendingRef.current = [];
+        }
+      }
       const activeApi =
         selectedTab === "trace"
           ? primaryTraceGridRef.current?.api
@@ -1717,9 +1816,62 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.hasEvalFilter !== undefined)
       setHasEvalFilter(display.hasEvalFilter);
 
-    // Defer custom columns — merged when backend columns arrive
+    // Strip existing custom cols from all grid slots so customs inherited
+    // from a previous tab/view (e.g. default-tab localStorage customs, or
+    // another saved view) don't linger when this saved view's set is
+    // merged in below. Without this, switching from default → saved view
+    // (or view A → view B) ends up showing the union of both sets and
+    // dirty-flags the Save view button.
+    setColumns((prev) => {
+      const next = {};
+      Object.keys(prev).forEach((ck) => {
+        next[ck] = (prev[ck] || []).filter(
+          (c) => c.groupBy !== "Custom Columns",
+        );
+      });
+      return next;
+    });
+
+    // Populate both primary and compare refs for the active tab type so a
+    // later toggle into compare mode also hydrates correctly.
     if (display.customColumns?.length > 0) {
-      pendingCustomColumnsRef.current = display.customColumns;
+      if (selectedTab === "trace") {
+        primaryTracePendingRef.current = display.customColumns;
+        compareTracePendingRef.current = display.customColumns;
+      } else {
+        primarySpansPendingRef.current = display.customColumns;
+        compareSpansPendingRef.current = display.customColumns;
+      }
+    }
+
+    // Voice/simulator projects: CallLogsGrid doesn't have a per-fetch merge
+    // step that drains the pending ref (it only emits its config when the
+    // backend column count changes, which doesn't happen on a same-tab-type
+    // saved-view switch). Drain into columns state directly here so customs
+    // from the new view actually appear. The strip block above already
+    // cleared old customs, so just append the new set.
+    if (
+      projectSource === PROJECT_SOURCE.SIMULATOR &&
+      display.customColumns?.length > 0
+    ) {
+      setColumns((prev) => {
+        const merge = (key) => {
+          const existing = prev[key] || [];
+          const stripped = existing.filter(
+            (c) => c.groupBy !== "Custom Columns",
+          );
+          return [...stripped, ...display.customColumns];
+        };
+        return {
+          ...prev,
+          "primary-trace": merge("primary-trace"),
+          "compare-trace": merge("compare-trace"),
+        };
+      });
+      // Clear the pending refs so handleSimulatorConfigLoaded doesn't try
+      // to drain them a second time on a later config callback.
+      primaryTracePendingRef.current = [];
+      compareTracePendingRef.current = [];
     }
 
     // Apply column state (widths/order/sort) to the active sub-tab's primary
@@ -1841,13 +1993,24 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     ? `user-filters-${userIdForUserMode}`
     : `observe-filters-${observeId}`;
 
-  // Pending custom columns — loaded from localStorage/view config but not
-  // merged into columns state until the backend returns real columns.
-  // This prevents the loading skeleton from showing only custom columns.
-  const pendingCustomColumnsRef = useRef([]);
+  // Pending custom columns — loaded from view config / localStorage but
+  // not merged into columns state until the backend returns real columns,
+  // so the grid doesn't render with only-custom-col headers mid-load.
+  // One ref per grid instance: a shared ref races across the 4 mounted
+  // grids (whichever fetches first drains the queue, leaving the others
+  // empty).
+  const primaryTracePendingRef = useRef([]);
+  const compareTracePendingRef = useRef([]);
+  const primarySpansPendingRef = useRef([]);
+  const compareSpansPendingRef = useRef([]);
 
-  // Load display settings from localStorage on mount (for default tab)
+  // Load display settings from localStorage on mount (for default tab).
+  // Saved-view tabs hydrate from the backend view config (apply effect at
+  // line ~1684); seeding pending refs from localStorage here on a hard
+  // refresh into a saved-view URL drains the wrong custom cols into the
+  // grid before the view config arrives.
   useEffect(() => {
+    if (activeViewTabId) return;
     try {
       const raw = localStorage.getItem(displayStorageKey);
       if (!raw) return;
@@ -1858,9 +2021,33 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       if (saved.showNonAnnotated) setShowNonAnnotated(saved.showNonAnnotated);
       if (saved.showCompare) setShowCompare(saved.showCompare);
       if (saved.hasEvalFilter) setHasEvalFilter(saved.hasEvalFilter);
-      // Defer custom columns — they'll be merged when backend columns arrive
-      if (saved.customColumns?.length > 0) {
-        pendingCustomColumnsRef.current = saved.customColumns;
+      // Accept both the new object shape ({trace: [], spans: []}) and the
+      // legacy flat array (treated as customs for the current tab only,
+      // for forward-compat with localStorage entries written before the
+      // per-tab split).
+      if (saved.customColumns) {
+        if (Array.isArray(saved.customColumns)) {
+          if (saved.customColumns.length > 0) {
+            if (selectedTab === "trace") {
+              primaryTracePendingRef.current = saved.customColumns;
+              compareTracePendingRef.current = saved.customColumns;
+            } else {
+              primarySpansPendingRef.current = saved.customColumns;
+              compareSpansPendingRef.current = saved.customColumns;
+            }
+          }
+        } else {
+          const traceCols = saved.customColumns.trace || [];
+          const spansCols = saved.customColumns.spans || [];
+          if (traceCols.length > 0) {
+            primaryTracePendingRef.current = traceCols;
+            compareTracePendingRef.current = traceCols;
+          }
+          if (spansCols.length > 0) {
+            primarySpansPendingRef.current = spansCols;
+            compareSpansPendingRef.current = spansCols;
+          }
+        }
       }
     } catch {
       /* ignore corrupted localStorage */
@@ -1924,6 +2111,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const ck = `${selectedGraph}-${selectedTab === "spans" ? "spans" : "trace"}`;
     return (columns[ck] || []).filter((c) => c.groupBy === "Custom Columns");
   }, [columns, selectedGraph, selectedTab]);
+
+  // Get custom columns for both tab types (used by localStorage save so
+  // adding customs on one tab doesn't wipe the other's customs from the
+  // shared `observe-display-<id>` entry).
+  const getCustomColumnsByTab = useCallback(() => {
+    const traceKey = `${selectedGraph}-trace`;
+    const spansKey = `${selectedGraph}-spans`;
+    return {
+      trace: (columns[traceKey] || []).filter(
+        (c) => c.groupBy === "Custom Columns",
+      ),
+      spans: (columns[spansKey] || []).filter(
+        (c) => c.groupBy === "Custom Columns",
+      ),
+    };
+  }, [columns, selectedGraph]);
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
@@ -2068,7 +2271,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showNonAnnotated,
       showCompare,
       hasEvalFilter,
-      customColumns: getCustomColumns(),
+      // Object shape keyed by tab type so adding a custom col on spans
+      // doesn't overwrite traces' customs (and vice versa) — the storage
+      // key itself is project-scoped, not tab-scoped.
+      customColumns: getCustomColumnsByTab(),
     };
     try {
       localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
@@ -2084,7 +2290,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     showCompare,
     hasEvalFilter,
     displayStorageKey,
-    getCustomColumns,
+    getCustomColumnsByTab,
   ]);
 
   const handleAddEvals = useCallback(() => {
@@ -4076,7 +4282,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={primaryTracePendingRef}
                     showErrors={showErrors}
                     enabled={
                       [
@@ -4114,7 +4320,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={compareTracePendingRef}
                     projectId={observeId}
                     showErrors={showErrors}
                     enabled={
@@ -4173,7 +4379,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={primarySpansPendingRef}
                     setFilters={setPrimarySpanFilters}
                     setExtraFilters={setExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
@@ -4207,7 +4413,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={compareSpansPendingRef}
                     filters={compareSpansValidatedFilters}
                     extraFilters={extraFilters}
                     ref={compareSpanGridRef}

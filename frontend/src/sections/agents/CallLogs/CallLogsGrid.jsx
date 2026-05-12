@@ -16,6 +16,7 @@ import {
   Pagination,
   PaginationItem,
   Select,
+  Skeleton,
   Stack,
   Typography,
   useTheme,
@@ -38,6 +39,42 @@ import { useShallowToggleAnnotationsStore } from "../store";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
+
+// Inline cell renderer for custom columns. Standard CallLogs cells wrap
+// content in a Box with `px: 1.5, py: 0.5` (CallLogsCellRenderer.jsx:262-274)
+// — without matching that here the custom-col content rendered flush
+// against the cell's left edge, breaking visual alignment with the rest of
+// the row.
+const CustomColCellRenderer = (params) => {
+  const v = params?.value;
+  const display = v == null || v === "" ? "-" : v;
+  return (
+    <Box
+      sx={{
+        px: 1.5,
+        py: 0.5,
+        display: "flex",
+        alignItems: "center",
+        height: "100%",
+      }}
+    >
+      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+        {String(display)}
+      </Typography>
+    </Box>
+  );
+};
+
+// Loading skeleton — same shape as the standard helper.jsx `LoadingSkeleton`,
+// inlined so the custom-col defs aren't coupled to that internal helper.
+const CustomColLoadingSkeleton = () => (
+  <Skeleton
+    variant="rectangular"
+    width="80%"
+    height={15}
+    sx={{ mx: 1, borderRadius: 0.5 }}
+  />
+);
 
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
@@ -267,15 +304,77 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       .filter((c) => !existingFields.has(c.id))
       .map((c) => ({
         headerName: c.name,
-        field: c.id,
+        // Use colId rather than `field` for custom cols so AG Grid doesn't
+        // try to deep-resolve the dotted path against the row object (which
+        // for voice/list_voice_calls is FLAT — no nested `call` member). We
+        // do the lookup ourselves in valueGetter below.
+        colId: c.id,
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        valueGetter: (params) => params.data?.[c.id] ?? "-",
+        // While the first fetch is in-flight, render the same skeleton
+        // bar the standard cols use (helper.jsx:408 LoadingSkeleton). After
+        // load, swap to the styled renderer that gives the custom-col cell
+        // the same px/py padding as the standard CallLogsCellRenderer.
+        cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
+        valueGetter: (params) => {
+          if (!params.data) return null;
+          // 1. Direct lookup (handles attributes whose stored id is the
+          //    literal data key, e.g. "bot_wpm").
+          let value = params.data[c.id];
+          // 2. Dot-notation traversal (handles nested response shapes,
+          //    matches TraceGrid/getCustomValueGetter).
+          if (value === undefined && c.id.includes(".")) {
+            value = c.id
+              .split(".")
+              .reduce((obj, key) => obj?.[key], params.data);
+          }
+          // 3. Voice-specific namespace strip: the /eval-attributes list
+          //    serves Vapi-style attribute paths with explicit namespace
+          //    prefixes (e.g. "call.bot_wpm", "vapi.call_id"), but the
+          //    /list_voice_calls/ response returns those same values as
+          //    top-level flat keys ("bot_wpm", "call_id"). Strip the prefix
+          //    and try direct lookup.
+          //
+          //    Whitelist intentionally — only namespaces where the data is
+          //    proven to live flat in the list response. A generic
+          //    "drop leading segments" fallback would false-positive on
+          //    paths like "phone_number.id" → row.id (the row primary key).
+          //
+          //    Attributes outside this whitelist (conversation.*,
+          //    performance_metrics.*, workflow.*, gen_ai.*, etc.) are
+          //    span-detail paths the list endpoint doesn't include — they
+          //    correctly fall through to "-" until the backend expands the
+          //    list response or removes them from the picker for voice.
+          const VOICE_FLAT_NAMESPACE_PREFIXES = ["call.", "vapi."];
+          if (value === undefined) {
+            const matchedPrefix = VOICE_FLAT_NAMESPACE_PREFIXES.find((p) =>
+              c.id.startsWith(p),
+            );
+            if (matchedPrefix) {
+              value = params.data[c.id.slice(matchedPrefix.length)];
+            }
+          }
+          if (value === undefined || value === null) return null;
+          if (Array.isArray(value) || typeof value === "object") {
+            return JSON.stringify(value);
+          }
+          return String(value);
+        },
       }));
 
-    return [...updated, ...newCustomDefs];
-  }, [callLogsColumnDefs, columnVisibility]);
+    // Wrap customs under a "Custom Columns" group header so they render as
+    // a grouped section at the end of the grid (parity with TraceGrid /
+    // SpanGrid / SessionGrid). Without this they appeared as flat columns
+    // alongside the standard ones, with no visual separation.
+    if (newCustomDefs.length > 0) {
+      return [
+        ...updated,
+        { headerName: "Custom Columns", children: newCustomDefs },
+      ];
+    }
+    return updated;
+  }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
       resetToggleAnnotationsStore();

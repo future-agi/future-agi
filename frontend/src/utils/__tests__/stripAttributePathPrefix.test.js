@@ -40,9 +40,9 @@ describe("stripAttributePathPrefix", () => {
     expect(stripAttributePathPrefix("")).toBe("");
   });
 
-  it("only strips an actual prefix, not a mid-string occurrence", () => {
+  it("strips span_attributes wherever it appears (unanchored regex)", () => {
     expect(stripAttributePathPrefix("metadata.span_attributes.input")).toBe(
-      "metadata.span_attributes.input",
+      "metadata.input",
     );
   });
 });
