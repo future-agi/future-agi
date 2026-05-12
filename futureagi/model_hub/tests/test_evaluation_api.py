@@ -614,6 +614,166 @@ class TestDeleteEvalsView:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    def test_delete_running_eval_cancels_runner(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Deleting a running eval should cancel the runner before soft-deleting."""
+        user_eval_metric.status = StatusType.RUNNING.value
+        user_eval_metric.save(update_fields=["status"])
+
+        with patch(
+            "tfc.utils.distributed_state.evaluation_tracker"
+        ) as mock_tracker, patch(
+            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+        ) as mock_mark_stopped:
+            response = auth_client.delete(
+                f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
+                {"delete_column": True},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_tracker.request_cancel.assert_called_once_with(
+            user_eval_metric.id, reason="eval_deleted"
+        )
+        mock_mark_stopped.assert_called_once()
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.deleted is True
+
+    def test_delete_eval_with_column_and_reason_column(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Deleting an eval with delete_column=True removes eval column AND reason column."""
+        # Create eval column
+        eval_col = Column.objects.create(
+            name="Test Eval",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        dataset.column_order.append(str(eval_col.id))
+        dataset.save()
+
+        # Create reason column (source_id pattern: "{eval_col.id}-sourceid-{metric_id}")
+        reason_col = Column.objects.create(
+            name="Test Eval-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{user_eval_metric.id}",
+        )
+        dataset.column_order.append(str(reason_col.id))
+        dataset.save()
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
+            {"delete_column": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Both columns should be soft-deleted
+        eval_col.refresh_from_db()
+        reason_col.refresh_from_db()
+        assert eval_col.deleted is True
+        assert reason_col.deleted is True
+
+        # Both should be removed from column_order
+        dataset.refresh_from_db()
+        assert str(eval_col.id) not in dataset.column_order
+        assert str(reason_col.id) not in dataset.column_order
+
+    def test_delete_column_of_running_eval_cancels_runner(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Deleting the column of a running eval should cancel the runner."""
+        user_eval_metric.status = StatusType.RUNNING.value
+        user_eval_metric.save(update_fields=["status"])
+
+        # Create eval column
+        eval_col = Column.objects.create(
+            name="Running Eval",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        dataset.column_order.append(str(eval_col.id))
+        dataset.save()
+
+        with patch(
+            "tfc.utils.distributed_state.evaluation_tracker"
+        ) as mock_tracker, patch(
+            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+        ) as mock_mark_stopped:
+            response = auth_client.delete(
+                f"/model-hub/develops/{dataset.id}/delete_column/{eval_col.id}/",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_tracker.request_cancel.assert_called_once_with(
+            user_eval_metric.id, reason="eval_column_deleted"
+        )
+        mock_mark_stopped.assert_called_once()
+
+        # Eval metric should be soft-deleted
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.deleted is True
+
+
+# ==================== is_user_eval_stopped Tests ====================
+
+
+@pytest.mark.django_db
+class TestIsUserEvalStopped:
+    """Tests for is_user_eval_stopped — the per-cell guard in the eval runner."""
+
+    def test_returns_false_for_running_eval(self, user_eval_metric):
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        user_eval_metric.status = StatusType.RUNNING.value
+        user_eval_metric.save(update_fields=["status"])
+
+        assert is_user_eval_stopped(user_eval_metric.id) is False
+
+    def test_returns_true_for_error_status(self, user_eval_metric):
+        """StopUserEvalView sets ERROR — guard must catch it."""
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        user_eval_metric.status = StatusType.ERROR.value
+        user_eval_metric.save(update_fields=["status"])
+
+        assert is_user_eval_stopped(user_eval_metric.id) is True
+
+    def test_returns_true_for_cancelled_status(self, user_eval_metric):
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        user_eval_metric.status = StatusType.CANCELLED.value
+        user_eval_metric.save(update_fields=["status"])
+
+        assert is_user_eval_stopped(user_eval_metric.id) is True
+
+    def test_returns_true_for_deleted_eval(self, user_eval_metric):
+        """DeleteEvalsView sets deleted=True — guard must catch it."""
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        user_eval_metric.deleted = True
+        user_eval_metric.save(update_fields=["deleted"])
+
+        assert is_user_eval_stopped(user_eval_metric.id) is True
+
+    def test_returns_false_for_nonexistent_id(self):
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        assert is_user_eval_stopped(uuid.uuid4()) is False
+
+    def test_returns_false_for_none(self):
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        assert is_user_eval_stopped(None) is False
+
 
 # ==================== StopUserEvalView Tests ====================
 
