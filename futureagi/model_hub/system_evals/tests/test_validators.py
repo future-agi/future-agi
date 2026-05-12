@@ -309,21 +309,51 @@ def test_wil_insertion_does_not_zero_hits():
 
 # ---------------------------------------------------------------------------
 # meteor_score
+#
+# METEOR moved out of the sandbox: heavy lifting runs in
+# `evaluations.engine.preprocessing._preprocess_meteor` (backend has WordNet),
+# and the eval body is now a thin reader of `_meteor_precomputed_score`. So
+# the tests exercise the full preprocess → eval-body path.
 # ---------------------------------------------------------------------------
 
 
-def test_meteor_perfect_match_high():
+def _meteor_full_path(reference, hypothesis):
+    """Run the preprocessor + eval body the same way `run_eval_func` would."""
+    from evaluations.engine.preprocessing import preprocess_inputs
     ev = _load_eval("meteor_score")
-    r = ev(None, "the cat sat on the mat", "the cat sat on the mat", None,
-           reference="the cat sat on the mat", hypothesis="the cat sat on the mat")
+    inputs = {"reference": reference, "hypothesis": hypothesis}
+    inputs = preprocess_inputs("meteor_score", inputs)
+    return ev(None, hypothesis, reference, None, **inputs)
+
+
+def test_meteor_body_without_preprocessing_reports_required():
+    """Sanity: eval body alone (no preprocessor run) must surface a clear
+    error, not silently zero-score."""
+    ev = _load_eval("meteor_score")
+    r = ev(None, "the cat sat", "the cat sat", None,
+           reference="the cat sat", hypothesis="the cat sat")
+    assert r["score"] == 0.0
+    assert "preprocessing" in r["reason"].lower()
+
+
+def test_meteor_perfect_match_high():
+    r = _meteor_full_path("the cat sat on the mat", "the cat sat on the mat")
     assert r["score"] > 0.95
 
 
 def test_meteor_reorder_lower_than_perfect():
-    ev = _load_eval("meteor_score")
-    perfect = ev(None, "the cat sat on the mat", "the cat sat on the mat", None,
-                 reference="the cat sat on the mat", hypothesis="the cat sat on the mat")
-    reordered = ev(None, "mat the on cat sat the", "the cat sat on the mat", None,
-                   reference="the cat sat on the mat", hypothesis="mat the on cat sat the")
+    perfect = _meteor_full_path("the cat sat on the mat", "the cat sat on the mat")
+    reordered = _meteor_full_path("the cat sat on the mat", "mat the on cat sat the")
     assert reordered["score"] < perfect["score"]
     assert reordered["score"] > 0
+
+
+def test_meteor_both_empty_is_perfect():
+    r = _meteor_full_path("", "")
+    assert r["score"] == 1.0
+
+
+def test_meteor_one_empty_reports_missing():
+    r = _meteor_full_path("the cat sat", "")
+    assert r["score"] == 0.0
+    assert "missing" in r["reason"].lower()

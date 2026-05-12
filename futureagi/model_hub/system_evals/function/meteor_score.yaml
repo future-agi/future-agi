@@ -24,19 +24,8 @@ config:
     hypothesis: The generated/output text
   code: |
     def evaluate(input, output, expected, context, **kwargs):
-        from nltk.translate.meteor_score import meteor_score as _meteor
-        reference = str(kwargs.get("reference", expected or "")).strip()
-        hypothesis = str(kwargs.get("hypothesis", output or "")).strip()
-        if not reference and not hypothesis:
-            return {"score": 1.0, "reason": "METEOR: 1.0 (both empty)"}
-        if not reference or not hypothesis:
-            return {"score": 0.0, "reason": "Missing reference or hypothesis"}
-        ref_tokens = reference.lower().split()
-        hyp_tokens = hypothesis.lower().split()
-        if not ref_tokens or not hyp_tokens:
-            return {"score": 0.0, "reason": "Empty tokens after split"}
-        try:
-            score = _meteor([ref_tokens], hyp_tokens)
-        except Exception as e:
-            return {"score": 0.0, "reason": f"METEOR error: {e}"}
-        return {"score": float(score), "reason": f"METEOR: {score:.4f}"}
+        score = kwargs.get("_meteor_precomputed_score")
+        if score is None:
+            reason = kwargs.get("_meteor_error") or "METEOR requires preprocessing. Enable preprocessing in eval config or use the Agent evaluator."
+            return {"score": 0.0, "reason": reason}
+        return {"score": float(score), "reason": f"METEOR: {float(score):.4f}"}
