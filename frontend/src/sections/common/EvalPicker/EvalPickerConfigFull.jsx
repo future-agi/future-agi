@@ -1642,6 +1642,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     previewData={sourcePreviewData}
+                    initialMapping={evalData?.mapping}
                   />
                 )}
                 {source === "task" && (
