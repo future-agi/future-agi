@@ -216,23 +216,35 @@ const TraceGrid = React.forwardRef(
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
-                if (!_.isEqual(newCols, currentNonCustom)) {
-                  // Merge: existing custom cols + pending (from localStorage/saved view)
-                  const existingCustom = (columnsRef.current || []).filter(
-                    (c) => c.groupBy === "Custom Columns",
-                  );
-                  const pending = pendingCustomColumnsRef?.current || [];
-                  const existingIds = new Set(existingCustom.map((c) => c.id));
-                  const dedupedPending = pending.filter(
-                    (c) => !existingIds.has(c.id),
-                  );
+                const existingCustom = (columnsRef.current || []).filter(
+                  (c) => c.groupBy === "Custom Columns",
+                );
+                const pending = pendingCustomColumnsRef?.current || [];
+                const existingIds = new Set(existingCustom.map((c) => c.id));
+                const dedupedPending = pending.filter(
+                  (c) => !existingIds.has(c.id),
+                );
+                // Re-merge when backend cols changed OR pending has items.
+                // Without the hasPending clause, switching into a saved view
+                // where the backend returns the same standard cols would
+                // skip the merge — pending custom cols would stay in the
+                // ref forever.
+                const backendChanged = !_.isEqual(newCols, currentNonCustom);
+                const hasPending = dedupedPending.length > 0;
+                if (backendChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
-                  // Clear pending after consuming
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
+                  // When only pending fired, reuse currentNonCustom to keep
+                  // AG Grid's column identity stable (avoid reorder churn).
+                  const finalNonCustom = backendChanged
+                    ? newCols
+                    : currentNonCustom;
                   setColumns(
-                    allCustom.length > 0 ? [...newCols, ...allCustom] : newCols,
+                    allCustom.length > 0
+                      ? [...finalNonCustom, ...allCustom]
+                      : finalNonCustom,
                   );
                 }
               }

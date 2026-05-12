@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { useParams } from "react-router";
@@ -36,6 +36,42 @@ const UserTraceTabV2 = ({ dateFilter }) => {
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
   const openColumnConfigure = Boolean(columnConfigureAnchor);
   const pendingCustomColumnsRef = useRef([]);
+
+  // Persist custom columns to localStorage so they survive a refresh on
+  // this user-detail trace tab. Scoped per {project, user} to match the
+  // URL — same-user across projects gets its own set since available
+  // attributes (the source for custom cols) is project-specific.
+  const customColsStorageKey = useMemo(
+    () => `user-trace-customcols-${projectId}-${userId}`,
+    [projectId, userId],
+  );
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(customColsStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved) && saved.length > 0) {
+        pendingCustomColumnsRef.current = saved;
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+  }, [customColsStorageKey]);
+
+  useEffect(() => {
+    const customCols = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    try {
+      if (customCols.length > 0) {
+        localStorage.setItem(customColsStorageKey, JSON.stringify(customCols));
+      } else {
+        localStorage.removeItem(customColsStorageKey);
+      }
+    } catch {
+      /* quota exceeded */
+    }
+  }, [columns, customColsStorageKey]);
 
   // Build validated filter list: user_id + date range + any user-added extras.
   const validatedFilters = useMemo(() => {

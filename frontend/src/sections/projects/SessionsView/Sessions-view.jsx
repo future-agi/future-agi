@@ -368,6 +368,24 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
     }
+    // Custom columns: compare sorted id lists. Without this, adding or
+    // removing a custom col on a saved view leaves the Save view button
+    // disabled — users have no way to persist the change.
+    const currentCustomIds = (sessionColumns || [])
+      .filter((c) => c.groupBy === "Custom Columns")
+      .map((c) => c.id)
+      .sort();
+    const baselineCustomIds = (
+      Array.isArray(baselineDisplay.customColumns)
+        ? baselineDisplay.customColumns
+        : []
+    )
+      .map((c) => c.id)
+      .sort();
+    if (currentCustomIds.length !== baselineCustomIds.length) return true;
+    for (let i = 0; i < currentCustomIds.length; i += 1) {
+      if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
+    }
     return false;
   }, [
     activeViewConfig,
@@ -376,6 +394,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     cellHeight,
     showCompare,
     updateObj,
+    sessionColumns,
   ]);
 
   // Defer so the button doesn't flicker during the one-render gap between
@@ -399,6 +418,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
     // updateObj is the authoritative {col.id: isVisible} source.
     const hasVisibility = updateObj && Object.keys(updateObj).length > 0;
+    // Persist custom columns separately. Their colIds also appear in
+    // columnState, but columnState alone can't recreate them — AG Grid
+    // silently drops state for unknown colIds, so without this list the
+    // custom cols never come back on restore.
+    const customColumns = (sessionColumns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
     return {
       display: {
         cellHeight,
@@ -406,10 +432,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         dateFilter,
         ...(hasVisibility ? { visibleColumns: updateObj } : {}),
         ...(columnState ? { columnState } : {}),
+        ...(customColumns.length > 0 ? { customColumns } : {}),
       },
       extraFilters: extraFilters || [],
     };
-  }, [cellHeight, showCompare, dateFilter, extraFilters, updateObj]);
+  }, [
+    cellHeight,
+    showCompare,
+    dateFilter,
+    extraFilters,
+    updateObj,
+    sessionColumns,
+  ]);
 
   useEffect(() => {
     registerGetViewConfig(buildViewConfig);
@@ -434,6 +468,93 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     const key = isUserMode ? params.get("userTab") : params.get("tab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isUserMode]);
+
+  // localStorage key for default-tab display state. Project-scoped on the
+  // ObservePage path, user-scoped on CrossProjectUserDetailPage. Mirrors
+  // the LLMTracingView / UsersView shape but with a `-sessions-` segment
+  // so the three views don't collide on payload schema.
+  const displayStorageKey = useMemo(
+    () =>
+      isUserMode
+        ? `user-sessions-display-${userIdForUserMode}`
+        : `observe-sessions-display-${observeId}`,
+    [isUserMode, userIdForUserMode, observeId],
+  );
+
+  // Hydrate default-tab display state from localStorage. Custom cols go
+  // through `pendingCustomColumnsRef` so Session-grid's first-fetch merge
+  // drains them — same path the saved-view apply effect uses. The ref
+  // gate fires the hydrate once per project/user; the `activeViewTabId`
+  // check skips it on saved-view URLs where the view config owns state.
+  const hydratedKeyRef = useRef(null);
+  // Set immediately after a hydrate so the save effect skips its first
+  // fire — that first fire would otherwise close over the PRE-hydrate
+  // state (the hydrate's setters are queued, not yet committed to this
+  // render) and persist defaults back to localStorage, clobbering the
+  // values we just loaded.
+  const skipNextSaveRef = useRef(false);
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current === displayStorageKey) return;
+    hydratedKeyRef.current = displayStorageKey;
+    try {
+      const raw = localStorage.getItem(displayStorageKey);
+      if (!raw) return;
+      skipNextSaveRef.current = true;
+      const saved = JSON.parse(raw);
+      if (saved.cellHeight) setCellHeight(saved.cellHeight);
+      if (typeof saved.showCompare === "boolean") {
+        setShowCompare(saved.showCompare);
+      }
+      if (saved.visibleColumns && typeof saved.visibleColumns === "object") {
+        setUpdateObj(saved.visibleColumns);
+      }
+      if (
+        Array.isArray(saved.customColumns) &&
+        saved.customColumns.length > 0
+      ) {
+        pendingCustomColumnsRef.current = saved.customColumns;
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayStorageKey]);
+
+  // Persist display state on every change. Skip until the hydrate has
+  // run for this key, otherwise the initial empty state would overwrite
+  // saved customs before the load effect gets a chance to populate them.
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current !== displayStorageKey) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    const customColumns = (sessionColumns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    const payload = {
+      cellHeight,
+      showCompare,
+      ...(updateObj && Object.keys(updateObj).length > 0
+        ? { visibleColumns: updateObj }
+        : {}),
+      ...(customColumns.length > 0 ? { customColumns } : {}),
+    };
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
+    } catch {
+      /* quota exceeded */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    displayStorageKey,
+    cellHeight,
+    showCompare,
+    updateObj,
+    sessionColumns,
+  ]);
 
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
@@ -491,6 +612,48 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
       if (api?.resetColumnState) api.resetColumnState();
       pendingColumnStateRef.current = null;
+      pendingCustomColumnsRef.current = [];
+      // Strip saved-view custom cols from sessionColumns so they don't
+      // linger on the default tab. Symmetric with LLMTracingView.
+      setSessionColumns((prev) =>
+        (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+      );
+      // Re-hydrate default-tab preferences from localStorage. The mount
+      // hydrate effect is keyed on `displayStorageKey` and won't re-fire
+      // on a same-project saved-view → default transition; without this,
+      // going back to default after a saved view would land on factory
+      // defaults instead of the user's preferences. Pending customs go
+      // through the ref and drain on Session-grid's next merge.
+      try {
+        const raw = localStorage.getItem(displayStorageKey);
+        if (raw) {
+          // Mirror the mount-hydrate skip-flag so the save effect's next
+          // fire doesn't write the pre-hydrate state back over localStorage.
+          skipNextSaveRef.current = true;
+          const saved = JSON.parse(raw);
+          if (saved.cellHeight) setCellHeight(saved.cellHeight);
+          if (typeof saved.showCompare === "boolean") {
+            setShowCompare(saved.showCompare);
+          }
+          if (
+            saved.visibleColumns &&
+            typeof saved.visibleColumns === "object"
+          ) {
+            setUpdateObj(saved.visibleColumns);
+          }
+          if (
+            Array.isArray(saved.customColumns) &&
+            saved.customColumns.length > 0
+          ) {
+            pendingCustomColumnsRef.current = saved.customColumns;
+            sessionGridApiRef.current?.api?.refreshServerSide?.({
+              purge: true,
+            });
+          }
+        }
+      } catch {
+        /* ignore corrupted localStorage */
+      }
       return;
     }
     const display = activeViewConfig.display || {};
@@ -533,15 +696,51 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       : updateObj
         ? { ...updateObj }
         : null;
+    // Strip existing customs from sessionColumns before queuing this
+    // view's set — guards against view→view transitions and against
+    // a default-tab→saved-view click where default customs would
+    // otherwise stack on top of the saved view's. Symmetric with the
+    // LLMTracingView apply effect.
+    setSessionColumns((prev) =>
+      (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+    );
+    // Queue the saved view's custom cols for the Session-grid merge to
+    // drain into sessionColumns on its next fetch. Defer (don't push
+    // directly) so the grid doesn't render with only-custom-col headers
+    // before the standard backend cols land.
+    const savedCustomCols = Array.isArray(display.customColumns)
+      ? display.customColumns
+      : [];
+    pendingCustomColumnsRef.current = savedCustomCols;
+    // Force a Session-grid re-fetch so its merge logic drains the queued
+    // customs. Without this, when the saved view's extraFilters happen to
+    // equal the current state (commonly both empty on a hard refresh),
+    // setExtraFilters returns the same array ref via the optimization
+    // below — finalFilters doesn't recompute, Session-grid's dataSource
+    // memo doesn't recreate, and no fetch fires. The pending ref then
+    // sits there forever and customs never appear.
+    if (savedCustomCols.length > 0) {
+      sessionGridApiRef.current?.api?.refreshServerSide?.({ purge: true });
+    }
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      const api = sessionGridApiRef.current?.api;
-      if (api?.applyColumnState) {
-        api.applyColumnState({
-          state: display.columnState,
-          applyOrder: true,
-        });
-      } else {
+      // Always queue columnState when there are custom cols pending —
+      // applying it immediately would race the Session-grid merge that
+      // adds the customs to sessionColumns. AG Grid silently drops
+      // applyColumnState entries for colIds it doesn't know about, so
+      // widths/order for custom cols would be lost. The sessionColumns
+      // drain effect below applies the queued state once the customs land.
+      if (savedCustomCols.length > 0) {
         pendingColumnStateRef.current = display.columnState;
+      } else {
+        const api = sessionGridApiRef.current?.api;
+        if (api?.applyColumnState) {
+          api.applyColumnState({
+            state: display.columnState,
+            applyOrder: true,
+          });
+        } else {
+          pendingColumnStateRef.current = display.columnState;
+        }
       }
     }
     const nextExtraFilters = activeViewConfig.extraFilters || [];
@@ -730,6 +929,22 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     },
     [setHeaderConfig],
   );
+
+  // Drain pendingColumnState once sessionColumns updates (custom cols
+  // landed via the Session-grid merge) and the grid api is ready. Catches
+  // the case where the saved view includes both custom cols AND
+  // columnState — applying state before custom cols are merged would
+  // silently drop widths/order/sort for the unknown colIds.
+  useEffect(() => {
+    if (!pendingColumnStateRef.current) return;
+    const api = sessionGridApiRef.current?.api;
+    if (!api?.applyColumnState) return;
+    api.applyColumnState({
+      state: pendingColumnStateRef.current,
+      applyOrder: true,
+    });
+    pendingColumnStateRef.current = null;
+  }, [sessionColumns]);
 
   // --- Column config for display panel ---
   const displayColumns = useMemo(() => {

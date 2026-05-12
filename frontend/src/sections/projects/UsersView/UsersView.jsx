@@ -324,6 +324,14 @@ const UsersView = ({
     // the backend serializer's allowed_keys whitelists `display` for
     // arbitrary subkeys but does not whitelist a separate `columnState`.
     const columnState = gridApi?.getColumnState?.() ?? undefined;
+    // Persist custom columns separately. Their colIds also appear in
+    // columnState (for widths/order/sort), but the standard col defs come
+    // from the static UsersView baseConfig — the backend doesn't know
+    // about custom cols, so without this list AG Grid won't recreate them
+    // on restore and applyColumnState would silently drop their entries.
+    const customColumns = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
     return {
       display: {
         cellHeight,
@@ -332,6 +340,7 @@ const UsersView = ({
         hasEvalFilter,
         visibleColumns,
         ...(columnState ? { columnState } : {}),
+        ...(customColumns.length > 0 ? { customColumns } : {}),
       },
       filters: {
         extraFilters,
@@ -353,6 +362,100 @@ const UsersView = ({
   // ready. Drained by the effect below when gridApi becomes available.
   const pendingColumnStateRef = useRef(null);
 
+  // localStorage key for default-tab display state (per-project). Mirrors
+  // LLMTracingView's `observe-display-<id>` pattern but with a separate
+  // namespace so the two views don't collide on shape (different fields).
+  const displayStorageKey = useMemo(
+    () => `observe-users-display-${observeId}`,
+    [observeId],
+  );
+
+  // Hydrate default-tab display state from localStorage. Runs when columns
+  // is populated (UsersGrid's mount effect runs first and seeds the default
+  // schema via setColumns) — without this gate, addCustomColumns would
+  // race the schema seed and the customs would be wiped. Guard with a
+  // per-key ref so it only fires once per project, and skip entirely on
+  // a saved-view tab (the view config is the source of truth there).
+  const hydratedKeyRef = useRef(null);
+  // Set immediately after a hydrate so the save effect skips its next
+  // fire — that fire would otherwise close over the PRE-hydrate state
+  // (setters from the hydrate are queued, not committed yet) and write
+  // defaults back over the values we just loaded.
+  const skipNextSaveRef = useRef(false);
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (!columns || columns.length === 0) return;
+    if (hydratedKeyRef.current === displayStorageKey) return;
+    hydratedKeyRef.current = displayStorageKey;
+    try {
+      const raw = localStorage.getItem(displayStorageKey);
+      if (!raw) return;
+      skipNextSaveRef.current = true;
+      const saved = JSON.parse(raw);
+      if (saved.cellHeight) setCellHeight(saved.cellHeight);
+      if (typeof saved.showErrors === "boolean") setShowErrors(saved.showErrors);
+      if (typeof saved.showNonAnnotated === "boolean") {
+        setShowNonAnnotated(saved.showNonAnnotated);
+      }
+      if (typeof saved.hasEvalFilter === "boolean") {
+        setHasEvalFilter(saved.hasEvalFilter);
+      }
+      if (saved.visibleColumns && typeof saved.visibleColumns === "object") {
+        updateColumnVisibility(saved.visibleColumns);
+      }
+      if (
+        Array.isArray(saved.customColumns) &&
+        saved.customColumns.length > 0
+      ) {
+        addCustomColumns(saved.customColumns);
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns, displayStorageKey]);
+
+  // Persist display state to localStorage on every change (default tab
+  // only — saved views own their persistence via the explicit Save view
+  // button). Skip until the initial hydrate has run, otherwise the
+  // empty default state would overwrite saved customs on first paint.
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current !== displayStorageKey) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    const visibleColumns = (columns || []).reduce((acc, col) => {
+      acc[col.id] = col.isVisible !== false;
+      return acc;
+    }, {});
+    const customColumns = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    const payload = {
+      cellHeight,
+      showErrors,
+      showNonAnnotated,
+      hasEvalFilter,
+      visibleColumns,
+      ...(customColumns.length > 0 ? { customColumns } : {}),
+    };
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
+    } catch {
+      /* quota exceeded */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    displayStorageKey,
+    columns,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    hasEvalFilter,
+  ]);
+
   const applyConfig = useCallback(
     (config) => {
       if (!config) {
@@ -364,6 +467,14 @@ const UsersView = ({
         setHasEvalFilter(false);
         setDateFilter(getDefaultDateRange());
         pendingColumnStateRef.current = null;
+        // Drop any custom cols left by the saved view we're navigating
+        // away from so the default tab doesn't inherit them.
+        const currentCustomIds = (columns || [])
+          .filter((c) => c.groupBy === "Custom Columns")
+          .map((c) => c.id);
+        if (currentCustomIds.length > 0) {
+          removeCustomColumns(currentCustomIds);
+        }
         // Reset column visibility to the column-config defaults so going back
         // to All Users from a saved view with limited columns shows everything
         // again.
@@ -379,6 +490,44 @@ const UsersView = ({
         }
         // Reset AG Grid column state (widths/order/sort) to coldef defaults.
         if (gridApi?.resetColumnState) gridApi.resetColumnState();
+        // Re-hydrate default-tab preferences from localStorage. The mount-
+        // time hydrate effect is keyed on `displayStorageKey` and won't
+        // re-fire on a same-project saved-view → default transition.
+        // Setters here run after the resets above, so React's batched
+        // render sees the localStorage values as the final state.
+        try {
+          const raw = localStorage.getItem(displayStorageKey);
+          if (raw) {
+            // Mirror the mount-hydrate skip-flag so the save effect's next
+            // fire doesn't write the pre-hydrate state back to localStorage.
+            skipNextSaveRef.current = true;
+            const saved = JSON.parse(raw);
+            if (saved.cellHeight) setCellHeight(saved.cellHeight);
+            if (typeof saved.showErrors === "boolean") {
+              setShowErrors(saved.showErrors);
+            }
+            if (typeof saved.showNonAnnotated === "boolean") {
+              setShowNonAnnotated(saved.showNonAnnotated);
+            }
+            if (typeof saved.hasEvalFilter === "boolean") {
+              setHasEvalFilter(saved.hasEvalFilter);
+            }
+            if (
+              saved.visibleColumns &&
+              typeof saved.visibleColumns === "object"
+            ) {
+              updateColumnVisibility(saved.visibleColumns);
+            }
+            if (
+              Array.isArray(saved.customColumns) &&
+              saved.customColumns.length > 0
+            ) {
+              addCustomColumns(saved.customColumns);
+            }
+          }
+        } catch {
+          /* ignore corrupted localStorage */
+        }
         return;
       }
       const display = config.display || {};
@@ -388,13 +537,38 @@ const UsersView = ({
         setShowErrors(display.showErrors);
       if (typeof display.showNonAnnotated === "boolean")
         setShowNonAnnotated(display.showNonAnnotated);
+      if (typeof display.showNonAnnotated === "boolean")
+        setShowNonAnnotated(display.showNonAnnotated);
       if (typeof display.hasEvalFilter === "boolean")
         setHasEvalFilter(display.hasEvalFilter);
+      // Strip any pre-existing custom cols before adding this view's set,
+      // so view → view doesn't stack customs and default → view doesn't
+      // leak default-tab customs into the saved view's column header.
+      const existingCustomIds = (columns || [])
+        .filter((c) => c.groupBy === "Custom Columns")
+        .map((c) => c.id);
+      if (existingCustomIds.length > 0) {
+        removeCustomColumns(existingCustomIds);
+      }
+      const savedCustomCols = Array.isArray(display.customColumns)
+        ? display.customColumns
+        : [];
+      if (savedCustomCols.length > 0) {
+        addCustomColumns(savedCustomCols);
+      }
       if (display.visibleColumns && columns?.length) {
         updateColumnVisibility(display.visibleColumns);
       }
       if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-        if (gridApi?.applyColumnState) {
+        // Defer columnState whenever custom cols are being added — they
+        // land in the store synchronously but AG Grid's columnDefs prop
+        // only flips on the next render. Applying state in this tick
+        // would silently drop entries for the custom colIds. The
+        // `columns` drain effect re-applies the queued state once the
+        // store update has propagated.
+        if (savedCustomCols.length > 0) {
+          pendingColumnStateRef.current = display.columnState;
+        } else if (gridApi?.applyColumnState) {
           gridApi.applyColumnState({
             state: display.columnState,
             applyOrder: true,
@@ -418,12 +592,19 @@ const UsersView = ({
       setDateFilter,
       setExtraFilters,
       updateColumnVisibility,
+      addCustomColumns,
+      removeCustomColumns,
       columns,
       gridApi,
+      displayStorageKey,
     ],
   );
 
-  // Drain any column state queued before the grid was ready.
+  // Drain any column state queued before the grid was ready, OR queued
+  // because custom cols had to land in the store first. Two triggers:
+  // gridApi flipping from null to ready (initial mount), and `columns`
+  // changing (custom cols just got added → AG Grid columnDefs prop
+  // updated → safe to apply state for the custom colIds).
   useEffect(() => {
     if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
       gridApi.applyColumnState({
@@ -432,7 +613,7 @@ const UsersView = ({
       });
       pendingColumnStateRef.current = null;
     }
-  }, [gridApi]);
+  }, [gridApi, columns]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -500,6 +681,26 @@ const UsersView = ({
           return true;
         }
       }
+    }
+    // Custom columns: compare the sorted id list against the baseline so
+    // adding/removing a custom col on a saved view dirty-flags the Save
+    // view button. Sort because the user's intent is "which customs are
+    // selected" not "in what order" — order is captured separately in
+    // columnState.
+    const currentCustomIds = (columns || [])
+      .filter((c) => c.groupBy === "Custom Columns")
+      .map((c) => c.id)
+      .sort();
+    const baselineCustomIds = (
+      Array.isArray(baselineDisplay.customColumns)
+        ? baselineDisplay.customColumns
+        : []
+    )
+      .map((c) => c.id)
+      .sort();
+    if (currentCustomIds.length !== baselineCustomIds.length) return true;
+    for (let i = 0; i < currentCustomIds.length; i += 1) {
+      if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
     }
     return false;
   }, [
@@ -574,13 +775,27 @@ const UsersView = ({
 
   // Apply a saved view's config when activeViewConfig changes. Reuses the
   // existing applyConfig — handles extraFilters, dateFilter, display state,
-  // column visibility.
+  // column visibility, custom columns.
   // Dep array intentionally only watches `activeViewConfig`. `applyConfig`'s
   // identity changes whenever `columns` does, and `applyConfig` itself
-  // mutates `columns` via `updateColumnVisibility` — keeping it in deps
-  // creates an infinite re-apply loop.
+  // mutates `columns` via `updateColumnVisibility` / `addCustomColumns` —
+  // keeping it in deps creates an infinite re-apply loop.
+  //
+  // The `wasOnSavedViewRef` gate ensures the null branch of applyConfig
+  // (which strips saved-view-leftover state — custom cols, visibility,
+  // pendingColumnState) only fires on a genuine saved-view → default
+  // transition, not on initial mount where activeViewConfig is null
+  // simply because no view is selected yet.
+  const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
-    if (!activeViewConfig) return;
+    if (!activeViewConfig) {
+      const wasOnSavedView = wasOnSavedViewRef.current;
+      wasOnSavedViewRef.current = false;
+      if (!wasOnSavedView) return;
+      applyConfig(null);
+      return;
+    }
+    wasOnSavedViewRef.current = true;
     applyConfig(activeViewConfig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
