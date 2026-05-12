@@ -1880,11 +1880,61 @@ def _execute_evaluation_for_trace(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Set workspace context for tools that need org-scoping ---
+    # See _execute_evaluation_for_session for rationale; same applies here.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+        set_workspace_context(
+            workspace=workspace,
+            organization=trace.project.organization,
+        )
+    except Exception as _ctx_err:
+        logger.warning(
+            "Failed to set workspace context for trace eval: %s", _ctx_err
+        )
+
+    # --- Build context for data_injection support (trace-scoped) ---
+    # Mirrors the span-level _execute_evaluation block. At trace level, the
+    # entity being evaluated is the Trace itself (anchored on a span):
+    #   trace_context   → trace identity + name. Agents drill into spans
+    #                     via the explore_trace tool using these IDs.
+    #   session_context → walk trace.session (nullable for orphan traces);
+    #                     build full session aggregate when present.
+    #   span_context    → the anchor_span data, same shape as the span-level
+    #                     handler. Useful when the eval is conceptually
+    #                     trace-scoped but the anchor span has rich detail.
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["trace_context"]:
+        _eval_inputs["trace_context"] = {
+            "id": str(trace.id),
+            "name": trace.name,
+        }
+    if _di["session_context"]:
+        _session = getattr(trace, "session", None)
+        _session_ctx = build_session_context(_session) if _session else None
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
+    if _di["span_context"]:
+        _eval_inputs["span_context"] = {
+            "id": str(anchor_span.id),
+            "name": anchor_span.name,
+            "observation_type": anchor_span.observation_type,
+            "status": anchor_span.status,
+            "status_message": anchor_span.status_message,
+            "model": anchor_span.model,
+            "latency_ms": anchor_span.latency_ms,
+            "total_tokens": anchor_span.total_tokens,
+            "cost": float(anchor_span.cost) if anchor_span.cost else None,
+        }
+
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
@@ -2050,11 +2100,48 @@ def _execute_evaluation_for_session(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Set workspace context for tools that need org-scoping ---
+    # The explore_trace tool's live DB actions (list_trace_spans, span_detail)
+    # call get_current_organization() to enforce tenant isolation. The
+    # ContextVar is request-bound and not set in Temporal worker contexts.
+    # Set it here from the session's project so the agent can drill into
+    # individual trace spans during exploration.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+        set_workspace_context(
+            workspace=workspace,
+            organization=trace_session.project.organization,
+        )
+    except Exception as _ctx_err:
+        logger.warning(
+            "Failed to set workspace context for session eval: %s", _ctx_err
+        )
+
+    # --- Build context for data_injection support (session-scoped) ---
+    # Mirrors the span-level _execute_evaluation block. At session level, the
+    # entity being evaluated is the TraceSession, so:
+    #   session_context → full session aggregate (traces, span/error counts,
+    #                     tokens, cost, time range — via build_session_context)
+    #   trace_context   → not applicable at session-level (no single focal
+    #                     trace; the session has many). We omit to avoid
+    #                     committing to an ambiguous "first trace" semantic.
+    #                     Agents can drill into individual traces via the
+    #                     session_context.traces[] summaries + explore_trace.
+    #   span_context    → not applicable at session-level.
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["session_context"]:
+        _session_ctx = build_session_context(trace_session)
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
+
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)

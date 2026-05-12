@@ -159,6 +159,48 @@ class TraceExplorerTool(BaseTool):
         if params.action == "list_trace_spans":
             return self._list_trace_spans(params.query, params.limit)
 
+        # span_detail is also DB-backed when no spans are loaded in context.
+        # This lets agents at session-level (where session_context holds
+        # trace summaries, not individual spans) drill into specific spans
+        # via the span_id they get back from list_trace_spans. Without this,
+        # session-level evals can navigate the session graph but never read
+        # actual span input/output content.
+        if params.action == "span_detail" and not spans:
+            if not params.query:
+                return ToolResult.error("Provide a span ID in `query` to fetch span detail.")
+            try:
+                from tfc.middleware.workspace_context import get_current_organization
+                org = get_current_organization()
+                if not org:
+                    logger.warning(
+                        "span_detail (DB-backed) called without organization context; refusing"
+                    )
+                    return ToolResult.error(
+                        "Cannot fetch span detail without an authenticated organization context."
+                    )
+                full_span = _fetch_full_span(params.query)
+                if not full_span:
+                    return ToolResult.error(f"Span '{params.query}' not found")
+                # Render using the same format as _span_detail's tail.
+                lines = [f"## Span Detail: {full_span.get('name', '?')}\n"]
+                for key, val in full_span.items():
+                    if val is None or val == "" or val == 0 or val == []:
+                        continue
+                    val_str = (
+                        json.dumps(val, default=str, indent=2)
+                        if isinstance(val, (dict, list))
+                        else str(val)
+                    )
+                    if len(val_str) > 1000:
+                        val_str = (
+                            val_str[:1000] + f"\n... [truncated, {len(val_str)} chars total]"
+                        )
+                    lines.append(f"**{key}:** {val_str}")
+                return ToolResult(content="\n".join(lines), data={"span_id": full_span.get("id")})
+            except Exception as e:
+                logger.warning(f"Failed to fetch span detail for {params.query}: {e}")
+                return ToolResult.error(f"Failed to fetch span detail: {e}")
+
         # Filter action — works on loaded spans
         if params.action == "filter_spans":
             if not spans:
