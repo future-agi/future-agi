@@ -23,7 +23,8 @@ const DefaultCell = memo(
     const colId = column?.id;
 
     const showQuickFilter =
-      !RENDERER_CONFIG.ignoredQuickFilters.includes(colId);
+      !RENDERER_CONFIG.ignoredQuickFilters.includes(colId) &&
+      column?.groupBy !== "Custom Columns";
 
     const shouldApplyDateFormat =
       RENDERER_CONFIG.applyDateFormat.includes(colId) && value;
