@@ -1,35 +1,41 @@
-from typing import List, Optional
+from typing import Any
 
 import structlog
 from django.conf import settings
 from pydantic import BaseModel as PydanticBaseModel
-
-logger = structlog.get_logger(__name__)
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
+from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+
+logger = structlog.get_logger(__name__)
 
 
 class EvaluateWithAgentInput(PydanticBaseModel):
+    model_config = ConfigDict(extra="allow")
+
     source_id: str = Field(
-        description="ID of the span, trace, session, dataset row, or cell to evaluate"
+        default="",
+        description="ID of the span, trace, session, dataset row, or cell to evaluate",
     )
     input_scope: str = Field(
+        default="",
         description=(
             "Type of the item to evaluate. "
             "Must be one of: 'span', 'trace', 'session', 'dataset_row', 'cell'"
-        )
+        ),
     )
     criteria: str = Field(
+        default="",
         description=(
             "Evaluation criteria or question. "
             "Can be vague (e.g. 'Is the response helpful?') or detailed "
             "(e.g. 'Rate whether the assistant followed the user instructions on a scale from 0 to 1'). "
             "The agent will formalize vague criteria automatically."
-        )
+        ),
     )
-    choices: Optional[List[str]] = Field(
+    choices: list[str] | None = Field(
         default=None,
         description=(
             "Labels for the evaluation result. "
@@ -37,20 +43,52 @@ class EvaluateWithAgentInput(PydanticBaseModel):
             "Pass a list like ['Passed', 'Failed'] or ['Good', 'Acceptable', 'Poor'] for categorical evaluation."
         ),
     )
-    eval_template_id: Optional[str] = Field(
+    eval_template_id: str | None = Field(
         default=None,
         description=(
             "UUID of an existing eval template to associate with this evaluation. "
             "When provided, enables few-shot examples from past human feedback."
         ),
     )
-    kb_id: Optional[str] = Field(
+    kb_id: str | None = Field(
         default=None,
         description=(
             "UUID of a knowledge base to consult during evaluation. "
             "Useful when criteria reference domain-specific standards or policies."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["source_id"] = (
+            normalized.get("source_id")
+            or normalized.get("span_id")
+            or normalized.get("trace_id")
+            or normalized.get("session_id")
+            or normalized.get("row_id")
+            or normalized.get("cell_id")
+            or normalized.get("id")
+            or ""
+        )
+        normalized["input_scope"] = (
+            normalized.get("input_scope")
+            or normalized.get("scope")
+            or normalized.get("source_type")
+            or normalized.get("type")
+            or ""
+        )
+        normalized["criteria"] = (
+            normalized.get("criteria")
+            or normalized.get("question")
+            or normalized.get("rubric")
+            or normalized.get("prompt")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -73,6 +111,34 @@ class EvaluateWithAgentTool(BaseTool):
     def execute(
         self, params: EvaluateWithAgentInput, context: ToolContext
     ) -> ToolResult:
+        missing = []
+        if not params.source_id:
+            missing.append("source_id")
+        if not params.input_scope:
+            missing.append("input_scope")
+        if not params.criteria:
+            missing.append("criteria")
+        if missing:
+            info = key_value_block(
+                [
+                    ("Required", ", ".join(f"`{field}`" for field in missing)),
+                    ("Valid input_scope", ", ".join(sorted(self._VALID_SCOPES))),
+                    (
+                        "Next step",
+                        "Use search/search_traces/get_dataset_rows to find an item ID.",
+                    ),
+                ]
+            )
+            return ToolResult(
+                content=section("Evaluation Input Required", info),
+                data={
+                    "requires_source_id": "source_id" in missing,
+                    "requires_input_scope": "input_scope" in missing,
+                    "requires_criteria": "criteria" in missing,
+                    "valid_input_scopes": sorted(self._VALID_SCOPES),
+                },
+            )
+
         from tfc.ee_gating import EEFeature, check_ee_feature
 
         try:
@@ -98,7 +164,9 @@ class EvaluateWithAgentTool(BaseTool):
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.eval_orchestrator", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.eval_orchestrator", exc_info=True
+                )
             return ToolResult.feature_unavailable(EEFeature.AGENTIC_EVAL.value)
 
         if params.input_scope not in self._VALID_SCOPES:

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -33,24 +31,23 @@ class FilterConfig(PydanticBaseModel):
 
 class GetDatasetRowsInput(PydanticBaseModel):
     dataset_id: str = Field(
-        description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
+        default="",
+        description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'",
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max rows to return")
     offset: int = Field(default=0, ge=0, description="Row offset for pagination")
-    filters: Optional[list[FilterConfig]] = Field(
+    filters: list[FilterConfig] | None = Field(
         default=None,
         description=(
             "List of column filters. Each filter specifies column_name, "
             "filter_type, filter_op, and filter_value."
         ),
     )
-    sort_column: Optional[str] = Field(
-        default=None, description="Column name to sort by"
-    )
-    sort_direction: Optional[str] = Field(
+    sort_column: str | None = Field(default=None, description="Column name to sort by")
+    sort_direction: str | None = Field(
         default="asc", description="Sort direction: 'asc' or 'desc'"
     )
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None, description="Search text across all text columns"
     )
 
@@ -65,6 +62,47 @@ class GetDatasetRowsTool(BaseTool):
     )
     category = "datasets"
     input_model = GetDatasetRowsInput
+
+    def _dataset_candidates_result(
+        self,
+        context: ToolContext,
+        *,
+        title: str = "Dataset Candidates",
+        message: str = "",
+        unresolved_dataset_id: str = "",
+    ) -> ToolResult:
+        from model_hub.models.develop_dataset import Dataset, Row
+
+        datasets = Dataset.objects.filter(
+            organization=context.organization,
+            deleted=False,
+        ).order_by("-created_at")[:10]
+        rows = [
+            [
+                f"`{dataset.id}`",
+                dataset.name,
+                str(Row.objects.filter(dataset=dataset, deleted=False).count()),
+            ]
+            for dataset in datasets
+        ]
+        body_parts = []
+        if message:
+            body_parts.append(message)
+        if rows:
+            body_parts.append(markdown_table(["ID", "Name", "Rows"], rows))
+        else:
+            body_parts.append("No datasets found.")
+        return ToolResult(
+            content=section(title, "\n\n".join(body_parts)),
+            data={
+                "datasets": [
+                    {"id": str(dataset.id), "name": dataset.name}
+                    for dataset in datasets
+                ],
+                "requires_dataset_id": True,
+                "unresolved_dataset_id": unresolved_dataset_id,
+            },
+        )
 
     def _apply_filters(self, queryset, filters, col_name_to_id):
         """Apply column-based filters to cell queryset, returning filtered row IDs."""
@@ -173,14 +211,26 @@ class GetDatasetRowsTool(BaseTool):
 
     def execute(self, params: GetDatasetRowsInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_dataset
         from model_hub.models.develop_dataset import Cell, Column, Row
+
+        from ai_tools.resolvers import resolve_dataset
+
+        if not params.dataset_id:
+            return self._dataset_candidates_result(context)
 
         dataset, error = resolve_dataset(
             params.dataset_id, context.organization, context.workspace
         )
         if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+            return self._dataset_candidates_result(
+                context,
+                title="Dataset Not Found",
+                message=(
+                    f"{error}\n\nChoose one of these available datasets, or provide "
+                    "the exact dataset UUID."
+                ),
+                unresolved_dataset_id=params.dataset_id,
+            )
 
         # Validate sort_direction
         if params.sort_direction and params.sort_direction not in ("asc", "desc"):
@@ -268,9 +318,7 @@ class GetDatasetRowsTool(BaseTool):
         )
 
         # Build row data
-        cell_map = (
-            {}
-        )  # {row_id: {col_name: {"value": ..., "column_id": ..., "cell_id": ...}}}
+        cell_map = {}  # {row_id: {col_name: {"value": ..., "column_id": ..., "cell_id": ...}}}
         for cell in cells:
             if cell.row_id not in cell_map:
                 cell_map[cell.row_id] = {}

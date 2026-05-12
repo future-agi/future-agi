@@ -1,7 +1,7 @@
-from typing import Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -120,88 +120,463 @@ def _get_persona_choices():
 
 
 class CreatePersonaInput(PydanticBaseModel):
-    name: str = Field(description="Name of the persona")
-    description: str = Field(description="Description of the persona")
+    name: str = Field(
+        default="General Simulation Persona", description="Name of the persona"
+    )
+    description: str = Field(
+        default="A general-purpose simulation persona for testing agent behavior.",
+        description="Description of the persona",
+    )
     simulation_type: SimulationType = Field(
         default="voice", description="Simulation type"
     )
     # Demographics
-    gender: Optional[List[Gender]] = Field(default=None, description="List of genders")
-    age_group: Optional[List[AgeGroup]] = Field(
+    gender: list[Gender] | None = Field(default=None, description="List of genders")
+    age_group: list[AgeGroup] | None = Field(
         default=None, description="List of age groups"
     )
-    occupation: Optional[List[Occupation]] = Field(
+    occupation: list[Occupation] | None = Field(
         default=None, description="List of occupations"
     )
-    location: Optional[List[Location]] = Field(
+    location: list[Location] | None = Field(
         default=None, description="List of locations"
     )
     # Behavioral
-    personality: Optional[List[Personality]] = Field(
+    personality: list[Personality] | None = Field(
         default=None, description="List of personality types"
     )
-    communication_style: Optional[List[CommunicationStyle]] = Field(
+    communication_style: list[CommunicationStyle] | None = Field(
         default=None, description="List of communication styles"
     )
-    accent: Optional[List[Accent]] = Field(
+    accent: list[Accent] | None = Field(
         default=None, description="List of accents. Voice only."
     )
     # Voice conversation settings
-    multilingual: Optional[bool] = Field(
+    multilingual: bool | None = Field(
         default=False, description="Whether the persona supports multiple languages"
     )
-    languages: Optional[List[Language]] = Field(
+    languages: list[Language] | None = Field(
         default=None,
         description="List of languages. Required if multilingual=true.",
     )
-    conversation_speed: Optional[List[ConversationSpeed]] = Field(
+    conversation_speed: list[ConversationSpeed] | None = Field(
         default=None,
         description="Conversation speed values. Voice only.",
     )
-    background_sound: Optional[bool] = Field(
+    background_sound: bool | None = Field(
         default=None, description="Enable background sound. Voice only."
     )
-    finished_speaking_sensitivity: Optional[int] = Field(
+    finished_speaking_sensitivity: int | None = Field(
         default=None,
         ge=1,
         le=10,
         description="Finished speaking sensitivity (1-10). Voice only.",
     )
-    interrupt_sensitivity: Optional[int] = Field(
+    interrupt_sensitivity: int | None = Field(
         default=None,
         ge=1,
         le=10,
         description="Interrupt sensitivity (1-10). Voice only.",
     )
-    keywords: Optional[List[str]] = Field(
+    keywords: list[str] | None = Field(
         default=None, description="Free-form keywords for the persona"
     )
     # Chat settings
-    tone: Optional[Tone] = Field(default=None, description="Tone. Chat only.")
-    verbosity: Optional[Verbosity] = Field(
+    tone: Tone | None = Field(default=None, description="Tone. Chat only.")
+    verbosity: Verbosity | None = Field(
         default=None, description="Verbosity level. Chat only."
     )
-    punctuation: Optional[Punctuation] = Field(
+    punctuation: Punctuation | None = Field(
         default=None, description="Punctuation style. Chat only."
     )
-    emoji_usage: Optional[EmojiUsage] = Field(
+    emoji_usage: EmojiUsage | None = Field(
         default=None, description="Emoji usage level. Chat only."
     )
-    slang_usage: Optional[SlangUsage] = Field(
+    slang_usage: SlangUsage | None = Field(
         default=None, description="Slang usage level. Chat only."
     )
-    typos_frequency: Optional[TypoFrequency] = Field(
+    typos_frequency: TypoFrequency | None = Field(
         default=None, description="Typo frequency. Chat only."
     )
-    regional_mix: Optional[RegionalMix] = Field(
+    regional_mix: RegionalMix | None = Field(
         default=None, description="Regional language mix level. Chat only."
     )
-    metadata: Optional[Dict[str, str]] = Field(
+    metadata: dict[str, str] | None = Field(
         default=None, description="Custom key-value properties for the persona"
     )
-    additional_instruction: Optional[str] = Field(
+    additional_instruction: str | None = Field(
         default=None, description="Additional behavior instructions for the persona"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_llm_aliases(cls, values: Any) -> Any:
+        import json
+        import re
+
+        if not isinstance(values, dict):
+            return values
+
+        normalized = dict(values)
+
+        def parse_jsonish(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            stripped = value.strip()
+            if not stripped.startswith(("{", "[")):
+                return value
+            try:
+                return json.loads(stripped)
+            except (TypeError, ValueError):
+                return value
+
+        jsonish_fields = {
+            "demographics",
+            "personality",
+            "metadata",
+            "traits",
+            "keywords",
+            "gender",
+            "age_group",
+            "occupation",
+            "location",
+            "communication_style",
+            "languages",
+            "conversation_speed",
+            "accent",
+        }
+        for field in jsonish_fields:
+            if field in normalized:
+                normalized[field] = parse_jsonish(normalized[field])
+
+        def age_to_group(age: int) -> str:
+            if age < 25:
+                return "18-25"
+            if age < 32:
+                return "25-32"
+            if age < 40:
+                return "32-40"
+            if age < 50:
+                return "40-50"
+            if age < 60:
+                return "50-60"
+            return "60+"
+
+        def age_text_to_group(value: Any) -> str | None:
+            if value is None:
+                return None
+            numbers = [int(match) for match in re.findall(r"\d+", str(value))]
+            if not numbers:
+                return None
+            age = int(sum(numbers[:2]) / min(len(numbers), 2))
+            return age_to_group(age)
+
+        occupation_aliases = {
+            "any": "Other",
+            "professional": "Manager",
+            "professional / decision-maker": "Manager",
+            "decision-maker": "Manager",
+            "decision maker": "Manager",
+            "non-technical / first-time user": "Other",
+            "non technical / first time user": "Other",
+            "first-time user": "Other",
+            "first time user": "Other",
+            "technical": "Engineer",
+            "product manager": "Manager",
+            "manager": "Manager",
+            "small business owner": "Business Owner",
+            "business owner": "Business Owner",
+            "support": "Customer Service",
+            "customer support": "Customer Service",
+            "student": "Student",
+            "teacher": "Teacher",
+            "retired teacher": "Retired",
+            "retired": "Retired",
+        }
+
+        demographics = normalized.pop("demographics", None)
+        if isinstance(demographics, dict):
+            if demographics.get("gender") and not normalized.get("gender"):
+                normalized["gender"] = demographics.get("gender")
+            if not normalized.get("age_group"):
+                age_group = (
+                    demographics.get("age_group")
+                    or demographics.get("age_range")
+                    or age_text_to_group(demographics.get("age"))
+                )
+                mapped_age_group = age_text_to_group(age_group) or age_group
+                if mapped_age_group:
+                    normalized["age_group"] = [mapped_age_group]
+            if demographics.get("occupation") and not normalized.get("occupation"):
+                occupation = str(demographics.get("occupation")).strip()
+                normalized["occupation"] = [
+                    occupation_aliases.get(occupation.lower(), occupation)
+                ]
+            if demographics.get("location") and not normalized.get("location"):
+                normalized["location"] = demographics.get("location")
+
+            metadata = normalized.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            for key in ("tech_savviness", "age_range"):
+                value = demographics.get(key)
+                if value:
+                    metadata[f"demographics_{key}"] = str(value)
+            if metadata:
+                normalized["metadata"] = metadata
+
+        personality_payload = normalized.get("personality")
+        if isinstance(personality_payload, dict):
+            traits = personality_payload.get("traits")
+            if traits:
+                normalized["traits"] = traits
+            normalized.pop("personality", None)
+
+            metadata = normalized.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            instruction_parts = []
+            for key in ("motivation", "emotional_state", "patience_level"):
+                value = personality_payload.get(key)
+                if value:
+                    metadata[f"personality_{key}"] = str(value)
+                    instruction_parts.append(f"{key.replace('_', ' ')}: {value}")
+            if instruction_parts and not normalized.get("additional_instruction"):
+                normalized["additional_instruction"] = "; ".join(instruction_parts)
+            if metadata:
+                normalized["metadata"] = metadata
+
+        if "age" in normalized and not normalized.get("age_group"):
+            try:
+                age = int(str(normalized.get("age")).strip())
+            except (TypeError, ValueError):
+                age = None
+            if age is not None:
+                normalized["age_group"] = [age_to_group(age)]
+
+        if "traits" in normalized and not normalized.get("personality"):
+            traits = normalized.get("traits")
+            if isinstance(traits, str):
+                traits = [traits]
+            trait_text = " ".join(str(t).lower() for t in (traits or []))
+            personality = []
+            if any(word in trait_text for word in ("confident", "decisive", "goal")):
+                personality.append("Confident")
+            if any(word in trait_text for word in ("detail", "efficient")):
+                personality.append("Detail-oriented")
+            if any(word in trait_text for word in ("angry", "aggressive", "impatient")):
+                personality.append("Impatient and direct")
+            if any(
+                word in trait_text for word in ("confused", "uncertain", "overwhelmed")
+            ):
+                personality.append("Anxious")
+            if any(
+                word in trait_text
+                for word in ("cautious", "skeptical", "evasive", "deceptive")
+            ):
+                personality.append("Cautious and skeptical")
+            if personality:
+                normalized["personality"] = list(dict.fromkeys(personality))
+
+        communication_aliases = {
+            "direct": "Direct and concise",
+            "aggressive": "Assertive",
+            "confrontational": "Assertive",
+            "assertive": "Assertive",
+            "hesitant": "Questioning",
+            "indirect": "Questioning",
+            "evasive": "Questioning",
+            "casual": "Casual and friendly",
+            "formal": "Formal and polite",
+            "technical": "Technical",
+            "simple": "Simple and clear",
+            "verbose": "Detailed and elaborate",
+            "detailed": "Detailed and elaborate",
+        }
+        text_style = normalized.get("text_style")
+        if text_style and not normalized.get("communication_style"):
+            normalized["communication_style"] = text_style
+        if str(text_style or "").strip().lower() in {"verbose", "detailed"} and not normalized.get("verbosity"):
+            normalized["verbosity"] = "detailed"
+
+        style = normalized.get("communication_style")
+        if isinstance(style, str):
+            normalized["communication_style"] = [
+                communication_aliases.get(style.strip().lower(), style)
+            ]
+
+        age_group_aliases = {
+            "child": "18-25",
+            "teen": "18-25",
+            "young": "18-25",
+            "young_adult": "18-25",
+            "young adult": "18-25",
+            "adult": "32-40",
+            "middle_aged": "40-50",
+            "middle aged": "40-50",
+            "older_adult": "50-60",
+            "older adult": "50-60",
+            "senior": "60+",
+            "elderly": "60+",
+        }
+        personality_aliases = {
+            "determined": "Confident",
+            "decisive": "Confident",
+            "goal-oriented": "Confident",
+            "goal oriented": "Confident",
+            "aggressive": "Impatient and direct",
+            "angry": "Impatient and direct",
+            "frustrated": "Impatient and direct",
+            "impatient": "Impatient and direct",
+            "hesitant": "Anxious",
+            "confused": "Anxious",
+            "uncertain": "Anxious",
+            "deceptive": "Cautious and skeptical",
+            "evasive": "Cautious and skeptical",
+            "fraud-risk": "Cautious and skeptical",
+            "fraud risk": "Cautious and skeptical",
+            "skeptical": "Cautious and skeptical",
+            "friendly": "Friendly and cooperative",
+            "professional": "Professional and formal",
+            "formal": "Professional and formal",
+            "detail-oriented": "Detail-oriented",
+            "detail oriented": "Detail-oriented",
+            "analytical": "Analytical",
+            "emotional": "Emotional",
+            "reserved": "Reserved",
+            "talkative": "Talkative",
+        }
+        verbosity_aliases = {
+            "low": "brief",
+            "short": "brief",
+            "concise": "brief",
+            "medium": "balanced",
+            "moderate": "balanced",
+            "normal": "balanced",
+            "high": "detailed",
+            "verbose": "detailed",
+            "long": "detailed",
+        }
+        gender_aliases = {
+            "m": "male",
+            "man": "male",
+            "male": "male",
+            "f": "female",
+            "woman": "female",
+            "female": "female",
+        }
+
+        def map_location(value: Any) -> str | None:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            lower = text.lower()
+            if lower in {"united states", "usa", "us", "u.s.", "america"}:
+                return "United States"
+            if lower in {"canada"}:
+                return "Canada"
+            if lower in {"united kingdom", "uk", "u.k.", "england"}:
+                return "United Kingdom"
+            if lower in {"australia"}:
+                return "Australia"
+            if lower in {"india"}:
+                return "India"
+            if any(
+                token in lower
+                for token in (
+                    "san francisco",
+                    "chicago",
+                    "austin",
+                    "new york",
+                    "california",
+                    ", ca",
+                    ", il",
+                    ", tx",
+                    ", ny",
+                    "usa",
+                    "united states",
+                )
+            ):
+                return "United States"
+            if any(token in lower for token in ("toronto", "vancouver", "canada")):
+                return "Canada"
+            if any(token in lower for token in ("london", "manchester", "uk")):
+                return "United Kingdom"
+            if any(token in lower for token in ("sydney", "melbourne", "australia")):
+                return "Australia"
+            if any(token in lower for token in ("india", "delhi", "mumbai", "bangalore", "bengaluru")):
+                return "India"
+            return None
+
+        def normalize_alias_list(field: str, aliases: dict[str, str]) -> None:
+            value = normalized.get(field)
+            if value is None:
+                return
+            values = value if isinstance(value, list) else [value]
+            normalized[field] = [
+                aliases.get(str(item).strip().lower(), item)
+                for item in values
+                if str(item).strip()
+            ]
+
+        normalize_alias_list("age_group", age_group_aliases)
+        normalize_alias_list("personality", personality_aliases)
+        normalize_alias_list("occupation", occupation_aliases)
+        normalize_alias_list("gender", gender_aliases)
+        normalize_alias_list("communication_style", communication_aliases)
+
+        raw_locations = normalized.get("location")
+        if raw_locations is not None:
+            location_values = raw_locations if isinstance(raw_locations, list) else [raw_locations]
+            mapped_locations = []
+            raw_unmapped = []
+            for location in location_values:
+                mapped = map_location(location)
+                if mapped:
+                    mapped_locations.append(mapped)
+                else:
+                    raw_unmapped.append(str(location))
+            normalized["location"] = list(dict.fromkeys(mapped_locations)) or None
+            if raw_unmapped:
+                metadata = normalized.get("metadata")
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata["raw_location"] = ", ".join(raw_unmapped)
+                normalized["metadata"] = metadata
+
+        verbosity = normalized.get("verbosity")
+        if isinstance(verbosity, str):
+            normalized["verbosity"] = verbosity_aliases.get(
+                verbosity.strip().lower(), verbosity
+            )
+
+        list_fields = {
+            "gender",
+            "age_group",
+            "occupation",
+            "location",
+            "personality",
+            "communication_style",
+            "accent",
+            "languages",
+            "conversation_speed",
+            "keywords",
+        }
+        for field in list_fields:
+            value = normalized.get(field)
+            if value is None or isinstance(value, list):
+                continue
+            if field == "gender" and str(value).strip().lower() in {
+                "neutral",
+                "nonbinary",
+                "unknown",
+                "any",
+            }:
+                normalized[field] = None
+            else:
+                normalized[field] = [value]
+
+        return normalized
 
     @field_validator("metadata")
     @classmethod
@@ -249,15 +624,31 @@ class CreatePersonaTool(BaseTool):
             )
 
         # Check for workspace persona with same name
-        if Persona.no_workspace_objects.filter(
+        existing_persona = Persona.no_workspace_objects.filter(
             name__iexact=params.name,
             workspace=context.workspace,
             organization=context.organization,
             persona_type=Persona.PersonaType.WORKSPACE,
-        ).exists():
-            return ToolResult.error(
-                f"A persona named '{params.name}' already exists in this workspace.",
-                error_code="VALIDATION_ERROR",
+        ).first()
+        if existing_persona:
+            info = key_value_block(
+                [
+                    ("ID", f"`{existing_persona.id}`"),
+                    ("Name", existing_persona.name),
+                    ("Type", "workspace"),
+                    ("Simulation Type", existing_persona.simulation_type),
+                    ("Created", format_datetime(existing_persona.created_at)),
+                ]
+            )
+            return ToolResult(
+                content=section("Persona Already Exists", info),
+                data={
+                    "id": str(existing_persona.id),
+                    "name": existing_persona.name,
+                    "simulation_type": existing_persona.simulation_type,
+                    "persona_type": "workspace",
+                    "already_exists": True,
+                },
             )
 
         persona = Persona(

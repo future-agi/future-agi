@@ -100,6 +100,12 @@ class ModelConfigs:
         temperature=0.2,
         max_tokens=8100,
     )
+    CLAUDE_SONNET_4_6: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.ANTHROPIC.value,
+        model_name="claude-sonnet-4-6",
+        temperature=0.2,
+        max_tokens=16000,
+    )
 
     VERTEX_GEMINI_3_FLASH: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.VERTEX_AI.value,
@@ -230,4 +236,3 @@ class ModelConfigs:
         """Check if the model supports PDF inputs."""
         cfg = cls.get_config(model_name)
         return bool(cfg and cfg.supports_pdf)
-

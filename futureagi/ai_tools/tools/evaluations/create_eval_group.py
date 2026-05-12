@@ -13,15 +13,21 @@ from ai_tools.registry import register_tool
 
 
 class CreateEvalGroupInput(PydanticBaseModel):
-    name: str = Field(
-        description="Name for the eval group", min_length=1, max_length=255
+    name: Optional[str] = Field(
+        default=None,
+        description="Name for the eval group",
+        min_length=1,
+        max_length=255,
     )
     description: Optional[str] = Field(
         default=None, description="Description of the eval group"
     )
-    eval_template_ids: list[UUID] = Field(
-        description="List of eval template IDs to include in the group",
-        min_length=1,
+    eval_template_ids: Optional[list[UUID]] = Field(
+        default=None,
+        description=(
+            "List of eval template IDs to include in the group. Omit to list "
+            "candidate templates with IDs."
+        ),
     )
 
 
@@ -39,6 +45,67 @@ class CreateEvalGroupTool(BaseTool):
 
         from model_hub.models.evals_metric import EvalTemplate
         from model_hub.services.eval_group import create_eval_group as svc_create
+        from ai_tools.formatting import format_datetime, markdown_table, truncate
+
+        if not params.name or not params.eval_template_ids:
+            from django.db.models import Q
+
+            templates = list(
+                EvalTemplate.no_workspace_objects.filter(
+                    Q(organization=context.organization) | Q(organization__isnull=True)
+                ).order_by("-created_at")[:10]
+            )
+            rows = []
+            data = []
+            for template in templates:
+                config = template.config or {}
+                output_type = (
+                    config.get("output", "—") if isinstance(config, dict) else "—"
+                )
+                rows.append(
+                    [
+                        f"`{template.id}`",
+                        truncate(template.name, 36),
+                        template.owner or "—",
+                        output_type,
+                        format_datetime(template.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(template.id),
+                        "name": template.name,
+                        "owner": template.owner,
+                        "output_type": output_type,
+                    }
+                )
+
+            missing_fields = []
+            if not params.name:
+                missing_fields.append("name")
+            if not params.eval_template_ids:
+                missing_fields.append("eval_template_ids")
+
+            detail = (
+                "Provide a group `name` and at least one `eval_template_ids` value "
+                "from the candidates below, then call `create_eval_group` again."
+            )
+            if not rows:
+                detail = (
+                    "No evaluation templates were found. Create an eval template "
+                    "first, then call `create_eval_group` with its template ID."
+                )
+            return ToolResult.needs_input(
+                section(
+                    "Eval Group Inputs Required",
+                    f"{detail}\n\n"
+                    + markdown_table(
+                        ["ID", "Name", "Owner", "Output", "Created"], rows
+                    ),
+                ),
+                data={"candidate_templates": data},
+                missing_fields=missing_fields,
+            )
 
         # Validate templates exist
         template_ids = [str(tid) for tid in params.eval_template_ids]

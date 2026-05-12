@@ -118,16 +118,18 @@ class TraceExplorerTool(BaseTool):
                 {r for (eid, r) in _context_store if eid == params.eval_id}
             )
             if available:
-                return ToolResult.error(
+                return ToolResult.needs_input(
                     f"No data loaded under root='{params.root}' for eval "
                     f"{params.eval_id}. Available roots: {available}.",
-                    error_code="NO_CONTEXT_DATA",
+                    data={"available_roots": available},
+                    missing_fields=["root"],
                 )
-            return ToolResult.error(
+            return ToolResult.needs_input(
                 f"No context data loaded for eval {params.eval_id}. "
                 "This tool is only available when the eval prompt references "
                 "{{row}} / {{span}} / {{trace}} / {{session}} / {{call}}.",
-                error_code="NO_CONTEXT_DATA",
+                data={"available_roots": []},
+                missing_fields=["eval_id"],
             )
 
         spans = _extract_spans(data) if isinstance(data, (dict, list)) else []

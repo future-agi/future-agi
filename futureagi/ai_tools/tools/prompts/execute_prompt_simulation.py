@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -11,17 +10,26 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_simulation,
+    resolve_prompt_template_for_tool,
+)
+from ai_tools.tools.simulation._utils import resolve_scenarios
 
 
 class ExecutePromptSimulationInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    simulation_id: UUID = Field(
-        description="The UUID of the simulation run (RunTest) to execute"
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
     )
-    scenario_ids: Optional[List[UUID]] = Field(
+    simulation_id: str = Field(
+        default="",
+        description="Simulation UUID or exact name. Omit to list candidates.",
+    )
+    scenario_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Optional list of specific scenario UUIDs to execute. "
+            "Optional list of specific scenario UUIDs or names to execute. "
             "If omitted, all scenarios configured in the simulation are used."
         ),
     )
@@ -48,32 +56,23 @@ class ExecutePromptSimulationTool(BaseTool):
     def execute(
         self, params: ExecutePromptSimulationInput, context: ToolContext
     ) -> ToolResult:
-
-        from model_hub.models.run_prompt import PromptTemplate
-        from simulate.models import RunTest
         from simulate.services.test_executor import TestExecutor
 
-        # Validate template exists and belongs to org
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
-        # Validate simulation exists
-        try:
-            run_test = RunTest.objects.get(
-                id=params.simulation_id,
-                prompt_template=template,
-                source_type="prompt",
-                organization=context.organization,
-                deleted=False,
-            )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Simulation", str(params.simulation_id))
+        run_test, simulation_result = resolve_prompt_simulation(
+            template,
+            params.simulation_id,
+            "Prompt Simulation Required",
+        )
+        if simulation_result:
+            return simulation_result
 
         # Validate prompt version still exists and is not deleted
         if not run_test.prompt_version or run_test.prompt_version.deleted:
@@ -86,19 +85,32 @@ class ExecutePromptSimulationTool(BaseTool):
         all_scenario_ids = list(
             run_test.scenarios.filter(deleted=False).values_list("id", flat=True)
         )
+        requested_scenario_ids = None
+        if params.scenario_ids:
+            scenarios, scenario_result = resolve_scenarios(
+                params.scenario_ids,
+                context,
+                title="Scenarios Required For Prompt Simulation",
+            )
+            if scenario_result:
+                return scenario_result
+            requested_scenario_ids = [str(scenario.id) for scenario in scenarios]
 
         # Determine which scenarios to execute
         if params.select_all:
-            if params.scenario_ids:
-                exclude_set = {str(sid) for sid in params.scenario_ids}
+            if requested_scenario_ids:
+                exclude_set = set(requested_scenario_ids)
                 final_scenario_ids = [
                     str(sid) for sid in all_scenario_ids if str(sid) not in exclude_set
                 ]
             else:
                 final_scenario_ids = [str(sid) for sid in all_scenario_ids]
         else:
-            if params.scenario_ids:
-                final_scenario_ids = [str(sid) for sid in params.scenario_ids]
+            if requested_scenario_ids:
+                available = {str(sid) for sid in all_scenario_ids}
+                final_scenario_ids = [
+                    sid for sid in requested_scenario_ids if sid in available
+                ]
             else:
                 final_scenario_ids = [str(sid) for sid in all_scenario_ids]
 

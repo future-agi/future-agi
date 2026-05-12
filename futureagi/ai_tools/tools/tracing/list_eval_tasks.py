@@ -1,6 +1,3 @@
-from typing import Optional
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -16,16 +13,17 @@ from ai_tools.registry import register_tool
 
 
 class ListEvalTasksInput(PydanticBaseModel):
-    project_id: UUID = Field(
-        description="The UUID of the project to list eval tasks for"
+    project_id: str | None = Field(
+        default=None,
+        description="Project UUID or exact/fuzzy project name to list eval tasks for",
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    status: Optional[str] = Field(
+    status: str | None = Field(
         default=None,
         description="Filter by status: pending, running, completed, failed, paused",
     )
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         description="Filter by name (case-insensitive contains match)",
     )
@@ -45,14 +43,25 @@ class ListEvalTasksTool(BaseTool):
     def execute(self, params: ListEvalTasksInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.eval_task import EvalTask
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing._utils import (
+            candidate_projects_result,
+            resolve_project,
+        )
 
-        try:
-            project = Project.objects.get(
-                id=params.project_id, organization=context.organization
+        if params.project_id is None:
+            return candidate_projects_result(
+                context,
+                "Project Required",
+                "Provide `project_id` to list eval tasks for a project.",
             )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required To List Eval Tasks",
+        )
+        if unresolved:
+            return unresolved
 
         qs = (
             EvalTask.objects.filter(project=project, deleted=False)

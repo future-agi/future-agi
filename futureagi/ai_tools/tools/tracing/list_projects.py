@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -17,11 +15,11 @@ from ai_tools.registry import register_tool
 class ListProjectsInput(PydanticBaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    trace_type: Optional[str] = Field(
+    trace_type: str | None = Field(
         default=None,
         description="Filter by project type: 'experiment' or 'observe'",
     )
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search projects by name (case-insensitive)",
     )
@@ -40,7 +38,6 @@ class ListProjectsTool(BaseTool):
 
     def execute(self, params: ListProjectsInput, context: ToolContext) -> ToolResult:
         from django.db.models import Count, Q
-
         from tracer.models.project import Project
 
         qs = (
@@ -50,6 +47,9 @@ class ListProjectsTool(BaseTool):
             .annotate(trace_count=Count("traces", filter=Q(traces__deleted=False)))
             .order_by("-created_at")
         )
+
+        if context.workspace:
+            qs = qs.filter(Q(workspace=context.workspace) | Q(workspace__isnull=True))
 
         if params.trace_type:
             qs = qs.filter(trace_type=params.trace_type)

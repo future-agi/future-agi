@@ -1,6 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
+from django.db.models import Q
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -45,7 +46,12 @@ class ListAnnotationLabelsTool(BaseTool):
 
         from model_hub.models.develop_annotations import AnnotationsLabels
 
-        qs = AnnotationsLabels.objects.order_by("-created_at")
+        qs = AnnotationsLabels.objects.filter(
+            organization=context.organization,
+            deleted=False,
+        )
+        if context.workspace:
+            qs = qs.filter(Q(workspace=context.workspace) | Q(workspace__isnull=True))
 
         if params.project_id:
             qs = qs.filter(project_id=params.project_id)
@@ -54,7 +60,17 @@ class ListAnnotationLabelsTool(BaseTool):
             qs = qs.filter(type=params.label_type)
 
         total = qs.count()
-        labels = qs[params.offset : params.offset + params.limit]
+        labels = qs.only(
+            "id",
+            "name",
+            "type",
+            "settings",
+            "description",
+            "created_at",
+            "project_id",
+            "organization_id",
+            "workspace_id",
+        ).order_by("-created_at")[params.offset : params.offset + params.limit]
 
         rows = []
         data_list = []
@@ -92,6 +108,7 @@ class ListAnnotationLabelsTool(BaseTool):
                     "type": lbl.type,
                     "settings": lbl.settings,
                     "description": lbl.description,
+                    "project_id": str(lbl.project_id) if lbl.project_id else None,
                 }
             )
 

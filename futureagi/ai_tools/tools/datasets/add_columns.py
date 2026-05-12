@@ -1,8 +1,8 @@
-from typing import Literal, Optional
-from uuid import UUID
+from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
+from pydantic import model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -48,6 +48,63 @@ class AddColumnsInput(PydanticBaseModel):
         min_length=1,
         max_length=20,
     )
+    column_types: list[DataTypeLiteral] | None = Field(
+        default=None,
+        description=(
+            "Optional legacy parallel list of data types. Prefer putting "
+            "data_type on each column object."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_column_inputs(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        columns = data.get("columns")
+        column_types = data.get("column_types") or data.get("types")
+
+        if isinstance(columns, str):
+            columns = [part.strip() for part in columns.split(",") if part.strip()]
+
+        if isinstance(column_types, str):
+            column_types = [
+                part.strip() for part in column_types.split(",") if part.strip()
+            ]
+
+        def type_at(index: int) -> str:
+            if isinstance(column_types, list) and index < len(column_types):
+                return column_types[index]
+            return "text"
+
+        if isinstance(columns, list):
+            normalized = []
+            changed = False
+            for index, column in enumerate(columns):
+                if isinstance(column, str):
+                    normalized.append({"name": column, "data_type": type_at(index)})
+                    changed = True
+                    continue
+                if isinstance(column, dict):
+                    column_data = dict(column)
+                    if "data_type" not in column_data:
+                        column_data["data_type"] = (
+                            column_data.pop("column_type", None)
+                            or column_data.pop("type", None)
+                            or type_at(index)
+                        )
+                        changed = True
+                    normalized.append(column_data)
+                    continue
+                normalized.append(column)
+            if changed:
+                data["columns"] = normalized
+                if isinstance(column_types, list):
+                    data["column_types"] = column_types
+
+        return data
 
 
 @register_tool
@@ -85,6 +142,45 @@ class AddColumnsTool(BaseTool):
         )
 
         if isinstance(result, ServiceError):
+            if "already exist" in result.message.lower():
+                from model_hub.models.develop_dataset import Column
+
+                requested_names = [column["name"] for column in columns_data]
+                existing = Column.objects.filter(
+                    dataset=ds,
+                    name__in=requested_names,
+                    deleted=False,
+                ).order_by("name")
+                rows = [
+                    [column.name, column.data_type, f"`{column.id}`"]
+                    for column in existing
+                ]
+                return ToolResult(
+                    content=section(
+                        "Columns Already Exist",
+                        (
+                            f"{result.message}\n\n"
+                            "Use new column names, or continue with these existing columns.\n\n"
+                            + (
+                                markdown_table(["Name", "Type", "ID"], rows)
+                                if rows
+                                else ""
+                            )
+                        ),
+                    ),
+                    data={
+                        "dataset_id": str(ds.id),
+                        "already_exists": True,
+                        "existing_columns": [
+                            {
+                                "id": str(column.id),
+                                "name": column.name,
+                                "data_type": column.data_type,
+                            }
+                            for column in existing
+                        ],
+                    },
+                )
             return ToolResult.error(result.message, error_code=result.code)
 
         rows_table = [

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Type
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 from pydantic import BaseModel as PydanticBaseModel
 
@@ -38,7 +38,7 @@ class ToolContext:
 
     @property
     def workspace_id(self):
-        return self.workspace.id
+        return self.workspace.id if self.workspace else None
 
 
 @dataclass
@@ -49,25 +49,39 @@ class ToolResult:
     data: Optional structured data dict (for programmatic use).
     is_error: Whether this result represents an error.
     error_code: Optional structured error code (e.g. NOT_FOUND, VALIDATION_ERROR).
+    status: Machine-readable outcome. Use non-error states like `needs_input`
+        and `blocked` for recoverable planning states that should not count as
+        tool crashes.
     """
 
     content: str
-    data: Optional[dict] = None
+    data: dict | None = None
     is_error: bool = False
-    error_code: Optional[str] = None
+    error_code: str | None = None
+    status: str = "success"
+
+    def __post_init__(self):
+        if self.is_error and self.status == "success":
+            self.status = "error"
+        if self.data is None:
+            self.data = {}
+        self.data.setdefault("tool_status", self.status)
+        if self.error_code:
+            self.data.setdefault("error_code", self.error_code)
 
     @classmethod
     def error(
         cls,
         message: str,
-        data: Optional[dict] = None,
-        error_code: Optional[str] = None,
+        data: dict | None = None,
+        error_code: str | None = None,
     ) -> ToolResult:
         return cls(
             content=f"**Error:** {message}",
             data=data,
             is_error=True,
             error_code=error_code or "INTERNAL_ERROR",
+            status="error",
         )
 
     @classmethod
@@ -76,6 +90,7 @@ class ToolResult:
             content=f"**Not Found:** {entity_type} with ID `{entity_id}` was not found in this workspace.",
             is_error=True,
             error_code="NOT_FOUND",
+            status="not_found",
         )
 
     @classmethod
@@ -84,6 +99,7 @@ class ToolResult:
             content=f"**Permission Denied:** {message}",
             is_error=True,
             error_code="PERMISSION_DENIED",
+            status="permission_denied",
         )
 
     @classmethod
@@ -96,6 +112,7 @@ class ToolResult:
             data={"feature": feature, "upgrade_required": True},
             is_error=True,
             error_code="ENTITLEMENT_DENIED",
+            status="feature_unavailable",
         )
 
     @classmethod
@@ -104,6 +121,43 @@ class ToolResult:
             content=f"**Validation Error:** {message}",
             is_error=True,
             error_code="VALIDATION_ERROR",
+            status="validation_error",
+        )
+
+    @classmethod
+    def needs_input(
+        cls,
+        message: str,
+        data: dict | None = None,
+        missing_fields: list[str] | None = None,
+    ) -> ToolResult:
+        payload = dict(data or {})
+        if missing_fields:
+            payload["missing_fields"] = missing_fields
+            for field_name in missing_fields:
+                payload.setdefault(f"requires_{field_name}", True)
+        return cls(
+            content=f"**Needs Input:** {message}",
+            data=payload,
+            is_error=False,
+            status="needs_input",
+        )
+
+    @classmethod
+    def blocked(
+        cls,
+        message: str,
+        data: dict | None = None,
+        reason: str | None = None,
+    ) -> ToolResult:
+        payload = dict(data or {})
+        if reason:
+            payload["blocked_reason"] = reason
+        return cls(
+            content=f"**Blocked:** {message}",
+            data=payload,
+            is_error=False,
+            status="blocked",
         )
 
 
@@ -121,7 +175,7 @@ class BaseTool(ABC):
     name: ClassVar[str]
     description: ClassVar[str]
     category: ClassVar[str]
-    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
@@ -147,6 +201,24 @@ class BaseTool(ABC):
             cleaned = self._clean_params(raw_params or {})
             params = self.input_model.model_validate(cleaned)
         except Exception as e:
+            try:
+                from pydantic import ValidationError
+
+                if isinstance(e, ValidationError):
+                    missing_fields = [
+                        str(error.get("loc", ["field"])[0])
+                        for error in e.errors()
+                        if error.get("type") == "missing"
+                    ]
+                    if missing_fields and len(missing_fields) == len(e.errors()):
+                        return ToolResult.needs_input(
+                            "Missing required tool parameters: "
+                            + ", ".join(f"`{field}`" for field in missing_fields),
+                            missing_fields=missing_fields,
+                        )
+            except Exception:
+                pass
+
             # Include the expected schema so the LLM can self-correct
             schema = self.input_schema
             required = schema.get("required", [])

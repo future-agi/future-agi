@@ -14,7 +14,10 @@ DOCS_BASE = "https://docs.futureagi.com"
 
 
 class SearchDocsInput(PydanticBaseModel):
-    query: str = Field(description="Search query for the Future AGI documentation")
+    query: str = Field(
+        default="Future AGI",
+        description="Search query for the Future AGI documentation",
+    )
     limit: int = Field(default=5, description="Maximum number of results to return")
 
 

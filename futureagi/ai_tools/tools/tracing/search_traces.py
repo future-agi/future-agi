@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -18,14 +17,14 @@ from ai_tools.registry import register_tool
 class SearchTracesInput(PydanticBaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    project_id: Optional[UUID] = Field(default=None, description="Filter by project ID")
-    name: Optional[str] = Field(
+    project_id: UUID | None = Field(default=None, description="Filter by project ID")
+    name: str | None = Field(
         default=None, description="Filter by trace name (case-insensitive contains)"
     )
-    has_error: Optional[bool] = Field(
+    has_error: bool | None = Field(
         default=None, description="Filter to traces with/without errors"
     )
-    tags: Optional[list[str]] = Field(
+    tags: list[str] | None = Field(
         default=None,
         description="Filter by tags (traces must contain all specified tags)",
     )
@@ -43,6 +42,7 @@ class SearchTracesTool(BaseTool):
 
     def execute(self, params: SearchTracesInput, context: ToolContext) -> ToolResult:
 
+        from django.db.models import Q
         from tracer.models.trace import Trace
 
         qs = (
@@ -51,6 +51,12 @@ class SearchTracesTool(BaseTool):
             .order_by("-created_at")
         )
 
+        if context.workspace:
+            qs = qs.filter(
+                Q(project__workspace=context.workspace)
+                | Q(project__workspace__isnull=True)
+            )
+
         if params.project_id:
             qs = qs.filter(project_id=params.project_id)
         if params.name:
@@ -58,8 +64,6 @@ class SearchTracesTool(BaseTool):
         if params.has_error is True:
             qs = qs.exclude(error__isnull=True).exclude(error={})
         elif params.has_error is False:
-            from django.db.models import Q
-
             qs = qs.filter(Q(error__isnull=True) | Q(error={}))
         if params.tags:
             for tag in params.tags:
@@ -94,6 +98,7 @@ class SearchTracesTool(BaseTool):
                     "id": str(trace.id),
                     "name": trace.name,
                     "project": project_name,
+                    "project_id": str(trace.project_id) if trace.project_id else None,
                     "has_error": has_err == "Yes",
                     "tags": trace.tags,
                 }

@@ -1,0 +1,345 @@
+{
+  "source": {
+    "generated_from": [
+      "PostHog Falcon prompt corpus",
+      "internal-docs/TESTING.md",
+      "internal-docs/falcon/testing/TEST-PLAN.md",
+      "local ai_tools registry audit"
+    ],
+    "generated_at": "2026-05-08",
+    "goal": "Reusable 30-chat simulation corpus for API and browser Falcon regression testing."
+  },
+  "cases": [
+    {
+      "id": "falcon_mt_001_dataset_basic_crud",
+      "area": "datasets",
+      "turns": [
+        "Create a dataset called Falcon QA Smoke with columns question, expected_answer, source.",
+        "Add 5 rows about customer support conversations and show me the row count.",
+        "Rename expected_answer to ideal_answer and add a metadata column named priority.",
+        "Show me the dataset schema and summarize anything missing."
+      ],
+      "expected_capabilities": ["create_dataset", "dataset_schema_update", "add_rows", "get_dataset"]
+    },
+    {
+      "id": "falcon_mt_002_dataset_posthog_variant",
+      "area": "datasets",
+      "turns": [
+        "Generate a dataset of 10 customer support conversa",
+        "Make the rows more realistic with escalation and refund examples.",
+        "Can you list all the datasets and confirm the new dataset exists?",
+        "Create a small eval-ready split from that dataset."
+      ],
+      "expected_capabilities": ["create_dataset", "synthetic_rows", "list_datasets", "clone_or_filter_dataset"]
+    },
+    {
+      "id": "falcon_mt_003_dataset_typo_resilience",
+      "area": "datasets",
+      "turns": [
+        "create a dataset with 3 columns named name phonenu",
+        "I meant phone_number, email, and notes. Fix the schema.",
+        "Add two sample contacts and then show only names and phone numbers.",
+        "Tell me exactly what you changed."
+      ],
+      "expected_capabilities": ["typo_handling", "schema_update", "add_rows", "projection"]
+    },
+    {
+      "id": "falcon_mt_004_eval_intent_detection",
+      "area": "evaluations",
+      "turns": [
+        "Create an evaluation for intent detection and add it to my latest support dataset.",
+        "Use labels refund, cancellation, technical_issue, and billing_question.",
+        "Run it on a small sample and show failing examples.",
+        "Suggest how to improve the evaluator instructions."
+      ],
+      "expected_capabilities": ["create_eval", "attach_eval", "run_eval", "inspect_failures"]
+    },
+    {
+      "id": "falcon_mt_005_eval_composite",
+      "area": "evaluations",
+      "turns": [
+        "I want to make a composite eval and for the pasted response check correctness and tone.",
+        "Add groundedness as a third criterion with higher weight.",
+        "Test it on this output: old macdonald had a farm.",
+        "Explain whether the eval should be code, LLM, or agent based."
+      ],
+      "expected_capabilities": ["composite_eval", "single_output_eval", "eval_type_selection"]
+    },
+    {
+      "id": "falcon_mt_006_voice_eval_howto",
+      "area": "evaluations_docs",
+      "turns": [
+        "how to build a voice eval",
+        "Now create a voice-call quality eval template for interruption handling and compliance.",
+        "Apply it to the latest voice call dataset if one exists.",
+        "If no dataset exists, tell me exactly what data you need."
+      ],
+      "expected_capabilities": ["docs_search", "create_eval", "contextual_clarification"]
+    },
+    {
+      "id": "falcon_mt_007_tracing_project_visibility",
+      "area": "tracing_admin",
+      "turns": [
+        "why can't i see a project here?",
+        "Check my current workspace and list projects I can access.",
+        "Search recent traces for the visible projects.",
+        "Tell me if this is a permission issue or a data availability issue."
+      ],
+      "expected_capabilities": ["whoami", "list_projects", "search_traces", "permission_reasoning"]
+    },
+    {
+      "id": "falcon_mt_008_tracing_smart_ats_ocr",
+      "area": "tracing_evaluations",
+      "turns": [
+        "In my smart ATS project I want to apply OCR eval d",
+        "Find the Smart ATS project and recent traces that have OCR-like outputs.",
+        "Create or select an OCR accuracy eval for those outputs.",
+        "Run a small validation and summarize the top failure modes."
+      ],
+      "expected_capabilities": ["resolve_project_by_name", "search_traces", "create_eval", "run_eval"]
+    },
+    {
+      "id": "falcon_mt_009_tracing_feed_summary",
+      "area": "tracing",
+      "turns": [
+        "In feed section which shows issues or what can be",
+        "Summarise all the suggestions in the feed to improve the project.",
+        "Group the issues by severity and owning feature.",
+        "Turn the highest severity issue into an action plan."
+      ],
+      "expected_capabilities": ["feed_analysis", "summarization", "prioritization"]
+    },
+    {
+      "id": "falcon_mt_010_trace_nested_field",
+      "area": "tracing",
+      "turns": [
+        "i need to see ai_outcome. its digged very a lot in",
+        "Search recent traces and find where ai_outcome appears in nested input, output, metadata, or span attributes.",
+        "Create a view that exposes ai_outcome next to trace id and status.",
+        "Show example rows and explain the field path."
+      ],
+      "expected_capabilities": ["field_search", "explore_trace", "render_widget", "dashboard_or_view"]
+    },
+    {
+      "id": "falcon_mt_011_prompt_template_typo",
+      "area": "prompts",
+      "turns": [
+        "cany ou create a new prompt template?",
+        "Make it for customer support triage with variables customer_message and account_tier.",
+        "Create a second version that is stricter about escalation.",
+        "Compare the versions and recommend which one to use."
+      ],
+      "expected_capabilities": ["create_prompt", "prompt_variables", "version_prompt", "compare_prompt_versions"]
+    },
+    {
+      "id": "falcon_mt_012_prompt_variables",
+      "area": "prompts",
+      "turns": [
+        "Add the variables from remaining to here",
+        "Find the current prompt context and identify missing variables.",
+        "Wire the variables into the prompt body without changing the intent.",
+        "Run a dry test with sample values."
+      ],
+      "expected_capabilities": ["context_recovery", "prompt_update", "run_prompt"]
+    },
+    {
+      "id": "falcon_mt_013_fix_failing_eval",
+      "area": "fix_with_falcon",
+      "turns": [
+        "/fix-with-falcon Fix this failing evaluation. Con",
+        "Find the failing eval result and inspect the related dataset row and trace.",
+        "Diagnose whether the failure is prompt, eval config, or data quality.",
+        "Make the smallest safe fix and show before versus after."
+      ],
+      "expected_capabilities": ["context_page_payload", "eval_debug", "trace_lookup", "repair_plan"]
+    },
+    {
+      "id": "falcon_mt_014_fix_voice_call",
+      "area": "fix_with_falcon_voice",
+      "turns": [
+        "/fix-with-falcon This voice call has issues. Analy",
+        "Find interruptions, silence, compliance misses, and incorrect next action.",
+        "Map each issue to the call trace spans and eval results.",
+        "Suggest agent prompt and eval changes."
+      ],
+      "expected_capabilities": ["voice_analysis", "trace_timeline", "eval_results", "agent_repair"]
+    },
+    {
+      "id": "falcon_mt_015_sales_agent",
+      "area": "simulation",
+      "turns": [
+        "build an agent for me which qualifies sales lead",
+        "Add qualification criteria: budget, authority, need, timeline, and company size.",
+        "Create three simulator personas: high intent, budget constrained, and unqualified.",
+        "Run a small simulation and summarize what the sales agent should improve."
+      ],
+      "expected_capabilities": ["create_agent_definition", "create_personas", "create_scenarios", "run_simulation"]
+    },
+    {
+      "id": "falcon_mt_016_agent_fix_from_errors",
+      "area": "simulation_tracing_evals",
+      "turns": [
+        "fix my agent based on errors and evals",
+        "Find recent failed simulations and related traces.",
+        "Identify which evals failed and the exact conversation turns responsible.",
+        "Patch the agent instructions and propose a regression simulation."
+      ],
+      "expected_capabilities": ["list_test_executions", "search_traces", "get_eval_results", "agent_version_update"]
+    },
+    {
+      "id": "falcon_mt_017_dashboard_calls",
+      "area": "dashboards",
+      "turns": [
+        "Provide me with a view of date of calls on x axis,",
+        "Use call count on y axis, grouped by status and project.",
+        "Add a filter for the last 14 days.",
+        "Render or create the dashboard widget and explain the query."
+      ],
+      "expected_capabilities": ["create_dashboard", "render_widget", "analytics_query", "date_filter"]
+    },
+    {
+      "id": "falcon_mt_018_annotations_export",
+      "area": "annotations",
+      "turns": [
+        "how do I export all the annotation results",
+        "Find annotation queues in my workspace.",
+        "For the most recent queue, summarize status counts and labels.",
+        "Tell me the API or UI path to export the results."
+      ],
+      "expected_capabilities": ["docs_search", "list_annotation_queues", "annotation_summary"]
+    },
+    {
+      "id": "falcon_mt_019_custom_eval_cta",
+      "area": "evaluations",
+      "turns": [
+        "Create an custom eval for with name \"CTA Action Ty",
+        "Complete the name as CTA Action Type and define allowed outputs: schedule_demo, send_docs, follow_up, no_action.",
+        "Test the eval on three sample assistant replies.",
+        "Add it to a sales dataset if available."
+      ],
+      "expected_capabilities": ["custom_eval", "typo_recovery", "single_output_eval", "attach_eval"]
+    },
+    {
+      "id": "falcon_mt_020_legal_rag_pipeline",
+      "area": "rag_evals",
+      "turns": [
+        "New RAG pipeline for legal review. No evals. Build",
+        "Create a minimal eval suite for citation accuracy, answer groundedness, and refusal safety.",
+        "Generate a small synthetic legal-review dataset.",
+        "Run the eval suite and tell me what is production blocking."
+      ],
+      "expected_capabilities": ["dataset_generation", "eval_suite", "rag_quality", "run_eval"]
+    },
+    {
+      "id": "falcon_mt_021_docs_then_action",
+      "area": "docs_cross_feature",
+      "turns": [
+        "Search docs for setting up tracing in Python.",
+        "Based on those docs, create a checklist for my workspace instrumentation.",
+        "Find recent traces that look incorrectly instrumented.",
+        "Turn the checklist into action items."
+      ],
+      "expected_capabilities": ["search_docs", "list_projects", "search_traces", "plan_generation"]
+    },
+    {
+      "id": "falcon_mt_022_web_general_question",
+      "area": "web",
+      "turns": [
+        "can you tell me how good andaman islands is",
+        "Use web search, then summarize travel timing, common risks, and whether it is suitable for a short family trip.",
+        "Separate current facts from general advice.",
+        "Cite the sources you used."
+      ],
+      "expected_capabilities": ["web_search", "source_grounding", "summary"]
+    },
+    {
+      "id": "falcon_mt_023_mcp_connector_tools",
+      "area": "mcp_connectors",
+      "turns": [
+        "List my MCP connectors and show enabled tools.",
+        "Disable one risky write tool on a connector while keeping read tools enabled.",
+        "Re-enable it and confirm the enabled tool list changed correctly.",
+        "Explain which tools Falcon can now use."
+      ],
+      "expected_capabilities": ["list_mcp_connectors", "connector_tool_toggle", "enabled_tools_semantics"]
+    },
+    {
+      "id": "falcon_mt_024_file_upload_vision",
+      "area": "files_multimodal",
+      "turns": [
+        "Describe this image",
+        "Extract any text or UI labels from it.",
+        "If it looks like a product screenshot, suggest the most likely Falcon context page.",
+        "Create a follow-up test prompt for this file."
+      ],
+      "expected_capabilities": ["file_upload_context", "vision", "context_inference"]
+    },
+    {
+      "id": "falcon_mt_025_workspace_audit",
+      "area": "admin_tracing_usage",
+      "turns": [
+        "Audit my workspace health across projects, usage, traces, eval failures, and expensive models.",
+        "Find top 5 cost drivers and top 5 reliability issues.",
+        "Create a prioritized action list.",
+        "Do not make destructive changes; only report."
+      ],
+      "expected_capabilities": ["whoami", "usage_analysis", "search_traces", "eval_failures", "cost_breakdown"]
+    },
+    {
+      "id": "falcon_mt_026_prompt_eval_experiment",
+      "area": "prompts_evals_experiments",
+      "turns": [
+        "Create a support response prompt and evaluate it against a small dataset.",
+        "Create two variants: concise and empathetic.",
+        "Run an experiment comparing the variants with helpfulness and correctness evals.",
+        "Recommend the winning variant with evidence."
+      ],
+      "expected_capabilities": ["create_prompt", "run_prompt", "create_experiment", "eval_experiment_results"]
+    },
+    {
+      "id": "falcon_mt_027_traces_to_dataset_to_eval",
+      "area": "tracing_datasets_evals",
+      "turns": [
+        "Find recent error traces and turn representative examples into an eval dataset.",
+        "Create columns input, output, error_type, expected_behavior.",
+        "Create an eval that checks whether the model avoids those errors.",
+        "Run it and summarize the failing examples."
+      ],
+      "expected_capabilities": ["search_traces", "create_dataset_from_traces", "create_eval", "run_eval"]
+    },
+    {
+      "id": "falcon_mt_028_agent_test_suite",
+      "area": "simulation_evals_tracing",
+      "turns": [
+        "Create an agent testing suite for a refund support agent.",
+        "Add edge cases: angry customer, policy exception, missing order id, and fraud suspicion.",
+        "Run simulations, inspect traces, and evaluate policy compliance.",
+        "Return a ranked list of prompt fixes."
+      ],
+      "expected_capabilities": ["create_agent_definition", "create_scenarios", "run_simulation", "trace_analysis", "eval_results"]
+    },
+    {
+      "id": "falcon_mt_029_error_localization",
+      "area": "error_localization",
+      "turns": [
+        "Find failing traces for my most active project and localize the root cause.",
+        "Trigger error localization on the worst trace.",
+        "Poll until the result is ready.",
+        "Summarize the root cause and proposed fix."
+      ],
+      "expected_capabilities": ["search_traces", "trigger_error_localization", "get_error_localization_status", "get_error_localization_results"]
+    },
+    {
+      "id": "falcon_mt_030_full_qa_pipeline",
+      "area": "complex_mission",
+      "turns": [
+        "Build a small end-to-end QA pipeline: dataset, prompt, evals, experiment, and dashboard.",
+        "Use a customer support domain and include at least 5 test rows.",
+        "Run the prompt over the dataset and evaluate correctness, tone, and escalation behavior.",
+        "Create a dashboard or widget summarizing pass rate and failure reasons.",
+        "Give me a production-readiness summary with blockers."
+      ],
+      "expected_capabilities": ["datasets", "prompts", "evaluations", "experiments", "visualization", "synthesis"]
+    }
+  ]
+}

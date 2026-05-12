@@ -8,6 +8,11 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.datasets._utils import (
+    candidate_dataset_evals_result,
+    resolve_dataset_evals,
+    resolve_dataset_for_tool,
+)
 
 
 class RunDatasetEvalsInput(PydanticBaseModel):
@@ -15,8 +20,8 @@ class RunDatasetEvalsInput(PydanticBaseModel):
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
     eval_ids: list[str] = Field(
-        description="List of UserEvalMetric UUIDs to run",
-        min_length=1,
+        default_factory=list,
+        description="List of configured dataset eval names or UserEvalMetric UUIDs to run",
         max_length=20,
     )
 
@@ -34,7 +39,6 @@ class RunDatasetEvalsTool(BaseTool):
 
     def execute(self, params: RunDatasetEvalsInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_dataset
         from model_hub.models.choices import (
             CellStatus,
             DataTypeChoices,
@@ -44,28 +48,32 @@ class RunDatasetEvalsTool(BaseTool):
         from model_hub.models.develop_dataset import Cell, Column
         from model_hub.models.evals_metric import UserEvalMetric
 
-        dataset, error = resolve_dataset(
-            params.dataset_id, context.organization, context.workspace
+        dataset, unresolved = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            title="Dataset Required For Running Evals",
         )
-        if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+        if unresolved:
+            return unresolved
 
-        # Find matching evals
-        evals = list(
-            UserEvalMetric.objects.filter(
-                id__in=params.eval_ids,
-                dataset=dataset,
-                deleted=False,
-            ).select_related("template")
-        )
+        if not params.eval_ids:
+            return candidate_dataset_evals_result(
+                dataset,
+                title="Dataset Evals Required To Run",
+                detail="Provide `eval_ids` using one or more configured eval IDs or names.",
+            )
 
-        found_ids = set(str(e.id) for e in evals)
-        missing = [str(eid) for eid in params.eval_ids if str(eid) not in found_ids]
+        evals, missing = resolve_dataset_evals(dataset, params.eval_ids)
 
         if not evals:
-            return ToolResult.error(
-                "No matching evals found. Check the eval_ids and dataset_id.",
-                error_code="NOT_FOUND",
+            return candidate_dataset_evals_result(
+                dataset,
+                title="Dataset Evals Not Found",
+                detail=(
+                    "No matching evals found for: "
+                    + ", ".join(f"`{item}`" for item in missing)
+                    + ". Use one of these configured eval IDs or names."
+                ),
             )
 
         # Check for column_deleted

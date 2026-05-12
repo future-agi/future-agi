@@ -33,15 +33,15 @@ class GetSpanTool(BaseTool):
     def execute(self, params: GetSpanInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.observation_span import ObservationSpan
+        from ai_tools.tools.tracing._utils import resolve_span
 
-        try:
-            span = ObservationSpan.objects.select_related("trace", "project").get(
-                id=params.span_id,
-                deleted=False,
-                project__organization=context.organization,
-            )
-        except ObservationSpan.DoesNotExist:
-            return ToolResult.not_found("Span", params.span_id)
+        span, unresolved = resolve_span(
+            params.span_id,
+            context,
+            title="Span Required",
+        )
+        if unresolved:
+            return unresolved
 
         # Calculate duration
         duration = f"{span.latency_ms}ms" if span.latency_ms else "—"

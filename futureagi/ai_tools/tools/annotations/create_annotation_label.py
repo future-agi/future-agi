@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -15,18 +14,24 @@ VALID_LABEL_TYPES = {"text", "numeric", "categorical", "star", "thumbs_up_down"}
 
 
 class CreateAnnotationLabelInput(PydanticBaseModel):
-    name: str = Field(description="Name for the label", min_length=1, max_length=255)
-    label_type: str = Field(
-        description=("Type of label: text, numeric, categorical, star, thumbs_up_down")
+    name: str | None = Field(
+        default=None,
+        description="Name for the label",
+        min_length=1,
+        max_length=255,
     )
-    description: Optional[str] = Field(
+    label_type: str = Field(
+        default="categorical",
+        description=("Type of label: text, numeric, categorical, star, thumbs_up_down"),
+    )
+    description: str | None = Field(
         default=None, description="Optional description of this label"
     )
-    project_id: Optional[UUID] = Field(
+    project_id: UUID | None = Field(
         default=None,
         description="Optional project UUID to scope this label to a specific project",
     )
-    settings: Optional[dict] = Field(
+    settings: dict | None = Field(
         default=None,
         description=(
             "Type-specific settings (required for all types except thumbs_up_down and text). "
@@ -58,6 +63,29 @@ class CreateAnnotationLabelTool(BaseTool):
 
         from model_hub.models.develop_annotations import AnnotationsLabels
 
+        label_name = (params.name or "").strip()
+        if not label_name:
+            return ToolResult(
+                content=section(
+                    "Annotation Label Details Required",
+                    (
+                        "Provide at least `name` before creating an annotation label. "
+                        "`label_type` defaults to `categorical`; include `settings` "
+                        "for numeric, star, or custom categorical labels."
+                    ),
+                ),
+                data={
+                    "requires_name": True,
+                    "required_fields": ["name"],
+                    "optional_fields": [
+                        "label_type",
+                        "description",
+                        "project_id",
+                        "settings",
+                    ],
+                },
+            )
+
         if params.label_type not in VALID_LABEL_TYPES:
             return ToolResult.error(
                 f"Invalid label type '{params.label_type}'. "
@@ -80,7 +108,7 @@ class CreateAnnotationLabelTool(BaseTool):
 
         # Check for duplicate name+type (scoped to project if provided)
         duplicate_filter = {
-            "name": params.name,
+            "name": label_name,
             "type": params.label_type,
             "organization": context.organization,
             "workspace": context.workspace,
@@ -90,22 +118,43 @@ class CreateAnnotationLabelTool(BaseTool):
         else:
             duplicate_filter["project__isnull"] = True
 
-        if AnnotationsLabels.objects.filter(**duplicate_filter).exists():
-            return ToolResult.error(
-                f"A label named '{params.name}' with type '{params.label_type}' "
-                "already exists in this workspace"
-                + (f" for project '{project.name}'." if project else "."),
-                error_code="VALIDATION_ERROR",
+        existing_label = AnnotationsLabels.objects.filter(**duplicate_filter).first()
+        if existing_label:
+            content = section(
+                "Annotation Label Already Exists",
+                key_value_block(
+                    [
+                        ("ID", f"`{existing_label.id}`"),
+                        ("Name", existing_label.name),
+                        ("Type", existing_label.type),
+                        (
+                            "Project",
+                            f"`{project.id}` ({project.name})" if project else "—",
+                        ),
+                    ]
+                ),
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "label_id": str(existing_label.id),
+                    "name": existing_label.name,
+                    "type": existing_label.type,
+                    "project_id": str(project.id) if project else None,
+                    "already_exists": True,
+                },
             )
 
-        # Validate settings per label type (matches API serializer validation)
-        settings = params.settings or {}
+        # Validate settings per label type (matches API serializer validation).
+        # Falcon frequently supplies only categorical options. Fill the serializer's
+        # non-semantic defaults here so the first tool call succeeds.
+        settings = _normalize_label_settings(params.label_type, params.settings or {})
         settings_error = _validate_label_settings(params.label_type, settings)
         if settings_error:
             return ToolResult.error(settings_error, error_code="VALIDATION_ERROR")
 
         label = AnnotationsLabels(
-            name=params.name,
+            name=label_name,
             type=params.label_type,
             description=params.description or "",
             settings=settings,
@@ -137,6 +186,27 @@ class CreateAnnotationLabelTool(BaseTool):
                 "project_id": str(project.id) if project else None,
             },
         )
+
+
+def _normalize_label_settings(label_type: str, settings: dict) -> dict:
+    normalized = dict(settings)
+    if label_type == "star":
+        normalized.setdefault("no_of_stars", 5)
+        return normalized
+    if label_type == "numeric":
+        normalized.setdefault("min", 0)
+        normalized.setdefault("max", 10)
+        normalized.setdefault("step_size", 1)
+        normalized.setdefault("display_type", "slider")
+        return normalized
+    if label_type != "categorical":
+        return normalized
+    normalized.setdefault("options", [{"label": "Yes"}, {"label": "No"}])
+    normalized.setdefault("multi_choice", False)
+    normalized.setdefault("auto_annotate", False)
+    normalized.setdefault("rule_prompt", "")
+    normalized.setdefault("strategy", None)
+    return normalized
 
 
 def _validate_label_settings(label_type: str, settings: dict) -> str | None:

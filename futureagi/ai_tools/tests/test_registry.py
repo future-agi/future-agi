@@ -97,6 +97,13 @@ class TestToolRegistry:
         assert registry.get("list_evaluations") is not None
         assert registry.get("list_datasets") is not None
         assert registry.get("search_traces") is not None
+        assert registry.get("create_dataset_from_file") is not None
+        assert registry.get("create_dataset_from_huggingface") is not None
+        assert registry.get("trigger_error_localization") is not None
+        assert registry.get("get_error_localization_status") is not None
+        assert registry.get("get_error_localization_results") is not None
+        assert registry.get("web_search") is not None
+        assert registry.get("render_widget") is not None
 
     def test_global_registry_categories(self):
         cats = registry.categories()
@@ -104,6 +111,25 @@ class TestToolRegistry:
         assert "evaluations" in cats
         assert "datasets" in cats
         assert "tracing" in cats
+        assert "web" in cats
+        assert "visualization" in cats
+
+    def test_global_registry_categories_have_mcp_groups(self):
+        from mcp_server.constants import CATEGORY_TO_GROUP, TOOL_GROUPS
+
+        missing = sorted(
+            category
+            for category in registry.categories()
+            if category not in CATEGORY_TO_GROUP
+        )
+        dangling = sorted(
+            group
+            for group in CATEGORY_TO_GROUP.values()
+            if group not in TOOL_GROUPS
+        )
+
+        assert missing == []
+        assert dangling == []
 
 
 class TestBaseTool:

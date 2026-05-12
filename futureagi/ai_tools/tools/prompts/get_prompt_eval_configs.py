@@ -1,10 +1,9 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
+    format_datetime,
     key_value_block,
     markdown_table,
     section,
@@ -14,7 +13,10 @@ from ai_tools.registry import register_tool
 
 
 class GetPromptEvalConfigsInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
+    template_id: str = Field(
+        default="",
+        description="Prompt template name or UUID. If omitted, candidate templates are returned.",
+    )
 
 
 @register_tool
@@ -31,12 +33,73 @@ class GetPromptEvalConfigsTool(BaseTool):
         self, params: GetPromptEvalConfigsInput, context: ToolContext
     ) -> ToolResult:
 
+        from ai_tools.resolvers import resolve_prompt_template
         from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 
+        if not params.template_id:
+            templates = PromptTemplate.objects.order_by("-updated_at")[:10]
+            rows = [
+                [
+                    f"`{template.id}`",
+                    truncate(template.name, 40),
+                    format_datetime(template.updated_at),
+                ]
+                for template in templates
+            ]
+            return ToolResult(
+                content=section(
+                    "Prompt Template Candidates",
+                    markdown_table(["ID", "Name", "Updated"], rows)
+                    if rows
+                    else "No prompt templates found.",
+                ),
+                data={
+                    "requires_template_id": True,
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ],
+                },
+            )
+
+        template_obj, err = resolve_prompt_template(
+            params.template_id, context.organization, context.workspace
+        )
+        if err:
+            templates = PromptTemplate.objects.order_by("-updated_at")[:10]
+            rows = [
+                [
+                    f"`{template.id}`",
+                    truncate(template.name, 40),
+                    format_datetime(template.updated_at),
+                ]
+                for template in templates
+            ]
+            return ToolResult(
+                content=section(
+                    "Prompt Template Not Found",
+                    (
+                        f"{err}\n\n"
+                        + (
+                            markdown_table(["ID", "Name", "Updated"], rows)
+                            if rows
+                            else "No prompt templates found."
+                        )
+                    ),
+                ),
+                data={
+                    "template_id": params.template_id,
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ],
+                },
+            )
+
         try:
-            template = PromptTemplate.objects.get(id=params.template_id)
+            template = PromptTemplate.objects.get(id=template_obj.id)
         except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
+            return ToolResult.not_found("Prompt Template", str(template_obj.id))
 
         configs = PromptEvalConfig.objects.filter(
             prompt_template=template, deleted=False

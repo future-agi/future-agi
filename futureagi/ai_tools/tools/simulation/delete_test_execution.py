@@ -1,4 +1,3 @@
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -6,25 +5,28 @@ from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
+    format_datetime,
+    format_status,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
 
 
 class DeleteTestExecutionInput(PydanticBaseModel):
-    test_execution_id: Optional[UUID] = Field(
+    test_execution_id: UUID | None = Field(
         default=None,
         description="The UUID of a single test execution to delete.",
     )
-    run_test_id: Optional[UUID] = Field(
+    run_test_id: UUID | None = Field(
         default=None,
         description=(
             "The UUID of the RunTest for bulk delete operations. "
             "Use with test_execution_ids or select_all."
         ),
     )
-    test_execution_ids: Optional[List[UUID]] = Field(
+    test_execution_ids: list[UUID] | None = Field(
         default=None,
         description="List of test execution IDs to delete (for bulk operations).",
     )
@@ -52,11 +54,57 @@ class DeleteTestExecutionTool(BaseTool):
         self, params: DeleteTestExecutionInput, context: ToolContext
     ) -> ToolResult:
         from django.utils import timezone
-
         from simulate.models.test_execution import TestExecution
 
         now = timezone.now()
         non_deletable_statuses = ["pending", "running", "cancelling"]
+
+        def candidate_executions_result(title: str, detail: str = "") -> ToolResult:
+            executions = list(
+                TestExecution.objects.select_related("run_test")
+                .filter(run_test__organization=context.organization, deleted=False)
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data = []
+            for execution in executions:
+                rows.append(
+                    [
+                        f"`{execution.id}`",
+                        execution.run_test.name if execution.run_test else "—",
+                        format_status(execution.status),
+                        format_datetime(execution.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(execution.id),
+                        "run_test_id": (
+                            str(execution.run_test_id)
+                            if execution.run_test_id
+                            else None
+                        ),
+                        "status": execution.status,
+                    }
+                )
+            body = detail or (
+                "Provide `test_execution_id`, or provide `run_test_id` with "
+                "`test_execution_ids` or `select_all=true`."
+            )
+            if rows:
+                body += "\n\n" + markdown_table(
+                    ["Execution ID", "Run Test", "Status", "Created"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo test executions found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_test_execution_id_or_run_test_id": True,
+                    "executions": data,
+                },
+            )
 
         # Single deletion mode
         if params.test_execution_id and not params.run_test_id:
@@ -66,8 +114,9 @@ class DeleteTestExecutionTool(BaseTool):
                     run_test__organization=context.organization,
                 )
             except TestExecution.DoesNotExist:
-                return ToolResult.not_found(
-                    "Test Execution", str(params.test_execution_id)
+                return candidate_executions_result(
+                    "Test Execution Not Found",
+                    f"Test execution `{params.test_execution_id}` was not found.",
                 )
 
             if execution.status in non_deletable_statuses:
@@ -110,7 +159,10 @@ class DeleteTestExecutionTool(BaseTool):
                     deleted=False,
                 )
             except RunTest.DoesNotExist:
-                return ToolResult.not_found("Run Test", str(params.run_test_id))
+                return candidate_executions_result(
+                    "Run Test Not Found",
+                    f"Run test `{params.run_test_id}` was not found.",
+                )
 
             if params.select_all:
                 executions = TestExecution.objects.filter(
@@ -160,7 +212,4 @@ class DeleteTestExecutionTool(BaseTool):
                 },
             )
 
-        return ToolResult.error(
-            "Either test_execution_id or run_test_id must be provided.",
-            error_code="VALIDATION_ERROR",
-        )
+        return candidate_executions_result("Test Execution Required")

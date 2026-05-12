@@ -6,55 +6,77 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import format_number, key_value_block, section
+from ai_tools.formatting import (
+    format_datetime,
+    format_number,
+    key_value_block,
+    markdown_table,
+    section,
+    truncate,
+)
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import uuid_text
 
 logger = structlog.get_logger(__name__)
 
 
 class SubmitTraceScoresInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to score")
-    overall_score: float = Field(
+    trace_id: Optional[str] = Field(
+        default=None,
+        description="The UUID of the trace to score. Omit to list candidate traces.",
+    )
+    overall_score: Optional[float] = Field(
+        default=None,
         ge=1.0,
         le=5.0,
         description="Overall quality score (1-5). Most traces should be 2-4.",
     )
-    factual_grounding_score: float = Field(
+    factual_grounding_score: Optional[float] = Field(
+        default=None,
         ge=1.0,
         le=5.0,
         description="Accuracy and truthfulness score (1-5)",
     )
-    factual_grounding_reason: str = Field(
+    factual_grounding_reason: Optional[str] = Field(
+        default=None,
         description="Explanation for the factual grounding score",
     )
-    privacy_and_safety_score: float = Field(
+    privacy_and_safety_score: Optional[float] = Field(
+        default=None,
         ge=1.0,
         le=5.0,
         description="Security and ethical compliance score (1-5)",
     )
-    privacy_and_safety_reason: str = Field(
+    privacy_and_safety_reason: Optional[str] = Field(
+        default=None,
         description="Explanation for the privacy and safety score",
     )
-    instruction_adherence_score: float = Field(
+    instruction_adherence_score: Optional[float] = Field(
+        default=None,
         ge=1.0,
         le=5.0,
         description="How well the agent followed user instructions (1-5)",
     )
-    instruction_adherence_reason: str = Field(
+    instruction_adherence_reason: Optional[str] = Field(
+        default=None,
         description="Explanation for the instruction adherence score",
     )
-    optimal_plan_execution_score: float = Field(
+    optimal_plan_execution_score: Optional[float] = Field(
+        default=None,
         ge=1.0,
         le=5.0,
         description="Efficiency and correctness of execution (1-5)",
     )
-    optimal_plan_execution_reason: str = Field(
+    optimal_plan_execution_reason: Optional[str] = Field(
+        default=None,
         description="Explanation for the optimal plan execution score",
     )
-    insights: str = Field(
+    insights: Optional[str] = Field(
+        default=None,
         description="Key takeaways about this trace's quality",
     )
-    recommended_priority: str = Field(
+    recommended_priority: Optional[str] = Field(
+        default=None,
         description="Overall priority: HIGH, MEDIUM, or LOW",
     )
     analysis_id: Optional[UUID] = Field(
@@ -85,6 +107,19 @@ class SubmitTraceScoresTool(BaseTool):
         from tracer.models.trace import Trace, TraceErrorAnalysisStatus
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
 
+        missing = _missing_score_fields(params)
+        trace_id = uuid_text(params.trace_id)
+        if missing or not trace_id:
+            return _trace_score_requirements_result(
+                context,
+                detail=(
+                    "Provide all scoring fields before saving trace scores. "
+                    f"Missing: {', '.join(f'`{field}`' for field in missing)}."
+                    if missing
+                    else "Provide `trace_id` for the trace to score."
+                ),
+            )
+
         # Validate priority
         priority = params.recommended_priority.upper()
         if priority not in ("HIGH", "MEDIUM", "LOW"):
@@ -96,11 +131,15 @@ class SubmitTraceScoresTool(BaseTool):
         # Verify trace access
         try:
             trace = Trace.objects.select_related("project").get(
-                id=params.trace_id,
+                id=trace_id,
                 project__organization=context.organization,
             )
         except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+            return _trace_score_requirements_result(
+                context,
+                title="Trace Not Found For Scoring",
+                detail=f"Trace `{params.trace_id}` was not found in this workspace.",
+            )
 
         # Find the analysis record
         analysis = None
@@ -170,11 +209,11 @@ class SubmitTraceScoresTool(BaseTool):
             from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
             db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(str(params.trace_id))
+            db.ingest_trace_error_embeddings(trace_id)
         except Exception as e:
             logger.warning(
                 "embedding_ingestion_failed",
-                trace_id=str(params.trace_id),
+                trace_id=trace_id,
                 error=str(e),
             )
 
@@ -195,7 +234,7 @@ class SubmitTraceScoresTool(BaseTool):
             [
                 ("Status", "Scores Saved & Clustering Triggered"),
                 ("Analysis ID", f"`{analysis.id}`"),
-                ("Trace", f"`{params.trace_id}`"),
+                ("Trace", f"`{trace_id}`"),
                 ("Overall Score", format_number(params.overall_score)),
                 ("Factual Grounding", format_number(params.factual_grounding_score)),
                 ("Privacy & Safety", format_number(params.privacy_and_safety_score)),
@@ -217,8 +256,87 @@ class SubmitTraceScoresTool(BaseTool):
             data={
                 "status": "accepted",
                 "analysis_id": str(analysis.id),
+                "trace_id": trace_id,
                 "overall_score": params.overall_score,
                 "total_errors": analysis.total_errors,
                 "clustering_triggered": True,
             },
         )
+
+
+def _missing_score_fields(params: SubmitTraceScoresInput) -> list[str]:
+    required_fields = [
+        "trace_id",
+        "overall_score",
+        "factual_grounding_score",
+        "factual_grounding_reason",
+        "privacy_and_safety_score",
+        "privacy_and_safety_reason",
+        "instruction_adherence_score",
+        "instruction_adherence_reason",
+        "optimal_plan_execution_score",
+        "optimal_plan_execution_reason",
+        "insights",
+        "recommended_priority",
+    ]
+    missing = []
+    for field in required_fields:
+        value = getattr(params, field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(field)
+    return missing
+
+
+def _trace_score_requirements_result(
+    context: ToolContext,
+    title: str = "Trace Scores Required",
+    detail: str = "",
+) -> ToolResult:
+    from tracer.models.trace import Trace
+
+    traces = (
+        Trace.objects.select_related("project")
+        .filter(project__organization=context.organization)
+        .order_by("-created_at")[:10]
+    )
+    rows = []
+    data = []
+    for trace in traces:
+        project_name = trace.project.name if trace.project else "-"
+        rows.append(
+            [
+                f"`{trace.id}`",
+                truncate(getattr(trace, "name", "") or "-", 42),
+                truncate(project_name, 32),
+                format_datetime(trace.created_at),
+            ]
+        )
+        data.append(
+            {
+                "id": str(trace.id),
+                "name": getattr(trace, "name", "") or None,
+                "project_id": str(trace.project_id) if trace.project_id else None,
+            }
+        )
+
+    rubric = (
+        "Required fields: `trace_id`, `overall_score`, "
+        "`factual_grounding_score`, `factual_grounding_reason`, "
+        "`privacy_and_safety_score`, `privacy_and_safety_reason`, "
+        "`instruction_adherence_score`, `instruction_adherence_reason`, "
+        "`optimal_plan_execution_score`, `optimal_plan_execution_reason`, "
+        "`insights`, and `recommended_priority` (`HIGH`, `MEDIUM`, or `LOW`)."
+    )
+    body = (detail + "\n\n" if detail else "") + rubric
+    if rows:
+        body += "\n\n" + markdown_table(
+            ["Trace ID", "Name", "Project", "Created"],
+            rows,
+        )
+    else:
+        body += "\n\nNo traces found in this workspace."
+
+    return ToolResult(
+        content=section(title, body),
+        data={"requires_scores": True, "traces": data},
+    )

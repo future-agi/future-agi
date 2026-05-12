@@ -2,6 +2,7 @@ from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
+from pydantic import field_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -49,6 +50,22 @@ class CreatePromptTemplateInput(PydanticBaseModel):
         description="UUID of the folder to place this template in",
     )
 
+    @field_validator("variable_values", mode="before")
+    @classmethod
+    def normalize_variable_values(cls, value):
+        """Treat null variable values as an empty allowed-values list."""
+        if not isinstance(value, dict):
+            return value
+        return {key: ([] if val is None else val) for key, val in value.items()}
+
+    @field_validator("prompt_config", mode="before")
+    @classmethod
+    def normalize_prompt_config(cls, value):
+        """Accept a single config object as shorthand for a one-item config list."""
+        if isinstance(value, dict):
+            return [value]
+        return value
+
 
 @register_tool
 class CreatePromptTemplateTool(BaseTool):
@@ -65,10 +82,50 @@ class CreatePromptTemplateTool(BaseTool):
         self, params: CreatePromptTemplateInput, context: ToolContext
     ) -> ToolResult:
 
+        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
         from model_hub.services.prompt_service import (
             ServiceError,
             create_prompt_template,
         )
+
+        existing_template = (
+            PromptTemplate.objects.filter(
+                name=params.name,
+                organization=context.organization,
+                workspace=context.workspace,
+                deleted=False,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if existing_template:
+            existing_version = (
+                PromptVersion.objects.filter(
+                    original_template=existing_template,
+                    deleted=False,
+                )
+                .order_by("-is_default", "-created_at")
+                .first()
+            )
+            content = section(
+                "Prompt Template Already Exists",
+                key_value_block(
+                    [
+                        ("ID", f"`{existing_template.id}`"),
+                        ("Name", existing_template.name),
+                        ("Version ID", f"`{existing_version.id}`" if existing_version else "—"),
+                    ]
+                ),
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "template_id": str(existing_template.id),
+                    "name": existing_template.name,
+                    "version_id": str(existing_version.id) if existing_version else None,
+                    "already_exists": True,
+                },
+            )
 
         # Auto-wrap flat message arrays into proper config format.
         # Users often pass [{"role": "system", "content": "..."}] instead of

@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,10 +7,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.simulation.update_persona import _resolve_persona
 
 
 class DeletePersonaInput(PydanticBaseModel):
-    persona_id: UUID = Field(description="The UUID of the persona to delete")
+    persona_id: str = Field(
+        default="",
+        description="Persona name or UUID to delete. If omitted, candidates are returned.",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms deletion.",
+    )
 
 
 @register_tool
@@ -25,19 +31,32 @@ class DeletePersonaTool(BaseTool):
     def execute(self, params: DeletePersonaInput, context: ToolContext) -> ToolResult:
         from django.utils import timezone
 
-        from simulate.models.persona import Persona
-
-        try:
-            persona = Persona.objects.get(
-                id=params.persona_id, organization=context.organization
-            )
-        except Persona.DoesNotExist:
-            return ToolResult.not_found("Persona", str(params.persona_id))
+        persona, unresolved = _resolve_persona(params.persona_id, context)
+        if unresolved:
+            return unresolved
 
         if persona.persona_type == "system":
             return ToolResult.error(
                 "System personas cannot be deleted. Only workspace personas can be removed.",
                 error_code="PERMISSION_DENIED",
+            )
+
+        if not params.confirm_delete:
+            info = key_value_block(
+                [
+                    ("ID", f"`{persona.id}`"),
+                    ("Name", persona.name),
+                    ("Status", "Awaiting confirmation"),
+                ]
+            )
+            return ToolResult(
+                content=section("Confirm Persona Deletion", info),
+                data={
+                    "requires_confirmation": True,
+                    "confirm_delete": True,
+                    "id": str(persona.id),
+                    "name": persona.name,
+                },
             )
 
         persona_name = persona.name
@@ -47,7 +66,7 @@ class DeletePersonaTool(BaseTool):
 
         info = key_value_block(
             [
-                ("ID", f"`{params.persona_id}`"),
+                ("ID", f"`{persona.id}`"),
                 ("Name", persona_name),
                 ("Status", "Deleted"),
             ]
@@ -57,5 +76,5 @@ class DeletePersonaTool(BaseTool):
 
         return ToolResult(
             content=content,
-            data={"id": str(params.persona_id), "name": persona_name, "deleted": True},
+            data={"id": str(persona.id), "name": persona_name, "deleted": True},
         )

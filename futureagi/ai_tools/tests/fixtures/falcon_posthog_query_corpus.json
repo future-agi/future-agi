@@ -1,0 +1,262 @@
+{
+  "source": {
+    "system": "posthog",
+    "organization": "Future AGI",
+    "organization_slug": "future-agi",
+    "project": "Prod US",
+    "project_id": "345959",
+    "lookback_days": 180,
+    "extracted_at": "2026-05-08",
+    "events_checked": [
+      "api_request",
+      "$autocapture",
+      "$pageview",
+      "$web_vitals",
+      "$pageleave",
+      "$dead_click",
+      "$groupidentify",
+      "$set",
+      "$exception",
+      "$rageclick",
+      "$identify",
+      "ad_pixel_blocked",
+      "docs_page_feedback"
+    ],
+    "falcon_api_paths_seen": [
+      "/falcon-ai/conversations/",
+      "/falcon-ai/conversations/{id}/",
+      "/falcon-ai/conversations/{id}/stream-status/",
+      "/falcon-ai/mcp-connectors/",
+      "/falcon-ai/skills/",
+      "/falcon-ai/files/upload/"
+    ],
+    "content_source": "$autocapture.properties.$el_text on https://app.futureagi.com/dashboard/falcon-ai",
+    "caveat": "PostHog did not expose full Falcon chat request bodies in api_request events. This corpus is a partial set of visible/clicked UI text and prompt text; many entries are truncated."
+  },
+  "queries": [
+    {
+      "text": "build an agent for me which qualifies sales lead",
+      "count": 4,
+      "first_seen": "2026-04-09",
+      "last_seen": "2026-04-17",
+      "workflow_tags": ["simulation", "agent_definition", "sales"]
+    },
+    {
+      "text": "can you tell me how good andaman islands is",
+      "count": 3,
+      "first_seen": "2026-04-27",
+      "last_seen": "2026-05-06",
+      "workflow_tags": ["web", "docs", "general_question"]
+    },
+    {
+      "text": "why can't i see a project here?",
+      "count": 3,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["admin", "workspace", "troubleshooting"]
+    },
+    {
+      "text": "Here can you make configure an evaluation with the",
+      "count": 3,
+      "first_seen": "2026-04-27",
+      "last_seen": "2026-04-28",
+      "workflow_tags": ["evaluations", "configuration"]
+    },
+    {
+      "text": "Describe this image",
+      "count": 3,
+      "first_seen": "2026-04-20",
+      "last_seen": "2026-04-20",
+      "workflow_tags": ["files", "vision", "multimodal"]
+    },
+    {
+      "text": "In feed section which shows issues or what can be",
+      "count": 3,
+      "first_seen": "2026-04-16",
+      "last_seen": "2026-04-17",
+      "workflow_tags": ["tracing", "feed", "issue_analysis"]
+    },
+    {
+      "text": "in my monitoring - smart ATS project there is a t",
+      "count": 3,
+      "first_seen": "2026-04-15",
+      "last_seen": "2026-04-17",
+      "workflow_tags": ["tracing", "project_context", "smart_ats"]
+    },
+    {
+      "text": "In my smart ATS project I want to apply OCR eval d",
+      "count": 3,
+      "first_seen": "2026-03-24",
+      "last_seen": "2026-04-17",
+      "workflow_tags": ["evaluations", "ocr", "smart_ats"]
+    },
+    {
+      "text": "Generate a dataset of 10 customer support conversa",
+      "count": 3,
+      "first_seen": "2026-04-02",
+      "last_seen": "2026-04-07",
+      "workflow_tags": ["datasets", "synthetic_data", "customer_support"]
+    },
+    {
+      "text": "/fix-with-falcon Fix this failing evaluation. Con",
+      "count": 2,
+      "first_seen": "2026-04-27",
+      "last_seen": "2026-05-02",
+      "workflow_tags": ["fix_with_falcon", "evaluations", "debugging"]
+    },
+    {
+      "text": "/fix-with-falcon This voice call has issues. Analy",
+      "count": 2,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["fix_with_falcon", "voice", "simulation", "tracing"]
+    },
+    {
+      "text": "how do I export all the annotation results",
+      "count": 2,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["annotations", "export", "docs"]
+    },
+    {
+      "text": "Add the variables from remaining to here",
+      "count": 2,
+      "first_seen": "2026-04-10",
+      "last_seen": "2026-04-10",
+      "workflow_tags": ["prompts", "variables"]
+    },
+    {
+      "text": "evaluate this output: \"old macdonald had a farm\" f",
+      "count": 2,
+      "first_seen": "2026-04-07",
+      "last_seen": "2026-04-07",
+      "workflow_tags": ["evaluations", "single_output"]
+    },
+    {
+      "text": "New RAG pipeline for legal review. No evals. Build",
+      "count": 2,
+      "first_seen": "2026-04-07",
+      "last_seen": "2026-04-07",
+      "workflow_tags": ["rag", "evaluations", "legal", "pipeline"]
+    },
+    {
+      "text": "list all datasets",
+      "count": 1,
+      "first_seen": "2026-05-04",
+      "last_seen": "2026-05-04",
+      "workflow_tags": ["datasets", "list"]
+    },
+    {
+      "text": "can you list all the datasets?",
+      "count": 1,
+      "first_seen": "2026-05-04",
+      "last_seen": "2026-05-04",
+      "workflow_tags": ["datasets", "list"]
+    },
+    {
+      "text": "fix my agent based on errors and evals",
+      "count": 1,
+      "first_seen": "2026-05-04",
+      "last_seen": "2026-05-04",
+      "workflow_tags": ["simulation", "evaluations", "tracing", "repair"]
+    },
+    {
+      "text": "i need to see ai_outcome. its digged very a lot in",
+      "count": 1,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["tracing", "span_attributes", "field_search"]
+    },
+    {
+      "text": "Create an evaluation for intent detection and add",
+      "count": 1,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["evaluations", "intent_detection"]
+    },
+    {
+      "text": "I want to make a composite eval and for the pasted",
+      "count": 1,
+      "first_seen": "2026-04-29",
+      "last_seen": "2026-04-29",
+      "workflow_tags": ["evaluations", "composite_eval"]
+    },
+    {
+      "text": "Provide me with a view of date of calls on x axis,",
+      "count": 1,
+      "first_seen": "2026-04-28",
+      "last_seen": "2026-04-28",
+      "workflow_tags": ["dashboards", "visualization", "calls"]
+    },
+    {
+      "text": "create a dataset with name cricket and add column",
+      "count": 1,
+      "first_seen": "2026-04-27",
+      "last_seen": "2026-04-27",
+      "workflow_tags": ["datasets", "schema"]
+    },
+    {
+      "text": "what is this",
+      "count": 1,
+      "first_seen": "2026-04-26",
+      "last_seen": "2026-04-26",
+      "workflow_tags": ["context", "ambiguous"]
+    },
+    {
+      "text": "cany ou create a new prompt template?",
+      "count": 1,
+      "first_seen": "2026-04-23",
+      "last_seen": "2026-04-23",
+      "workflow_tags": ["prompts", "create", "typo"]
+    },
+    {
+      "text": "summarise all the suggestions in the feed to impro",
+      "count": 1,
+      "first_seen": "2026-04-17",
+      "last_seen": "2026-04-17",
+      "workflow_tags": ["tracing", "feed", "summarization"]
+    },
+    {
+      "text": "i want to wire respnse form node 2 into node 3",
+      "count": 1,
+      "first_seen": "2026-04-09",
+      "last_seen": "2026-04-09",
+      "workflow_tags": ["workflows", "graph", "typo"]
+    },
+    {
+      "text": "Create me a dataset",
+      "count": 1,
+      "first_seen": "2026-04-09",
+      "last_seen": "2026-04-09",
+      "workflow_tags": ["datasets", "create", "ambiguous"]
+    },
+    {
+      "text": "Create an custom eval for with name \"CTA Action Ty",
+      "count": 1,
+      "first_seen": "2026-04-07",
+      "last_seen": "2026-04-07",
+      "workflow_tags": ["evaluations", "custom_eval"]
+    },
+    {
+      "text": "can you give me names of dataset that i have curre",
+      "count": 1,
+      "first_seen": "2026-03-31",
+      "last_seen": "2026-03-31",
+      "workflow_tags": ["datasets", "list", "typo"]
+    },
+    {
+      "text": "how to build a voice eval",
+      "count": 1,
+      "first_seen": "2026-03-30",
+      "last_seen": "2026-03-30",
+      "workflow_tags": ["docs", "evaluations", "voice"]
+    },
+    {
+      "text": "create a dataset with 3 columns named name phonenu",
+      "count": 1,
+      "first_seen": "2026-03-26",
+      "last_seen": "2026-03-26",
+      "workflow_tags": ["datasets", "schema", "typo"]
+    }
+  ]
+}

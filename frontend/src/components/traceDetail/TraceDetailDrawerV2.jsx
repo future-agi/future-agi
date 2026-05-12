@@ -298,6 +298,24 @@ const TraceDetailDrawerV2 = ({
   const isFalconOpen = useFalconStore((s) => s.isSidebarOpen);
   const falconOffsetPx = isFalconOpen ? FalconAISidebar.SIDEBAR_WIDTH : 0;
 
+  useEffect(() => {
+    if (!open || !traceId) return undefined;
+
+    const sourceId = `trace-drawer:${traceId}`;
+    useFalconStore.getState().setActivePageContext({
+      page: "tracing",
+      entity_type: "trace",
+      entity_id: traceId,
+      project_id: projectId || null,
+      source: "trace_drawer",
+      source_id: sourceId,
+    });
+
+    return () => {
+      useFalconStore.getState().clearActivePageContext(sourceId);
+    };
+  }, [open, traceId, projectId]);
+
   // Action dialog/drawer state
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
   const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);

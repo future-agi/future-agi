@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,10 +13,17 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import candidate_agents_result, resolve_agent
 
 
 class GetAgentInput(PydanticBaseModel):
-    agent_id: UUID = Field(description="The UUID of the agent definition to retrieve")
+    agent_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Agent UUID or exact agent name to retrieve. Omit to list candidate "
+            "agents with IDs."
+        ),
+    )
     include_test_history: bool = Field(
         default=True, description="Include recent test execution history"
     )
@@ -33,15 +40,16 @@ class GetAgentTool(BaseTool):
     input_model = GetAgentInput
 
     def execute(self, params: GetAgentInput, context: ToolContext) -> ToolResult:
+        if not params.agent_id:
+            return candidate_agents_result(context)
 
-        from simulate.models.agent_definition import AgentDefinition
-
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id, organization=context.organization
-            )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
+        agent, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required",
+        )
+        if unresolved:
+            return unresolved
 
         info = key_value_block(
             [

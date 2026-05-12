@@ -17,7 +17,8 @@ from ai_tools.registry import register_tool
 
 class GetExperimentResultsInput(PydanticBaseModel):
     experiment_id: str = Field(
-        description="Name or UUID of the experiment to retrieve results for"
+        default="",
+        description="Name or UUID of the experiment to retrieve results for. Omit it to list candidate experiments.",
     )
 
 
@@ -41,6 +42,39 @@ class GetExperimentResultsTool(BaseTool):
             ExperimentDatasetTable,
             ExperimentsTable,
         )
+
+        if not params.experiment_id:
+            experiments = (
+                ExperimentsTable.objects.select_related("dataset")
+                .filter(dataset__organization=context.organization)
+                .order_by("-created_at")[:10]
+            )
+            rows = [
+                [
+                    f"`{experiment.id}`",
+                    experiment.name,
+                    experiment.status or "—",
+                    format_datetime(experiment.created_at),
+                ]
+                for experiment in experiments
+            ]
+            if not rows:
+                return ToolResult(
+                    content=section("Experiment Candidates", "No experiments found."),
+                    data={"experiments": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Experiment Candidates",
+                    markdown_table(["ID", "Name", "Status", "Created"], rows),
+                ),
+                data={
+                    "experiments": [
+                        {"id": str(experiment.id), "name": experiment.name}
+                        for experiment in experiments
+                    ]
+                },
+            )
 
         experiment_obj, err = resolve_experiment(
             params.experiment_id, context.organization

@@ -1,5 +1,4 @@
-from uuid import UUID
-
+from django.core.exceptions import ValidationError
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -13,10 +12,96 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import clean_ref, uuid_text
+
+
+def _candidate_sessions_result(
+    context: ToolContext,
+    title: str = "Session Required",
+    detail: str = "",
+    search: str = "",
+) -> ToolResult:
+    from django.db.models import Q
+    from tracer.models.trace_session import TraceSession
+
+    qs = TraceSession.objects.select_related("project").filter(
+        project__organization=context.organization
+    )
+    if context.workspace:
+        qs = qs.filter(
+            Q(project__workspace=context.workspace) | Q(project__workspace__isnull=True)
+        )
+    search = clean_ref(search)
+    if search:
+        qs = qs.filter(name__icontains=search)
+    sessions = list(qs.order_by("-created_at")[:10])
+    rows = [
+        [
+            f"`{session.id}`",
+            truncate(session.name or "-", 36),
+            session.project.name if session.project else "-",
+            format_datetime(session.created_at),
+        ]
+        for session in sessions
+    ]
+    body = detail or ""
+    if rows:
+        body = (body + "\n\n" if body else "") + markdown_table(
+            ["ID", "Name", "Project", "Created"],
+            rows,
+        )
+    else:
+        body = body or "No trace sessions found in this workspace."
+    return ToolResult(
+        content=section(title, body),
+        data={
+            "requires_session_id": True,
+            "sessions": [
+                {"id": str(session.id), "name": session.name} for session in sessions
+            ],
+        },
+    )
+
+
+def _resolve_session(session_ref: str, context: ToolContext):
+    from django.db.models import Q
+    from tracer.models.trace_session import TraceSession
+
+    ref = clean_ref(session_ref)
+    if not ref:
+        return None, _candidate_sessions_result(context)
+    qs = TraceSession.objects.select_related("project").filter(
+        project__organization=context.organization
+    )
+    if context.workspace:
+        qs = qs.filter(
+            Q(project__workspace=context.workspace) | Q(project__workspace__isnull=True)
+        )
+    ref_uuid = uuid_text(ref)
+    try:
+        if ref_uuid:
+            return qs.get(id=ref_uuid), None
+        exact = qs.filter(name__iexact=ref)
+        if exact.count() == 1:
+            return exact.first(), None
+        fuzzy = qs.filter(name__icontains=ref)
+        if fuzzy.count() == 1:
+            return fuzzy.first(), None
+    except (TraceSession.DoesNotExist, ValidationError, ValueError, TypeError):
+        pass
+    return None, _candidate_sessions_result(
+        context,
+        "Session Not Found",
+        f"Session `{ref}` was not found. Use one of these IDs instead.",
+        search="" if ref_uuid else ref,
+    )
 
 
 class GetSessionInput(PydanticBaseModel):
-    session_id: UUID = Field(description="The UUID of the session to retrieve")
+    session_id: str = Field(
+        default="",
+        description="Trace session name or UUID to retrieve",
+    )
 
 
 @register_tool
@@ -32,14 +117,10 @@ class GetSessionTool(BaseTool):
     def execute(self, params: GetSessionInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.trace import Trace
-        from tracer.models.trace_session import TraceSession
 
-        try:
-            session = TraceSession.objects.select_related("project").get(
-                id=params.session_id, project__organization=context.organization
-            )
-        except TraceSession.DoesNotExist:
-            return ToolResult.not_found("Session", str(params.session_id))
+        session, unresolved = _resolve_session(params.session_id, context)
+        if unresolved:
+            return unresolved
 
         # Verify the session's project is accessible in the current workspace
         if session.project_id:

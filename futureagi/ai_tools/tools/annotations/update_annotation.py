@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,31 +9,36 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import resolve_labels, resolve_users
+from ai_tools.tools.annotations._utils import resolve_annotation
 
 
 class UpdateAnnotationInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation task to update")
+    annotation_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or exact name of the annotation task to update",
+    )
     name: Optional[str] = Field(
         default=None,
         description="New name for the annotation task",
         min_length=1,
         max_length=255,
     )
-    add_user_ids: Optional[list[UUID]] = Field(
+    add_user_ids: Optional[list[str]] = Field(
         default=None,
-        description="User UUIDs to add as annotators",
+        description="User UUIDs, emails, or exact names to add as annotators",
     )
-    remove_user_ids: Optional[list[UUID]] = Field(
+    remove_user_ids: Optional[list[str]] = Field(
         default=None,
-        description="User UUIDs to remove from annotators",
+        description="User UUIDs, emails, or exact names to remove from annotators",
     )
-    add_label_ids: Optional[list[UUID]] = Field(
+    add_label_ids: Optional[list[str]] = Field(
         default=None,
-        description="Annotation label UUIDs to add to this task",
+        description="Annotation label UUIDs or exact names to add to this task",
     )
-    remove_label_ids: Optional[list[UUID]] = Field(
+    remove_label_ids: Optional[list[str]] = Field(
         default=None,
-        description="Annotation label UUIDs to remove from this task",
+        description="Annotation label UUIDs or exact names to remove from this task",
     )
     responses: Optional[int] = Field(
         default=None,
@@ -59,14 +63,48 @@ class UpdateAnnotationTool(BaseTool):
     ) -> ToolResult:
         from django.utils import timezone
 
-        from accounts.models import User
-        from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
         from model_hub.models.develop_dataset import Cell, Column
 
-        try:
-            annotation = Annotations.objects.get(id=params.annotation_id)
-        except Annotations.DoesNotExist:
-            return ToolResult.not_found("Annotation", str(params.annotation_id))
+        annotation, unresolved = resolve_annotation(
+            params.annotation_id,
+            context,
+            title="Annotation Task Required For Update",
+        )
+        if unresolved:
+            return unresolved
+
+        add_users = []
+        remove_users = []
+        labels_to_add = []
+        labels_to_remove = []
+
+        if params.add_user_ids:
+            add_users, missing = resolve_users(params.add_user_ids, context)
+            if missing:
+                return ToolResult.validation_error(
+                    f"User(s) not found: {', '.join(missing)}"
+                )
+
+        if params.remove_user_ids:
+            remove_users, missing = resolve_users(params.remove_user_ids, context)
+            if missing:
+                return ToolResult.validation_error(
+                    f"User(s) not found: {', '.join(missing)}"
+                )
+
+        if params.remove_label_ids:
+            labels_to_remove, missing = resolve_labels(params.remove_label_ids, context)
+            if missing:
+                return ToolResult.validation_error(
+                    f"Label(s) not found: {', '.join(missing)}"
+                )
+
+        if params.add_label_ids:
+            labels_to_add, missing = resolve_labels(params.add_label_ids, context)
+            if missing:
+                return ToolResult.validation_error(
+                    f"Label(s) not found: {', '.join(missing)}"
+                )
 
         changes = []
 
@@ -78,26 +116,18 @@ class UpdateAnnotationTool(BaseTool):
             annotation.responses = params.responses
             changes.append(f"Responses per row → {params.responses}")
 
-        annotation.save()
+        if params.name or params.responses is not None:
+            annotation.save()
 
-        if params.add_user_ids:
-            users = User.objects.filter(
-                id__in=params.add_user_ids,
-                organization=context.organization,
-            )
-            annotation.assigned_users.add(*users)
-            changes.append(f"Added {users.count()} user(s)")
+        if add_users:
+            annotation.assigned_users.add(*add_users)
+            changes.append(f"Added {len(add_users)} user(s)")
 
-        if params.remove_user_ids:
-            users = User.objects.filter(id__in=params.remove_user_ids)
-            annotation.assigned_users.remove(*users)
-            changes.append(f"Removed {users.count()} user(s)")
+        if remove_users:
+            annotation.assigned_users.remove(*remove_users)
+            changes.append(f"Removed {len(remove_users)} user(s)")
 
-        if params.remove_label_ids:
-            # Remove labels and clean up their columns (matches view behavior)
-            labels_to_remove = list(
-                AnnotationsLabels.objects.filter(id__in=params.remove_label_ids)
-            )
+        if labels_to_remove:
             now = timezone.now()
             for label in labels_to_remove:
                 source_id = f"{annotation.id}-sourceid-{label.id}"
@@ -132,14 +162,7 @@ class UpdateAnnotationTool(BaseTool):
             annotation.labels.remove(*labels_to_remove)
             changes.append(f"Removed {len(labels_to_remove)} label(s) + columns")
 
-        if params.add_label_ids:
-            # Add labels and create columns (matches view behavior)
-            labels_to_add = list(
-                AnnotationsLabels.objects.filter(
-                    id__in=params.add_label_ids,
-                    organization=context.organization,
-                )
-            )
+        if labels_to_add:
             annotation.labels.add(*labels_to_add)
 
             from model_hub.services.annotation_service import process_annotation_columns

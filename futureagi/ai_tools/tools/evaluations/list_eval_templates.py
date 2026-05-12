@@ -1,7 +1,6 @@
-from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -16,14 +15,22 @@ from ai_tools.registry import register_tool
 class ListEvalTemplatesInput(PydanticBaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    owner: Optional[str] = Field(
+    owner: str | None = Field(
         default=None,
         description="Filter by owner: 'system' (built-in) or 'user' (custom)",
     )
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search eval templates by name (case-insensitive)",
     )
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def clamp_limit(cls, value):
+        try:
+            return min(max(int(value), 1), 100)
+        except (TypeError, ValueError):
+            return 20
 
 
 @register_tool
@@ -43,7 +50,6 @@ class ListEvalTemplatesTool(BaseTool):
     ) -> ToolResult:
 
         from django.db.models import Q
-
         from model_hub.models.evals_metric import EvalTemplate
 
         qs = EvalTemplate.no_workspace_objects.filter(

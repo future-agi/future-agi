@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -10,14 +8,19 @@ from ai_tools.formatting import (
     format_number,
     format_status,
     key_value_block,
+    markdown_table,
     section,
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
 
 
 class GetEvaluationInput(PydanticBaseModel):
-    evaluation_id: UUID = Field(description="The UUID of the evaluation to retrieve")
+    evaluation_id: str = Field(
+        default="",
+        description="The UUID of the evaluation to retrieve. If omitted, candidates are returned.",
+    )
 
 
 @register_tool
@@ -34,12 +37,66 @@ class GetEvaluationTool(BaseTool):
 
         from model_hub.models.evaluation import Evaluation
 
+        def candidate_evaluations_result(title: str, detail: str = "") -> ToolResult:
+            evaluations = list(
+                Evaluation.objects.select_related("eval_template")
+                .filter(organization=context.organization)
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data = []
+            for candidate in evaluations:
+                template_name = (
+                    candidate.eval_template.name
+                    if candidate.eval_template
+                    else "evaluation"
+                )
+                rows.append(
+                    [
+                        f"`{candidate.id}`",
+                        truncate(template_name, 40),
+                        format_status(candidate.status),
+                        format_datetime(candidate.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(candidate.id),
+                        "template_name": template_name,
+                        "status": candidate.status,
+                    }
+                )
+            body = detail or "Provide `evaluation_id` to inspect an evaluation."
+            if rows:
+                body += "\n\n" + markdown_table(
+                    ["Evaluation ID", "Template", "Status", "Created"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo evaluations found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={"requires_evaluation_id": True, "evaluations": data},
+            )
+
+        evaluation_ref = str(params.evaluation_id or "").strip()
+        if not evaluation_ref:
+            return candidate_evaluations_result("Evaluation Required")
+        if not is_uuid(evaluation_ref):
+            return candidate_evaluations_result(
+                "Evaluation Not Found",
+                f"`{evaluation_ref}` is not a valid evaluation UUID.",
+            )
+
         try:
             ev = Evaluation.objects.select_related("eval_template").get(
-                id=params.evaluation_id, organization=context.organization
+                id=evaluation_ref, organization=context.organization
             )
         except Evaluation.DoesNotExist:
-            return ToolResult.not_found("Evaluation", str(params.evaluation_id))
+            return candidate_evaluations_result(
+                "Evaluation Not Found",
+                f"Evaluation `{evaluation_ref}` was not found in this workspace.",
+            )
 
         template_name = ev.eval_template.name if ev.eval_template else "—"
 

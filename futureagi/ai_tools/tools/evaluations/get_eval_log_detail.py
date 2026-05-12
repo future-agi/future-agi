@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,6 +7,7 @@ from ai_tools.formatting import (
     format_number,
     format_status,
     key_value_block,
+    markdown_table,
     section,
     truncate,
 )
@@ -16,8 +15,40 @@ from ai_tools.registry import register_tool
 
 
 class GetEvalLogDetailInput(PydanticBaseModel):
-    log_id: UUID = Field(
-        description="The UUID (log_id) of the eval log entry to retrieve"
+    log_id: str = Field(
+        default="", description="The UUID (log_id) of the eval log entry to retrieve"
+    )
+
+
+def _candidate_eval_logs_result(context: ToolContext, title: str, detail: str = "") -> ToolResult:
+    from ee.usage.models.usage import APICallLog
+
+    logs = list(
+        APICallLog.objects.filter(organization=context.organization).order_by(
+            "-created_at"
+        )[:10]
+    )
+    rows = [
+        [
+            f"`{log.log_id}`",
+            format_status(log.status),
+            log.source or "—",
+            format_datetime(log.created_at),
+        ]
+        for log in logs
+    ]
+    body = detail or "Choose an eval log ID."
+    body += "\n\n" + (
+        markdown_table(["Log ID", "Status", "Source", "Created"], rows)
+        if rows
+        else "No eval logs found."
+    )
+    return ToolResult(
+        content=section(title, body),
+        data={
+            "requires_log_id": True,
+            "logs": [{"log_id": str(log.log_id)} for log in logs],
+        },
     )
 
 
@@ -39,15 +70,24 @@ class GetEvalLogDetailTool(BaseTool):
         if is_oss():
             return ToolResult.feature_unavailable(EEFeature.AUDIT_LOGS.value)
 
+        from django.core.exceptions import ValidationError
         from ee.usage.models.usage import APICallLog
+
+        log_ref = str(params.log_id or "").strip()
+        if not log_ref:
+            return _candidate_eval_logs_result(context, "Eval Log Required")
 
         try:
             log = APICallLog.objects.get(
-                log_id=params.log_id,
+                log_id=log_ref,
                 organization=context.organization,
             )
-        except APICallLog.DoesNotExist:
-            return ToolResult.not_found("Eval Log", str(params.log_id))
+        except (APICallLog.DoesNotExist, ValidationError, ValueError, TypeError):
+            return _candidate_eval_logs_result(
+                context,
+                "Eval Log Not Found",
+                f"Eval log `{log_ref}` was not found. Use one of these log IDs instead.",
+            )
 
         info = key_value_block(
             [

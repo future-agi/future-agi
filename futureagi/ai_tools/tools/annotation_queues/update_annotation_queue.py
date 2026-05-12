@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,10 +9,19 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import (
+    clean_ref,
+    resolve_labels,
+    resolve_queue,
+    resolve_users,
+)
 
 
 class UpdateAnnotationQueueInput(PydanticBaseModel):
-    queue_id: UUID = Field(description="The UUID of the annotation queue to update")
+    queue_id: Optional[str] = Field(
+        default="",
+        description="Annotation queue UUID or exact queue name to update",
+    )
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = Field(default=None)
     instructions: Optional[str] = Field(default=None)
@@ -22,17 +30,17 @@ class UpdateAnnotationQueueInput(PydanticBaseModel):
         description="New status: draft, active, paused, completed",
     )
     annotations_required: Optional[int] = Field(default=None, ge=1, le=10)
-    add_label_ids: Optional[list[UUID]] = Field(
-        default=None, description="Label UUIDs to add to the queue"
+    add_label_ids: Optional[list[str]] = Field(
+        default=None, description="Label UUIDs or exact names to add to the queue"
     )
-    remove_label_ids: Optional[list[UUID]] = Field(
-        default=None, description="Label UUIDs to remove from the queue"
+    remove_label_ids: Optional[list[str]] = Field(
+        default=None, description="Label UUIDs or exact names to remove from the queue"
     )
-    add_annotator_ids: Optional[list[UUID]] = Field(
-        default=None, description="User UUIDs to add as annotators"
+    add_annotator_ids: Optional[list[str]] = Field(
+        default=None, description="User UUIDs, emails, or names to add as annotators"
     )
-    remove_annotator_ids: Optional[list[UUID]] = Field(
-        default=None, description="User UUIDs to remove from annotators"
+    remove_annotator_ids: Optional[list[str]] = Field(
+        default=None, description="User UUIDs, emails, or names to remove from annotators"
     )
 
 
@@ -52,33 +60,29 @@ class UpdateAnnotationQueueTool(BaseTool):
     ) -> ToolResult:
         from model_hub.models.annotation_queues import (
             VALID_STATUS_TRANSITIONS,
-            AnnotationQueue,
             AnnotationQueueAnnotator,
             AnnotationQueueLabel,
         )
 
-        try:
-            queue = AnnotationQueue.objects.get(
-                id=params.queue_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except AnnotationQueue.DoesNotExist:
-            return ToolResult.not_found("Annotation Queue", str(params.queue_id))
+        queue, unresolved = resolve_queue(params.queue_id, context)
+        if unresolved:
+            return unresolved
 
         changes = []
+        warnings = []
 
         # Status transition validation
         if params.status:
+            status = clean_ref(params.status).lower()
             valid_transitions = VALID_STATUS_TRANSITIONS.get(queue.status, set())
-            if params.status not in valid_transitions:
-                return ToolResult.error(
-                    f"Cannot transition from '{queue.status}' to '{params.status}'. "
-                    f"Valid transitions: {', '.join(sorted(valid_transitions)) if valid_transitions else 'none'}",
-                    error_code="VALIDATION_ERROR",
+            if status not in valid_transitions:
+                warnings.append(
+                    f"Status left as `{queue.status}` because `{params.status}` is not a valid transition. "
+                    f"Valid transitions: {', '.join(sorted(valid_transitions)) if valid_transitions else 'none'}."
                 )
-            queue.status = params.status
-            changes.append(f"Status -> {params.status}")
+            else:
+                queue.status = status
+                changes.append(f"Status -> {status}")
 
         if params.name is not None:
             queue.name = params.name
@@ -98,11 +102,11 @@ class UpdateAnnotationQueueTool(BaseTool):
 
         # Add labels
         if params.add_label_ids:
-            from model_hub.models.develop_annotations import AnnotationsLabels
-
-            labels = AnnotationsLabels.objects.filter(
-                id__in=params.add_label_ids, organization=context.organization
-            )
+            labels, missing_labels = resolve_labels(params.add_label_ids, context)
+            if missing_labels:
+                warnings.append(
+                    "Labels not found: " + ", ".join(f"`{ref}`" for ref in missing_labels)
+                )
             existing_label_ids = set(
                 AnnotationQueueLabel.objects.filter(
                     queue=queue, deleted=False
@@ -128,20 +132,28 @@ class UpdateAnnotationQueueTool(BaseTool):
 
         # Remove labels
         if params.remove_label_ids:
+            labels, missing_labels = resolve_labels(params.remove_label_ids, context)
+            if missing_labels:
+                warnings.append(
+                    "Labels not found for removal: "
+                    + ", ".join(f"`{ref}`" for ref in missing_labels)
+                )
             removed = AnnotationQueueLabel.objects.filter(
-                queue=queue, label_id__in=params.remove_label_ids, deleted=False
+                queue=queue,
+                label_id__in=[label.id for label in labels],
+                deleted=False,
             ).update(deleted=True)
             if removed:
                 changes.append(f"Removed {removed} label(s)")
 
         # Add annotators
         if params.add_annotator_ids:
-            from accounts.models.user import User
-
-            users = User.objects.filter(
-                id__in=params.add_annotator_ids,
-                organization=context.organization,
-            )
+            users, missing_users = resolve_users(params.add_annotator_ids, context)
+            if missing_users:
+                warnings.append(
+                    "Annotators not found: "
+                    + ", ".join(f"`{ref}`" for ref in missing_users)
+                )
             existing_user_ids = set(
                 AnnotationQueueAnnotator.objects.filter(
                     queue=queue, deleted=False
@@ -157,22 +169,35 @@ class UpdateAnnotationQueueTool(BaseTool):
 
         # Remove annotators
         if params.remove_annotator_ids:
+            users, missing_users = resolve_users(params.remove_annotator_ids, context)
+            if missing_users:
+                warnings.append(
+                    "Annotators not found for removal: "
+                    + ", ".join(f"`{ref}`" for ref in missing_users)
+                )
             removed = AnnotationQueueAnnotator.objects.filter(
-                queue=queue, user_id__in=params.remove_annotator_ids, deleted=False
+                queue=queue,
+                user_id__in=[user.id for user in users],
+                deleted=False,
             ).update(deleted=True)
             if removed:
                 changes.append(f"Removed {removed} annotator(s)")
 
-        if not changes:
-            return ToolResult.error(
-                "No changes provided.", error_code="VALIDATION_ERROR"
+        if not changes and not warnings:
+            return ToolResult(
+                content=section(
+                    "Annotation Queue Unchanged",
+                    "No queue updates were provided. Provide a field to update, or add/remove labels or annotators.",
+                ),
+                data={"queue_id": str(queue.id), "unchanged": True},
             )
 
         info = key_value_block(
             [
                 ("Queue ID", f"`{queue.id}`"),
                 ("Name", queue.name),
-                ("Changes", "; ".join(changes)),
+                ("Changes", "; ".join(changes) if changes else "None"),
+                ("Warnings", "; ".join(warnings) if warnings else "None"),
             ]
         )
 
@@ -183,5 +208,6 @@ class UpdateAnnotationQueueTool(BaseTool):
             data={
                 "queue_id": str(queue.id),
                 "changes": changes,
+                "warnings": warnings,
             },
         )

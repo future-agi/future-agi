@@ -14,11 +14,20 @@ from ai_tools.registry import register_tool
 
 
 class CreateRunTestInput(PydanticBaseModel):
-    name: str = Field(description="Name of the test suite")
-    agent_id: UUID = Field(description="The UUID of the agent definition to test")
-    scenario_ids: List[UUID] = Field(
-        description="List of scenario UUIDs to include (at least one required)",
-        min_length=1,
+    name: Optional[str] = Field(default=None, description="Name of the test suite")
+    agent_id: Optional[str] = Field(
+        default=None, description="The UUID or name of the agent definition to test"
+    )
+    agent_ref: Optional[str] = Field(
+        default=None, description="Agent ID or exact/fuzzy agent name"
+    )
+    scenario_ids: Optional[List[str]] = Field(
+        default=None,
+        description="List of scenario UUIDs or names to include",
+    )
+    scenario_refs: Optional[List[str]] = Field(
+        default=None,
+        description="List of scenario IDs or exact/fuzzy scenario names to include",
     )
     simulator_agent_id: Optional[UUID] = Field(
         default=None, description="UUID of the simulator agent to use"
@@ -61,31 +70,45 @@ class CreateRunTestTool(BaseTool):
 
         from django.db import transaction
 
-        from simulate.models.agent_definition import AgentDefinition
+        from ai_tools.formatting import section
+        from ai_tools.tools.agents._utils import resolve_agent
+        from ai_tools.tools.simulation._utils import resolve_scenarios
         from simulate.models.agent_version import AgentVersion
         from simulate.models.eval_config import SimulateEvalConfig
         from simulate.models.run_test import RunTest
-        from simulate.models.scenarios import Scenarios
 
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id, organization=context.organization
+        if not params.name or not params.name.strip():
+            return ToolResult(
+                content=section(
+                    "Run Test Details Required",
+                    "Provide a name for the test suite before creating it.",
+                ),
+                data={"requires_name": True},
             )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
 
-        # Validate scenarios exist
-        scenarios = Scenarios.objects.filter(
-            id__in=params.scenario_ids, organization=context.organization
+        agent, error = resolve_agent(
+            params.agent_ref or params.agent_id,
+            context,
+            title="Agent Needed For Run Test",
         )
-        if scenarios.count() != len(params.scenario_ids):
-            found_ids = set(str(s.id) for s in scenarios)
-            missing = [
-                str(sid) for sid in params.scenario_ids if str(sid) not in found_ids
-            ]
-            return ToolResult.error(
-                f"Scenarios not found: {', '.join(missing)}",
-                error_code="NOT_FOUND",
+        if error:
+            return error
+
+        scenarios, error = resolve_scenarios(
+            params.scenario_refs or params.scenario_ids,
+            context,
+            title="Scenarios Needed For Run Test",
+            agent=agent,
+        )
+        if error:
+            return error
+        if not scenarios:
+            return ToolResult(
+                content=section(
+                    "Scenarios Needed For Run Test",
+                    "Choose at least one scenario before creating the test suite.",
+                ),
+                data={"requires_scenario_id": True},
             )
 
         # Optional simulator agent
@@ -111,6 +134,7 @@ class CreateRunTestTool(BaseTool):
                     id=params.agent_version_id,
                     deleted=False,
                     organization=context.organization,
+                    agent_definition=agent,
                 )
             except AgentVersion.DoesNotExist:
                 return ToolResult.not_found(
@@ -139,7 +163,7 @@ class CreateRunTestTool(BaseTool):
 
         with transaction.atomic():
             run_test = RunTest.objects.create(
-                name=params.name,
+                name=params.name.strip(),
                 description=params.description or "",
                 agent_definition=agent,
                 agent_version=agent_version,
@@ -248,7 +272,7 @@ class CreateRunTestTool(BaseTool):
                     "Agent Version",
                     str(agent_version.version_number) if agent_version else "—",
                 ),
-                ("Scenarios", str(scenarios.count())),
+                ("Scenarios", str(len(scenarios))),
                 ("Eval Configs", str(eval_count)),
                 ("Simulator Agent", simulator_agent.name if simulator_agent else "—"),
                 ("Created", format_datetime(run_test.created_at)),
@@ -263,7 +287,7 @@ class CreateRunTestTool(BaseTool):
                 "id": str(run_test.id),
                 "name": run_test.name,
                 "agent_id": str(agent.id),
-                "scenario_count": scenarios.count(),
+                "scenario_count": len(scenarios),
                 "eval_config_count": eval_count,
             },
         )

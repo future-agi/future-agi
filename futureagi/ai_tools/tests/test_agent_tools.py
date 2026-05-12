@@ -73,7 +73,6 @@ class TestListAgentVersionsTool:
 
 class TestListTestExecutionsTool:
     def test_list_empty(self, tool_context):
-        # run_test_id is required; pass a random UUID to get empty results
         result = run_tool(
             "list_test_executions",
             {"run_test_id": str(uuid.uuid4())},
@@ -82,6 +81,35 @@ class TestListTestExecutionsTool:
 
         assert not result.is_error
         assert result.data["total"] == 0
+
+    def test_list_workspace_executions_without_run_test_id(
+        self, tool_context, agent_definition
+    ):
+        from simulate.models.run_test import RunTest
+        from simulate.models.test_execution import TestExecution
+
+        run_test = RunTest.objects.create(
+            name="Workspace Status Test",
+            agent_definition=agent_definition,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+        execution = TestExecution.objects.create(
+            run_test=run_test,
+            status="running",
+            total_calls=4,
+            completed_calls=2,
+            failed_calls=1,
+        )
+
+        result = run_tool("list_test_executions", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["total"] == 1
+        assert result.data["executions"][0]["id"] == str(execution.id)
+        assert result.data["executions"][0]["run_test"] == "Workspace Status Test"
+        assert result.data["status_counts"] == {"running": 1}
+        assert "Status Breakdown" in result.content
 
 
 class TestGetTestExecutionTool:

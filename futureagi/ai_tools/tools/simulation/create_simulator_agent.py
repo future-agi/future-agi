@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -13,8 +14,14 @@ from ai_tools.registry import register_tool
 
 
 class CreateSimulatorAgentInput(PydanticBaseModel):
-    name: str = Field(description="Name of the simulator agent")
-    prompt: str = Field(description="System prompt for the simulator agent")
+    name: str = Field(
+        default="",
+        description="Name of the simulator agent. If omitted, a unique test-safe name is generated.",
+    )
+    prompt: str = Field(
+        default="",
+        description="System prompt for the simulator agent. If omitted, a safe default simulator prompt is used.",
+    )
     voice_provider: Optional[str] = Field(
         default="openai", description="Voice service provider"
     )
@@ -52,9 +59,15 @@ class CreateSimulatorAgentTool(BaseTool):
 
         from simulate.models.simulator_agent import SimulatorAgent
 
+        name = params.name.strip() or f"falcon_simulator_agent_{uuid.uuid4().hex[:8]}"
+        prompt = params.prompt.strip() or (
+            "You are a realistic customer simulator for local Falcon regression tests. "
+            "Stay in character, ask concise follow-up questions, and avoid using real customer data."
+        )
+
         sa = SimulatorAgent(
-            name=params.name,
-            prompt=params.prompt,
+            name=name,
+            prompt=prompt,
             voice_provider=params.voice_provider or "openai",
             voice_name=params.voice_name or "alloy",
             model=params.model or "gpt-4o",

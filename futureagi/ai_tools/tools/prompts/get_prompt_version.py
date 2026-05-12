@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -11,11 +9,21 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
 
 
 class GetPromptVersionInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    version_id: UUID = Field(description="The UUID of the prompt version")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
+    version_id: str = Field(
+        default="",
+        description="Version UUID or version name. Omit to list candidate versions.",
+    )
 
 
 @register_tool
@@ -32,20 +40,21 @@ class GetPromptVersionTool(BaseTool):
     def execute(
         self, params: GetPromptVersionInput, context: ToolContext
     ) -> ToolResult:
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
-        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
-
-        try:
-            template = PromptTemplate.objects.get(id=params.template_id)
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
-
-        try:
-            version = PromptVersion.objects.get(
-                id=params.version_id, original_template=template
-            )
-        except PromptVersion.DoesNotExist:
-            return ToolResult.not_found("Prompt Version", str(params.version_id))
+        version, version_result = resolve_prompt_version(
+            template,
+            params.version_id,
+            "Prompt Version Required",
+        )
+        if version_result:
+            return version_result
 
         labels = list(version.labels.values_list("name", flat=True))
 

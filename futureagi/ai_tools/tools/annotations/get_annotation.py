@@ -1,23 +1,39 @@
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import (
-    format_datetime,
-    key_value_block,
-    markdown_table,
-    section,
-    truncate,
-)
+from ai_tools.formatting import format_datetime, key_value_block, markdown_table, section, truncate
 from ai_tools.registry import register_tool
 
 
 class GetAnnotationInput(PydanticBaseModel):
-    annotation_id: UUID = Field(
-        description="The UUID of the annotation task to retrieve"
+    annotation_id: str | None = Field(
+        default=None,
+        description="The name or UUID of the annotation task to retrieve. Omit it to list candidate tasks.",
     )
+    annotation_task_id: str | None = Field(
+        default=None,
+        description="Alias for annotation_id used by some clients.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_annotation_id_aliases(cls, value):
+        if isinstance(value, dict):
+            data = dict(value)
+            if not data.get("annotation_id") and data.get("annotation_task_id"):
+                data["annotation_id"] = data.get("annotation_task_id")
+            return data
+        return value
+
+    @field_validator("annotation_id", mode="before")
+    @classmethod
+    def blank_annotation_id_means_list_candidates(cls, value):
+        if value == "":
+            return None
+        return value
 
 
 @register_tool
@@ -32,16 +48,87 @@ class GetAnnotationTool(BaseTool):
 
     def execute(self, params: GetAnnotationInput, context: ToolContext) -> ToolResult:
 
+        from ai_tools.tools.annotations._utils import candidate_annotations_result
         from model_hub.models.develop_annotations import Annotations
 
-        try:
-            ann = (
-                Annotations.objects.select_related("dataset")
-                .prefetch_related("labels", "assigned_users", "columns")
-                .get(id=params.annotation_id)
+        annotation_ref = (params.annotation_id or "").strip()
+
+        if not annotation_ref:
+            annotations = Annotations.objects.select_related("dataset").order_by(
+                "-created_at"
+            )[:10]
+            rows = [
+                [
+                    f"`{annotation.id}`",
+                    annotation.name,
+                    annotation.dataset.name if annotation.dataset else "—",
+                ]
+                for annotation in annotations
+            ]
+            if not rows:
+                return ToolResult(
+                    content=section(
+                        "Annotation Task Candidates", "No annotation tasks found."
+                    ),
+                    data={"annotations": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Annotation Task Candidates",
+                    markdown_table(["ID", "Name", "Dataset"], rows),
+                ),
+                data={
+                    "annotations": [
+                        {"id": str(annotation.id), "name": annotation.name}
+                        for annotation in annotations
+                    ]
+                },
             )
+
+        base_qs = Annotations.objects.select_related("dataset").prefetch_related(
+            "labels", "assigned_users", "columns"
+        )
+        try:
+            ann = base_qs.get(id=UUID(annotation_ref))
+        except (ValueError, TypeError):
+            matches = base_qs.filter(name__iexact=annotation_ref)
+            if matches.count() == 1:
+                ann = matches.first()
+            else:
+                fuzzy = list(base_qs.filter(name__icontains=annotation_ref)[:5])
+                if fuzzy:
+                    rows = [
+                        [
+                            f"`{annotation.id}`",
+                            annotation.name,
+                            annotation.dataset.name if annotation.dataset else "—",
+                        ]
+                        for annotation in fuzzy
+                    ]
+                    return ToolResult(
+                        content=section(
+                            "Annotation Task Candidates",
+                            (
+                                f"No exact annotation task matched `{annotation_ref}`. "
+                                "Use one of these IDs or exact names:\n\n"
+                                + markdown_table(["ID", "Name", "Dataset"], rows)
+                            ),
+                        ),
+                        data={
+                            "annotations": [
+                                {"id": str(annotation.id), "name": annotation.name}
+                                for annotation in fuzzy
+                            ],
+                            "requires_annotation_id": True,
+                        },
+                    )
+                return ToolResult.not_found("Annotation", annotation_ref)
         except Annotations.DoesNotExist:
-            return ToolResult.not_found("Annotation", str(params.annotation_id))
+            return candidate_annotations_result(
+                context,
+                "Annotation Task Not Found",
+                f"Annotation task `{annotation_ref}` was not found. Use one of these IDs instead.",
+            )
 
         dataset_name = ann.dataset.name if ann.dataset else "—"
 
@@ -139,3 +226,22 @@ class GetAnnotationTool(BaseTool):
         }
 
         return ToolResult(content=content, data=data)
+
+
+@register_tool
+class GetAnnotationDetailsTool(GetAnnotationTool):
+    name = "get_annotation_details"
+    description = (
+        "Compatibility alias for get_annotation. Returns detailed information "
+        "about an annotation task including assigned users, labels, field "
+        "configuration, and completion progress."
+    )
+
+
+@register_tool
+class GetAnnotationTaskTool(GetAnnotationTool):
+    name = "get_annotation_task"
+    description = (
+        "Compatibility alias for get_annotation. Returns detailed information "
+        "about an annotation task using annotation_id or annotation_task_id."
+    )

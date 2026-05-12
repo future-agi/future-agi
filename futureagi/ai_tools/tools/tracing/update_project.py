@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,7 +12,10 @@ from ai_tools.registry import register_tool
 
 
 class UpdateProjectInput(PydanticBaseModel):
-    project_id: UUID = Field(description="The UUID of the project to update")
+    project_id: str = Field(
+        default="",
+        description="Project UUID or exact/fuzzy project name to update.",
+    )
     name: Optional[str] = Field(default=None, description="Updated project name")
     description: Optional[str] = Field(
         default=None, description="Updated description (stored in metadata)"
@@ -29,14 +31,15 @@ class UpdateProjectTool(BaseTool):
 
     def execute(self, params: UpdateProjectInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing._utils import resolve_project
 
-        try:
-            project = Project.objects.get(
-                id=params.project_id, organization=context.organization
-            )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required To Update",
+        )
+        if unresolved:
+            return unresolved
 
         changes = []
 

@@ -1,7 +1,9 @@
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_agent_definition, make_scenario
@@ -78,6 +80,50 @@ class TestListAgentsTool:
         assert "Listed Agent" in result.content
 
 
+class TestUpdateScenarioTool:
+    def test_missing_scenario_returns_candidates(self, tool_context):
+        result = run_tool(
+            "update_scenario",
+            {"scenario_id": str(uuid.uuid4()), "name": "Renamed scenario"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_scenario_id"] is True
+
+
+class TestAddScenarioRowsTool:
+    def test_missing_scenario_returns_candidates(self, tool_context):
+        result = run_tool(
+            "add_scenario_rows",
+            {
+                "scenario_id": str(uuid.uuid4()),
+                "num_rows": 10,
+                "description": "Generate support escalation rows.",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_scenario_id"] is True
+        assert "Scenario Not Found" in result.content
+
+    def test_malformed_scenario_id_returns_candidates(self, tool_context):
+        result = run_tool(
+            "add_scenario_rows",
+            {
+                "scenario_id": "5aa13d82-0081-46a1-9ead-c9f9dd2",
+                "num_rows": 25,
+                "description": "Generate support escalation rows.",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_scenario_id"] is True
+        assert "Scenario Not Found" in result.content
+
+
 # ===================================================================
 # WRITE TOOLS
 # ===================================================================
@@ -112,6 +158,40 @@ class TestCreatePersonaTool:
 
         assert not result.is_error
 
+    def test_create_with_json_demographics_and_personality(self, tool_context):
+        result = run_tool(
+            "create_persona",
+            {
+                "name": "JSON Persona",
+                "description": "Persona generated from free-form analysis",
+                "demographics": '{"age_range": "28-45", "occupation": "Professional / Decision-Maker", "tech_savviness": "high"}',
+                "personality": '{"traits": ["decisive", "goal-oriented"], "motivation": "Complete a task quickly", "patience_level": "low"}',
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["name"] == "JSON Persona"
+
+    def test_create_with_trace_derived_freeform_fields(self, tool_context):
+        result = run_tool(
+            "create_persona",
+            {
+                "name": "Trace Derived Persona",
+                "description": "Persona inferred from traces",
+                "age": "45",
+                "gender": "Female",
+                "location": "Chicago, IL",
+                "occupation": "Small Business Owner",
+                "traits": '["frustrated", "confrontational", "low patience"]',
+                "text_style": "assertive",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["name"] == "Trace Derived Persona"
+
     def test_create_duplicate_name(self, tool_context):
         run_tool(
             "create_persona",
@@ -124,8 +204,9 @@ class TestCreatePersonaTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert "Already Exists" in result.content
+        assert result.data["already_exists"] is True
 
     def test_create_duplicate_case_insensitive(self, tool_context):
         run_tool(
@@ -135,7 +216,8 @@ class TestCreatePersonaTool:
             "create_persona", {"name": "case test", "description": "Test"}, tool_context
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["already_exists"] is True
 
 
 class TestCreateAgentDefinitionTool:
@@ -146,18 +228,9 @@ class TestCreateAgentDefinitionTool:
             tool_context,
         )
 
-        # Note: create_agent_definition has a known issue where languages=None
-        # causes AgentConfigurationSnapshot validation to fail.
-        # The tool creates the agent but create_version() fails due to
-        # missing languages field. This is caught by BaseTool error handling.
-        # Test that the tool at least runs without crashing.
-        # TODO: Fix create_agent_definition to set languages=[language] on the model.
-        if result.is_error:
-            assert (
-                "languages" in result.content or "validation" in result.content.lower()
-            )
-        else:
-            assert result.data["name"] == "New Agent"
+        assert not result.is_error
+        assert result.data["name"] == "New Agent"
+        assert result.data["type"] == "text"
 
     def test_create_with_description(self, tool_context):
         result = run_tool(
@@ -166,9 +239,68 @@ class TestCreateAgentDefinitionTool:
             tool_context,
         )
 
-        # Same known issue as above
-        if not result.is_error:
-            assert result.data["name"] == "Agent Two"
+        assert not result.is_error
+        assert result.data["name"] == "Agent Two"
+
+
+class TestCreateScenarioTool:
+    def test_persona_descriptions_are_folded_into_generation_instruction(
+        self, tool_context, agent_definition
+    ):
+        scenario_id = uuid.uuid4()
+        created_scenario = SimpleNamespace(
+            id=scenario_id,
+            name="Regression Scenario",
+            scenario_type="graph",
+            source_type="agent_definition",
+            status="draft",
+            created_at=timezone.now(),
+        )
+
+        with patch("simulate.services.scenario_service.create_scenario") as create:
+            create.return_value = {
+                "scenario": created_scenario,
+                "workflow_started": False,
+                "id": str(scenario_id),
+                "name": created_scenario.name,
+                "type": created_scenario.scenario_type,
+                "agent_id": agent_definition.id,
+                "status": created_scenario.status,
+            }
+
+            result = run_tool(
+                "create_scenario",
+                {
+                    "name": "Regression Scenario",
+                    "agent_id": str(agent_definition.id),
+                    "personas": [
+                        "Frustrated returning customer",
+                        "Power user who catches factual inaccuracies",
+                    ],
+                },
+                tool_context,
+            )
+
+        assert not result.is_error
+        kwargs = create.call_args.kwargs
+        assert kwargs["personas"] is None
+        assert kwargs["add_persona_automatically"] is True
+        assert "Frustrated returning customer" in kwargs["custom_instruction"]
+
+
+class TestUpdateAgentDefinitionTool:
+    def test_no_update_fields_returns_needs_input(
+        self, tool_context, agent_definition
+    ):
+        result = run_tool(
+            "update_agent_definition",
+            {"agent_id": str(agent_definition.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_update_fields"] is True
 
 
 class TestDeletePersonaTool:

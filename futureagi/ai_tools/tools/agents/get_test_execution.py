@@ -1,3 +1,4 @@
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -17,7 +18,10 @@ from ai_tools.registry import register_tool
 
 
 class GetTestExecutionInput(PydanticBaseModel):
-    execution_id: UUID = Field(description="The UUID of the test execution")
+    execution_id: Optional[UUID] = Field(
+        default=None,
+        description="The UUID of the test execution",
+    )
     include_calls: bool = Field(
         default=True, description="Include individual call results"
     )
@@ -29,7 +33,8 @@ class GetTestExecutionTool(BaseTool):
     name = "get_test_execution"
     description = (
         "Returns detailed information about a test execution including "
-        "overall status, call results with scores, durations, and error details."
+        "overall status, call results with scores, durations, and error details. "
+        "If the execution UUID is unknown, call this with no parameters to list candidates."
     )
     category = "agents"
     input_model = GetTestExecutionInput
@@ -39,6 +44,36 @@ class GetTestExecutionTool(BaseTool):
     ) -> ToolResult:
 
         from simulate.models.test_execution import CallExecution, TestExecution
+
+        if params.execution_id is None:
+            executions = (
+                TestExecution.objects.filter(run_test__organization=context.organization)
+                .select_related("run_test")
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data_list = []
+            for execution in executions:
+                run_test_name = execution.run_test.name if execution.run_test else "—"
+                rows.append(
+                    f"- `{execution.id}` — {run_test_name} ({format_status(execution.status)})"
+                )
+                data_list.append(
+                    {
+                        "id": str(execution.id),
+                        "run_test": run_test_name,
+                        "status": execution.status,
+                    }
+                )
+            content = section(
+                "Test Execution Candidates",
+                (
+                    "Choose one of these executions, then call "
+                    "`get_test_execution` with `execution_id`.\n\n"
+                    + ("\n".join(rows) if rows else "No test executions found.")
+                ),
+            )
+            return ToolResult(content=content, data={"executions": data_list})
 
         try:
             execution = TestExecution.objects.select_related(

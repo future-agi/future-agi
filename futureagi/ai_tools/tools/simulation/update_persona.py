@@ -1,6 +1,4 @@
-from typing import Dict, List, Optional
-from uuid import UUID
-
+from django.core.exceptions import ValidationError
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 
@@ -8,9 +6,12 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     format_datetime,
     key_value_block,
+    markdown_table,
     section,
+    truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import clean_ref, uuid_text
 from ai_tools.tools.simulation.create_persona import (
     Accent,
     AgeGroup,
@@ -31,81 +32,167 @@ from ai_tools.tools.simulation.create_persona import (
 )
 
 
+def _candidate_personas_result(
+    context: ToolContext,
+    title: str = "Persona Required",
+    detail: str = "",
+    search: str = "",
+) -> ToolResult:
+    from simulate.models.persona import Persona
+
+    qs = Persona.objects.filter(workspace=context.workspace).exclude(
+        persona_type="system"
+    )
+    search = clean_ref(search)
+    if search:
+        qs = qs.filter(name__icontains=search)
+    personas = list(qs.order_by("-created_at")[:10])
+    rows = [
+        [
+            f"`{persona.id}`",
+            truncate(persona.name, 36),
+            persona.simulation_type,
+            format_datetime(persona.created_at),
+        ]
+        for persona in personas
+    ]
+    body = detail or ""
+    if rows:
+        body = (body + "\n\n" if body else "") + markdown_table(
+            ["ID", "Name", "Simulation Type", "Created"],
+            rows,
+        )
+    else:
+        body = body or "No editable personas found in this workspace."
+    return ToolResult.needs_input(
+        section(title, body),
+        data={
+            "personas": [
+                {"id": str(persona.id), "name": persona.name} for persona in personas
+            ],
+        },
+        missing_fields=["persona_id"],
+    )
+
+
+def _resolve_persona(
+    persona_ref: str, context: ToolContext
+) -> tuple[object | None, ToolResult | None]:
+    from simulate.models.persona import Persona
+
+    ref = clean_ref(persona_ref)
+    if not ref:
+        return None, _candidate_personas_result(context)
+
+    qs = Persona.objects.filter(workspace=context.workspace).exclude(
+        persona_type="system"
+    )
+    ref_uuid = uuid_text(ref)
+    try:
+        if ref_uuid:
+            return qs.get(id=ref_uuid), None
+        exact = qs.filter(name__iexact=ref)
+        if exact.count() == 1:
+            return exact.first(), None
+        if exact.count() > 1:
+            return None, _candidate_personas_result(
+                context,
+                "Multiple Personas Matched",
+                f"More than one persona matched `{ref}`. Use one of these IDs.",
+                search=ref,
+            )
+        fuzzy = qs.filter(name__icontains=ref)
+        if fuzzy.count() == 1:
+            return fuzzy.first(), None
+    except (Persona.DoesNotExist, ValidationError, ValueError, TypeError):
+        pass
+
+    return None, _candidate_personas_result(
+        context,
+        "Persona Not Found",
+        f"Persona `{ref}` was not found. Use one of these IDs instead.",
+        search="" if ref_uuid else ref,
+    )
+
+
 class UpdatePersonaInput(PydanticBaseModel):
-    persona_id: UUID = Field(description="The UUID of the persona to update")
-    name: Optional[str] = Field(default=None, description="New name")
-    description: Optional[str] = Field(default=None, description="New description")
+    persona_id: str = Field(
+        default="",
+        description="Editable persona name or UUID to update",
+    )
+    name: str | None = Field(default=None, description="New name")
+    description: str | None = Field(default=None, description="New description")
     # Demographics
-    gender: Optional[List[Gender]] = Field(default=None, description="New gender list")
-    age_group: Optional[List[AgeGroup]] = Field(
+    gender: list[Gender] | None = Field(default=None, description="New gender list")
+    age_group: list[AgeGroup] | None = Field(
         default=None, description="New age group list"
     )
-    occupation: Optional[List[Occupation]] = Field(
+    occupation: list[Occupation] | None = Field(
         default=None, description="New occupation list"
     )
-    location: Optional[List[Location]] = Field(
+    location: list[Location] | None = Field(
         default=None, description="New location list"
     )
     # Behavioral
-    personality: Optional[List[Personality]] = Field(
+    personality: list[Personality] | None = Field(
         default=None, description="New personality list"
     )
-    communication_style: Optional[List[CommunicationStyle]] = Field(
+    communication_style: list[CommunicationStyle] | None = Field(
         default=None, description="New communication style list"
     )
-    accent: Optional[List[Accent]] = Field(
+    accent: list[Accent] | None = Field(
         default=None, description="New accent list. Voice only."
     )
     # Voice settings
-    multilingual: Optional[bool] = Field(
+    multilingual: bool | None = Field(
         default=None, description="Whether the persona supports multiple languages"
     )
-    languages: Optional[List[Language]] = Field(
+    languages: list[Language] | None = Field(
         default=None, description="New languages list"
     )
-    conversation_speed: Optional[List[ConversationSpeed]] = Field(
+    conversation_speed: list[ConversationSpeed] | None = Field(
         default=None, description="New conversation speed values. Voice only."
     )
-    background_sound: Optional[bool] = Field(
+    background_sound: bool | None = Field(
         default=None, description="Enable background sound. Voice only."
     )
-    finished_speaking_sensitivity: Optional[int] = Field(
+    finished_speaking_sensitivity: int | None = Field(
         default=None,
         ge=1,
         le=10,
         description="Finished speaking sensitivity (1-10). Voice only.",
     )
-    interrupt_sensitivity: Optional[int] = Field(
+    interrupt_sensitivity: int | None = Field(
         default=None,
         ge=1,
         le=10,
         description="Interrupt sensitivity (1-10). Voice only.",
     )
-    keywords: Optional[List[str]] = Field(default=None, description="New keywords list")
+    keywords: list[str] | None = Field(default=None, description="New keywords list")
     # Chat settings
-    tone: Optional[Tone] = Field(default=None, description="New tone. Chat only.")
-    verbosity: Optional[Verbosity] = Field(
+    tone: Tone | None = Field(default=None, description="New tone. Chat only.")
+    verbosity: Verbosity | None = Field(
         default=None, description="New verbosity level. Chat only."
     )
-    punctuation: Optional[Punctuation] = Field(
+    punctuation: Punctuation | None = Field(
         default=None, description="New punctuation style. Chat only."
     )
-    emoji_usage: Optional[EmojiUsage] = Field(
+    emoji_usage: EmojiUsage | None = Field(
         default=None, description="New emoji usage level. Chat only."
     )
-    slang_usage: Optional[SlangUsage] = Field(
+    slang_usage: SlangUsage | None = Field(
         default=None, description="New slang usage level. Chat only."
     )
-    typos_frequency: Optional[TypoFrequency] = Field(
+    typos_frequency: TypoFrequency | None = Field(
         default=None, description="New typo frequency. Chat only."
     )
-    regional_mix: Optional[RegionalMix] = Field(
+    regional_mix: RegionalMix | None = Field(
         default=None, description="New regional language mix level. Chat only."
     )
-    metadata: Optional[Dict[str, str]] = Field(
+    metadata: dict[str, str] | None = Field(
         default=None, description="New custom key-value properties"
     )
-    additional_instruction: Optional[str] = Field(
+    additional_instruction: str | None = Field(
         default=None, description="New additional instructions"
     )
 
@@ -132,14 +219,9 @@ class UpdatePersonaTool(BaseTool):
 
     def execute(self, params: UpdatePersonaInput, context: ToolContext) -> ToolResult:
 
-        from simulate.models.persona import Persona
-
-        try:
-            persona = Persona.objects.get(
-                id=params.persona_id, organization=context.organization
-            )
-        except Persona.DoesNotExist:
-            return ToolResult.not_found("Persona", str(params.persona_id))
+        persona, unresolved = _resolve_persona(params.persona_id, context)
+        if unresolved:
+            return unresolved
 
         if persona.persona_type == "system":
             return ToolResult.error(
@@ -182,9 +264,10 @@ class UpdatePersonaTool(BaseTool):
                 updated_fields.append(field_name)
 
         if not updated_fields:
-            return ToolResult.error(
-                "No fields provided to update.",
-                error_code="VALIDATION_ERROR",
+            return _candidate_personas_result(
+                context,
+                "Persona Update Requirements",
+                "Provide at least one field to update, such as `name`, `description`, `tone`, or `verbosity`.",
             )
 
         persona.save(update_fields=updated_fields + ["updated_at"])

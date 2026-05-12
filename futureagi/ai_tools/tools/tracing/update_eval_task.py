@@ -17,7 +17,10 @@ logger = structlog.get_logger(__name__)
 
 
 class UpdateEvalTaskInput(PydanticBaseModel):
-    eval_task_id: UUID = Field(description="The UUID of the eval task to update")
+    eval_task_id: str = Field(
+        default="",
+        description="Eval task UUID or exact task name to update.",
+    )
     edit_type: str = Field(
         description=(
             "Type of update: 'fresh_run' (delete all results, restart from scratch) "
@@ -98,18 +101,28 @@ class UpdateEvalTaskTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Get task with org check
-        try:
-            eval_task = (
-                EvalTask.objects.select_related("project")
-                .prefetch_related("evals")
-                .get(
-                    id=params.eval_task_id,
-                    project__organization=context.organization,
-                )
+        from ai_tools.tools.tracing._utils import (
+            candidate_eval_tasks_result,
+            resolve_eval_tasks,
+        )
+
+        eval_tasks, missing, unresolved = resolve_eval_tasks(
+            [params.eval_task_id],
+            context,
+        )
+        if unresolved:
+            return unresolved
+        if missing or not eval_tasks:
+            return candidate_eval_tasks_result(
+                context,
+                "Eval Task Required To Update",
+                f"Eval task `{params.eval_task_id}` was not found.",
             )
-        except EvalTask.DoesNotExist:
-            return ToolResult.not_found("EvalTask", str(params.eval_task_id))
+        eval_task = (
+            EvalTask.objects.select_related("project")
+            .prefetch_related("evals")
+            .get(id=eval_tasks[0].id)
+        )
 
         # Status checks
         if eval_task.status == EvalTaskStatus.RUNNING:

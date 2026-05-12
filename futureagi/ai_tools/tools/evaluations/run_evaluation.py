@@ -1,5 +1,6 @@
-from typing import Optional
+import os
 
+from model_hub.models.choices import ModelChoices
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -11,19 +12,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
-from model_hub.models.choices import ModelChoices
 
 
 class RunEvaluationInput(PydanticBaseModel):
     eval_template_id: str = Field(
-        description="Name or UUID of the evaluation template to run"
+        default="", description="Name or UUID of the evaluation template to run"
     )
     dataset_id: str = Field(
-        description="Name or UUID of the dataset to evaluate against"
+        default="", description="Name or UUID of the dataset to evaluate against"
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
-        description="Model to use for evaluation (e.g. 'turing_large', 'turing_small'). Uses template default if not specified.",
+        description="Model to use for evaluation. Uses FALCON_AI_MODEL or template default if not specified.",
     )
 
 
@@ -38,19 +38,74 @@ class RunEvaluationTool(BaseTool):
     category = "evaluations"
     input_model = RunEvaluationInput
 
+    def _requirements_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from django.db.models import Q
+        from model_hub.models.develop_dataset import Dataset, Row
+        from model_hub.models.evals_metric import EvalTemplate
+
+        templates = EvalTemplate.objects.filter(
+            Q(organization=context.organization) | Q(organization__isnull=True),
+            deleted=False,
+        ).order_by("-created_at")[:5]
+        datasets = Dataset.objects.filter(
+            organization=context.organization,
+            deleted=False,
+        ).order_by("-created_at")[:5]
+        template_rows = [[f"`{t.id}`", t.name] for t in templates]
+        dataset_rows = [
+            [
+                f"`{d.id}`",
+                d.name,
+                str(Row.objects.filter(dataset=d, deleted=False).count()),
+            ]
+            for d in datasets
+        ]
+        content = (
+            message + "\n\n" if message else ""
+        ) + "Provide `eval_template_id` and `dataset_id` to start an evaluation."
+        if template_rows:
+            from ai_tools.formatting import markdown_table
+
+            content += "\n\n### Eval Templates\n\n" + markdown_table(
+                ["ID", "Name"], template_rows
+            )
+        if dataset_rows:
+            from ai_tools.formatting import markdown_table
+
+            content += "\n\n### Datasets\n\n" + markdown_table(
+                ["ID", "Name", "Rows"], dataset_rows
+            )
+        return ToolResult(
+            content=section("Run Evaluation Requirements", content),
+            data={
+                "requires_eval_template_id": True,
+                "requires_dataset_id": True,
+                "eval_templates": [
+                    {"id": str(t.id), "name": t.name} for t in templates
+                ],
+                "datasets": [{"id": str(d.id), "name": d.name} for d in datasets],
+            },
+        )
+
     def execute(self, params: RunEvaluationInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_dataset, resolve_eval_template
         from model_hub.models.develop_dataset import Dataset, Row
         from model_hub.models.evals_metric import EvalTemplate
         from model_hub.models.evaluation import Evaluation
+
+        from ai_tools.resolvers import resolve_dataset, resolve_eval_template
+
+        if not params.eval_template_id or not params.dataset_id:
+            return self._requirements_result(context)
 
         # Resolve template by name or UUID
         template_obj, err = resolve_eval_template(
             params.eval_template_id, context.organization
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return self._requirements_result(context, err)
 
         # Validate template exists (with org-or-null check)
         try:
@@ -71,7 +126,7 @@ class RunEvaluationTool(BaseTool):
             params.dataset_id, context.organization, context.workspace
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return self._requirements_result(context, err)
 
         # Validate dataset exists
         try:
@@ -90,7 +145,7 @@ class RunEvaluationTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        model = params.model or ModelChoices.TURING_SMALL.value
+        model = params.model or os.environ.get("FALCON_AI_MODEL") or ModelChoices.TURING_SMALL.value
 
         # Create evaluation record
         evaluation = Evaluation(
@@ -116,7 +171,7 @@ class RunEvaluationTool(BaseTool):
             evaluation.status = "processing"
             evaluation.save(update_fields=["status"])
             workflow_started = True
-        except Exception as e:
+        except Exception:
             # Workflow failed to start, mark as pending (will be picked up by polling)
             pass
 

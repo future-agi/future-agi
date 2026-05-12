@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -15,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class GetAnnotateRowInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation task")
+    annotation_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or name of the annotation task. Omit it to list candidate annotation tasks.",
+    )
     row_order: Optional[int] = Field(
         default=None,
         description="Row order number to annotate (1-indexed). Defaults to lowest unfinished row.",
@@ -35,29 +37,54 @@ class GetAnnotateRowTool(BaseTool):
 
     def execute(self, params: GetAnnotateRowInput, context: ToolContext) -> ToolResult:
 
-        from model_hub.models.develop_annotations import Annotations
+        from ai_tools.tools.annotations._utils import (
+            candidate_annotations_result,
+            resolve_annotation,
+        )
         from model_hub.models.develop_dataset import Cell, Column, Row
 
-        try:
-            annotation = Annotations.objects.prefetch_related(
-                "labels", "assigned_users"
-            ).get(id=params.annotation_id)
-        except Annotations.DoesNotExist:
-            return ToolResult.not_found("Annotation", str(params.annotation_id))
+        annotation, annotation_result = resolve_annotation(
+            params.annotation_id,
+            context,
+            title="Annotation Task Required",
+        )
+        if annotation_result:
+            return annotation_result
+        annotation = (
+            annotation.__class__.objects.prefetch_related("labels", "assigned_users")
+            .select_related("dataset")
+            .get(id=annotation.id)
+        )
 
         dataset = annotation.dataset
         if not dataset:
-            return ToolResult.error(
-                "Annotation has no dataset assigned.",
-                error_code="VALIDATION_ERROR",
+            return candidate_annotations_result(
+                context,
+                "Annotation Has No Dataset",
+                (
+                    f"Annotation task `{annotation.name}` (`{annotation.id}`) has no "
+                    "dataset assigned, so no row can be annotated. Choose a dataset-backed "
+                    "annotation task instead."
+                ),
             )
 
         # Get total rows
         total_rows = Row.objects.filter(dataset=dataset, deleted=False).count()
         if total_rows == 0:
-            return ToolResult.error(
-                "Dataset has no rows.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Annotation Dataset Has No Rows",
+                    (
+                        f"Annotation task `{annotation.name}` uses dataset `{dataset.name}`, "
+                        "but that dataset has no rows to annotate. Add rows to the dataset "
+                        "or choose another annotation task."
+                    ),
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "dataset_id": str(dataset.id),
+                    "requires_rows": True,
+                },
             )
 
         # Determine which row
@@ -77,15 +104,27 @@ class GetAnnotateRowTool(BaseTool):
                     .first()
                 )
         except Exception:
-            return ToolResult.error(
-                f"Row with order {target_order} not found.",
-                error_code="NOT_FOUND",
+            return ToolResult(
+                content=section(
+                    "Annotation Row Not Found",
+                    f"Row order `{target_order}` was not found. Try another `row_order`.",
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "requires_row_order": True,
+                },
             )
 
         if not row:
-            return ToolResult.error(
-                "No rows available.",
-                error_code="NOT_FOUND",
+            return ToolResult(
+                content=section(
+                    "Annotation Row Not Found",
+                    "No available rows were found for this annotation task.",
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "requires_row_order": True,
+                },
             )
 
         # Get cells for this row

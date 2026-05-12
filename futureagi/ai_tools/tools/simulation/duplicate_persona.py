@@ -1,7 +1,5 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -10,11 +8,41 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.simulation.update_persona import _resolve_persona
 
 
 class DuplicatePersonaInput(PydanticBaseModel):
-    persona_id: UUID = Field(description="The UUID of the persona to duplicate")
-    new_name: str = Field(description="Name for the duplicated persona")
+    model_config = ConfigDict(extra="allow")
+
+    persona_id: str = Field(
+        default="",
+        description="Editable persona name or UUID to duplicate. If omitted, candidates are returned.",
+    )
+    new_name: str = Field(
+        default="",
+        description="Name for the duplicated persona. Defaults to '<original> Copy'.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["persona_id"] = (
+            normalized.get("persona_id")
+            or normalized.get("persona")
+            or normalized.get("source_persona_id")
+            or normalized.get("id")
+            or ""
+        )
+        normalized["new_name"] = (
+            normalized.get("new_name")
+            or normalized.get("name")
+            or normalized.get("duplicate_name")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -33,27 +61,36 @@ class DuplicatePersonaTool(BaseTool):
 
         from simulate.models.persona import Persona
 
-        try:
-            original = Persona.objects.get(
-                id=params.persona_id, organization=context.organization
-            )
-        except Persona.DoesNotExist:
-            return ToolResult.not_found("Persona", str(params.persona_id))
+        original, unresolved = _resolve_persona(params.persona_id, context)
+        if unresolved:
+            return unresolved
+
+        new_name = (params.new_name or "").strip() or f"{original.name} Copy"
 
         # Check for duplicate name (matches PersonaViewSet._duplicate_persona)
         if Persona.objects.filter(
-            name__iexact=params.new_name,
+            name__iexact=new_name,
             workspace=context.workspace,
             persona_type="workspace",
             deleted=False,
         ).exists():
-            return ToolResult.error(
-                f"A persona named '{params.new_name}' already exists in this workspace.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Persona Name Already Exists",
+                    (
+                        f"A persona named `{new_name}` already exists in this "
+                        "workspace. Provide `new_name` to create a distinct copy."
+                    ),
+                ),
+                data={
+                    "requires_new_name": True,
+                    "persona_id": str(original.id),
+                    "existing_name": new_name,
+                },
             )
 
         clone = Persona(
-            name=params.new_name,
+            name=new_name,
             description=original.description,
             persona_type="workspace",
             simulation_type=original.simulation_type,

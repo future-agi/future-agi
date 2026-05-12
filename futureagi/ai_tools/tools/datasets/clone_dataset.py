@@ -10,11 +10,13 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
 from model_hub.constants import MAX_DATASET_NAME_LENGTH
 
 
 class CloneDatasetInput(PydanticBaseModel):
     dataset_id: str = Field(
+        default="",
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
     new_name: Optional[str] = Field(
@@ -35,16 +37,16 @@ class CloneDatasetTool(BaseTool):
     input_model = CloneDatasetInput
 
     def execute(self, params: CloneDatasetInput, context: ToolContext) -> ToolResult:
-
-        from ai_tools.resolvers import resolve_dataset
         from model_hub.services.dataset_service import ServiceError
         from model_hub.services.dataset_service import clone_dataset as svc_clone
 
-        ds, error = resolve_dataset(
-            params.dataset_id, context.organization, context.workspace
+        ds, dataset_result = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            "Dataset Required To Clone",
         )
-        if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+        if dataset_result:
+            return dataset_result
 
         result = svc_clone(
             source_dataset_id=str(ds.id),
@@ -56,17 +58,57 @@ class CloneDatasetTool(BaseTool):
 
         if isinstance(result, ServiceError):
             if "already exists" in result.message.lower():
-                from model_hub.models.develop_dataset import Dataset
+                from model_hub.models.develop_dataset import Column, Dataset, Row
 
                 existing = Dataset.objects.filter(
-                    name__icontains=params.new_name or "",
+                    name=params.new_name or "",
                     organization=context.organization,
+                    workspace=context.workspace,
+                    deleted=False,
                 ).first()
                 if existing:
-                    return ToolResult.error(
-                        f"{result.message} Existing dataset ID: `{existing.id}`. "
-                        f"Use this ID or choose a different name.",
-                        error_code=result.code,
+                    row_count = Row.objects.filter(
+                        dataset=existing,
+                        deleted=False,
+                    ).count()
+                    column_count = Column.objects.filter(
+                        dataset=existing,
+                        deleted=False,
+                    ).count()
+                    info = key_value_block(
+                        [
+                            ("Dataset ID", f"`{existing.id}`"),
+                            ("Name", existing.name),
+                            ("Rows", str(row_count)),
+                            ("Columns", str(column_count)),
+                            (
+                                "Link",
+                                dashboard_link(
+                                    "dataset",
+                                    str(existing.id),
+                                    label="View Existing Dataset",
+                                ),
+                            ),
+                        ]
+                    )
+                    return ToolResult(
+                        content=section(
+                            "Dataset Clone Already Exists",
+                            (
+                                f"{info}\n\nNo new dataset was created because "
+                                "the requested clone name already exists. Use "
+                                "this dataset ID, or provide a different "
+                                "`new_name` to create another clone."
+                            ),
+                        ),
+                        data={
+                            "dataset_id": str(existing.id),
+                            "name": existing.name,
+                            "rows": row_count,
+                            "columns": column_count,
+                            "source_dataset_id": str(ds.id),
+                            "already_exists": True,
+                        },
                     )
             return ToolResult.error(result.message, error_code=result.code)
 

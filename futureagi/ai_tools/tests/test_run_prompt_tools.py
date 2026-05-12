@@ -67,7 +67,7 @@ def mock_celery():
 def mock_run_all_prompts():
     """Patch run_all_prompts_task."""
     with patch(
-        "model_hub.tasks.run_prompt.run_all_prompts_task.apply_async"
+        "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
     ) as mock_task:
         yield mock_task
 
@@ -136,8 +136,10 @@ class TestAddRunPromptColumnTool:
             },
             tool_context,
         )
-        assert result.is_error
-        assert "VALIDATION_ERROR" in (result.error_code or "")
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_messages"] is True
+        assert "nonexistent" in result.data["missing_columns"]
 
     def test_duplicate_column_name(self, tool_context, writable_dataset, mock_celery):
         # Create first column
@@ -355,6 +357,41 @@ class TestRunPromptForRowsTool:
         assert result.data["rows_queued"] == 2
         mock_run_all_prompts.assert_called_once()
 
+    def test_run_selected_rows_skips_malformed_row_ids(
+        self, tool_context, populated_dataset, mock_celery, mock_run_all_prompts
+    ):
+        ds, cols, rows = populated_dataset
+        rp_id = self._make_run_prompter(tool_context, ds, mock_celery)
+
+        result = run_tool(
+            "run_prompt_for_rows",
+            {
+                "run_prompt_ids": [rp_id],
+                "row_ids": [str(rows[0].id), "c8f13e2d-d056c3c7fc16"],
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["rows_queued"] == 1
+        assert result.data["skipped_invalid_row_ids"] == ["c8f13e2d-d056c3c7fc16"]
+        mock_run_all_prompts.assert_called_once()
+
+    def test_malformed_run_prompt_id_returns_candidates(
+        self, tool_context, populated_dataset
+    ):
+        result = run_tool(
+            "run_prompt_for_rows",
+            {
+                "run_prompt_ids": ["not-a-run-prompt-id"],
+                "row_ids": [str(populated_dataset[2][0].id)],
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_run_prompt_ids"] is True
+
     def test_run_all_rows(
         self, tool_context, populated_dataset, mock_celery, mock_run_all_prompts
     ):
@@ -477,6 +514,40 @@ class TestGetRunPromptColumnConfigTool:
             other_org_context,
         )
         assert result.is_error
+
+
+# ===================================================================
+# PREVIEW_RUN_PROMPT_COLUMN TOOL
+# ===================================================================
+
+
+class TestPreviewRunPromptColumnTool:
+    def test_missing_column_reference_returns_available_columns(
+        self, tool_context, writable_dataset
+    ):
+        result = run_tool(
+            "preview_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Input: {{missing_input}}\nOutput: {{missing_output}}",
+                    }
+                ],
+                "first_n_rows": 1,
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_messages"] is True
+        assert result.data["missing_columns"] == ["missing_input", "missing_output"]
+        assert {column["name"] for column in result.data["available_columns"]} == {
+            "input",
+            "output",
+        }
 
 
 # ===================================================================

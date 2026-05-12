@@ -38,7 +38,7 @@ class UpdateUserRoleTool(BaseTool):
 
     def execute(self, params: UpdateUserRoleInput, context: ToolContext) -> ToolResult:
 
-        from accounts.models.user import User
+        from ai_tools.tools.users._utils import resolve_user
         from accounts.models.workspace import (
             OrganizationRoles,
             Workspace,
@@ -61,10 +61,13 @@ class UpdateUserRoleTool(BaseTool):
             )
 
         # Find the target user
-        try:
-            target_user = User.objects.get(id=params.user_id, organization=org)
-        except User.DoesNotExist:
-            return ToolResult.not_found("User", str(params.user_id))
+        target_user, user_result = resolve_user(
+            params.user_id,
+            context,
+            title="User Required",
+        )
+        if user_result:
+            return user_result
 
         # Prevent changing own role to a lower level
         if target_user.id == actor.id:

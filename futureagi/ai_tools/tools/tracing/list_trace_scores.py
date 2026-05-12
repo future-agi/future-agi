@@ -1,4 +1,3 @@
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -16,19 +15,19 @@ from ai_tools.registry import register_tool
 
 
 class ListTraceScoresInput(PydanticBaseModel):
-    trace_id: Optional[UUID] = Field(
+    trace_id: str | None = Field(
         default=None,
-        description="The UUID of the trace to list annotations/scores for",
+        description="Trace UUID or exact trace name to list annotations/scores for",
     )
-    observation_span_id: Optional[str] = Field(
+    observation_span_id: str | None = Field(
         default=None,
         description="Filter by observation span ID",
     )
-    annotators: Optional[List[UUID]] = Field(
+    annotators: list[UUID] | None = Field(
         default=None,
         description="Include only annotations from these annotator user IDs",
     )
-    exclude_annotators: Optional[List[UUID]] = Field(
+    exclude_annotators: list[UUID] | None = Field(
         default=None,
         description="Exclude annotations from these annotator user IDs",
     )
@@ -46,26 +45,26 @@ class ListTraceScoresTool(BaseTool):
 
     def execute(self, params: ListTraceScoresInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.trace import Trace
         from tracer.models.trace_annotation import TraceAnnotation
+        from ai_tools.tools.tracing._utils import candidate_traces_result, resolve_trace
 
         if not params.trace_id and not params.observation_span_id:
-            return ToolResult.error(
-                "Provide at least one of trace_id or observation_span_id.",
-                error_code="VALIDATION_ERROR",
+            return candidate_traces_result(
+                context,
+                "Trace Required",
+                "Provide `trace_id` or `observation_span_id` to list trace scores.",
             )
 
         # Build base filter with org scoping
         filters = {}
         if params.trace_id:
-            # Verify trace exists and belongs to the user's organization
-            try:
-                trace = Trace.objects.get(
-                    id=params.trace_id,
-                    project__organization=context.organization,
-                )
-            except Trace.DoesNotExist:
-                return ToolResult.not_found("Trace", str(params.trace_id))
+            trace, unresolved = resolve_trace(
+                params.trace_id,
+                context,
+                title="Trace Required To List Scores",
+            )
+            if unresolved:
+                return unresolved
             filters["trace"] = trace
 
         if params.observation_span_id:

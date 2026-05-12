@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -17,7 +15,10 @@ from ai_tools.registry import register_tool
 
 
 class GetTraceInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to retrieve")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name. Omit it to list candidate traces.",
+    )
     include_spans: bool = Field(default=True, description="Include span details")
 
 
@@ -34,14 +35,15 @@ class GetTraceTool(BaseTool):
     def execute(self, params: GetTraceInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        try:
-            trace = Trace.objects.select_related("project").get(
-                id=params.trace_id, project__organization=context.organization
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required",
+        )
+        if unresolved:
+            return unresolved
 
         project_name = trace.project.name if trace.project else "—"
         has_error = bool(trace.error and trace.error != {})
@@ -146,6 +148,7 @@ class GetTraceTool(BaseTool):
             "id": str(trace.id),
             "name": trace.name,
             "project": project_name,
+            "project_id": str(trace.project_id) if trace.project_id else None,
             "has_error": has_error,
             "tags": trace.tags,
             "spans": span_data,

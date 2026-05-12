@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -7,14 +5,19 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     format_datetime,
     key_value_block,
+    markdown_table,
     section,
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import clean_ref, uuid_text
 
 
 class GetPersonaInput(PydanticBaseModel):
-    persona_id: UUID = Field(description="The UUID of the persona to retrieve")
+    persona_id: str = Field(
+        default="",
+        description="Persona name or UUID to retrieve. If omitted, candidates are returned.",
+    )
 
 
 @register_tool
@@ -29,15 +32,81 @@ class GetPersonaTool(BaseTool):
     input_model = GetPersonaInput
 
     def execute(self, params: GetPersonaInput, context: ToolContext) -> ToolResult:
-
+        from django.core.exceptions import ValidationError
+        from django.db.models import Q
         from simulate.models.persona import Persona
 
-        try:
-            persona = Persona.objects.get(
-                id=params.persona_id, organization=context.organization
+        def candidate_personas_result(title: str, detail: str = "") -> ToolResult:
+            qs = Persona.objects.filter(
+                Q(persona_type="system") | Q(workspace=context.workspace)
+            ).order_by("-created_at")
+            personas = list(qs[:10])
+            rows = [
+                [
+                    f"`{persona.id}`",
+                    truncate(persona.name, 36),
+                    persona.persona_type,
+                    persona.simulation_type,
+                ]
+                for persona in personas
+            ]
+            body = detail or "Provide `persona_id` to inspect a persona."
+            if rows:
+                body += "\n\n" + markdown_table(
+                    ["ID", "Name", "Type", "Simulation Type"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo personas found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_persona_id": True,
+                    "personas": [
+                        {
+                            "id": str(persona.id),
+                            "name": persona.name,
+                            "persona_type": persona.persona_type,
+                        }
+                        for persona in personas
+                    ],
+                },
             )
-        except Persona.DoesNotExist:
-            return ToolResult.not_found("Persona", str(params.persona_id))
+
+        ref = clean_ref(params.persona_id)
+        if not ref:
+            return candidate_personas_result("Persona Required")
+
+        qs = Persona.objects.filter(
+            Q(persona_type="system") | Q(workspace=context.workspace)
+        )
+        ref_uuid = uuid_text(ref)
+        try:
+            if ref_uuid:
+                persona = qs.get(id=ref_uuid)
+            else:
+                exact = qs.filter(name__iexact=ref)
+                if exact.count() == 1:
+                    persona = exact.first()
+                elif exact.count() > 1:
+                    return candidate_personas_result(
+                        "Multiple Personas Matched",
+                        f"More than one persona matched `{ref}`. Use one of these IDs.",
+                    )
+                else:
+                    fuzzy = qs.filter(name__icontains=ref)
+                    if fuzzy.count() == 1:
+                        persona = fuzzy.first()
+                    else:
+                        return candidate_personas_result(
+                            "Persona Not Found",
+                            f"Persona `{ref}` was not found.",
+                        )
+        except (Persona.DoesNotExist, ValidationError, ValueError, TypeError):
+            return candidate_personas_result(
+                "Persona Not Found",
+                f"Persona `{ref}` was not found.",
+            )
 
         def list_str(val):
             if val and isinstance(val, list):

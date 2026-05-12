@@ -11,12 +11,14 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.datasets._utils import candidate_datasets_result
 
 ALLOWED_SOURCES = ("demo", "build", "observe")
 
 
 class GetDatasetInput(PydanticBaseModel):
     dataset_id: str = Field(
+        default="",
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
     include_sample_rows: bool = Field(
@@ -39,14 +41,62 @@ class GetDatasetTool(BaseTool):
         from ai_tools.resolvers import resolve_dataset
         from model_hub.models.develop_dataset import Cell, Column, Row
 
+        if not params.dataset_id:
+            from model_hub.models.develop_dataset import Dataset
+
+            datasets = (
+                Dataset.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                    source__in=ALLOWED_SOURCES,
+                )
+                .exclude(scenarios__isnull=False)
+                .order_by("-created_at")[:10]
+            )
+            rows = [
+                [
+                    dataset.name or "Untitled",
+                    f"`{dataset.id}`",
+                    dataset.source or "—",
+                    format_datetime(dataset.created_at),
+                ]
+                for dataset in datasets
+            ]
+            if not rows:
+                return ToolResult(
+                    content="No datasets found in this workspace.",
+                    data={"datasets": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Candidate Datasets",
+                    markdown_table(["Name", "ID", "Source", "Created"], rows),
+                ),
+                data={
+                    "datasets": [
+                        {"id": str(dataset.id), "name": dataset.name}
+                        for dataset in datasets
+                    ]
+                },
+            )
+
         ds, error = resolve_dataset(
             params.dataset_id, context.organization, context.workspace
         )
         if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+            return candidate_datasets_result(
+                context,
+                "Dataset Not Found",
+                f"{error} Use one of these dataset IDs or exact names.",
+            )
 
         if ds.source not in ALLOWED_SOURCES:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
+            return candidate_datasets_result(
+                context,
+                "Dataset Not Available",
+                f"Dataset `{params.dataset_id}` is not available in this tool. "
+                "Use one of these datasets instead.",
+            )
 
         # Get columns ordered by column_order, then any remaining by id
         all_columns = list(Column.objects.filter(dataset=ds, deleted=False))

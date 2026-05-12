@@ -9,7 +9,6 @@ get_trace + read_trace_span calls.
 
 import json
 import os
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -20,7 +19,10 @@ from ai_tools.registry import register_tool
 
 
 class ExploreTraceInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to explore")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name to explore.",
+    )
 
 
 @register_tool
@@ -48,16 +50,15 @@ class ExploreTraceTool(BaseTool):
 
     def execute(self, params: ExploreTraceInput, context: ToolContext) -> ToolResult:
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        # Verify trace access
-        try:
-            trace = Trace.objects.select_related("project").get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To Explore",
+        )
+        if unresolved:
+            return unresolved
 
         # Load all spans
         spans = list(
@@ -70,9 +71,9 @@ class ExploreTraceTool(BaseTool):
             return ToolResult(
                 content=section(
                     "Trace Exploration",
-                    f"Trace `{params.trace_id}` has no spans.",
+                    f"Trace `{trace.id}` has no spans.",
                 ),
-                data={"trace_id": str(params.trace_id), "total_spans": 0},
+                data={"trace_id": str(trace.id), "total_spans": 0},
             )
 
         # Build span map and tree (same as TraceErrorAnalysisAgent)

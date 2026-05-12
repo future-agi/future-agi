@@ -15,7 +15,10 @@ from ai_tools.registry import register_tool
 
 
 class SearchInput(PydanticBaseModel):
-    query: str = Field(description="Search query (case-insensitive)")
+    query: str = Field(
+        default="",
+        description="Search query (case-insensitive). Omit to list recent resources.",
+    )
     entity_types: Optional[list[str]] = Field(
         default=None,
         description=(

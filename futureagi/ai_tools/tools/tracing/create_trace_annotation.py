@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -16,8 +15,9 @@ class CreateTraceAnnotationInput(PydanticBaseModel):
     span_id: str = Field(
         description="The ID of the observation span to annotate (required — annotations are always on spans)",
     )
-    annotation_label_id: UUID = Field(
-        description="The UUID of the annotation label to use"
+    annotation_label_id: str = Field(
+        default="",
+        description="Annotation label UUID or exact label name to use.",
     )
     value: Optional[str] = Field(
         default=None,
@@ -59,31 +59,30 @@ class CreateTraceAnnotationTool(BaseTool):
         self, params: CreateTraceAnnotationInput, context: ToolContext
     ) -> ToolResult:
 
-        from model_hub.models.develop_annotations import AnnotationsLabels
         from model_hub.models.score import Score
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace_annotation import TraceAnnotation
+        from ai_tools.tools.tracing._utils import (
+            resolve_annotation_label,
+            resolve_span,
+        )
 
         from ._annotation_validation import validate_annotation_value
 
-        # Validate label exists and belongs to the user's organization
-        try:
-            label = AnnotationsLabels.objects.get(
-                id=params.annotation_label_id,
-                organization=context.organization,
-            )
-        except AnnotationsLabels.DoesNotExist:
-            return ToolResult.not_found(
-                "Annotation Label", str(params.annotation_label_id)
-            )
+        label, unresolved = resolve_annotation_label(
+            params.annotation_label_id,
+            context,
+            title="Annotation Label Required",
+        )
+        if unresolved:
+            return unresolved
 
-        # Validate span exists
-        try:
-            span = ObservationSpan.objects.select_related("trace").get(
-                id=params.span_id, project__organization=context.organization
-            )
-        except ObservationSpan.DoesNotExist:
-            return ToolResult.not_found("Span", params.span_id)
+        span, unresolved = resolve_span(
+            params.span_id,
+            context,
+            title="Span Required To Annotate",
+        )
+        if unresolved:
+            return unresolved
 
         # Resolve the trace from the span
         trace = span.trace

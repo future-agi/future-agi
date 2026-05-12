@@ -1,5 +1,4 @@
 from typing import Any, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,11 +9,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import (
+    clean_ref,
+    resolve_queue,
+    resolve_queue_item,
+    uuid_text,
+)
 
 
 class QueueAnnotationValue(PydanticBaseModel):
-    label_id: UUID = Field(description="The annotation label UUID")
-    value: Any = Field(
+    label_id: str = Field(description="Annotation label UUID or exact label name")
+    value: dict[str, Any] = Field(
+        default_factory=dict,
         description=(
             "Annotation value. Format depends on label type: "
             "TEXT -> {text: 'string'}, NUMERIC -> {value: float}, "
@@ -25,10 +31,18 @@ class QueueAnnotationValue(PydanticBaseModel):
 
 
 class SubmitQueueAnnotationsInput(PydanticBaseModel):
-    queue_id: UUID = Field(description="The UUID of the annotation queue")
-    item_id: UUID = Field(description="The UUID of the queue item to annotate")
+    queue_id: Optional[str] = Field(
+        default="",
+        description="Annotation queue UUID or exact queue name",
+    )
+    item_id: Optional[str] = Field(
+        default="",
+        description="Queue item UUID to annotate. Omit to list candidate items.",
+    )
     annotations: list[QueueAnnotationValue] = Field(
-        description="List of annotation values to submit", min_length=1
+        default_factory=list,
+        description="List of annotation values to submit",
+        max_length=100,
     )
     notes: Optional[str] = Field(
         default=None, description="Optional notes for this annotation"
@@ -49,55 +63,101 @@ class SubmitQueueAnnotationsTool(BaseTool):
     def execute(
         self, params: SubmitQueueAnnotationsInput, context: ToolContext
     ) -> ToolResult:
-        from model_hub.models.annotation_queues import (
-            AnnotationQueue,
-            ItemAnnotation,
-            QueueItem,
-        )
-        from model_hub.models.develop_annotations import AnnotationsLabels
+        from model_hub.models.annotation_queues import ItemAnnotation
 
-        try:
-            queue = AnnotationQueue.objects.get(
-                id=params.queue_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except AnnotationQueue.DoesNotExist:
-            return ToolResult.not_found("Annotation Queue", str(params.queue_id))
+        queue, unresolved = resolve_queue(params.queue_id, context)
+        if unresolved:
+            return unresolved
 
-        try:
-            item = QueueItem.objects.get(
-                id=params.item_id,
-                queue=queue,
-                deleted=False,
+        item, unresolved = resolve_queue_item(params.item_id, queue)
+        if unresolved:
+            return unresolved
+
+        if not params.annotations:
+            labels = queue.queue_labels.filter(deleted=False).select_related("label")
+            label_rows = [
+                f"- `{ql.label.id}` - {ql.label.name} ({ql.label.type})"
+                for ql in labels
+            ]
+            return ToolResult(
+                content=section(
+                    "Queue Annotation Values Required",
+                    (
+                        "Provide `annotations` with label_id/value pairs for this item.\n\n"
+                        + (
+                            "\n".join(label_rows)
+                            if label_rows
+                            else "No labels are attached to this queue."
+                        )
+                    ),
+                ),
+                data={
+                    "queue_id": str(queue.id),
+                    "item_id": str(item.id),
+                    "annotations_required": True,
+                    "labels": [
+                        {
+                            "id": str(ql.label.id),
+                            "name": ql.label.name,
+                            "type": ql.label.type,
+                        }
+                        for ql in labels
+                    ],
+                },
             )
-        except QueueItem.DoesNotExist:
-            return ToolResult.not_found("Queue Item", str(params.item_id))
 
         if item.status == "completed":
-            return ToolResult.error(
-                "This item is already completed.", error_code="VALIDATION_ERROR"
+            return ToolResult(
+                content=section(
+                    "Queue Item Already Completed",
+                    f"Queue item `{item.id}` in `{queue.name}` is already completed.",
+                ),
+                data={
+                    "queue_id": str(queue.id),
+                    "item_id": str(item.id),
+                    "item_status": item.status,
+                    "already_completed": True,
+                },
             )
 
-        # Pre-fetch labels
-        label_ids = {a.label_id for a in params.annotations}
-        labels_by_id = {
-            l.id: l
-            for l in AnnotationsLabels.objects.filter(
-                id__in=label_ids, organization=context.organization
+        allowed_labels = [
+            queue_label.label
+            for queue_label in queue.queue_labels.filter(deleted=False).select_related(
+                "label"
             )
-        }
+            if queue_label.label and not queue_label.label.deleted
+        ]
+        if not allowed_labels:
+            return ToolResult.validation_error(
+                "No labels are attached to this queue. Add queue labels before "
+                "submitting annotations."
+            )
+
+        resolved_annotations = []
+        errors = []
+        for ann in params.annotations:
+            label, error = _resolve_queue_label(ann.label_id, allowed_labels)
+            if error:
+                errors.append(error)
+                continue
+            resolved_annotations.append((ann, label))
+
+        if errors:
+            allowed_rows = "\n".join(
+                f"- `{label.id}` - {label.name} ({label.type})"
+                for label in allowed_labels
+            )
+            return ToolResult.validation_error(
+                "Invalid queue label reference(s): "
+                + "; ".join(errors)
+                + "\n\nUse one of the labels attached to this queue:\n"
+                + allowed_rows
+            )
 
         created = 0
         updated = 0
-        errors = []
 
-        for ann in params.annotations:
-            label = labels_by_id.get(ann.label_id)
-            if not label:
-                errors.append(f"Label `{ann.label_id}` not found")
-                continue
-
+        for ann, label in resolved_annotations:
             # Upsert — update if same (item, user, label) exists
             existing = ItemAnnotation.objects.filter(
                 queue_item=item,
@@ -166,5 +226,33 @@ class SubmitQueueAnnotationsTool(BaseTool):
                 "item_status": item.status,
                 "errors": errors,
             },
-            is_error=created == 0 and updated == 0 and len(errors) > 0,
+            is_error=False,
         )
+
+
+def _resolve_queue_label(
+    label_ref: str, allowed_labels: list
+) -> tuple[Any | None, str | None]:
+    ref = clean_ref(label_ref)
+    if not ref:
+        return None, "Label reference is required"
+
+    ref_uuid = uuid_text(ref)
+    if ref_uuid:
+        for label in allowed_labels:
+            if str(label.id) == ref_uuid:
+                return label, None
+        return None, f"Label `{ref}` is not attached to this queue"
+
+    exact = [label for label in allowed_labels if label.name.lower() == ref.lower()]
+    if len(exact) == 1:
+        return exact[0], None
+    if len(exact) > 1:
+        return None, f"Multiple queue labels matched `{ref}`; use a label ID"
+
+    fuzzy = [label for label in allowed_labels if ref.lower() in label.name.lower()]
+    if len(fuzzy) == 1:
+        return fuzzy[0], None
+    if len(fuzzy) > 1:
+        return None, f"Multiple queue labels matched `{ref}`; use a label ID"
+    return None, f"Label `{ref}` is not attached to this queue"

@@ -31,7 +31,7 @@ class ListErrorClustersInput(PydanticBaseModel):
     limit: int = Field(
         default=10,
         ge=1,
-        le=50,
+        le=100,
         description="Maximum number of clusters to return",
     )
     offset: int = Field(

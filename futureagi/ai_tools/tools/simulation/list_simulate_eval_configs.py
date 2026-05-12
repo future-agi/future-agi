@@ -1,3 +1,4 @@
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -14,8 +15,9 @@ from ai_tools.registry import register_tool
 
 
 class ListSimulateEvalConfigsInput(PydanticBaseModel):
-    run_test_id: UUID = Field(
-        description="The UUID of the RunTest (test suite) to list eval configs for"
+    run_test_id: Optional[UUID] = Field(
+        default=None,
+        description="The UUID of the RunTest (test suite) to list eval configs for. Omit it to list candidate test suites.",
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
@@ -38,6 +40,36 @@ class ListSimulateEvalConfigsTool(BaseTool):
 
         from simulate.models.eval_config import SimulateEvalConfig
         from simulate.models.run_test import RunTest
+
+        if params.run_test_id is None:
+            run_tests = (
+                RunTest.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                )
+                .order_by("-created_at")[:10]
+            )
+            rows = [
+                [f"`{run_test.id}`", run_test.name, format_datetime(run_test.created_at)]
+                for run_test in run_tests
+            ]
+            if not rows:
+                return ToolResult(
+                    content=section("Run Test Candidates", "No run tests found."),
+                    data={"run_tests": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Run Test Candidates",
+                    markdown_table(["ID", "Name", "Created"], rows),
+                ),
+                data={
+                    "run_tests": [
+                        {"id": str(run_test.id), "name": run_test.name}
+                        for run_test in run_tests
+                    ]
+                },
+            )
 
         try:
             run_test = RunTest.objects.get(

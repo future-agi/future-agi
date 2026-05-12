@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -10,11 +8,13 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid, resolve_eval_template
 
 
 class GetEvalPlaygroundInput(PydanticBaseModel):
-    eval_template_id: UUID = Field(
-        description="The UUID of the eval template to get playground data for"
+    eval_template_id: str = Field(
+        default="",
+        description="The UUID or name of the eval template to get playground data for",
     )
 
 
@@ -35,14 +35,58 @@ class GetEvalPlaygroundTool(BaseTool):
     ) -> ToolResult:
 
         from model_hub.models.evals_metric import EvalTemplate
+
         from model_hub.utils.eval_validators import validate_eval_template_org_access
+
+        def candidates_result(detail: str = "") -> ToolResult:
+            from django.db.models import Q
+
+            templates = EvalTemplate.no_workspace_objects.filter(
+                Q(organization=context.organization) | Q(organization__isnull=True)
+            ).order_by("-created_at")[:10]
+            rows = [
+                f"- `{template.id}` — {template.name} ({template.owner or 'unknown owner'})"
+                for template in templates
+            ]
+            content = section(
+                "Eval Playground Candidates",
+                (
+                    (detail + "\n\n" if detail else "")
+                    + "Choose one of these eval templates, then call "
+                    "`get_eval_playground` with `eval_template_id`.\n\n"
+                    + ("\n".join(rows) if rows else "No eval templates found.")
+                ),
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ]
+                },
+            )
+
+        eval_ref = str(params.eval_template_id or "").strip()
+        if not eval_ref:
+            return candidates_result()
+
+        resolved_template, err = resolve_eval_template(eval_ref, context.organization)
+        if err:
+            return candidates_result(err)
 
         try:
             template = validate_eval_template_org_access(
-                params.eval_template_id, context.organization
+                resolved_template.id if resolved_template else eval_ref,
+                context.organization,
             )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found("Eval Template", str(params.eval_template_id))
+        except (EvalTemplate.DoesNotExist, ValueError, TypeError):
+            detail = (
+                f"Eval template `{eval_ref}` was not found."
+                if is_uuid(eval_ref)
+                else f"No eval template matched `{eval_ref}`."
+            )
+            return candidates_result(detail)
 
         config = template.config or {}
         output_type = config.get("output", "—") if isinstance(config, dict) else "—"

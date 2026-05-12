@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,10 +7,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_run_test
 
 
 class DeleteRunTestInput(PydanticBaseModel):
-    run_test_id: UUID = Field(description="The UUID of the run test to delete")
+    run_test_id: str = Field(
+        default="",
+        description="Run test name or UUID to delete. If omitted, candidates are returned.",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms deletion.",
+    )
 
 
 @register_tool
@@ -25,14 +31,31 @@ class DeleteRunTestTool(BaseTool):
     def execute(self, params: DeleteRunTestInput, context: ToolContext) -> ToolResult:
         from django.utils import timezone
 
-        from simulate.models.run_test import RunTest
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Run Test Required To Delete",
+        )
+        if unresolved:
+            return unresolved
 
-        try:
-            run_test = RunTest.objects.get(
-                id=params.run_test_id, organization=context.organization
+        if not params.confirm_delete:
+            info = key_value_block(
+                [
+                    ("ID", f"`{run_test.id}`"),
+                    ("Name", run_test.name),
+                    ("Status", "Awaiting confirmation"),
+                ]
             )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+            return ToolResult(
+                content=section("Confirm Test Suite Deletion", info),
+                data={
+                    "requires_confirmation": True,
+                    "confirm_delete": True,
+                    "id": str(run_test.id),
+                    "name": run_test.name,
+                },
+            )
 
         run_test_name = run_test.name
         run_test.deleted = True
@@ -41,7 +64,7 @@ class DeleteRunTestTool(BaseTool):
 
         info = key_value_block(
             [
-                ("ID", f"`{params.run_test_id}`"),
+                ("ID", f"`{run_test.id}`"),
                 ("Name", run_test_name),
                 ("Status", "Deleted"),
             ]
@@ -52,7 +75,7 @@ class DeleteRunTestTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "id": str(params.run_test_id),
+                "id": str(run_test.id),
                 "name": run_test_name,
                 "deleted": True,
             },

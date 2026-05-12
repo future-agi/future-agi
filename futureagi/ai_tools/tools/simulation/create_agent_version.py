@@ -1,8 +1,9 @@
-from typing import Optional
+import re
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -11,21 +12,105 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_agent
 from ai_tools.validators import (
+    get_valid_language_codes,
     validate_contact_number,
     validate_languages,
     validate_provider,
 )
 
+_PROVIDER_ALIASES = {
+    "anthropic": "others",
+    "claude": "others",
+    "openai": "others",
+    "gpt": "others",
+    "gemini": "others",
+    "google": "others",
+    "bedrock": "others",
+    "aws": "others",
+    "custom": "others",
+    "other": "others",
+}
+
+
+def _normalize_contact_number(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) < 10 or len(digits) > 12:
+        return None
+    normalized = f"+{digits}" if raw.startswith("+") else digits
+    try:
+        return validate_contact_number(normalized)
+    except ValueError:
+        return None
+
+
+def _normalize_languages(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    try:
+        valid_codes = get_valid_language_codes()
+    except Exception:
+        valid_codes = []
+    by_lower = {str(code).lower(): code for code in valid_codes}
+    common_aliases = {
+        "en-us": "en",
+        "en_us": "en",
+        "english": "en",
+        "es": "es",
+        "spanish": "es",
+        "fr": "fr",
+        "french": "fr",
+        "de": "de",
+        "german": "de",
+        "ja": "ja",
+        "japanese": "ja",
+        "ko": "ko",
+        "korean": "ko",
+        "pt": "pt",
+        "portuguese": "pt",
+        "hi": "hi",
+        "hindi": "hi",
+    }
+    normalized = []
+    for item in values:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        lowered = raw.lower()
+        candidate = by_lower.get(lowered)
+        if candidate is None:
+            alias = common_aliases.get(lowered)
+            candidate = by_lower.get(alias) if alias else None
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+    if not normalized:
+        return None
+    try:
+        return validate_languages(normalized)
+    except ValueError:
+        return None
+
 
 class CreateAgentVersionInput(PydanticBaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-    agent_id: UUID = Field(description="The UUID of the agent definition")
-    commit_message: str = Field(
-        min_length=1, description="Commit message for the version"
+    agent_id: str = Field(
+        default="",
+        description="Agent definition name or UUID",
     )
-    release_notes: Optional[str] = Field(
+    commit_message: str = Field(
+        default="Falcon AI update",
+        min_length=1,
+        description="Commit message for the version",
+    )
+    release_notes: str | None = Field(
         default=None, description="Detailed release notes"
     )
 
@@ -77,20 +162,58 @@ class CreateAgentVersionInput(PydanticBaseModel):
         description="UUID of the knowledge base file (set to null UUID to clear)",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_agentic_inputs(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if not normalized.get("agent_id"):
+            normalized["agent_id"] = (
+                normalized.get("agent")
+                or normalized.get("agent_definition_id")
+                or normalized.get("agent_name")
+                or normalized.get("id")
+                or ""
+            )
+        provider = normalized.get("provider")
+        if provider is not None:
+            provider_text = str(provider).strip()
+            provider_key = provider_text.lower()
+            normalized["provider"] = _PROVIDER_ALIASES.get(
+                provider_key, provider_key or provider_text
+            )
+            model_details = normalized.get("model_details")
+            if provider_key in _PROVIDER_ALIASES:
+                if not isinstance(model_details, dict):
+                    model_details = {}
+                model_details.setdefault("requested_provider", provider_text)
+                normalized["model_details"] = model_details
+        contact = normalized.get("contact_number", normalized.get("contactNumber"))
+        if contact is not None:
+            normalized["contact_number"] = _normalize_contact_number(contact)
+        if "languages" in normalized:
+            normalized["languages"] = _normalize_languages(normalized.get("languages"))
+        auth = normalized.get("authentication_method")
+        if auth is not None and str(auth).strip() != "api_key":
+            normalized["authentication_method"] = None
+        return normalized
+
     @field_validator("languages")
     @classmethod
     def check_languages(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
-            if len(v) == 0:
-                raise ValueError("At least one language is required")
-            return validate_languages(v)
+            return _normalize_languages(v)
         return v
 
     @field_validator("provider")
     @classmethod
     def check_provider(cls, v: str | None) -> str | None:
         if v is not None and v.strip():
-            return validate_provider(v)
+            try:
+                return validate_provider(v)
+            except ValueError:
+                return _PROVIDER_ALIASES.get(v.strip().lower(), "others")
         return v
 
     @field_validator("authentication_method")
@@ -99,7 +222,7 @@ class CreateAgentVersionInput(PydanticBaseModel):
         if v is not None and v.strip():
             v = v.strip()
             if v != "api_key":
-                raise ValueError("authentication_method must be 'api_key'")
+                return None
             return v
         return v
 
@@ -107,8 +230,21 @@ class CreateAgentVersionInput(PydanticBaseModel):
     @classmethod
     def check_contact_number(cls, v: str | None) -> str | None:
         if v is not None and v.strip():
-            return validate_contact_number(v)
+            return _normalize_contact_number(v)
         return v
+
+
+def _requirements_result(
+    title: str,
+    requirements: list[str],
+    data: dict | None = None,
+) -> ToolResult:
+    body = "Cannot create a new agent version until these requirements are met:"
+    body += "\n\n" + "\n".join(f"- `{item}`" for item in requirements)
+    payload = {"requires_fields": requirements}
+    if data:
+        payload.update(data)
+    return ToolResult(content=section(title, body), data=payload)
 
 
 @register_tool
@@ -126,17 +262,15 @@ class CreateAgentVersionTool(BaseTool):
         self, params: CreateAgentVersionInput, context: ToolContext
     ) -> ToolResult:
 
-        from simulate.models.agent_definition import AgentDefinition
         from simulate.models.agent_version import AgentVersion
 
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
+        agent, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required To Create Version",
+        )
+        if unresolved:
+            return unresolved
 
         # --- Update agent definition fields (matches AgentDefinitionUpdateSerializer) ---
         updated_fields = []
@@ -194,14 +328,16 @@ class CreateAgentVersionTool(BaseTool):
 
         if agent.agent_type == "voice":
             if not agent.provider or not agent.provider.strip():
-                return ToolResult.validation_error(
-                    "provider is required for voice agents. "
-                    "Provide provider in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["provider"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
             if not agent.contact_number or not agent.contact_number.strip():
-                return ToolResult.validation_error(
-                    "contact_number is required for voice agents. "
-                    "Provide contact_number in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["contact_number"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
 
             should_require_auth = agent.provider != "others" and (
@@ -212,47 +348,60 @@ class CreateAgentVersionTool(BaseTool):
                     not agent.authentication_method
                     or not agent.authentication_method.strip()
                 ):
-                    return ToolResult.validation_error(
-                        "authentication_method is required for configured voice agents"
+                    return _requirements_result(
+                        "Agent Version Requirements",
+                        ["authentication_method"],
+                        {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                     )
                 if agent.authentication_method != "api_key":
-                    return ToolResult.validation_error(
-                        "authentication_method must be 'api_key'"
+                    return _requirements_result(
+                        "Agent Version Requirements",
+                        ["authentication_method=api_key"],
+                        {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                     )
 
             if agent.contact_number:
                 try:
                     validate_contact_number(agent.contact_number)
                 except ValueError as e:
-                    return ToolResult.validation_error(str(e))
+                    return _requirements_result(
+                        "Agent Version Requirements",
+                        [f"valid contact_number ({str(e)})"],
+                        {"agent_id": str(agent.id), "agent_name": agent.agent_name},
+                    )
 
         if not agent.inbound:
             if not agent.provider or not agent.provider.strip():
-                return ToolResult.validation_error(
-                    "provider is required for outbound agents. "
-                    "Provide provider in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["provider"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
             if not agent.api_key:
-                return ToolResult.validation_error(
-                    "api_key is required for outbound agents. "
-                    "Provide api_key in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["api_key"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
             if not agent.assistant_id:
-                return ToolResult.validation_error(
-                    "assistant_id is required for outbound agents. "
-                    "Provide assistant_id in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["assistant_id"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
 
         if observability_enabled and agent.provider != "others" and agent.inbound:
             if not agent.api_key:
-                return ToolResult.validation_error(
-                    "api_key is required when observability is enabled. "
-                    "Provide api_key in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["api_key"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
             if not agent.assistant_id:
-                return ToolResult.validation_error(
-                    "assistant_id is required when observability is enabled. "
-                    "Provide assistant_id in this update or ensure it is already set on the agent."
+                return _requirements_result(
+                    "Agent Version Requirements",
+                    ["assistant_id"],
+                    {"agent_id": str(agent.id), "agent_name": agent.agent_name},
                 )
 
         # Save agent updates

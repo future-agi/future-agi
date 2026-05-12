@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -19,7 +18,7 @@ class CompareExperimentsInput(PydanticBaseModel):
     experiment_id: UUID = Field(
         description="The UUID of the experiment to compare variants"
     )
-    weights: Optional[dict[str, float]] = Field(
+    weights: dict[str, float] | None = Field(
         default=None,
         description=(
             "Custom weights for comparison metrics. "
@@ -64,9 +63,21 @@ class CompareExperimentsTool(BaseTool):
 
         variant_datasets = list(experiment.experiments_datasets.all())
         if not variant_datasets:
-            return ToolResult.error(
-                "Experiment has no variants.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Experiment Has No Variants",
+                    (
+                        f"Experiment `{experiment.name}` exists, but it has no "
+                        "variant datasets to compare yet. Add variants or run the "
+                        "experiment before requesting a ranked comparison."
+                    ),
+                ),
+                data={
+                    "experiment_id": str(experiment.id),
+                    "experiment_name": experiment.name,
+                    "variant_count": 0,
+                    "requires_variants": True,
+                },
             )
 
         # Compute raw metrics per variant
@@ -175,7 +186,7 @@ class CompareExperimentsTool(BaseTool):
         tkw = w.get("total_tokens", 0.25)
 
         ratings = []
-        for i, vm in enumerate(variant_metrics):
+        for i, _vm in enumerate(variant_metrics):
             rating = norm_scores[i] * sw + norm_times[i] * tw + norm_tokens[i] * tkw
             ratings.append(rating)
 

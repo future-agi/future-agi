@@ -18,8 +18,9 @@ class AddDatasetRowsInput(PydanticBaseModel):
     )
     rows: list[dict] = Field(
         description=(
-            "List of row objects. Each row is a dict mapping column names to values. "
-            "Example: [{'input': 'What is AI?', 'expected_output': 'AI is...'}]"
+            "Required list of row objects. Do not call this tool without rows. "
+            "Each row must be a dict mapping column names to values. "
+            "Example: [{'question': 'What is AI?', 'answer': 'AI is...'}]"
         ),
         min_length=1,
         max_length=100,
@@ -31,7 +32,10 @@ class AddDatasetRowsTool(BaseTool):
     name = "add_dataset_rows"
     description = (
         "Adds rows to an existing dataset. Each row is a dictionary mapping "
-        "column names to cell values. Maximum 100 rows per call."
+        "column names to cell values. Maximum 100 rows per call. "
+        "After create_dataset, use this for actual row values; do not ask "
+        "create_dataset to create blank placeholder rows first. Only call this "
+        "tool when you can include the rows parameter in the same call."
     )
     category = "datasets"
     input_model = AddDatasetRowsInput

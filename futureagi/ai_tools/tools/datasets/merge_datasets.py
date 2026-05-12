@@ -1,6 +1,3 @@
-from typing import Optional
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -14,13 +11,15 @@ from ai_tools.registry import register_tool
 
 
 class MergeDatasetsInput(PydanticBaseModel):
-    source_dataset_id: UUID = Field(
-        description="The UUID of the dataset to merge rows FROM"
+    source_dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID to merge rows FROM",
     )
-    target_dataset_id: UUID = Field(
-        description="The UUID of the dataset to merge rows INTO"
+    target_dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID to merge rows INTO",
     )
-    row_ids: Optional[list[UUID]] = Field(
+    row_ids: list[str] | None = Field(
         default=None,
         description=(
             "Optional list of specific row UUIDs from the source dataset to merge. "
@@ -42,14 +41,41 @@ class MergeDatasetsTool(BaseTool):
 
     def execute(self, params: MergeDatasetsInput, context: ToolContext) -> ToolResult:
 
+        from ai_tools.tools.datasets._utils import (
+            candidate_datasets_result,
+            resolve_dataset_for_tool,
+        )
         from model_hub.services.dataset_service import (
             ServiceError,
         )
         from model_hub.services.dataset_service import merge_datasets as svc_merge
 
+        source_dataset, source_error = resolve_dataset_for_tool(
+            params.source_dataset_id,
+            context,
+            title="Source Dataset Required",
+        )
+        if source_error:
+            return source_error
+
+        target_dataset, target_error = resolve_dataset_for_tool(
+            params.target_dataset_id,
+            context,
+            title="Target Dataset Required",
+        )
+        if target_error:
+            return candidate_datasets_result(
+                context,
+                "Target Dataset Required",
+                (
+                    "Provide `target_dataset_id` for the dataset to merge rows into. "
+                    f"Source selected: `{source_dataset.name}` (`{source_dataset.id}`)."
+                ),
+            )
+
         result = svc_merge(
-            source_dataset_id=str(params.source_dataset_id),
-            target_dataset_id=str(params.target_dataset_id),
+            source_dataset_id=str(source_dataset.id),
+            target_dataset_id=str(target_dataset.id),
             row_ids=[str(r) for r in params.row_ids] if params.row_ids else None,
             organization=context.organization,
             workspace=context.workspace,

@@ -1,5 +1,4 @@
 from typing import Any, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
@@ -14,7 +13,10 @@ from ai_tools.registry import register_tool
 
 
 class UpdateScenarioInput(PydanticBaseModel):
-    scenario_id: UUID = Field(description="The UUID of the scenario to update")
+    scenario_id: str = Field(
+        default="",
+        description="Scenario UUID or exact/fuzzy scenario name. Omit it to list candidates.",
+    )
     name: Optional[str] = Field(
         default=None, max_length=255, description="New name for the scenario"
     )
@@ -49,16 +51,15 @@ class UpdateScenarioTool(BaseTool):
 
     def execute(self, params: UpdateScenarioInput, context: ToolContext) -> ToolResult:
 
-        from simulate.models.scenarios import Scenarios
+        from ai_tools.tools.simulation._utils import resolve_scenario
 
-        try:
-            scenario = Scenarios.objects.select_related("simulator_agent").get(
-                id=params.scenario_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except Scenarios.DoesNotExist:
-            return ToolResult.not_found("Scenario", str(params.scenario_id))
+        scenario, unresolved = resolve_scenario(
+            params.scenario_id,
+            context,
+            title="Scenario Required To Update",
+        )
+        if unresolved:
+            return unresolved
 
         updated_fields = []
         if params.name is not None:

@@ -9,8 +9,6 @@ These functions take explicit parameters instead of reading from `self`.
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
-
 logger = structlog.get_logger(__name__)
 
 
@@ -25,7 +23,6 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
-
         from model_hub.models.evals_metric import EvalTemplateVersion
 
         if organization is None:
@@ -87,7 +84,14 @@ def apply_version_overrides(config, resolved_version, criteria=None):
             )
         criteria = criteria_text
 
-    if resolved_version.model:
+    current_model = str(config.get("model") or "").strip()
+    current_provider = str(config.get("provider") or "").strip()
+    explicit_bedrock_runtime = (
+        current_model.startswith(("bedrock/", "arn:aws:bedrock:"))
+        or current_provider == "aws_bedrock_anthropic"
+    )
+
+    if resolved_version.model and not explicit_bedrock_runtime:
         config["model"] = resolved_version.model
 
     return config, criteria
@@ -120,8 +124,13 @@ def _get_futureagi_model_config(model="turing_large"):
 
     Extracted from EvaluationRunner._get_futureagi_model_config (eval_runner.py:2397).
     """
-    from agentic_eval.core.utils.model_config import ModelConfigs
     from model_hub.models.choices import ModelChoices
+
+    from agentic_eval.core.utils.model_config import LiteLlmProvider, ModelConfigs
+
+    model_name = str(model or "").strip()
+    if model_name.startswith("bedrock/") or model_name.startswith("arn:aws:bedrock:"):
+        return model_name, LiteLlmProvider.AWS_BEDROCK_ANTHROPIC.value
 
     futureagi_model_configs = {
         ModelChoices.TURING_LARGE.value: ModelConfigs.TURING_LARGE,

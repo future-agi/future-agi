@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
@@ -8,25 +7,35 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    candidate_prompt_eval_configs_result,
+    candidate_prompt_versions_result,
+    resolve_prompt_eval_configs,
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
 
 logger = structlog.get_logger(__name__)
 
 
 class RunPromptEvalsInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    version_to_run: list[str] = Field(
-        description=(
-            "List of version strings to run evals on (e.g. ['v1', 'v2']). "
-            "At least one version must be specified."
-        ),
-        min_length=1,
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
     )
-    prompt_eval_config_ids: list[UUID] = Field(
+    version_to_run: list[str] = Field(
+        default_factory=list,
         description=(
-            "List of PromptEvalConfig IDs to run. "
-            "Use get_prompt_eval_configs to find available IDs."
+            "List of version strings, names, or IDs to run evals on (e.g. ['v1', 'v2']). "
+            "Omit to list candidate versions."
         ),
-        min_length=1,
+    )
+    prompt_eval_config_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "List of PromptEvalConfig IDs or names to run. "
+            "Omit to list available eval configs."
+        ),
     )
     run_index: Optional[int] = Field(
         default=None,
@@ -57,7 +66,6 @@ class RunPromptEvalsTool(BaseTool):
 
         from model_hub.models.evals_metric import StatusType
         from model_hub.models.run_prompt import (
-            PromptEvalConfig,
             PromptTemplate,
             PromptVersion,
         )
@@ -69,40 +77,66 @@ class RunPromptEvalsTool(BaseTool):
             track_running_eval_count,
         )
 
-        # Validate template
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
-
-        version_to_run = params.version_to_run
-        prompt_eval_config_ids = [str(eid) for eid in params.prompt_eval_config_ids]
-        run_index = params.run_index
-
-        # Validate that all eval config IDs exist and belong to this template
-        existing_configs = PromptEvalConfig.objects.filter(
-            id__in=prompt_eval_config_ids,
-            prompt_template=template,
-            deleted=False,
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
         )
-        if existing_configs.count() != len(prompt_eval_config_ids):
-            found = set(str(c.id) for c in existing_configs)
-            missing = [eid for eid in prompt_eval_config_ids if eid not in found]
-            return ToolResult.error(
-                f"Eval config(s) not found: {', '.join(missing)}. "
-                "Use get_prompt_eval_configs to see available configs.",
-                error_code="NOT_FOUND",
+        if template_result:
+            return template_result
+
+        if not params.version_to_run:
+            return candidate_prompt_versions_result(
+                template,
+                "Prompt Versions Required",
+                "Choose one or more versions to evaluate.",
             )
+
+        resolved_versions = []
+        seen_version_ids = set()
+        for version_ref in params.version_to_run:
+            version, version_result = resolve_prompt_version(
+                template,
+                version_ref,
+                "Prompt Version Required",
+            )
+            if version_result:
+                return version_result
+            if str(version.id) not in seen_version_ids:
+                resolved_versions.append(version)
+                seen_version_ids.add(str(version.id))
+
+        version_ids = [str(version.id) for version in resolved_versions]
+        version_to_run = [version.template_version for version in resolved_versions]
+
+        if not params.prompt_eval_config_ids:
+            return candidate_prompt_eval_configs_result(
+                template,
+                "Prompt Eval Configs Required",
+                "Choose one or more eval configs to run.",
+            )
+
+        existing_configs, missing_configs = resolve_prompt_eval_configs(
+            template,
+            params.prompt_eval_config_ids,
+        )
+        if missing_configs:
+            return candidate_prompt_eval_configs_result(
+                template,
+                "Prompt Eval Config Not Found",
+                "Missing eval config reference(s): "
+                + ", ".join(f"`{missing}`" for missing in missing_configs)
+                + ". Use one of these config IDs or names.",
+            )
+
+        prompt_eval_config_ids = [str(config.id) for config in existing_configs]
+        run_index = params.run_index
 
         # Get executions (prompt versions) — same as the view
         executions = PromptVersion.objects.filter(
+            id__in=version_ids,
             original_template=template,
             original_template__organization=context.organization,
-            template_version__in=version_to_run,
             deleted=False,
         )
         if not executions.exists():

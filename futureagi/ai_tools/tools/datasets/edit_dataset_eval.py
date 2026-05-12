@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,11 +9,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.datasets._utils import resolve_dataset_eval, resolve_dataset_for_tool
 
 
 class EditDatasetEvalInput(PydanticBaseModel):
-    dataset_id: UUID = Field(description="The UUID of the dataset")
-    eval_id: UUID = Field(description="The UUID of the UserEvalMetric to edit")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset UUID or exact dataset name. Omit to list candidates.",
+    )
+    eval_id: str = Field(
+        default="",
+        description="Dataset eval UUID or exact eval/template name. Omit to list candidates.",
+    )
     mapping: Optional[dict[str, str]] = Field(
         default=None,
         description="Updated column mapping (template key → column ID/name)",
@@ -55,23 +61,23 @@ class EditDatasetEvalTool(BaseTool):
     def execute(self, params: EditDatasetEvalInput, context: ToolContext) -> ToolResult:
 
         from model_hub.models.choices import DataTypeChoices
-        from model_hub.models.develop_dataset import Dataset
-        from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 
-        try:
-            dataset = Dataset.objects.get(
-                id=params.dataset_id, deleted=False, organization=context.organization
-            )
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
+        dataset, unresolved = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            title="Dataset Required For Eval Edit",
+        )
+        if unresolved:
+            return unresolved
 
-        try:
-            user_eval = UserEvalMetric.objects.get(
-                id=params.eval_id, dataset=dataset, deleted=False
-            )
-        except UserEvalMetric.DoesNotExist:
-            return ToolResult.not_found("DatasetEval", str(params.eval_id))
+        user_eval, unresolved = resolve_dataset_eval(
+            dataset,
+            params.eval_id,
+            title="Dataset Eval Required For Edit",
+        )
+        if unresolved:
+            return unresolved
 
         # Check if column has been deleted (matches backend EditAndRunUserEvalView)
         if user_eval.column_deleted:
@@ -88,7 +94,12 @@ class EditDatasetEvalTool(BaseTool):
         new_config = params.config or {}
 
         if params.mapping is not None:
-            current_config["mapping"] = params.mapping
+            resolved_mapping, mapping_error = _resolve_column_mapping(
+                dataset, params.mapping
+            )
+            if mapping_error:
+                return ToolResult.validation_error(mapping_error)
+            current_config["mapping"] = resolved_mapping
             changes.append("Updated column mapping")
 
         if params.config is not None:
@@ -114,12 +125,12 @@ class EditDatasetEvalTool(BaseTool):
             try:
                 UUID(str(params.kb_id))
             except (ValueError, TypeError):
-                return ToolResult.bad_param("kb_id", "Must be a valid UUID")
+                return ToolResult.validation_error("`kb_id` must be a valid UUID")
             user_eval.kb_id = params.kb_id
             update_fields.append("kb_id")
             changes.append(f"Knowledge Base → `{params.kb_id}`")
 
-        if params.error_localizer:
+        if params.error_localizer is not None:
             user_eval.error_localizer = params.error_localizer
             update_fields.append("error_localizer")
             changes.append("Updated error localizer")
@@ -199,3 +210,34 @@ class EditDatasetEvalTool(BaseTool):
                 "status": user_eval.status,
             },
         )
+
+
+def _resolve_column_mapping(dataset, mapping: dict[str, str]):
+    from ai_tools.resolvers import is_uuid
+    from model_hub.models.develop_dataset import Column
+
+    dataset_columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+    col_name_to_id = {col.name.lower(): str(col.id) for col in dataset_columns}
+    col_name_to_id_exact = {col.name: str(col.id) for col in dataset_columns}
+    col_ids = {str(col.id) for col in dataset_columns}
+
+    resolved_mapping = {}
+    for key, col_ref in mapping.items():
+        ref = str(col_ref or "").strip()
+        if ref in col_ids:
+            resolved_mapping[key] = ref
+        elif is_uuid(ref):
+            return None, (
+                f"Column `{ref}` is not present on dataset `{dataset.name}`. "
+                f"Available columns: {', '.join(col_name_to_id_exact.keys())}"
+            )
+        elif ref.lower() in col_name_to_id:
+            resolved_mapping[key] = col_name_to_id[ref.lower()]
+        elif ref in col_name_to_id_exact:
+            resolved_mapping[key] = col_name_to_id_exact[ref]
+        else:
+            return None, (
+                f"Column `{ref}` not found in dataset `{dataset.name}`. "
+                f"Available columns: {', '.join(col_name_to_id_exact.keys())}"
+            )
+    return resolved_mapping, None

@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,7 +7,10 @@ from ai_tools.registry import register_tool
 
 
 class SearchTraceSpansInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to search in")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name to search in.",
+    )
     keyword: str = Field(
         min_length=1,
         description="Keyword to search for across span input, output, and metadata (case-insensitive)",
@@ -31,18 +32,18 @@ class SearchTraceSpansTool(BaseTool):
         self, params: SearchTraceSpansInput, context: ToolContext
     ) -> ToolResult:
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        try:
-            Trace.objects.get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To Search Spans",
+        )
+        if unresolved:
+            return unresolved
 
         spans = ObservationSpan.objects.filter(
-            trace_id=params.trace_id, deleted=False
+            trace=trace, deleted=False
         ).order_by("start_time", "created_at")
 
         keyword_lower = params.keyword.lower()
@@ -74,7 +75,7 @@ class SearchTraceSpansTool(BaseTool):
             return ToolResult(
                 content=section(
                     "Search Results",
-                    f'No spans contain "{params.keyword}" in trace `{params.trace_id}`.',
+                    f'No spans contain "{params.keyword}" in trace `{trace.id}`.',
                 ),
                 data={"matches": [], "count": 0},
             )

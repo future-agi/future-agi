@@ -1,5 +1,3 @@
-from uuid import UUID
-
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -11,18 +9,23 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
+from ai_tools.tools.agents._utils import (
+    candidate_run_tests_result,
+    resolve_run_test,
+)
 
 logger = structlog.get_logger(__name__)
 
 
 class CancelTestExecutionInput(PydanticBaseModel):
-    test_execution_id: UUID | None = Field(
+    test_execution_id: str | None = Field(
         default=None,
         description="The UUID of the test execution to cancel",
     )
-    run_test_id: UUID | None = Field(
+    run_test_id: str | None = Field(
         default=None,
-        description="The UUID of the run test to cancel (cancels its latest execution)",
+        description="The UUID or name of the run test to cancel (cancels its latest execution)",
     )
 
 
@@ -41,39 +44,92 @@ class CancelTestExecutionTool(BaseTool):
         self, params: CancelTestExecutionInput, context: ToolContext
     ) -> ToolResult:
 
-        from simulate.models.run_test import RunTest
         from simulate.models.test_execution import TestExecution
+
         from tfc.settings import settings as app_settings
+
+        def candidate_executions_result(title: str, detail: str = "") -> ToolResult:
+            executions = list(
+                TestExecution.objects.select_related("run_test")
+                .filter(run_test__organization=context.organization)
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data = []
+            for execution in executions:
+                rows.append(
+                    [
+                        f"`{execution.id}`",
+                        execution.run_test.name if execution.run_test else "—",
+                        format_status(execution.status),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(execution.id),
+                        "run_test_id": (
+                            str(execution.run_test_id)
+                            if execution.run_test_id
+                            else None
+                        ),
+                        "status": execution.status,
+                    }
+                )
+            body = detail or (
+                "Provide `test_execution_id`, or provide `run_test_id` to cancel "
+                "the latest execution for a test suite."
+            )
+            if rows:
+                from ai_tools.formatting import markdown_table
+
+                body += "\n\n" + markdown_table(
+                    ["Execution ID", "Run Test", "Status"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo test executions found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_test_execution_id_or_run_test_id": True,
+                    "executions": data,
+                },
+            )
 
         # Validate that at least one identifier is provided
         if not params.test_execution_id and not params.run_test_id:
-            return ToolResult.validation_error(
-                "Either test_execution_id or run_test_id must be provided."
-            )
+            return candidate_executions_result("Test Execution Required")
 
         # Resolve test execution with organization scoping
-        if params.test_execution_id:
+        execution_ref = str(params.test_execution_id or "").strip()
+        run_test_ref = str(params.run_test_id or "").strip()
+        if execution_ref and is_uuid(execution_ref):
             try:
                 test_execution = TestExecution.objects.get(
-                    id=params.test_execution_id,
+                    id=execution_ref,
                     run_test__organization=context.organization,
                     run_test__deleted=False,
                 )
             except TestExecution.DoesNotExist:
-                return ToolResult.not_found(
-                    "Test Execution", str(params.test_execution_id)
+                return candidate_executions_result(
+                    "Test Execution Not Found",
+                    f"Test execution `{execution_ref}` was not found.",
                 )
             run_test_id = str(test_execution.run_test_id)
         else:
+            if execution_ref and not run_test_ref:
+                run_test_ref = execution_ref
+            if not run_test_ref:
+                return candidate_executions_result("Run Test Required")
+
             # Cancel by run_test_id: verify access and find latest execution
-            try:
-                run_test = RunTest.objects.get(
-                    id=params.run_test_id,
-                    organization=context.organization,
-                    deleted=False,
-                )
-            except RunTest.DoesNotExist:
-                return ToolResult.not_found("Run Test", str(params.run_test_id))
+            run_test, unresolved = resolve_run_test(
+                run_test_ref,
+                context,
+                title="Run Test Required To Cancel",
+            )
+            if unresolved:
+                return unresolved
 
             test_execution = (
                 TestExecution.objects.filter(run_test=run_test)
@@ -81,9 +137,10 @@ class CancelTestExecutionTool(BaseTool):
                 .first()
             )
             if not test_execution:
-                return ToolResult.error(
-                    "No test executions found for this run test.",
-                    error_code="NOT_FOUND",
+                return candidate_run_tests_result(
+                    context,
+                    "Test Execution Not Found",
+                    f"No test executions found for run test `{run_test.name}`.",
                 )
             run_test_id = str(run_test.id)
 
@@ -94,10 +151,24 @@ class CancelTestExecutionTool(BaseTool):
             TestExecution.ExecutionStatus.EVALUATING,
         ]
         if test_execution.status not in cancellable_statuses:
-            return ToolResult.error(
-                f"Cannot cancel execution with status '{test_execution.status}'. "
-                f"Only executions with status {[s.value if hasattr(s, 'value') else s for s in cancellable_statuses]} can be cancelled.",
-                error_code="VALIDATION_ERROR",
+            cancellable = [
+                s.value if hasattr(s, "value") else s for s in cancellable_statuses
+            ]
+            return ToolResult(
+                content=section(
+                    "Test Execution Not Cancellable",
+                    (
+                        f"Execution `{test_execution.id}` is `{test_execution.status}`. "
+                        "Only these statuses can be cancelled: "
+                        + ", ".join(f"`{status}`" for status in cancellable)
+                    ),
+                ),
+                data={
+                    "id": str(test_execution.id),
+                    "status": test_execution.status,
+                    "cancellable_statuses": cancellable,
+                    "cancelled": False,
+                },
             )
 
         previous_status = test_execution.status

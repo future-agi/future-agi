@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,10 +13,14 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_run_test
 
 
 class GetRunTestAnalyticsInput(PydanticBaseModel):
-    run_test_id: UUID = Field(description="The UUID of the run test")
+    run_test_id: Optional[str] = Field(
+        default=None,
+        description="Run test UUID or exact run test name. Omit to list candidate tests.",
+    )
 
 
 @register_tool
@@ -34,15 +38,15 @@ class GetRunTestAnalyticsTool(BaseTool):
     ) -> ToolResult:
         from django.db.models import Avg, Count, Sum
 
-        from simulate.models.run_test import RunTest
         from simulate.models.test_execution import CallExecution, TestExecution
 
-        try:
-            run_test = RunTest.objects.select_related(
-                "agent_definition", "simulator_agent"
-            ).get(id=params.run_test_id, organization=context.organization)
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Agent Test Required For Analytics",
+        )
+        if unresolved:
+            return unresolved
 
         agent_name = (
             run_test.agent_definition.agent_name if run_test.agent_definition else "—"

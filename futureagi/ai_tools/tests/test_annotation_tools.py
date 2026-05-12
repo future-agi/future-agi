@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_annotation_label
+from ai_tools.tests.fixtures import make_annotation_label, make_dataset
 
 
 @pytest.fixture
@@ -47,6 +47,92 @@ class TestListAnnotationLabelsTool:
         assert len(result.data["labels"]) <= 1
 
 
+class TestGetAnnotationTool:
+    def test_get_annotation_details_alias(self, tool_context):
+        from model_hub.models.develop_annotations import Annotations
+
+        dataset = make_dataset(tool_context, name="Alias Dataset")
+        annotation = Annotations.objects.create(
+            name="Alias Annotation",
+            dataset=dataset,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+
+        result = run_tool(
+            "get_annotation_details",
+            {"annotation_id": str(annotation.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["id"] == str(annotation.id)
+        assert "Alias Annotation" in result.content
+
+    def test_get_annotation_task_alias_accepts_task_id(self, tool_context):
+        from model_hub.models.develop_annotations import Annotations
+
+        dataset = make_dataset(tool_context, name="Task Alias Dataset")
+        annotation = Annotations.objects.create(
+            name="Task Alias Annotation",
+            dataset=dataset,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+
+        result = run_tool(
+            "get_annotation_task",
+            {"annotation_task_id": str(annotation.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["id"] == str(annotation.id)
+        assert "Task Alias Annotation" in result.content
+
+
+class TestGetAnnotateRowTool:
+    def test_annotation_without_dataset_returns_recovery(self, tool_context):
+        from model_hub.models.develop_annotations import Annotations
+
+        annotation = Annotations.objects.create(
+            name="No Dataset Annotation",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+
+        result = run_tool(
+            "get_annotate_row",
+            {"annotation_id": str(annotation.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_annotation_id"] is True
+        assert "Annotation Has No Dataset" in result.content
+
+    def test_annotation_dataset_without_rows_returns_recovery(self, tool_context):
+        from model_hub.models.develop_annotations import Annotations
+
+        dataset = make_dataset(tool_context, name="Empty Annotation Dataset")
+        annotation = Annotations.objects.create(
+            name="Empty Rows Annotation",
+            dataset=dataset,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+
+        result = run_tool(
+            "get_annotate_row",
+            {"annotation_id": str(annotation.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_rows"] is True
+        assert "Annotation Dataset Has No Rows" in result.content
+
+
 # ===================================================================
 # WRITE TOOLS
 # ===================================================================
@@ -79,6 +165,19 @@ class TestCreateAnnotationLabelTool:
             },
             tool_context,
         )
+        assert not result.is_error
+
+    def test_create_categorical_with_options_only(self, tool_context):
+        result = run_tool(
+            "create_annotation_label",
+            {
+                "name": "Correctness",
+                "label_type": "categorical",
+                "settings": {"options": [{"label": "Correct"}, {"label": "Wrong"}]},
+            },
+            tool_context,
+        )
+
         assert not result.is_error
 
     def test_create_invalid_type(self, tool_context):

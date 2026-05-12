@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,7 +13,10 @@ from ai_tools.registry import register_tool
 
 
 class GetDatasetEvalStatsInput(PydanticBaseModel):
-    dataset_id: UUID = Field(description="The UUID of the dataset")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID. If omitted, recent dataset candidates are returned.",
+    )
 
 
 @register_tool
@@ -33,15 +34,51 @@ class GetDatasetEvalStatsTool(BaseTool):
     ) -> ToolResult:
         from django.db.models import Avg, Count, Q
 
+        from ai_tools.tools.datasets._utils import (
+            candidate_datasets_result,
+            resolve_dataset_for_tool,
+        )
         from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
         from model_hub.models.evals_metric import UserEvalMetric
 
-        try:
-            dataset = Dataset.objects.get(
-                id=params.dataset_id, deleted=False, organization=context.organization
+        if not params.dataset_id:
+            datasets = list(
+                Dataset.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                ).order_by("-created_at")[:10]
             )
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
+            rows = [
+                [
+                    f"`{dataset.id}`",
+                    dataset.name,
+                    str(Row.objects.filter(dataset=dataset, deleted=False).count()),
+                ]
+                for dataset in datasets
+            ]
+            return ToolResult(
+                content=section(
+                    "Dataset Candidates",
+                    markdown_table(["ID", "Name", "Rows"], rows)
+                    if rows
+                    else "No datasets found.",
+                ),
+                data={
+                    "datasets": [
+                        {"id": str(dataset.id), "name": dataset.name}
+                        for dataset in datasets
+                    ],
+                    "requires_dataset_id": True,
+                },
+            )
+
+        dataset, dataset_result = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            title="Dataset Required",
+        )
+        if dataset_result:
+            return dataset_result
 
         total_rows = Row.objects.filter(dataset=dataset, deleted=False).count()
 

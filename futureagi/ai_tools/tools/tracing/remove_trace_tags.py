@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,8 +10,13 @@ from ai_tools.registry import register_tool
 
 
 class RemoveTraceTagsInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to remove tags from")
-    tags: list[str] = Field(description="List of tag strings to remove")
+    trace_id: str | None = Field(
+        default=None,
+        description="Trace UUID or exact trace name to remove tags from.",
+    )
+    tags: list[str] = Field(
+        default_factory=list, description="List of tag strings to remove"
+    )
 
 
 @register_tool
@@ -28,19 +31,38 @@ class RemoveTraceTagsTool(BaseTool):
 
     def execute(self, params: RemoveTraceTagsInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import candidate_traces_result, resolve_trace
 
-        try:
-            trace = Trace.objects.get(
-                id=params.trace_id, project__organization=context.organization
+        if not params.trace_id:
+            return candidate_traces_result(
+                context,
+                "Remove Trace Tags Requirements",
+                "Provide `trace_id` and `tags` to remove tags from a trace.",
             )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To Remove Tags",
+        )
+        if unresolved:
+            return unresolved
 
         if not params.tags:
-            return ToolResult.error(
-                "Provide at least one tag to remove.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Remove Trace Tags Requirements",
+                    (
+                        f"Trace `{trace.id}` has tags: "
+                        f"{', '.join(trace.tags or []) or 'none'}.\n\n"
+                        "Provide `tags` with at least one existing tag to remove."
+                    ),
+                ),
+                data={
+                    "trace_id": str(trace.id),
+                    "requires_tags": True,
+                    "available_tags": trace.tags or [],
+                },
             )
 
         existing_tags = set(trace.tags or [])
@@ -54,7 +76,7 @@ class RemoveTraceTagsTool(BaseTool):
 
         info = key_value_block(
             [
-                ("Trace ID", f"`{params.trace_id}`"),
+                ("Trace ID", f"`{trace.id}`"),
                 (
                     "Removed Tags",
                     (
@@ -80,7 +102,7 @@ class RemoveTraceTagsTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "trace_id": str(params.trace_id),
+                "trace_id": str(trace.id),
                 "removed": sorted(removed),
                 "not_found": sorted(not_found),
                 "remaining_tags": trace.tags,

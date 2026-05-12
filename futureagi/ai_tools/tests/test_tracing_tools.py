@@ -1,10 +1,10 @@
+import json
 import uuid
 
 import pytest
 
-from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_project, make_trace
+from ai_tools.tests.fixtures import make_annotation_label, make_project, make_trace
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -116,6 +116,44 @@ class TestSearchTracesTool:
         assert not result.is_error
         assert len(result.data["traces"]) <= 1
 
+    def test_search_is_scoped_to_current_workspace(self, tool_context, trace, user):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=tool_context.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_project = make_project(
+            tool_context, name="Other Project", workspace=other_workspace
+        )
+        make_trace(tool_context, project=other_project, name="other-trace")
+
+        result = run_tool("search_traces", {}, tool_context)
+
+        assert result.data["total"] == 1
+        assert result.data["traces"][0]["name"] == "test-trace"
+
+    def test_search_includes_org_level_legacy_projects(self, tool_context):
+        legacy_project = make_project(
+            tool_context, name="Legacy Project", workspace=None
+        )
+        make_trace(tool_context, project=legacy_project, name="legacy-trace")
+
+        result = run_tool("search_traces", {}, tool_context)
+
+        assert result.data["total"] == 1
+        assert result.data["traces"][0]["name"] == "legacy-trace"
+
+
+class TestGetTraceAnalyticsTool:
+    def test_accepts_14_day_range(self, tool_context, trace_with_spans):
+        result = run_tool("get_trace_analytics", {"time_range": "14d"}, tool_context)
+
+        assert not result.is_error
+        assert result.data["time_range"] == "14d"
+
 
 class TestGetTraceTool:
     def test_get_existing(self, tool_context, trace):
@@ -151,8 +189,8 @@ class TestGetTraceTool:
     def test_get_nonexistent(self, tool_context):
         result = run_tool("get_trace", {"trace_id": str(uuid.uuid4())}, tool_context)
 
-        assert result.is_error
-        assert "Not Found" in result.content
+        assert not result.is_error
+        assert result.data["requires_trace_id"] is True
 
     def test_get_shows_input_output(self, tool_context, trace):
         result = run_tool("get_trace", {"trace_id": str(trace.id)}, tool_context)
@@ -164,7 +202,43 @@ class TestGetTraceTool:
     def test_get_invalid_uuid(self, tool_context):
         result = run_tool("get_trace", {"trace_id": "not-a-uuid"}, tool_context)
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_trace_id"] is True
+
+    def test_get_trace_rejects_other_workspace_trace(self, tool_context, user):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=tool_context.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_project = make_project(
+            tool_context, name="Other Project", workspace=other_workspace
+        )
+        other_trace = make_trace(
+            tool_context, project=other_project, name="other-trace"
+        )
+
+        result = run_tool("get_trace", {"trace_id": str(other_trace.id)}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_trace_id"] is True
+        assert str(other_trace.id) not in {t["id"] for t in result.data["traces"]}
+
+    def test_get_trace_allows_org_level_legacy_project(self, tool_context):
+        legacy_project = make_project(
+            tool_context, name="Legacy Project", workspace=None
+        )
+        legacy_trace = make_trace(
+            tool_context, project=legacy_project, name="legacy-trace"
+        )
+
+        result = run_tool("get_trace", {"trace_id": str(legacy_trace.id)}, tool_context)
+
+        assert not result.is_error
+        assert result.data["id"] == str(legacy_trace.id)
 
 
 class TestListProjectsTool:
@@ -178,6 +252,129 @@ class TestListProjectsTool:
 
         assert not result.is_error
         assert "Test Project" in result.content
+
+    def test_list_is_scoped_to_current_workspace(self, tool_context, project, user):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=tool_context.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_project = make_project(
+            tool_context, name="Other Project", workspace=other_workspace
+        )
+        make_trace(tool_context, project=project)
+        make_trace(tool_context, project=other_project, name="other-trace")
+
+        result = run_tool("list_projects", {}, tool_context)
+
+        assert result.data["total"] == 1
+        assert result.data["projects"][0]["name"] == "Test Project"
+
+    def test_list_includes_org_level_legacy_projects(self, tool_context):
+        make_project(tool_context, name="Legacy Project", workspace=None)
+
+        result = run_tool("list_projects", {}, tool_context)
+
+        assert result.data["total"] == 1
+        assert result.data["projects"][0]["name"] == "Legacy Project"
+
+
+class TestGetProjectEvalAttributesTool:
+    def test_uses_clickhouse_fast_path(self, tool_context, project, monkeypatch):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        monkeypatch.setattr(
+            AnalyticsQueryService, "should_use_clickhouse", lambda self, query_type: True
+        )
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch",
+            lambda self, project_id: [{"key": "llm.input", "type": "text"}],
+        )
+
+        result = run_tool(
+            "get_project_eval_attributes",
+            {"project_id": str(project.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["attributes"] == ["llm.input"]
+        assert result.data["backend"] == "clickhouse"
+
+
+class TestGetSpanTool:
+    def test_get_nonexistent_returns_candidates(self, tool_context):
+        result = run_tool("get_span", {"span_id": "missing-span"}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_span_id"] is True
+
+
+class TestCreateDashboardTool:
+    def test_create_dashboard_shell(self, tool_context):
+        result = run_tool(
+            "create_dashboard",
+            {"name": "Falcon Ops", "description": "Created by Falcon"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert "Dashboard Created" in result.content
+        assert result.data["name"] == "Falcon Ops"
+        assert result.data["widget_count"] == 0
+
+    def test_create_dashboard_with_widget(self, tool_context):
+        result = run_tool(
+            "create_dashboard",
+            {
+                "name": "Trace Health",
+                "widgets": [
+                    {
+                        "name": "Trace count",
+                        "chart_type": "metric",
+                        "width": 4,
+                        "height": 3,
+                    }
+                ],
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["widget_count"] == 1
+        assert result.data["widgets"][0]["name"] == "Trace count"
+
+
+class TestRenderWidgetTool:
+    def test_summary_stats_flat_payload_maps_to_key_value(self, tool_context):
+        result = run_tool(
+            "render_widget",
+            {
+                "type": "summary_stats",
+                "title": "API Key Health",
+                "data": json.dumps(
+                    {
+                        "stats": [
+                            {"label": "Total Keys", "value": 12},
+                            {"label": "Active Keys", "value": 10},
+                        ]
+                    }
+                ),
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        payload = json.loads(result.content)
+        assert payload["widget"]["type"] == "key_value"
+        assert payload["widget"]["config"]["items"] == [
+            {"key": "Total Keys", "value": "12"},
+            {"key": "Active Keys", "value": "10"},
+        ]
 
 
 # ===================================================================
@@ -285,7 +482,8 @@ class TestAddTraceTagsTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_trace_id"] is True
 
     def test_add_mixed_new_and_existing(self, tool_context, trace):
         result = run_tool(
@@ -300,7 +498,7 @@ class TestAddTraceTagsTool:
 
 
 class TestDeleteProjectTool:
-    def test_delete_existing(self, tool_context, project):
+    def test_delete_existing_defaults_to_preview(self, tool_context, project):
         result = run_tool(
             "delete_project",
             {"project_id": str(project.id)},
@@ -308,6 +506,8 @@ class TestDeleteProjectTool:
         )
 
         assert not result.is_error
+        assert result.data["dry_run"] is True
+        assert result.data["requires_confirm_delete"] is True
 
     def test_delete_nonexistent(self, tool_context):
         result = run_tool(
@@ -316,4 +516,72 @@ class TestDeleteProjectTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_project_id"] is True
+
+
+class TestDeleteEvalTasksTool:
+    def test_missing_ids_returns_candidates(self, tool_context, project):
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus
+
+        task = EvalTask.objects.create(
+            project=project,
+            name="candidate-task",
+            status=EvalTaskStatus.PAUSED,
+        )
+
+        result = run_tool("delete_eval_tasks", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_eval_task_ids"] is True
+        assert any(item["id"] == str(task.id) for item in result.data["tasks"])
+
+    def test_delete_defaults_to_preview(self, tool_context, project):
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus
+
+        task = EvalTask.objects.create(
+            project=project,
+            name="preview-task",
+            status=EvalTaskStatus.PAUSED,
+        )
+
+        result = run_tool(
+            "delete_eval_tasks",
+            {"eval_task_ids": [str(task.id)]},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["dry_run"] is True
+        assert result.data["requires_confirm_delete"] is True
+
+
+class TestCreateScoreTool:
+    def test_missing_trace_returns_candidates(self, tool_context, trace):
+        result = run_tool("create_score", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_trace_id"] is True
+        assert any(item["id"] == str(trace.id) for item in result.data["traces"])
+
+    def test_missing_value_returns_needs_input(self, tool_context, trace):
+        label = make_annotation_label(
+            tool_context,
+            name="score-label",
+            label_type="numeric",
+            project=trace.project,
+        )
+
+        result = run_tool(
+            "create_score",
+            {"trace_id": str(trace.id), "annotation_label_id": str(label.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_score_value"] is True
+        assert result.data["label_type"] == "numeric"

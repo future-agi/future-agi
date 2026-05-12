@@ -31,7 +31,7 @@ class AddWorkspaceMemberTool(BaseTool):
         self, params: AddWorkspaceMemberInput, context: ToolContext
     ) -> ToolResult:
 
-        from accounts.models.user import User
+        from ai_tools.tools.users._utils import resolve_user
         from accounts.models.workspace import (
             OrganizationRoles,
             Workspace,
@@ -62,10 +62,13 @@ class AddWorkspaceMemberTool(BaseTool):
             return ToolResult.not_found("Workspace", str(params.workspace_id))
 
         # Validate user
-        try:
-            target_user = User.objects.get(id=params.user_id, organization=org)
-        except User.DoesNotExist:
-            return ToolResult.not_found("User", str(params.user_id))
+        target_user, user_result = resolve_user(
+            params.user_id,
+            context,
+            title="User Required",
+        )
+        if user_result:
+            return user_result
 
         # Check for soft-deleted membership
         existing_deleted = WorkspaceMembership.all_objects.filter(

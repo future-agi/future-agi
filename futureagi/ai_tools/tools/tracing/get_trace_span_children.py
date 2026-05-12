@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,7 +7,10 @@ from ai_tools.registry import register_tool
 
 
 class GetTraceSpanChildrenInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name.",
+    )
     span_id: str = Field(description="The ID of the parent span")
 
 
@@ -27,18 +28,18 @@ class GetTraceSpanChildrenTool(BaseTool):
         self, params: GetTraceSpanChildrenInput, context: ToolContext
     ) -> ToolResult:
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        try:
-            Trace.objects.get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To List Span Children",
+        )
+        if unresolved:
+            return unresolved
 
         children = ObservationSpan.objects.filter(
-            trace_id=params.trace_id,
+            trace=trace,
             parent_span_id=params.span_id,
             deleted=False,
         ).order_by("start_time", "created_at")[:50]

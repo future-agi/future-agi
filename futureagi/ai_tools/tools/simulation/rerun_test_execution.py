@@ -1,5 +1,4 @@
-from enum import Enum
-from typing import List, Optional
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -13,16 +12,17 @@ from ai_tools.formatting import (
 from ai_tools.registry import register_tool
 
 
-class RerunType(str, Enum):
+class RerunType(StrEnum):
     EVAL_ONLY = "eval_only"
     CALL_AND_EVAL = "call_and_eval"
 
 
 class RerunTestExecutionInput(PydanticBaseModel):
-    run_test_id: UUID = Field(
+    run_test_id: UUID | None = Field(
+        default=None,
         description="The UUID of the RunTest containing the test executions to rerun.",
     )
-    test_execution_ids: Optional[List[UUID]] = Field(
+    test_execution_ids: list[UUID] | None = Field(
         default=None,
         description="List of test execution IDs to rerun. If not provided, use select_all=True.",
     )
@@ -55,6 +55,33 @@ class RerunTestExecutionTool(BaseTool):
     category = "simulation"
     input_model = RerunTestExecutionInput
 
+    def _candidate_run_tests_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from simulate.models.run_test import RunTest
+
+        run_tests = RunTest.objects.filter(
+            organization=context.organization, deleted=False
+        ).order_by("-created_at")[:10]
+        rows = [f"- `{run_test.id}` — {run_test.name}" for run_test in run_tests]
+        return ToolResult(
+            content=section(
+                "Run Test Required",
+                (
+                    (message + "\n\n" if message else "")
+                    + "Provide `run_test_id` and either `test_execution_ids` or `select_all=true`.\n\n"
+                    + ("\n".join(rows) if rows else "No run tests found.")
+                ),
+            ),
+            data={
+                "requires_run_test_id": True,
+                "run_tests": [
+                    {"id": str(run_test.id), "name": run_test.name}
+                    for run_test in run_tests
+                ],
+            },
+        )
+
     def execute(
         self, params: RerunTestExecutionInput, context: ToolContext
     ) -> ToolResult:
@@ -63,6 +90,9 @@ class RerunTestExecutionTool(BaseTool):
         from simulate.models.run_test import RunTest
         from simulate.models.test_execution import TestExecution
 
+        if params.run_test_id is None:
+            return self._candidate_run_tests_result(context)
+
         # Fetch run_test with organization scoping (matches view's get_object_or_404)
         try:
             run_test = RunTest.objects.select_related("agent_definition").get(
@@ -70,16 +100,37 @@ class RerunTestExecutionTool(BaseTool):
                 organization=context.organization,
             )
         except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+            return self._candidate_run_tests_result(
+                context, f"Run test `{params.run_test_id}` was not found."
+            )
 
         rerun_type = params.rerun_type.value
         select_all = params.select_all
         test_execution_ids = params.test_execution_ids
 
         if not select_all and not test_execution_ids:
-            return ToolResult.error(
-                "Either provide test_execution_ids or set select_all=True.",
-                error_code="VALIDATION_ERROR",
+            executions = TestExecution.objects.filter(run_test=run_test).order_by(
+                "-created_at"
+            )[:10]
+            rows = [
+                f"- `{execution.id}` — {execution.status}" for execution in executions
+            ]
+            return ToolResult(
+                content=section(
+                    "Test Executions Required",
+                    (
+                        "Either provide `test_execution_ids` or set `select_all=true`.\n\n"
+                        + ("\n".join(rows) if rows else "No test executions found.")
+                    ),
+                ),
+                data={
+                    "run_test_id": str(run_test.id),
+                    "requires_test_execution_ids": True,
+                    "test_executions": [
+                        {"id": str(execution.id), "status": execution.status}
+                        for execution in executions
+                    ],
+                },
             )
 
         # Validate CHAT/TEXT agents can only use eval_only
@@ -128,7 +179,6 @@ class RerunTestExecutionTool(BaseTool):
         """Rerun multiple test executions using the backend's bulk rerun logic."""
         import structlog
         from django.db import transaction
-
         from simulate.models.test_execution import (
             CallExecution,
             CallExecutionSnapshot,

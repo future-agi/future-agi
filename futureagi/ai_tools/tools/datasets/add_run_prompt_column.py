@@ -1,4 +1,5 @@
 import re
+import uuid
 from typing import List, Literal, Optional
 from uuid import UUID
 
@@ -41,23 +42,26 @@ class MessageInput(PydanticBaseModel):
 
 
 class AddRunPromptColumnInput(PydanticBaseModel):
-    dataset_id: UUID = Field(description="The UUID of the dataset")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID. If omitted, dataset candidates are returned.",
+    )
     name: str = Field(
+        default="",
         description="Name for the new run-prompt column",
-        min_length=1,
         max_length=255,
     )
     model: str = Field(
+        default="gpt-4o-mini",
         description="Model to use for the prompt (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
-        min_length=1,
     )
     messages: List[MessageInput] = Field(
+        default_factory=list,
         description=(
             "List of prompt messages. Each message has a role and content. "
             "Use {{column_name}} to substitute values from dataset columns. "
             "Example: [{'role': 'user', 'content': 'Say hi to {{name}}'}]"
         ),
-        min_length=1,
     )
     temperature: float = Field(
         default=0.7,
@@ -176,33 +180,92 @@ class AddRunPromptColumnTool(BaseTool):
     ) -> ToolResult:
 
         from model_hub.models.choices import SourceChoices, StatusType
-        from model_hub.models.develop_dataset import Column, Dataset
+        from ai_tools.resolvers import resolve_dataset
+        from ai_tools.formatting import markdown_table
+        from model_hub.models.develop_dataset import Column, Dataset, Row
         from model_hub.models.run_prompt import RunPrompter
         from model_hub.services.column_service import create_run_prompt_column
 
-        # Validate dataset (organization-filtered)
-        try:
-            dataset = Dataset.objects.get(
-                id=params.dataset_id, deleted=False, organization=context.organization
+        if not params.dataset_id:
+            datasets = list(
+                Dataset.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                ).order_by("-created_at")[:10]
             )
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
+            rows = [
+                [
+                    f"`{dataset.id}`",
+                    dataset.name,
+                    str(Row.objects.filter(dataset=dataset, deleted=False).count()),
+                ]
+                for dataset in datasets
+            ]
+            return ToolResult(
+                content=section(
+                    "Run Prompt Column Requirements",
+                    "Provide `dataset_id`. If `messages` are omitted, Falcon will use the first text-like column as input.",
+                )
+                + "\n\n"
+                + (
+                    markdown_table(["Dataset ID", "Name", "Rows"], rows)
+                    if rows
+                    else "No datasets found."
+                ),
+                data={
+                    "requires_dataset_id": True,
+                    "datasets": [
+                        {"id": str(dataset.id), "name": dataset.name}
+                        for dataset in datasets
+                    ],
+                },
+            )
+
+        # Validate dataset (organization-filtered)
+        dataset, error = resolve_dataset(
+            params.dataset_id, context.organization, context.workspace
+        )
+        if error:
+            return ToolResult.error(error, error_code="NOT_FOUND")
 
         # Convert messages to the format RunPrompter expects
-        messages = []
-        for msg in params.messages:
-            if isinstance(msg, dict):
-                messages.append({"role": msg["role"], "content": msg["content"]})
-            else:
-                messages.append({"role": msg.role, "content": msg.content})
-
-        # Validate that referenced columns exist
         dataset_columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
             source__in=[
                 SourceChoices.EVALUATION.value,
                 SourceChoices.EVALUATION_REASON.value,
             ]
         )
+        if not params.messages:
+            first_column = dataset_columns.first()
+            if not first_column:
+                return ToolResult(
+                    content=section(
+                        "Run Prompt Column Requirements",
+                        "This dataset has no editable input columns. Add a column and row data before creating a run-prompt column.",
+                    ),
+                    data={"dataset_id": str(dataset.id), "requires_columns": True},
+                )
+            messages = [
+                {
+                    "role": "user",
+                    "content": f"Summarize this value: {{{{{first_column.name}}}}}",
+                }
+            ]
+        else:
+            messages = []
+            for msg in params.messages:
+                if isinstance(msg, dict):
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+                else:
+                    messages.append({"role": msg.role, "content": msg.content})
+
+        column_name = params.name.strip() or f"falcon_run_prompt_{uuid.uuid4().hex[:8]}"
+        if Column.objects.filter(
+            dataset=dataset, name=column_name, deleted=False
+        ).exists():
+            column_name = f"{column_name[:220]}_{uuid.uuid4().hex[:8]}"
+
+        # Validate that referenced columns exist
         col_names = {col.name for col in dataset_columns}
 
         # Extract {{variable}} references from messages (supports JSON paths and indexed access)
@@ -215,19 +278,38 @@ class AddRunPromptColumnTool(BaseTool):
 
         missing_vars = referenced_vars - col_names
         if missing_vars:
-            return ToolResult.error(
-                f"Column(s) referenced in messages not found in dataset: "
-                f"{', '.join(f'{{{{' + v + '}}}}' for v in missing_vars)}. "
-                f"Available columns: {', '.join(sorted(col_names))}",
-                error_code="VALIDATION_ERROR",
+            column_rows = [
+                [col.name, col.data_type, f"`{col.id}`"] for col in dataset_columns
+            ]
+            return ToolResult(
+                content=section(
+                    "Run Prompt Column Variables Need Correction",
+                    (
+                        "One or more prompt variables do not match dataset columns: "
+                        + ", ".join(f"`{{{{{v}}}}}`" for v in sorted(missing_vars))
+                        + "\n\nAvailable columns:\n\n"
+                        + markdown_table(["Name", "Type", "ID"], column_rows)
+                    ),
+                ),
+                data={
+                    "requires_messages": True,
+                    "dataset_id": str(dataset.id),
+                    "missing_columns": sorted(missing_vars),
+                    "available_columns": [
+                        {"id": str(col.id), "name": col.name, "data_type": col.data_type}
+                        for col in dataset_columns
+                    ],
+                },
+                is_error=False,
+                status="needs_input",
             )
 
         # Check for duplicate column name
         if Column.objects.filter(
-            dataset=dataset, name=params.name, deleted=False
+            dataset=dataset, name=column_name, deleted=False
         ).exists():
             return ToolResult.error(
-                f"A column named '{params.name}' already exists in this dataset.",
+                f"A column named '{column_name}' already exists in this dataset.",
                 error_code="VALIDATION_ERROR",
             )
 
@@ -264,7 +346,7 @@ class AddRunPromptColumnTool(BaseTool):
         run_prompter = RunPrompter(
             dataset=dataset,
             model=params.model,
-            name=params.name,
+            name=column_name,
             messages=messages,
             output_format=params.output_format,
             temperature=params.temperature,
@@ -296,7 +378,7 @@ class AddRunPromptColumnTool(BaseTool):
         column, created = create_run_prompt_column(
             dataset=dataset,
             source_id=str(run_prompter.id),
-            name=params.name,
+            name=column_name,
             output_format=params.output_format,
         )
 
@@ -328,7 +410,7 @@ class AddRunPromptColumnTool(BaseTool):
         info = key_value_block(
             [
                 ("Column ID", f"`{column.id}`"),
-                ("Column Name", params.name),
+                ("Column Name", column_name),
                 ("RunPrompter ID", f"`{run_prompter.id}`"),
                 ("Model", params.model),
                 ("Model Type", params.model_type),
@@ -360,7 +442,7 @@ class AddRunPromptColumnTool(BaseTool):
             data={
                 "column_id": str(column.id),
                 "run_prompter_id": str(run_prompter.id),
-                "name": params.name,
+                "name": column_name,
                 "model": params.model,
                 "status": run_prompter.status,
             },

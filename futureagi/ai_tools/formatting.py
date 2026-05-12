@@ -63,6 +63,7 @@ def dashboard_link(
         "agent": f"dashboard/agents/playground/{entity_id}",
         "prompt_template": f"dashboard/workbench/create/{entity_id}",
         "experiment": f"dashboard/develop/experiment/{entity_id}/data",
+        "dashboard": f"dashboard/dashboards/{entity_id}",
         "trace": "dashboard/observe",
     }
     path = path_map.get(entity_type, "dashboard/get-started")

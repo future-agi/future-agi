@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,7 +10,10 @@ from ai_tools.registry import register_tool
 
 
 class ListTraceTagsInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to list tags for")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name to list tags for.",
+    )
 
 
 @register_tool
@@ -27,27 +28,28 @@ class ListTraceTagsTool(BaseTool):
 
     def execute(self, params: ListTraceTagsInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        try:
-            trace = Trace.objects.get(
-                id=params.trace_id, project__organization=context.organization
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To List Tags",
+        )
+        if unresolved:
+            return unresolved
 
         tags = trace.tags or []
 
         if not tags:
             content = section(
                 "Trace Tags",
-                f"No tags found on trace `{params.trace_id}`.",
+                f"No tags found on trace `{trace.id}`.",
             )
         else:
             tag_list = "\n".join(f"- `{tag}`" for tag in tags)
             info = key_value_block(
                 [
-                    ("Trace ID", f"`{params.trace_id}`"),
+                    ("Trace ID", f"`{trace.id}`"),
                     ("Trace Name", trace.name or "—"),
                     ("Tag Count", str(len(tags))),
                 ]
@@ -57,7 +59,7 @@ class ListTraceTagsTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "trace_id": str(params.trace_id),
+                "trace_id": str(trace.id),
                 "tags": tags,
                 "count": len(tags),
             },

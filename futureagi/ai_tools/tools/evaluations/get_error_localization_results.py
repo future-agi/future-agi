@@ -1,16 +1,22 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import key_value_block, section, truncate
+from ai_tools.formatting import (
+    format_datetime,
+    key_value_block,
+    markdown_table,
+    section,
+    truncate,
+)
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
 
 
 class GetErrorLocalizationResultsInput(PydanticBaseModel):
-    task_id: UUID = Field(
-        description="The UUID of the ErrorLocalizerTask to retrieve results for"
+    task_id: str = Field(
+        default="",
+        description="The UUID of the ErrorLocalizerTask to retrieve results for",
     )
 
 
@@ -30,13 +36,66 @@ class GetErrorLocalizationResultsTool(BaseTool):
     ) -> ToolResult:
         from model_hub.models.error_localizer_model import ErrorLocalizerTask
 
+        def candidate_tasks_result(title: str, detail: str = "") -> ToolResult:
+            tasks = list(
+                ErrorLocalizerTask.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                ).order_by("-created_at")[:10]
+            )
+            rows = [
+                [
+                    f"`{task.id}`",
+                    task.status,
+                    task.source,
+                    format_datetime(task.created_at),
+                ]
+                for task in tasks
+            ]
+            body = detail or ""
+            if rows:
+                body = (body + "\n\n" if body else "") + markdown_table(
+                    ["Task ID", "Status", "Source", "Created"], rows
+                )
+            else:
+                body = body or "No error localization tasks found."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_task_id": True,
+                    "tasks": [
+                        {
+                            "id": str(task.id),
+                            "status": task.status,
+                            "source": task.source,
+                        }
+                        for task in tasks
+                    ],
+                },
+            )
+
+        task_ref = str(params.task_id or "").strip()
+        if not task_ref:
+            return candidate_tasks_result(
+                "Error Localization Task Required",
+                "Provide `task_id` to retrieve localization results.",
+            )
+        if not is_uuid(task_ref):
+            return candidate_tasks_result(
+                "Error Localization Task Not Found",
+                f"`{task_ref}` is not a task UUID. Use one of these task IDs.",
+            )
+
         try:
             task = ErrorLocalizerTask.objects.get(
-                id=params.task_id,
+                id=task_ref,
                 organization=context.organization,
             )
         except ErrorLocalizerTask.DoesNotExist:
-            return ToolResult.not_found("Error Localization Task", str(params.task_id))
+            return candidate_tasks_result(
+                "Error Localization Task Not Found",
+                f"Task `{task_ref}` was not found in this workspace.",
+            )
 
         if task.status != "completed":
             return ToolResult(

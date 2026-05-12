@@ -189,9 +189,31 @@ class UpdateAgentDefinitionTool(BaseTool):
                 )
 
         if not updated_fields:
-            return ToolResult.error(
-                "No fields provided to update.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult.needs_input(
+                "No update fields were provided. Include at least one field such as "
+                "`agent_name`, `description`, `provider`, `model`, `language`, "
+                "`agent_type`, `websocket_url`, or `knowledge_base`.",
+                missing_fields=["update_fields"],
+                data={
+                    "agent_id": str(agent.id),
+                    "available_update_fields": [
+                        "agent_name",
+                        "description",
+                        "provider",
+                        "model",
+                        "model_details",
+                        "language",
+                        "languages",
+                        "contact_number",
+                        "assistant_id",
+                        "api_key",
+                        "authentication_method",
+                        "agent_type",
+                        "websocket_url",
+                        "websocket_headers",
+                        "knowledge_base",
+                    ],
+                },
             )
 
         # Cross-field validation on the resulting state

@@ -4,7 +4,11 @@ from unittest.mock import patch
 import pytest
 
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_dataset, make_dataset_with_rows
+from ai_tools.tests.fixtures import (
+    make_dataset,
+    make_dataset_with_rows,
+    make_eval_template,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -83,7 +87,89 @@ class TestGetExperimentStatsTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
+
+
+class TestRunExperimentEvalsTool:
+    def test_missing_experiment_returns_candidates(self, tool_context):
+        result = run_tool("run_experiment_evals", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
+
+    def test_missing_eval_ids_returns_configured_eval_candidates(
+        self, tool_context, experiment_dataset
+    ):
+        from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.models.experiments import ExperimentsTable
+
+        ds, cols, _rows = experiment_dataset
+        template = make_eval_template(tool_context, name="Experiment Quality")
+        metric = UserEvalMetric.objects.create(
+            name="Quality Metric",
+            template=template,
+            dataset=ds,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            user=tool_context.user,
+        )
+        experiment = ExperimentsTable.objects.create(
+            name="Candidate Experiment",
+            dataset=ds,
+            column=cols[0],
+            prompt_config=[],
+            user=tool_context.user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        result = run_tool(
+            "run_experiment_evals",
+            {"experiment_id": str(experiment.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_eval_template_ids"] is True
+        assert result.data["evals"][0]["name"] == "Quality Metric"
+
+    def test_eval_id_accepts_single_string(self, tool_context, experiment_dataset):
+        from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.models.experiments import ExperimentsTable
+
+        ds, cols, _rows = experiment_dataset
+        template = make_eval_template(tool_context, name="Runnable Quality")
+        metric = UserEvalMetric.objects.create(
+            name="Runnable Metric",
+            template=template,
+            dataset=ds,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            user=tool_context.user,
+        )
+        experiment = ExperimentsTable.objects.create(
+            name="Runnable Experiment",
+            dataset=ds,
+            column=cols[0],
+            prompt_config=[],
+            user=tool_context.user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        with patch("model_hub.views.experiment_runner.ExperimentRunner") as runner:
+            runner.return_value.load_experiment.return_value = None
+            runner.return_value.empty_or_create_evals_column.return_value = None
+            result = run_tool(
+                "run_experiment_evals",
+                {
+                    "experiment_id": str(experiment.id),
+                    "eval_template_ids": str(metric.id),
+                },
+                tool_context,
+            )
+
+        assert not result.is_error
+        assert result.data["eval_template_ids"] == [str(metric.id)]
 
 
 # ===================================================================

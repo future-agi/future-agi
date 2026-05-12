@@ -126,6 +126,12 @@ class TestGetOptimizationRunTool:
 
 
 class TestStopOptimizationRunTool:
+    def test_stop_missing_id_returns_candidates(self, tool_context):
+        result = run_tool("stop_optimization_run", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_optimization_id"] is True
+
     def test_stop_running(self, tool_context, running_optimization):
         result = run_tool(
             "stop_optimization_run",
@@ -148,4 +154,5 @@ class TestStopOptimizationRunTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_optimization_id"] is True

@@ -353,9 +353,8 @@ class TestResolveEvalTemplate:
         MockTemplate.objects.filter.side_effect = [exact_qs, fuzzy_qs]
 
         result, err = resolve_eval_template("hallucination", org)
-        assert result is None
-        assert "Did you mean" in err
-        assert "hallucination_detection" in err
+        assert result is tmpl
+        assert err is None
 
     @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_no_match(self, MockTemplate):
@@ -395,6 +394,11 @@ class TestResolveExperiment:
         result, err = resolve_experiment(VALID_UUID, org)
         assert result is exp
         assert err is None
+        MockExperiment.objects.get.assert_called_once_with(
+            id=VALID_UUID,
+            dataset__organization=org,
+            deleted=False,
+        )
 
     @patch("ai_tools.resolvers.ExperimentsTable")
     def test_resolve_by_uuid_not_found(self, MockExperiment):
@@ -419,6 +423,11 @@ class TestResolveExperiment:
         result, err = resolve_experiment("Baseline v1", org)
         assert result is exp
         assert err is None
+        MockExperiment.objects.filter.assert_called_once_with(
+            name__iexact="Baseline v1",
+            dataset__organization=org,
+            deleted=False,
+        )
 
     @patch("ai_tools.resolvers.ExperimentsTable")
     def test_resolve_no_match(self, MockExperiment):

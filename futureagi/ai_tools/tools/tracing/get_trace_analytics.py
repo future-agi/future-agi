@@ -18,6 +18,7 @@ TIME_RANGE_MAP = {
     "6h": 6,
     "24h": 24,
     "7d": 24 * 7,
+    "14d": 24 * 14,
     "30d": 24 * 30,
 }
 
@@ -26,7 +27,7 @@ class GetTraceAnalyticsInput(PydanticBaseModel):
     project_id: Optional[UUID] = Field(default=None, description="Filter by project ID")
     time_range: str = Field(
         default="24h",
-        description="Time range to analyze: 1h, 6h, 24h, 7d, or 30d",
+        description="Time range to analyze: 1h, 6h, 24h, 7d, 14d, or 30d",
     )
     group_by: Optional[str] = Field(
         default=None,

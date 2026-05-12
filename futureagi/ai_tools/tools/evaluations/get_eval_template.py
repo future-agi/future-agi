@@ -5,6 +5,7 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     format_datetime,
     key_value_block,
+    markdown_table,
     section,
     truncate,
 )
@@ -13,7 +14,7 @@ from ai_tools.registry import register_tool
 
 class GetEvalTemplateInput(PydanticBaseModel):
     eval_template_id: str = Field(
-        description="Name or UUID of the eval template to retrieve"
+        default="", description="Name or UUID of the eval template to retrieve"
     )
 
 
@@ -30,15 +31,80 @@ class GetEvalTemplateTool(BaseTool):
 
     def execute(self, params: GetEvalTemplateInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_eval_template
         from model_hub.models.evals_metric import EvalTemplate
-        from model_hub.utils.eval_validators import validate_eval_template_org_access
+
+        from ai_tools.resolvers import resolve_eval_template
+
+        if not params.eval_template_id:
+            from django.db.models import Q
+
+            templates = EvalTemplate.no_workspace_objects.filter(
+                Q(organization=context.organization) | Q(organization__isnull=True)
+            ).order_by("-created_at")[:10]
+            rows = [
+                f"- `{template.id}` — {template.name} ({template.owner or 'unknown owner'})"
+                for template in templates
+            ]
+            content = section(
+                "Eval Template Candidates",
+                (
+                    "Choose one of these eval templates, then call "
+                    "`get_eval_template` with `eval_template_id`.\n\n"
+                    + ("\n".join(rows) if rows else "No eval templates found.")
+                ),
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ]
+                },
+            )
 
         template_obj, err = resolve_eval_template(
             params.eval_template_id, context.organization
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            from django.db.models import Q
+
+            templates = list(
+                EvalTemplate.no_workspace_objects.filter(
+                    Q(organization=context.organization) | Q(organization__isnull=True)
+                ).order_by("-created_at")[:10]
+            )
+            rows = [
+                [
+                    f"`{template.id}`",
+                    truncate(template.name, 48),
+                    template.owner or "unknown",
+                ]
+                for template in templates
+            ]
+            candidates = (
+                markdown_table(["ID", "Name", "Owner"], rows)
+                if rows
+                else "No eval templates found."
+            )
+            return ToolResult(
+                content=section(
+                    "Eval Template Candidates",
+                    (
+                        f"{err}\n\n"
+                        "Use one of these IDs or exact names, or call `list_eval_templates` with a search term:\n\n"
+                        f"{candidates}"
+                    ),
+                ),
+                data={
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ],
+                    "requires_eval_template_id": True,
+                    "lookup_error": err,
+                },
+            )
 
         try:
             template = EvalTemplate.objects.get(id=template_obj.id)

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -15,6 +15,18 @@ from ai_tools.registry import register_tool
 
 class GetOptimizationGraphInput(PydanticBaseModel):
     optimization_id: UUID = Field(description="The UUID of the optimization run")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_id_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if data.get("optimization_id"):
+            return data
+        for alias in ("optimization_run_id", "run_id", "id"):
+            if data.get(alias):
+                return {**data, "optimization_id": data[alias]}
+        return data
 
 
 @register_tool

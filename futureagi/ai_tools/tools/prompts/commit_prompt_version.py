@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -7,12 +6,20 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
 
 
 class CommitPromptVersionInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
     version_name: str = Field(
-        description="The version name to commit (e.g., 'v1', 'v2')"
+        default="",
+        description="The version name or UUID to commit (e.g., 'v1', 'v2')",
     )
     message: Optional[str] = Field(default=None, description="Commit message")
     set_default: bool = Field(default=False, description="Set this version as default")
@@ -33,20 +40,21 @@ class CommitPromptVersionTool(BaseTool):
     ) -> ToolResult:
         from django.utils import timezone
 
-        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
-        try:
-            template = PromptTemplate.objects.get(id=params.template_id)
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
-
-        try:
-            version = PromptVersion.objects.get(
-                original_template=template,
-                template_version=params.version_name,
-            )
-        except PromptVersion.DoesNotExist:
-            return ToolResult.not_found("Prompt Version", params.version_name)
+        version, version_result = resolve_prompt_version(
+            template,
+            params.version_name,
+            "Prompt Version Required",
+        )
+        if version_result:
+            return version_result
 
         version.commit_message = params.message or ""
         version.is_draft = False

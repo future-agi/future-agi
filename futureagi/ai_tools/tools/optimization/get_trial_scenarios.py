@@ -1,7 +1,5 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -12,13 +10,47 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.optimization._utils import (
+    candidate_trials_result,
+    resolve_optimization_run,
+    resolve_trial,
+)
 
 
 class GetTrialScenariosInput(PydanticBaseModel):
-    optimization_id: UUID = Field(description="The UUID of the optimization run")
-    trial_id: UUID = Field(description="The UUID of the trial")
+    model_config = ConfigDict(extra="allow")
+
+    optimization_id: str = Field(
+        default="",
+        description="Optimization run UUID or name. If omitted, candidates are returned.",
+    )
+    trial_id: str = Field(
+        default="",
+        description="Trial UUID, trial number, 'baseline', or 'best'.",
+    )
     limit: int = Field(default=20, ge=1, le=100, description="Max rows to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["optimization_id"] = (
+            normalized.get("optimization_id")
+            or normalized.get("optimization_run_id")
+            or normalized.get("run_id")
+            or normalized.get("id")
+            or ""
+        )
+        normalized["trial_id"] = (
+            normalized.get("trial_id")
+            or normalized.get("optimization_trial_id")
+            or normalized.get("trial")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -36,23 +68,21 @@ class GetTrialScenariosTool(BaseTool):
         self, params: GetTrialScenariosInput, context: ToolContext
     ) -> ToolResult:
 
-        from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
         from model_hub.models.dataset_optimization_trial_item import (
             DatasetOptimizationTrialItem,
         )
-        from model_hub.models.optimize_dataset import OptimizeDataset
 
-        try:
-            run = OptimizeDataset.objects.get(id=params.optimization_id)
-        except OptimizeDataset.DoesNotExist:
-            return ToolResult.not_found("Optimization Run", str(params.optimization_id))
-
-        try:
-            trial = DatasetOptimizationTrial.objects.get(
-                id=params.trial_id, optimization_run=run
+        run, unresolved = resolve_optimization_run(params.optimization_id, context)
+        if unresolved:
+            return unresolved
+        trial, error = resolve_trial(params.trial_id, run)
+        if error:
+            return candidate_trials_result(
+                run,
+                "Optimization Trial Not Found",
+                error,
+                search=params.trial_id,
             )
-        except DatasetOptimizationTrial.DoesNotExist:
-            return ToolResult.not_found("Trial", str(params.trial_id))
 
         total = DatasetOptimizationTrialItem.objects.filter(trial=trial).count()
         items = DatasetOptimizationTrialItem.objects.filter(trial=trial).order_by("id")[

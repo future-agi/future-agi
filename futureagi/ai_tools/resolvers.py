@@ -12,6 +12,7 @@ import uuid
 from typing import Optional
 
 import structlog
+from django.db.models import Q
 
 # Module-scope imports so unit tests can patch these symbols
 from model_hub.models.develop_dataset import Dataset
@@ -122,20 +123,20 @@ def resolve_eval_template(identifier: str, organization, workspace=None):
     if not identifier:
         return None, "Eval template identifier is required."
 
+    org_or_system = Q(organization=organization) | Q(organization__isnull=True)
+
     if is_uuid(identifier):
         try:
             return (
-                EvalTemplate.objects.get(
-                    id=identifier, organization=organization, deleted=False
-                ),
+                EvalTemplate.objects.get(org_or_system, id=identifier, deleted=False),
                 None,
             )
         except EvalTemplate.DoesNotExist:
             return None, f"Eval template with ID `{identifier}` not found."
 
     matches = EvalTemplate.objects.filter(
+        org_or_system,
         name__iexact=identifier.strip(),
-        organization=organization,
         deleted=False,
     )
     if matches.count() == 1:
@@ -144,13 +145,19 @@ def resolve_eval_template(identifier: str, organization, workspace=None):
         names = [f"`{t.name}` (ID: {t.id})" for t in matches[:5]]
         return None, f"Multiple templates match '{identifier}': {', '.join(names)}."
 
-    # Try fuzzy
-    fuzzy = EvalTemplate.objects.filter(
-        name__icontains=identifier.strip(),
-        organization=organization,
-        deleted=False,
-    )[:5]
-    if fuzzy.exists():
+    # Try fuzzy. A unique match is generally safer for eval templates than
+    # forcing the model through a retry turn, because system template names are
+    # stable and often requested by short aliases.
+    fuzzy = list(
+        EvalTemplate.objects.filter(
+            org_or_system,
+            name__icontains=identifier.strip(),
+            deleted=False,
+        )[:5]
+    )
+    if len(fuzzy) == 1:
+        return fuzzy[0], None
+    if fuzzy:
         suggestions = [f"`{t.name}` (ID: {t.id})" for t in fuzzy]
         return (
             None,
@@ -167,10 +174,15 @@ def resolve_experiment(identifier: str, organization, workspace=None):
 
     if is_uuid(identifier):
         try:
+            lookup = {
+                "id": identifier,
+                "dataset__organization": organization,
+                "deleted": False,
+            }
+            if workspace:
+                lookup["dataset__workspace"] = workspace
             return (
-                ExperimentsTable.objects.get(
-                    id=identifier, organization=organization, deleted=False
-                ),
+                ExperimentsTable.objects.get(**lookup),
                 None,
             )
         except ExperimentsTable.DoesNotExist:
@@ -178,11 +190,17 @@ def resolve_experiment(identifier: str, organization, workspace=None):
 
     matches = ExperimentsTable.objects.filter(
         name__iexact=identifier.strip(),
-        organization=organization,
+        dataset__organization=organization,
         deleted=False,
     )
+    if workspace:
+        matches = matches.filter(dataset__workspace=workspace)
+
     if matches.count() == 1:
         return matches.first(), None
+    elif matches.count() > 1:
+        names = [f"`{e.name}` (ID: {e.id})" for e in matches[:5]]
+        return None, f"Multiple experiments match '{identifier}': {', '.join(names)}."
 
     return None, f"No experiment found matching '{identifier}'."
 

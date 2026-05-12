@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,15 +7,16 @@ from ai_tools.registry import register_tool
 
 
 class RunExperimentEvalsInput(PydanticBaseModel):
-    experiment_id: UUID = Field(
-        description="The UUID of the experiment to run additional evaluations on"
+    experiment_id: str = Field(
+        default="",
+        description="Name or UUID of the experiment to run additional evaluations on"
     )
-    eval_template_ids: list[UUID] = Field(
+    eval_template_ids: list[str] | str | None = Field(
+        default=None,
         description=(
-            "List of UserEvalMetric IDs (evaluation template IDs) to run on the experiment. "
+            "List of UserEvalMetric names or IDs to run on the experiment. "
             "These must already be configured on the experiment via add_experiment_eval."
         ),
-        min_length=1,
     )
 
 
@@ -36,27 +35,35 @@ class RunExperimentEvalsTool(BaseTool):
         self, params: RunExperimentEvalsInput, context: ToolContext
     ) -> ToolResult:
         import structlog
-        from django.shortcuts import get_object_or_404
 
+        from ai_tools.resolvers import is_uuid
+        from ai_tools.tools.experiments._utils import (
+            candidate_experiment_evals_result,
+            resolve_experiment_for_tool,
+        )
         from model_hub.models.choices import StatusType
-        from model_hub.models.develop_dataset import UserEvalMetric
+        from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.models.experiments import ExperimentsTable
-        from model_hub.services.experiment_runner import ExperimentRunner
+        from model_hub.views.experiment_runner import ExperimentRunner
 
         logger = structlog.get_logger(__name__)
 
-        # Get the experiment
+        experiment_obj, unresolved = resolve_experiment_for_tool(
+            params.experiment_id,
+            context,
+            title="Experiment Required To Run Evals",
+        )
+        if unresolved:
+            return unresolved
+
         try:
             experiment = (
                 ExperimentsTable.objects.select_related("dataset")
                 .prefetch_related("experiments_datasets", "user_eval_template_ids")
-                .get(
-                    id=params.experiment_id,
-                    deleted=False,
-                )
+                .get(id=experiment_obj.id, deleted=False)
             )
         except ExperimentsTable.DoesNotExist:
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
+            return ToolResult.not_found("Experiment", str(experiment_obj.id))
 
         # Verify organization access
         if (
@@ -65,7 +72,60 @@ class RunExperimentEvalsTool(BaseTool):
         ):
             return ToolResult.not_found("Experiment", str(params.experiment_id))
 
-        eval_template_ids = [str(eid) for eid in params.eval_template_ids]
+        configured_evals = list(experiment.user_eval_template_ids.all())
+        eval_refs = _normalize_eval_refs(params.eval_template_ids)
+        if not eval_refs:
+            return candidate_experiment_evals_result(
+                experiment,
+                "Experiment Eval Required To Run",
+            )
+
+        evals = []
+        missing = []
+        seen = set()
+        for ref in eval_refs:
+            ref_str = str(ref)
+            matched = None
+            if is_uuid(ref_str):
+                matched = next(
+                    (em for em in configured_evals if str(em.id) == ref_str), None
+                )
+            if not matched:
+                ref_lower = ref_str.strip().lower()
+                exact = [
+                    em
+                    for em in configured_evals
+                    if (em.name or "").lower() == ref_lower
+                    or (
+                        em.template
+                        and (em.template.name or "").lower() == ref_lower
+                    )
+                ]
+                if len(exact) == 1:
+                    matched = exact[0]
+                elif len(exact) > 1:
+                    missing.append(
+                        f"{ref_str}: multiple evals match; use one of "
+                        + ", ".join(f"`{em.name}` ({em.id})" for em in exact[:5])
+                    )
+                    continue
+            if matched:
+                key = str(matched.id)
+                if key not in seen:
+                    evals.append(matched)
+                    seen.add(key)
+            else:
+                missing.append(ref_str)
+
+        if not evals:
+            return candidate_experiment_evals_result(
+                experiment,
+                "Experiment Eval Not Found",
+                "No matching experiment evals found. "
+                f"Configured evals: {', '.join(em.name for em in configured_evals) or 'None'}.",
+            )
+
+        eval_template_ids = [str(e.id) for e in evals]
 
         try:
             # Update source_id on the eval metrics
@@ -106,6 +166,7 @@ class RunExperimentEvalsTool(BaseTool):
             [
                 ("Experiment", experiment.name),
                 ("Evals Triggered", str(len(eval_template_ids))),
+                ("Skipped", str(len(missing)) if missing else "None"),
                 ("Status", "Running"),
             ]
         )
@@ -121,6 +182,16 @@ class RunExperimentEvalsTool(BaseTool):
             data={
                 "experiment_id": str(experiment.id),
                 "eval_template_ids": eval_template_ids,
+                "missing": missing,
                 "status": "running",
             },
         )
+
+
+def _normalize_eval_refs(value: list[str] | str | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.strip()
+        return [value] if value else []
+    return [str(item).strip() for item in value if str(item).strip()]

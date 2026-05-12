@@ -1,22 +1,89 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
+    format_datetime,
     format_number,
     format_status,
     markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_agent
+from ai_tools.tools.annotation_queues._utils import clean_ref, uuid_text
+
+
+def _candidate_versions_result(agent, title: str, detail: str = "") -> ToolResult:
+    from simulate.models.agent_version import AgentVersion
+
+    versions = list(
+        AgentVersion.objects.filter(agent_definition=agent).order_by("-version_number")[
+            :10
+        ]
+    )
+    rows = [
+        [
+            f"`{version.id}`",
+            version.version_name or f"v{version.version_number}",
+            format_status(version.status),
+            format_datetime(version.created_at),
+        ]
+        for version in versions
+    ]
+    body = detail or ""
+    if rows:
+        body = (body + "\n\n" if body else "") + markdown_table(
+            ["ID", "Version", "Status", "Created"],
+            rows,
+        )
+    else:
+        body = body or f"No versions found for `{agent.agent_name}`."
+    return ToolResult(
+        content=section(title, body),
+        data={
+            "requires_version_ids": True,
+            "agent_id": str(agent.id),
+            "versions": [
+                {
+                    "id": str(version.id),
+                    "version_name": version.version_name,
+                    "version_number": version.version_number,
+                }
+                for version in versions
+            ],
+        },
+    )
+
+
+def _resolve_version(agent, version_ref):
+    from simulate.models.agent_version import AgentVersion
+
+    ref = clean_ref(version_ref)
+    if not ref:
+        return None
+    qs = AgentVersion.objects.filter(agent_definition=agent)
+    ref_uuid = uuid_text(ref)
+    if ref_uuid:
+        return qs.filter(id=ref_uuid).first()
+    exact = qs.filter(version_name__iexact=ref)
+    if exact.count() == 1:
+        return exact.first()
+    if ref.lower().startswith("v") and ref[1:].isdigit():
+        return qs.filter(version_number=int(ref[1:])).first()
+    if ref.isdigit():
+        return qs.filter(version_number=int(ref)).first()
+    return None
 
 
 class CompareAgentVersionsInput(PydanticBaseModel):
-    agent_id: UUID = Field(description="The UUID of the agent definition")
-    version_id_a: UUID = Field(description="The UUID of the first version to compare")
-    version_id_b: UUID = Field(description="The UUID of the second version to compare")
+    agent_id: str = Field(default="", description="Agent definition name or UUID")
+    version_id_a: str = Field(
+        default="", description="First version UUID, version name, or number"
+    )
+    version_id_b: str = Field(
+        default="", description="Second version UUID, version name, or number"
+    )
 
 
 @register_tool
@@ -33,29 +100,22 @@ class CompareAgentVersionsTool(BaseTool):
         self, params: CompareAgentVersionsInput, context: ToolContext
     ) -> ToolResult:
 
-        from simulate.models.agent_definition import AgentDefinition
-        from simulate.models.agent_version import AgentVersion
+        agent, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required For Version Comparison",
+        )
+        if unresolved:
+            return unresolved
 
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id, organization=context.organization
+        version_a = _resolve_version(agent, params.version_id_a)
+        version_b = _resolve_version(agent, params.version_id_b)
+        if not version_a or not version_b:
+            return _candidate_versions_result(
+                agent,
+                "Agent Versions Required",
+                "Provide `version_id_a` and `version_id_b` from this agent.",
             )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
-
-        try:
-            version_a = AgentVersion.objects.get(
-                id=params.version_id_a, agent_definition=agent
-            )
-        except AgentVersion.DoesNotExist:
-            return ToolResult.not_found("Agent Version A", str(params.version_id_a))
-
-        try:
-            version_b = AgentVersion.objects.get(
-                id=params.version_id_b, agent_definition=agent
-            )
-        except AgentVersion.DoesNotExist:
-            return ToolResult.not_found("Agent Version B", str(params.version_id_b))
 
         # Metrics comparison table
         rows = [

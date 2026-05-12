@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -15,7 +15,14 @@ from ai_tools.registry import register_tool
 
 
 class GetScenarioInput(PydanticBaseModel):
-    scenario_id: UUID = Field(description="The UUID of the scenario to retrieve")
+    scenario_id: Optional[str] = Field(
+        default=None,
+        description="The UUID of the scenario to retrieve",
+    )
+    scenario_ref: Optional[str] = Field(
+        default=None,
+        description="Scenario ID or exact/fuzzy scenario name",
+    )
 
 
 @register_tool
@@ -30,18 +37,22 @@ class GetScenarioTool(BaseTool):
 
     def execute(self, params: GetScenarioInput, context: ToolContext) -> ToolResult:
 
-        from simulate.models.scenarios import Scenarios
+        from ai_tools.tools.simulation._utils import resolve_scenario
 
-        try:
-            scenario = Scenarios.objects.select_related(
-                "agent_definition", "dataset"
-            ).get(
-                id=params.scenario_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except Scenarios.DoesNotExist:
-            return ToolResult.not_found("Scenario", str(params.scenario_id))
+        scenario, error = resolve_scenario(
+            params.scenario_id or params.scenario_ref,
+            context,
+            title="Scenario Needed",
+        )
+        if error:
+            return error
+        scenario = scenario.__class__.objects.select_related(
+            "agent_definition", "dataset"
+        ).get(
+            id=scenario.id,
+            organization=context.organization,
+            deleted=False,
+        )
 
         agent_name = (
             scenario.agent_definition.agent_name if scenario.agent_definition else "—"

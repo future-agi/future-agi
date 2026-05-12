@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,7 +12,10 @@ from ai_tools.registry import register_tool
 
 
 class UpdateTraceAnnotationInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation to update")
+    annotation_id: str = Field(
+        default="",
+        description="The UUID of the annotation to update. Omit it to list candidates.",
+    )
     value: Optional[str] = Field(
         default=None,
         description="Updated string value for text/categorical labels",
@@ -46,17 +48,17 @@ class UpdateTraceAnnotationTool(BaseTool):
         self, params: UpdateTraceAnnotationInput, context: ToolContext
     ) -> ToolResult:
 
-        from tracer.models.trace_annotation import TraceAnnotation
+        from ai_tools.tools.tracing._utils import resolve_trace_annotation
 
         from ._annotation_validation import validate_annotation_value
 
-        try:
-            annotation = TraceAnnotation.objects.select_related("annotation_label").get(
-                id=params.annotation_id,
-                trace__project__organization=context.organization,
-            )
-        except TraceAnnotation.DoesNotExist:
-            return ToolResult.not_found("Trace Annotation", str(params.annotation_id))
+        annotation, unresolved = resolve_trace_annotation(
+            params.annotation_id,
+            context,
+            title="Trace Annotation Required To Update",
+        )
+        if unresolved:
+            return unresolved
 
         # Check if any update value is provided
         if (

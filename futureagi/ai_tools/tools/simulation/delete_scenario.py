@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,10 +7,18 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.simulation._utils import resolve_scenario
 
 
 class DeleteScenarioInput(PydanticBaseModel):
-    scenario_id: UUID = Field(description="The UUID of the scenario to delete")
+    scenario_id: str = Field(
+        default="",
+        description="Scenario name or UUID to delete. If omitted, candidates are returned.",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms deletion.",
+    )
 
 
 @register_tool
@@ -25,16 +31,31 @@ class DeleteScenarioTool(BaseTool):
     def execute(self, params: DeleteScenarioInput, context: ToolContext) -> ToolResult:
         from django.utils import timezone
 
-        from simulate.models.scenarios import Scenarios
+        scenario, unresolved = resolve_scenario(
+            params.scenario_id,
+            context,
+            title="Scenario Required To Delete",
+        )
+        if unresolved:
+            return unresolved
 
-        try:
-            scenario = Scenarios.objects.get(
-                id=params.scenario_id,
-                organization=context.organization,
-                deleted=False,
+        if not params.confirm_delete:
+            info = key_value_block(
+                [
+                    ("ID", f"`{scenario.id}`"),
+                    ("Name", scenario.name),
+                    ("Status", "Awaiting confirmation"),
+                ]
             )
-        except Scenarios.DoesNotExist:
-            return ToolResult.not_found("Scenario", str(params.scenario_id))
+            return ToolResult(
+                content=section("Confirm Scenario Deletion", info),
+                data={
+                    "requires_confirmation": True,
+                    "confirm_delete": True,
+                    "id": str(scenario.id),
+                    "name": scenario.name,
+                },
+            )
 
         scenario_name = scenario.name
         scenario.deleted = True
@@ -43,7 +64,7 @@ class DeleteScenarioTool(BaseTool):
 
         info = key_value_block(
             [
-                ("ID", f"`{params.scenario_id}`"),
+                ("ID", f"`{scenario.id}`"),
                 ("Name", scenario_name),
                 ("Status", "Deleted"),
             ]
@@ -54,7 +75,7 @@ class DeleteScenarioTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "id": str(params.scenario_id),
+                "id": str(scenario.id),
                 "name": scenario_name,
                 "deleted": True,
             },

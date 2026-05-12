@@ -6,17 +6,55 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
 from ai_tools.tools.datasets.add_columns import DataTypeLiteral
 
 
+def _resolve_column(dataset, column_ref: str):
+    from ai_tools.resolvers import is_uuid
+    from model_hub.models.develop_dataset import Column
+
+    if is_uuid(column_ref):
+        try:
+            return Column.objects.get(id=column_ref, dataset=dataset, deleted=False), None
+        except Column.DoesNotExist:
+            return None, f"Column with ID `{column_ref}` not found."
+
+    matches = Column.objects.filter(
+        dataset=dataset,
+        name__iexact=column_ref.strip(),
+        deleted=False,
+    )
+    if matches.count() == 1:
+        return matches.first(), None
+    if matches.count() > 1:
+        names = [f"`{c.name}` (ID: {c.id})" for c in matches[:5]]
+        return None, f"Multiple columns match '{column_ref}': {', '.join(names)}."
+
+    fuzzy = Column.objects.filter(
+        dataset=dataset,
+        name__icontains=column_ref.strip(),
+        deleted=False,
+    )[:5]
+    if fuzzy.exists():
+        suggestions = [f"`{c.name}` (ID: {c.id})" for c in fuzzy]
+        return None, (
+            f"No exact column match for '{column_ref}'. "
+            f"Did you mean: {', '.join(suggestions)}?"
+        )
+
+    return None, f"No column found matching '{column_ref}'."
+
+
 class UpdateColumnInput(PydanticBaseModel):
     dataset_id: str = Field(
+        default="",
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
-    column_id: str = Field(description="The UUID of the column to update")
+    column_id: str = Field(default="", description="Column name or UUID to update")
     new_name: Optional[str] = Field(
         default=None,
         description="New name for the column",
@@ -44,28 +82,87 @@ class UpdateColumnTool(BaseTool):
 
     def execute(self, params: UpdateColumnInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_dataset
+        from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
         from model_hub.models.choices import SourceChoices
-        from model_hub.models.develop_dataset import Column
+        from model_hub.models.develop_dataset import Column, Dataset, Row
 
-        if not params.new_name and not params.new_data_type:
-            return ToolResult.error(
-                "Provide at least one of new_name or new_data_type.",
-                error_code="VALIDATION_ERROR",
+        if not params.dataset_id:
+            datasets = list(
+                Dataset.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                ).order_by("-created_at")[:8]
+            )
+            rows = [
+                [
+                    f"`{dataset.id}`",
+                    dataset.name,
+                    str(Row.objects.filter(dataset=dataset, deleted=False).count()),
+                ]
+                for dataset in datasets
+            ]
+            return ToolResult(
+                content=section(
+                    "Column Update Requirements",
+                    "Provide `dataset_id`, `column_id`, and at least one of `new_name` or `new_data_type`.",
+                )
+                + "\n\n"
+                + (
+                    markdown_table(["Dataset ID", "Name", "Rows"], rows)
+                    if rows
+                    else "No datasets found."
+                ),
+                data={
+                    "requires_dataset_id": True,
+                    "datasets": [
+                        {"id": str(dataset.id), "name": dataset.name}
+                        for dataset in datasets
+                    ],
+                },
             )
 
-        dataset, error = resolve_dataset(
-            params.dataset_id, context.organization, context.workspace
+        dataset, unresolved = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            title="Dataset Required For Column Update",
         )
+        if unresolved:
+            return unresolved
+
+        if not params.column_id or (not params.new_name and not params.new_data_type):
+            columns = list(Column.objects.filter(dataset=dataset, deleted=False)[:20])
+            rows = [
+                [f"`{column.id}`", column.name, column.data_type] for column in columns
+            ]
+            return ToolResult(
+                content=section(
+                    "Column Update Requirements",
+                    "Provide `column_id` and at least one of `new_name` or `new_data_type`.",
+                )
+                + "\n\n"
+                + (
+                    markdown_table(["Column ID", "Name", "Type"], rows)
+                    if rows
+                    else "No columns found in this dataset."
+                ),
+                data={
+                    "dataset_id": str(dataset.id),
+                    "requires_column_id": not bool(params.column_id),
+                    "requires_update": not bool(params.new_name or params.new_data_type),
+                    "columns": [
+                        {
+                            "id": str(column.id),
+                            "name": column.name,
+                            "data_type": column.data_type,
+                        }
+                        for column in columns
+                    ],
+                },
+            )
+
+        column, error = _resolve_column(dataset, params.column_id)
         if error:
             return ToolResult.error(error, error_code="NOT_FOUND")
-
-        try:
-            column = Column.objects.get(
-                id=params.column_id, dataset=dataset, deleted=False
-            )
-        except Column.DoesNotExist:
-            return ToolResult.not_found("Column", str(params.column_id))
 
         changes = []
 

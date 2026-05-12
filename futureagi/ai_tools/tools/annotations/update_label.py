@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,10 +9,14 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotations._utils import resolve_label
 
 
 class UpdateLabelInput(PydanticBaseModel):
-    label_id: UUID = Field(description="The UUID of the annotation label to update")
+    label_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or exact name of the annotation label to update",
+    )
     name: Optional[str] = Field(
         default=None,
         description="New name for the label",
@@ -45,15 +48,13 @@ class UpdateLabelTool(BaseTool):
 
     def execute(self, params: UpdateLabelInput, context: ToolContext) -> ToolResult:
 
-        from model_hub.models.develop_annotations import AnnotationsLabels
-
-        try:
-            label = AnnotationsLabels.objects.get(
-                id=params.label_id,
-                organization=context.organization,
-            )
-        except AnnotationsLabels.DoesNotExist:
-            return ToolResult.not_found("AnnotationLabel", str(params.label_id))
+        label, unresolved = resolve_label(
+            params.label_id,
+            context,
+            title="Annotation Label Required For Update",
+        )
+        if unresolved:
+            return unresolved
 
         changes = []
         if params.name:

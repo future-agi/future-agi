@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 
@@ -15,8 +13,8 @@ VALID_RERUN_TYPES = ["eval_only", "call_and_eval"]
 
 
 class RerunCallExecutionInput(PydanticBaseModel):
-    call_execution_id: UUID = Field(
-        description="The UUID of the call execution to rerun"
+    call_execution_id: str = Field(
+        default="", description="The UUID of the call execution to rerun"
     )
     rerun_type: str = Field(
         default="call_and_eval",
@@ -44,17 +42,65 @@ class RerunCallExecutionTool(BaseTool):
     category = "simulation"
     input_model = RerunCallExecutionInput
 
+    def _candidate_calls_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from simulate.models.test_execution import CallExecution
+
+        calls = (
+            CallExecution.objects.select_related("test_execution", "scenario")
+            .filter(test_execution__run_test__organization=context.organization)
+            .order_by("-created_at")[:10]
+        )
+        rows = [
+            (
+                f"- `{call.id}` — {call.status} "
+                f"(scenario: {call.scenario.name if call.scenario else '—'})"
+            )
+            for call in calls
+        ]
+        return ToolResult(
+            content=section(
+                "Call Execution Required",
+                (
+                    (message + "\n\n" if message else "")
+                    + "Provide `call_execution_id` to rerun a specific call execution.\n\n"
+                    + ("\n".join(rows) if rows else "No call executions found.")
+                ),
+            ),
+            data={
+                "requires_call_execution_id": True,
+                "call_executions": [
+                    {
+                        "id": str(call.id),
+                        "status": call.status,
+                        "test_execution_id": (
+                            str(call.test_execution_id)
+                            if call.test_execution_id
+                            else None
+                        ),
+                    }
+                    for call in calls
+                ],
+            },
+        )
+
     def execute(
         self, params: RerunCallExecutionInput, context: ToolContext
     ) -> ToolResult:
 
+        from django.core.exceptions import ValidationError
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.test_execution import (
             CallExecution,
             CallExecutionSnapshot,
             TestExecution,
         )
+
         from simulate.temporal.client import rerun_call_executions
+
+        if not params.call_execution_id:
+            return self._candidate_calls_result(context)
 
         try:
             call = CallExecution.objects.select_related(
@@ -67,7 +113,15 @@ class RerunCallExecutionTool(BaseTool):
                 test_execution__run_test__organization=context.organization,
             )
         except CallExecution.DoesNotExist:
-            return ToolResult.not_found("Call Execution", str(params.call_execution_id))
+            return self._candidate_calls_result(
+                context,
+                f"Call execution `{params.call_execution_id}` was not found.",
+            )
+        except (TypeError, ValueError, ValidationError):
+            return self._candidate_calls_result(
+                context,
+                f"Call execution `{params.call_execution_id}` was not a valid UUID.",
+            )
 
         # Check if the parent test execution is in a non-rerunnable status
         if call.test_execution:

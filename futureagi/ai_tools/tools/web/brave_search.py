@@ -23,7 +23,10 @@ BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
 
 class BraveSearchInput(PydanticBaseModel):
-    query: str = Field(description="Search query to look up on the web")
+    query: str = Field(
+        default="",
+        description="Search query to look up on the web",
+    )
     count: int = Field(
         default=5,
         ge=1,
@@ -52,12 +55,25 @@ class BraveSearchTool(BaseTool):
     input_model = BraveSearchInput
 
     def execute(self, params: BraveSearchInput, context: ToolContext) -> ToolResult:
+        query = (params.query or "").strip()
+        if not query:
+            return ToolResult(
+                content=(
+                    "Web search needs a query. Ask the user for the exact current fact "
+                    "to verify, or use workspace/docs search if the question is about local data."
+                ),
+                data={"requires_query": True, "results": []},
+            )
+
         api_key = os.getenv("BRAVE_SEARCH_API_KEY")
         if not api_key:
-            return ToolResult.error(
-                "Brave Search API key not configured. "
-                "Set BRAVE_SEARCH_API_KEY environment variable.",
-                error_code="CONFIGURATION_ERROR",
+            return ToolResult(
+                content=(
+                    "Web search is unavailable in this local environment because "
+                    "`BRAVE_SEARCH_API_KEY` is not configured. I did not invent web "
+                    "results. Use docs, knowledge base, or trace data instead."
+                ),
+                data={"query": query, "results": [], "configuration_missing": True},
             )
 
         headers = {
@@ -67,7 +83,7 @@ class BraveSearchTool(BaseTool):
         }
 
         query_params = {
-            "q": params.query,
+            "q": query,
             "count": params.count,
         }
         if params.freshness:
@@ -105,12 +121,12 @@ class BraveSearchTool(BaseTool):
 
         if not web_results:
             return ToolResult(
-                content=f"No web results found for: **{params.query}**",
-                data={"query": params.query, "results": []},
+                content=f"No web results found for: **{query}**",
+                data={"query": query, "results": []},
             )
 
         # Format results for LLM consumption
-        lines = [f"## Web Search Results for: {params.query}\n"]
+        lines = [f"## Web Search Results for: {query}\n"]
         result_data = []
 
         for i, result in enumerate(web_results[: params.count], 1):
@@ -139,5 +155,5 @@ class BraveSearchTool(BaseTool):
 
         return ToolResult(
             content="\n".join(lines),
-            data={"query": params.query, "results": result_data},
+            data={"query": query, "results": result_data},
         )

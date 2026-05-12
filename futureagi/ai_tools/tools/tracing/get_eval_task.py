@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,7 +13,9 @@ from ai_tools.registry import register_tool
 
 
 class GetEvalTaskInput(PydanticBaseModel):
-    eval_task_id: UUID = Field(description="The UUID of the eval task to retrieve")
+    eval_task_id: str = Field(
+        default="", description="The UUID of the eval task to retrieve"
+    )
 
 
 @register_tool
@@ -28,9 +28,52 @@ class GetEvalTaskTool(BaseTool):
     category = "tracing"
     input_model = GetEvalTaskInput
 
+    def _candidate_tasks_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from tracer.models.eval_task import EvalTask
+
+        tasks = (
+            EvalTask.objects.select_related("project")
+            .filter(project__organization=context.organization, deleted=False)
+            .order_by("-created_at")[:10]
+        )
+        rows = [
+            (
+                f"- `{task.id}` — {task.name or 'Untitled'} "
+                f"({format_status(task.status)}, project: {task.project.name})"
+            )
+            for task in tasks
+        ]
+        return ToolResult(
+            content=section(
+                "Eval Task Candidates",
+                (
+                    (message + "\n\n" if message else "")
+                    + "Provide `eval_task_id` to inspect a specific eval task.\n\n"
+                    + ("\n".join(rows) if rows else "No eval tasks found.")
+                ),
+            ),
+            data={
+                "requires_eval_task_id": True,
+                "tasks": [
+                    {
+                        "id": str(task.id),
+                        "name": task.name,
+                        "status": task.status,
+                        "project_id": str(task.project_id),
+                    }
+                    for task in tasks
+                ],
+            },
+        )
+
     def execute(self, params: GetEvalTaskInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.eval_task import EvalTask
+
+        if not params.eval_task_id:
+            return self._candidate_tasks_result(context)
 
         try:
             task = (
@@ -42,7 +85,10 @@ class GetEvalTaskTool(BaseTool):
                 )
             )
         except EvalTask.DoesNotExist:
-            return ToolResult.not_found("EvalTask", str(params.eval_task_id))
+            return self._candidate_tasks_result(
+                context,
+                f"EvalTask `{params.eval_task_id}` was not found in this workspace.",
+            )
 
         evals_info = []
         eval_names = []

@@ -22,19 +22,21 @@ class ColumnDefinition(PydanticBaseModel):
     )
     description: str = Field(max_length=200, description="Column description")
 
-    @field_validator("name")
+    @field_validator("name", mode="before")
     @classmethod
     def validate_name(cls, v: str) -> str:
+        v = str(v or "").strip()[:50]
         if not v.strip():
             raise ValueError("Column name cannot be empty or just whitespace.")
-        return v.strip()
+        return v
 
-    @field_validator("description")
+    @field_validator("description", mode="before")
     @classmethod
     def validate_description(cls, v: str) -> str:
+        v = str(v or "").strip()[:200]
         if not v.strip():
             raise ValueError("Column description cannot be empty or just whitespace.")
-        return v.strip()
+        return v
 
     @field_validator("data_type")
     @classmethod
@@ -50,11 +52,11 @@ class ColumnDefinition(PydanticBaseModel):
 
 
 class AddScenarioColumnsInput(PydanticBaseModel):
-    scenario_id: uuid_mod.UUID = Field(
-        description="The UUID of the scenario to add columns to"
+    scenario_id: uuid_mod.UUID | None = Field(
+        default=None, description="The UUID of the scenario to add columns to"
     )
     columns: list[ColumnDefinition] = Field(
-        min_length=1,
+        default_factory=list,
         max_length=10,
         description="Columns to add (1-10)",
     )
@@ -79,15 +81,55 @@ class AddScenarioColumnsTool(BaseTool):
     category = "simulation"
     input_model = AddScenarioColumnsInput
 
+    def _requirements_result(
+        self,
+        context: ToolContext,
+        message: str = "",
+        *,
+        status: str = "needs_input",
+        blocked_reason: str | None = None,
+    ) -> ToolResult:
+        from simulate.models.scenarios import Scenarios
+
+        scenarios = Scenarios.objects.filter(
+            organization=context.organization, deleted=False
+        ).order_by("-created_at")[:10]
+        rows = [f"- `{scenario.id}` — {scenario.name}" for scenario in scenarios]
+        data = {
+            "requires_scenario_id": True,
+            "requires_columns": True,
+            "scenarios": [
+                {"id": str(scenario.id), "name": scenario.name}
+                for scenario in scenarios
+            ],
+        }
+        if blocked_reason:
+            data["blocked_reason"] = blocked_reason
+        return ToolResult(
+            content=section(
+                "Scenario Columns Requirements",
+                (
+                    (message + "\n\n" if message else "")
+                    + "Provide `scenario_id` and `columns` with name, data_type, and description.\n\n"
+                    + ("\n".join(rows) if rows else "No scenarios found.")
+                ),
+            ),
+            data=data,
+            status=status,
+        )
+
     def execute(
         self, params: AddScenarioColumnsInput, context: ToolContext
     ) -> ToolResult:
         from django.db import transaction
-
         from model_hub.models.choices import CellStatus, SourceChoices, StatusType
         from model_hub.models.develop_dataset import Cell, Column, Row
         from simulate.models.scenarios import Scenarios
+
         from tfc.temporal.simulate import start_add_columns_workflow_sync
+
+        if params.scenario_id is None or not params.columns:
+            return self._requirements_result(context)
 
         try:
             scenario = Scenarios.objects.get(
@@ -96,12 +138,20 @@ class AddScenarioColumnsTool(BaseTool):
                 deleted=False,
             )
         except Scenarios.DoesNotExist:
-            return ToolResult.not_found("Scenario", str(params.scenario_id))
+            return self._requirements_result(
+                context, f"Scenario `{params.scenario_id}` was not found."
+            )
 
         if not scenario.dataset:
-            return ToolResult.error(
-                "Scenario does not have an associated dataset.",
-                error_code="VALIDATION_ERROR",
+            return self._requirements_result(
+                context,
+                (
+                    f"Scenario `{scenario.id}` does not have an associated dataset. "
+                    "Choose a scenario with a dataset, or create/populate a scenario "
+                    "dataset before adding AI-generated columns."
+                ),
+                status="blocked",
+                blocked_reason="scenario_missing_dataset",
             )
 
         dataset = scenario.dataset
@@ -166,7 +216,7 @@ class AddScenarioColumnsTool(BaseTool):
             current_column_order = dataset.column_order or []
             current_column_config = dataset.column_config or {}
 
-            for col_id, col_info in zip(new_column_ids, columns_info):
+            for col_id, col_info in zip(new_column_ids, columns_info, strict=True):
                 current_column_order.append(col_id)
                 current_column_config[col_id] = {
                     "name": col_info["name"],

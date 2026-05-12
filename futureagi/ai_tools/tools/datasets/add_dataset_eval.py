@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 import structlog
@@ -8,6 +9,7 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     dashboard_link,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
@@ -15,9 +17,59 @@ from ai_tools.registry import register_tool
 logger = structlog.get_logger(__name__)
 
 
+def _get_template_required_keys(template) -> list[str]:
+    """Return required mapping keys for both current and legacy template shapes."""
+    config = getattr(template, "config", None)
+    if isinstance(config, dict):
+        required_keys = config.get("required_keys") or []
+        if required_keys:
+            return list(required_keys)
+    return list(getattr(template, "required_fields", None) or [])
+
+
+def _template_candidates_result(
+    context: ToolContext,
+    title: str = "Eval Template Required",
+    detail: str = "",
+) -> ToolResult:
+    from django.db.models import Q
+    from model_hub.models.evals_metric import EvalTemplate
+
+    templates = list(
+        EvalTemplate.no_workspace_objects.filter(
+            Q(organization=context.organization) | Q(organization__isnull=True)
+        ).order_by("-created_at")[:8]
+    )
+    template_rows = [
+        [f"`{template.id}`", template.name, template.owner or "—"]
+        for template in templates
+    ]
+    body = detail or "Choose one of these eval templates, then call `add_dataset_eval` again."
+    body += "\n\n"
+    body += (
+        markdown_table(["ID", "Name", "Owner"], template_rows)
+        if template_rows
+        else "No eval templates found."
+    )
+    return ToolResult(
+        content=section(title, body),
+        data={
+            "requires_template_id": True,
+            "templates": [
+                {"id": str(template.id), "name": template.name}
+                for template in templates
+            ],
+        },
+    )
+
+
 class AddDatasetEvalInput(PydanticBaseModel):
-    dataset_id: str = Field(description="Dataset name or UUID")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID. If omitted, dataset candidates are returned.",
+    )
     template_id: str = Field(
+        default="",
         description="Eval template name or UUID (e.g. 'faithfulness' or 'hallucination_detection')"
     )
     name: Optional[str] = Field(
@@ -62,9 +114,71 @@ class AddDatasetEvalTool(BaseTool):
     def execute(self, params: AddDatasetEvalInput, context: ToolContext) -> ToolResult:
 
         from ai_tools.resolvers import resolve_dataset, resolve_eval_template
-        from model_hub.models.develop_dataset import Column
+        from model_hub.models.develop_dataset import Column, Dataset, Row
         from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
         from model_hub.utils.eval_validators import validate_eval_template_org_access
+
+        if not params.dataset_id or not params.template_id:
+            from django.db.models import Q
+
+            datasets = list(
+                Dataset.objects.filter(
+                    organization=context.organization,
+                    deleted=False,
+                ).order_by("-created_at")[:8]
+            )
+            templates = list(
+                EvalTemplate.no_workspace_objects.filter(
+                    Q(organization=context.organization) | Q(organization__isnull=True)
+                ).order_by("-created_at")[:8]
+            )
+            dataset_rows = [
+                [
+                    f"`{dataset.id}`",
+                    dataset.name,
+                    str(Row.objects.filter(dataset=dataset, deleted=False).count()),
+                ]
+                for dataset in datasets
+            ]
+            template_rows = [
+                [
+                    f"`{template.id}`",
+                    template.name,
+                    template.owner or "—",
+                ]
+                for template in templates
+            ]
+            content = section(
+                "Dataset Eval Requirements",
+                "Provide both `dataset_id` and `template_id` to configure an eval.",
+            )
+            content += "\n\n### Dataset Candidates\n"
+            content += (
+                markdown_table(["ID", "Name", "Rows"], dataset_rows)
+                if dataset_rows
+                else "No datasets found."
+            )
+            content += "\n\n### Eval Template Candidates\n"
+            content += (
+                markdown_table(["ID", "Name", "Owner"], template_rows)
+                if template_rows
+                else "No eval templates found."
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "requires_dataset_id": not bool(params.dataset_id),
+                    "requires_template_id": not bool(params.template_id),
+                    "datasets": [
+                        {"id": str(dataset.id), "name": dataset.name}
+                        for dataset in datasets
+                    ],
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ],
+                },
+            )
 
         # Resolve dataset by name or UUID
         dataset, error = resolve_dataset(
@@ -83,7 +197,11 @@ class AddDatasetEvalTool(BaseTool):
             except EvalTemplate.DoesNotExist:
                 template = EvalTemplate.objects.filter(name=template_obj.name).first()
                 if not template:
-                    return ToolResult.not_found("EvalTemplate", params.template_id)
+                    return _template_candidates_result(
+                        context,
+                        "Eval Template Not Found",
+                        f"Eval template `{params.template_id}` was not found.",
+                    )
         else:
             # Try direct EvalTemplate lookup (system templates)
             try:
@@ -96,12 +214,18 @@ class AddDatasetEvalTool(BaseTool):
                         name__iexact=params.template_id
                     ).first()
                     if not template:
-                        return ToolResult.error(
-                            error or f"Eval template '{params.template_id}' not found.",
-                            error_code="NOT_FOUND",
+                        return _template_candidates_result(
+                            context,
+                            "Eval Template Not Found",
+                            error
+                            or f"Eval template `{params.template_id}` was not found.",
                         )
             except EvalTemplate.DoesNotExist:
-                return ToolResult.not_found("EvalTemplate", params.template_id)
+                return _template_candidates_result(
+                    context,
+                    "Eval Template Not Found",
+                    f"Eval template `{params.template_id}` was not found.",
+                )
 
         # Auto-generate name if not provided
         eval_name = params.name or f"{template.name}"
@@ -124,7 +248,7 @@ class AddDatasetEvalTool(BaseTool):
         # Auto-detect mapping if not provided
         if not params.mapping:
             # Try to auto-map eval template keys to dataset columns by name similarity
-            required_keys = template.required_fields or []
+            required_keys = _get_template_required_keys(template)
             auto_mapping = {}
             for key in required_keys:
                 key_lower = key.lower()
@@ -200,11 +324,7 @@ class AddDatasetEvalTool(BaseTool):
         # Validate all required template keys are mapped
         from model_hub.utils.eval_validators import validate_required_key_mapping
 
-        required_keys = (
-            template.config.get("required_keys", [])
-            if template.config and isinstance(template.config, dict)
-            else []
-        )
+        required_keys = _get_template_required_keys(template)
         missing_keys = validate_required_key_mapping(resolved_mapping, required_keys)
         if missing_keys:
             return ToolResult.error(
@@ -235,7 +355,7 @@ class AddDatasetEvalTool(BaseTool):
             dataset=dataset,
             config=eval_config,
             status=status,
-            model=params.model or template.model or "turing_large",
+            model=params.model or template.model or os.environ.get("FALCON_AI_MODEL") or "turing_large",
             organization=context.organization,
             workspace=context.workspace,
             user=context.user,

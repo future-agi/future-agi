@@ -153,6 +153,13 @@ class TestClickHouseSchema:
         assert "FROM tracer_observation_span" in SPANS_MV
         assert "TO spans" in SPANS_MV
 
+    def test_pre_ddl_alters_upgrade_existing_cdc_tables_before_views(self):
+        """Older ClickHouse CDC tables must be upgraded before dependent MVs."""
+        from tracer.services.clickhouse.schema import PRE_DDL_ALTERS_BY_TABLE
+
+        alters = PRE_DDL_ALTERS_BY_TABLE["tracer_observation_span"]
+        assert any("schema_version" in alter for alter in alters)
+
     def test_span_metrics_hourly_uses_aggregating_merge_tree(self):
         """Pre-aggregated table must use AggregatingMergeTree engine."""
         from tracer.services.clickhouse.schema import SPAN_METRICS_HOURLY_TABLE

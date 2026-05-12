@@ -42,6 +42,13 @@ const useFalconStore = create((set, _get) => ({
   // Context selector
   selectedContext: "auto",
   setSelectedContext: (ctx) => set({ selectedContext: ctx }),
+  activePageContext: null,
+  setActivePageContext: (context) => set({ activePageContext: context }),
+  clearActivePageContext: (sourceId = null) =>
+    set((s) => {
+      if (sourceId && s.activePageContext?.source_id !== sourceId) return {};
+      return { activePageContext: null };
+    }),
 
   // Skills
   skills: [],
@@ -227,6 +234,7 @@ const useFalconStore = create((set, _get) => ({
       isStreaming: false,
       streamingMessageId: null,
       selectedContext: "auto",
+      activePageContext: null,
       activeSkill: null,
       attachedFiles: [],
       pendingNavigation: null,

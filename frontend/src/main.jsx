@@ -75,9 +75,27 @@ initGoogleAds();
 // Initialize Reddit pixel (no-op if env vars are unset)
 initReddit();
 
-if (CURRENT_ENVIRONMENT === "local") {
+const shouldStartMockServer =
+  CURRENT_ENVIRONMENT === "local" && import.meta.env.VITE_ENABLE_MSW !== "false";
+
+if (shouldStartMockServer) {
   logger.debug("STARTING MOCK SERVER");
   worker.start({ onUnhandledRequest: "bypass" });
+} else if (
+  CURRENT_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_ENABLE_MSW === "false" &&
+  "serviceWorker" in navigator
+) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations
+      .filter((registration) =>
+        [registration.active, registration.installing, registration.waiting].some(
+          (workerRegistration) =>
+            workerRegistration?.scriptURL?.includes("mockServiceWorker.js"),
+        ),
+      )
+      .forEach((registration) => registration.unregister());
+  });
 }
 
 LicenseManager.setLicenseKey(import.meta.env.VITE_AG_GRID_LICENSE_KEY);

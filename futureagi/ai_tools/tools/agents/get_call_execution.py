@@ -1,7 +1,5 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -13,16 +11,37 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
 
 
 class GetCallExecutionInput(PydanticBaseModel):
-    call_execution_id: UUID = Field(description="The UUID of the call execution")
+    model_config = ConfigDict(extra="allow")
+
+    call_execution_id: str = Field(
+        default="",
+        description="The UUID of the call execution",
+    )
     include_transcript: bool = Field(
         default=True, description="Include conversation transcript"
     )
     include_eval_results: bool = Field(
         default=True, description="Include evaluation results"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["call_execution_id"] = (
+            normalized.get("call_execution_id")
+            or normalized.get("call_id")
+            or normalized.get("execution_id")
+            or normalized.get("id")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -31,7 +50,8 @@ class GetCallExecutionTool(BaseTool):
     description = (
         "Returns detailed information about a single call execution within "
         "a test run. Includes transcript, evaluation scores, cost breakdown, "
-        "recording URL, and performance metrics."
+        "recording URL, and performance metrics. If the call UUID is unknown, "
+        "call this with no parameters to list candidates."
     )
     category = "agents"
     input_model = GetCallExecutionInput
@@ -42,15 +62,57 @@ class GetCallExecutionTool(BaseTool):
 
         from simulate.models.test_execution import CallExecution
 
+        def candidate_calls_result(detail: str = "") -> ToolResult:
+            calls = (
+                CallExecution.objects.filter(
+                    test_execution__run_test__organization=context.organization
+                )
+                .select_related("test_execution", "scenario")
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data_list = []
+            for call in calls:
+                scenario_name = call.scenario.name if call.scenario else "—"
+                rows.append(
+                    f"- `{call.id}` — {scenario_name} ({format_status(call.status)})"
+                )
+                data_list.append(
+                    {
+                        "id": str(call.id),
+                        "scenario": scenario_name,
+                        "status": call.status,
+                        "test_execution_id": str(call.test_execution_id),
+                    }
+                )
+            content = section(
+                "Call Execution Candidates",
+                (
+                    (detail + "\n\n" if detail else "")
+                    + "Choose one of these calls, then call "
+                    "`get_call_execution` with `call_execution_id`.\n\n"
+                    + ("\n".join(rows) if rows else "No call executions found.")
+                ),
+            )
+            return ToolResult(content=content, data={"calls": data_list})
+
+        call_ref = str(params.call_execution_id or "").strip()
+        if not call_ref:
+            return candidate_calls_result()
+        if not is_uuid(call_ref):
+            return candidate_calls_result(
+                f"`{call_ref}` is not a valid call execution UUID."
+            )
+
         try:
             call = CallExecution.objects.select_related(
                 "test_execution", "scenario"
             ).get(
-                id=params.call_execution_id,
+                id=call_ref,
                 test_execution__run_test__organization=context.organization,
             )
         except CallExecution.DoesNotExist:
-            return ToolResult.not_found("Call Execution", str(params.call_execution_id))
+            return candidate_calls_result(f"Call execution `{call_ref}` was not found.")
 
         scenario_name = call.scenario.name if call.scenario else "—"
 

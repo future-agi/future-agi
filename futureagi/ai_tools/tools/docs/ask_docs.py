@@ -11,6 +11,7 @@ logger = structlog.get_logger(__name__)
 
 class AskDocsInput(PydanticBaseModel):
     question: str = Field(
+        default="How do I use Future AGI?",
         description="Question about Future AGI platform features, setup, or usage"
     )
 

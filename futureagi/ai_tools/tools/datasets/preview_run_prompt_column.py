@@ -7,28 +7,32 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import key_value_block, section, truncate
+from ai_tools.formatting import markdown_table, section, truncate
 from ai_tools.registry import register_tool
 from ai_tools.tools.datasets.add_run_prompt_column import (
     VARIABLE_PATTERN,
     MessageInput,
 )
+from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
 
 logger = structlog.get_logger(__name__)
 
 
 class PreviewRunPromptColumnInput(PydanticBaseModel):
-    dataset_id: UUID = Field(description="The UUID of the dataset")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset name or UUID. Omit to list candidate datasets.",
+    )
     model: str = Field(
+        default="gpt-4o-mini",
         description="Model to use (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
-        min_length=1,
     )
     messages: List[MessageInput] = Field(
+        default_factory=list,
         description="List of prompt messages with {{column_name}} substitution.",
-        min_length=1,
     )
     first_n_rows: Optional[int] = Field(
-        default=None,
+        default=3,
         ge=1,
         description="Preview on the first N rows. Mutually exclusive with row_indices.",
     )
@@ -54,7 +58,7 @@ class PreviewRunPromptColumnInput(PydanticBaseModel):
         has_indices = self.row_indices is not None and len(self.row_indices) > 0
 
         if not has_first_n and not has_indices:
-            raise ValueError("Either 'first_n_rows' or 'row_indices' must be provided.")
+            self.first_n_rows = 3
         if has_first_n and has_indices:
             raise ValueError("'first_n_rows' and 'row_indices' are mutually exclusive.")
 
@@ -86,18 +90,16 @@ class PreviewRunPromptColumnTool(BaseTool):
     ) -> ToolResult:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         from model_hub.models.choices import SourceChoices
-        from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+        from model_hub.models.develop_dataset import Column, Row
         from model_hub.views.run_prompt import populate_placeholders
 
-        # Validate dataset (organization-filtered)
-        try:
-            dataset = Dataset.objects.get(
-                id=params.dataset_id,
-                deleted=False,
-                organization=context.organization,
-            )
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
+        dataset, dataset_result = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            "Dataset Required For Prompt Preview",
+        )
+        if dataset_result:
+            return dataset_result
 
         # Validate referenced columns
         messages = [
@@ -111,6 +113,38 @@ class PreviewRunPromptColumnTool(BaseTool):
         )
         col_names = {col.name for col in dataset_columns}
 
+        if not params.messages:
+            rows = [
+                [column.name, f"`{column.id}`", column.data_type or "-"]
+                for column in dataset_columns[:30]
+            ]
+            content = section(
+                "Prompt Messages Required",
+                "Provide `messages` that reference dataset columns with `{{column_name}}`.",
+            )
+            if rows:
+                content += "\n\n### Available Columns\n\n" + markdown_table(
+                    ["Name", "ID", "Type"],
+                    rows,
+                )
+            return ToolResult(
+                content=content,
+                data={
+                    "requires_messages": True,
+                    "dataset_id": str(dataset.id),
+                    "columns": [
+                        {"id": str(column.id), "name": column.name}
+                        for column in dataset_columns
+                    ],
+                    "example_messages": [
+                        {
+                            "role": "user",
+                            "content": "Summarize {{column_name}} in one sentence.",
+                        }
+                    ],
+                },
+            )
+
         referenced_vars = set()
         for msg in messages:
             for match in VARIABLE_PATTERN.findall(msg["content"]):
@@ -119,10 +153,36 @@ class PreviewRunPromptColumnTool(BaseTool):
 
         missing_vars = referenced_vars - col_names
         if missing_vars:
-            return ToolResult.error(
-                f"Column(s) not found: {', '.join(missing_vars)}. "
-                f"Available: {', '.join(sorted(col_names))}",
-                error_code="VALIDATION_ERROR",
+            rows = [
+                [column.name, f"`{column.id}`", column.data_type or "-"]
+                for column in dataset_columns[:30]
+            ]
+            body = (
+                "One or more prompt variables do not match dataset columns: "
+                + ", ".join(f"`{name}`" for name in sorted(missing_vars))
+                + ". Update `messages` to reference available columns."
+            )
+            if rows:
+                body += "\n\n### Available Columns\n\n" + markdown_table(
+                    ["Name", "ID", "Type"],
+                    rows,
+                )
+            return ToolResult.needs_input(
+                section("Prompt Columns Required", body),
+                data={
+                    "dataset_id": str(dataset.id),
+                    "requires_messages": True,
+                    "missing_columns": sorted(missing_vars),
+                    "available_columns": [
+                        {
+                            "id": str(column.id),
+                            "name": column.name,
+                            "data_type": column.data_type,
+                        }
+                        for column in dataset_columns
+                    ],
+                },
+                missing_fields=["messages"],
             )
 
         # Get rows

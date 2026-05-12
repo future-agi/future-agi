@@ -1,4 +1,6 @@
-from typing import Optional
+import os
+import re
+from typing import Any
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator, model_validator
@@ -10,6 +12,7 @@ from ai_tools.registry import register_tool
 
 class CreateEvalTemplateInput(PydanticBaseModel):
     name: str = Field(
+        default="falcon_correctness_eval",
         description=(
             "Name for the evaluation template. Must be lowercase alphanumeric "
             "with hyphens or underscores only (e.g. 'is_indian_name')."
@@ -23,12 +26,14 @@ class CreateEvalTemplateInput(PydanticBaseModel):
     def validate_name_format(cls, v: str) -> str:
         from model_hub.utils.eval_validators import validate_eval_name
 
-        return validate_eval_name(v)
+        normalized = re.sub(r"[^a-z0-9_-]+", "_", (v or "").strip().lower())
+        normalized = normalized.strip("_-") or "falcon_correctness_eval"
+        return validate_eval_name(normalized)
 
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None, description="Description of what this evaluation measures"
     )
-    template_type: Optional[str] = Field(
+    template_type: str | None = Field(
         default="Futureagi",
         description=(
             "Type of evaluation: 'Futureagi' (deterministic, uses Future AGI's "
@@ -36,14 +41,14 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "or 'Function' (custom function eval)."
         ),
     )
-    config: Optional[dict] = Field(
+    config: dict | None = Field(
         default=None,
         description=(
             "Additional configuration dict. Can include 'model' for LLM evals, "
             "'proxy_agi', 'visible_ui', etc."
         ),
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description=(
             "Model to use for evaluation. For 'Futureagi' type: 'turing_small' "
@@ -51,8 +56,8 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "'gpt-4o', 'claude-3-5-sonnet', etc."
         ),
     )
-    criteria: Optional[str] = Field(
-        default=None,
+    criteria: str | None = Field(
+        default="Check whether {{output}} correctly and concisely answers {{input}}.",
         description=(
             "Evaluation criteria / rule prompt. MUST include template variables "
             "using double curly braces matching the required_keys. For example: "
@@ -60,15 +65,15 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "be replaced with actual values from the dataset columns at runtime."
         ),
     )
-    eval_tags: Optional[list[str]] = Field(
+    eval_tags: list[str] | None = Field(
         default=None,
         description="Tags to categorize this evaluation template",
     )
-    output_type: Optional[str] = Field(
+    output_type: str | None = Field(
         default="Pass/Fail",
         description="Output type: 'Pass/Fail' (binary), 'score' (numeric), 'choices' (custom choices)",
     )
-    choices: Optional[dict] = Field(
+    choices: dict | None = Field(
         default=None,
         description=(
             "Choices map for 'choices' output_type. Keys are choice labels, "
@@ -76,11 +81,11 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "'Not Indian': 'Name is not of Indian origin'})"
         ),
     )
-    multi_choice: Optional[bool] = Field(
+    multi_choice: bool | None = Field(
         default=False,
         description="Whether multiple choices can be selected (only for 'choices' output_type)",
     )
-    required_keys: Optional[list[str]] = Field(
+    required_keys: list[str] | None = Field(
         default=None,
         description=(
             "Required input keys for the evaluation. These must match the "
@@ -88,6 +93,51 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "When mapping to dataset columns, these keys map to column names."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_llm_aliases(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+
+        normalized = dict(values)
+        if "tags" in normalized and "eval_tags" not in normalized:
+            normalized["eval_tags"] = normalized.get("tags")
+
+        choices = normalized.get("choices")
+        if isinstance(choices, list):
+            normalized["choices"] = {str(choice): str(choice) for choice in choices}
+        elif isinstance(choices, str):
+            stripped = choices.strip()
+            parsed = None
+            if stripped.startswith("["):
+                import json
+
+                try:
+                    parsed = json.loads(stripped)
+                except (TypeError, ValueError):
+                    parsed = None
+            if isinstance(parsed, list):
+                normalized["choices"] = {str(choice): str(choice) for choice in parsed}
+
+        tags = normalized.get("eval_tags")
+        if isinstance(tags, str):
+            stripped = tags.strip()
+            parsed_tags = None
+            if stripped.startswith("["):
+                import json
+
+                try:
+                    parsed_tags = json.loads(stripped)
+                except (TypeError, ValueError):
+                    parsed_tags = None
+            normalized["eval_tags"] = (
+                [str(tag) for tag in parsed_tags]
+                if isinstance(parsed_tags, list)
+                else [stripped]
+            )
+
+        return normalized
 
     @model_validator(mode="after")
     def validate_template_type_constraints(self):
@@ -98,6 +148,16 @@ class CreateEvalTemplateInput(PydanticBaseModel):
         )
 
         template_type = self.template_type or "Futureagi"
+        if not self.criteria:
+            self.criteria = (
+                "Check whether {{output}} correctly and concisely answers {{input}}."
+            )
+        if not re.search(r"\{\{\w+\}\}", self.criteria):
+            self.criteria = self.criteria.rstrip() + " Use {{input}} and {{output}}."
+        if not self.required_keys:
+            self.required_keys = sorted(
+                set(re.findall(r"\{\{(\w+)\}\}", self.criteria))
+            )
 
         # Criteria must have variables for non-Function types
         validate_criteria_has_variables(self.criteria or "", template_type)
@@ -131,18 +191,33 @@ class CreateEvalTemplateTool(BaseTool):
 
         from model_hub.models.choices import OwnerChoices
         from model_hub.models.evals_metric import EvalTemplate
+
         from model_hub.serializers.eval_runner import CustomEvalTemplateCreateSerializer
 
         # Check name uniqueness within organization for user-owned templates
-        if EvalTemplate.objects.filter(
+        existing_template = EvalTemplate.objects.filter(
             name=params.name,
             organization=context.organization,
             owner=OwnerChoices.USER.value,
             deleted=False,
-        ).exists():
-            return ToolResult.error(
-                f"An eval template named '{params.name}' already exists in this organization.",
-                error_code="VALIDATION_ERROR",
+        ).first()
+        if existing_template:
+            return ToolResult(
+                content=section(
+                    "Eval Template Already Exists",
+                    key_value_block(
+                        [
+                            ("ID", f"`{existing_template.id}`"),
+                            ("Name", existing_template.name),
+                            ("Owner", existing_template.owner),
+                        ]
+                    ),
+                ),
+                data={
+                    "id": str(existing_template.id),
+                    "name": existing_template.name,
+                    "already_exists": True,
+                },
             )
 
         # Also check against system templates
@@ -214,7 +289,7 @@ class CreateEvalTemplateTool(BaseTool):
                 choices=validated_data.get("choices"),
                 multi_choice=validated_data.get("multi_choice") or False,
                 model=validated_data.get("config", {}).get(
-                    "model", params.model or "turing_small"
+                    "model", params.model or os.environ.get("FALCON_AI_MODEL") or "turing_small"
                 ),
                 eval_tags=validated_data.get("eval_tags", params.eval_tags or []),
                 proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),

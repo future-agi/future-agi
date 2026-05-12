@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,13 +9,22 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import (
+    clean_ref,
+    resolve_labels,
+    resolve_users,
+    uuid_text,
+)
 
 VALID_STRATEGIES = {"manual", "round_robin", "load_balanced"}
 
 
 class CreateAnnotationQueueInput(PydanticBaseModel):
-    name: str = Field(
-        description="Name for the annotation queue", min_length=1, max_length=255
+    name: Optional[str] = Field(
+        default=None,
+        description="Name for the annotation queue",
+        min_length=1,
+        max_length=255,
     )
     description: Optional[str] = Field(
         default=None, description="Description of the queue"
@@ -34,23 +42,23 @@ class CreateAnnotationQueueInput(PydanticBaseModel):
     requires_review: bool = Field(
         default=False, description="Whether annotations require review"
     )
-    project_id: Optional[UUID] = Field(
-        default=None, description="Project UUID to scope the queue to"
+    project_id: Optional[str] = Field(
+        default=None, description="Project UUID or exact project name to scope the queue to"
     )
-    dataset_id: Optional[UUID] = Field(
-        default=None, description="Dataset UUID to scope the queue to"
+    dataset_id: Optional[str] = Field(
+        default=None, description="Dataset UUID or exact dataset name to scope the queue to"
     )
-    agent_definition_id: Optional[UUID] = Field(
+    agent_definition_id: Optional[str] = Field(
         default=None,
-        description="Agent definition UUID to scope the queue to (for simulation annotation)",
+        description="Agent definition UUID or exact name to scope the queue to",
     )
-    label_ids: Optional[list[UUID]] = Field(
+    label_ids: Optional[list[str]] = Field(
         default=None,
-        description="List of annotation label UUIDs to attach to this queue",
+        description="Annotation label UUIDs or exact names to attach to this queue",
     )
-    annotator_ids: Optional[list[UUID]] = Field(
+    annotator_ids: Optional[list[str]] = Field(
         default=None,
-        description="List of user UUIDs to assign as annotators",
+        description="User UUIDs, emails, or exact names to assign as annotators",
     )
 
 
@@ -74,57 +82,94 @@ class CreateAnnotationQueueTool(BaseTool):
             AnnotationQueueAnnotator,
             AnnotationQueueLabel,
         )
-        from model_hub.models.develop_annotations import AnnotationsLabels
 
-        if params.assignment_strategy not in VALID_STRATEGIES:
-            return ToolResult.error(
-                f"Invalid assignment_strategy '{params.assignment_strategy}'. "
-                f"Valid: {', '.join(sorted(VALID_STRATEGIES))}",
-                error_code="VALIDATION_ERROR",
+        warnings = []
+        queue_name = clean_ref(params.name)
+        if not queue_name:
+            return ToolResult(
+                content=section(
+                    "Annotation Queue Details Required",
+                    (
+                        "Provide at least `name` before creating an annotation queue. "
+                        "Optional fields include `description`, `instructions`, "
+                        "`label_ids`, `annotator_ids`, and one scope field: "
+                        "`project_id`, `dataset_id`, or `agent_definition_id`."
+                    ),
+                ),
+                data={
+                    "requires_name": True,
+                    "required_fields": ["name"],
+                    "optional_fields": [
+                        "description",
+                        "instructions",
+                        "assignment_strategy",
+                        "annotations_required",
+                        "requires_review",
+                        "project_id",
+                        "dataset_id",
+                        "agent_definition_id",
+                        "label_ids",
+                        "annotator_ids",
+                    ],
+                },
             )
 
-        # Validate project
-        project = None
-        if params.project_id:
-            from tracer.models.project import Project
+        assignment_strategy = (
+            clean_ref(params.assignment_strategy)
+            .lower()
+            .replace("-", "_")
+            .replace(" ", "_")
+            or "manual"
+        )
+        if assignment_strategy not in VALID_STRATEGIES:
+            warnings.append(
+                f"Unknown assignment strategy `{params.assignment_strategy}`; used `manual`."
+            )
+            assignment_strategy = "manual"
 
-            try:
-                project = Project.objects.get(
-                    id=params.project_id, organization=context.organization
-                )
-            except Project.DoesNotExist:
-                return ToolResult.not_found("Project", str(params.project_id))
+        existing_queue = AnnotationQueue.objects.filter(
+            name__iexact=queue_name,
+            organization=context.organization,
+            workspace=context.workspace,
+            deleted=False,
+        ).first()
+        if existing_queue:
+            info = key_value_block(
+                [
+                    ("ID", f"`{existing_queue.id}`"),
+                    ("Name", existing_queue.name),
+                    ("Strategy", existing_queue.assignment_strategy),
+                    ("Annotations Required", str(existing_queue.annotations_required)),
+                    ("Status", existing_queue.status),
+                ]
+            )
+            return ToolResult(
+                content=section("Annotation Queue Already Exists", info),
+                data={
+                    "queue_id": str(existing_queue.id),
+                    "name": existing_queue.name,
+                    "status": existing_queue.status,
+                    "already_exists": True,
+                },
+            )
 
-        # Validate dataset
-        dataset = None
-        if params.dataset_id:
-            from model_hub.models.develop_dataset import Dataset
-
-            try:
-                dataset = Dataset.objects.get(id=params.dataset_id)
-            except Dataset.DoesNotExist:
-                return ToolResult.not_found("Dataset", str(params.dataset_id))
-
-        # Validate agent definition
-        agent_definition = None
-        if params.agent_definition_id:
-            from simulate.models import AgentDefinition
-
-            try:
-                agent_definition = AgentDefinition.objects.get(
-                    id=params.agent_definition_id,
-                    organization=context.organization,
-                )
-            except AgentDefinition.DoesNotExist:
-                return ToolResult.not_found(
-                    "Agent Definition", str(params.agent_definition_id)
-                )
+        project, unresolved = _resolve_project(params.project_id, context)
+        if unresolved:
+            return unresolved
+        dataset, unresolved = _resolve_dataset(params.dataset_id, context)
+        if unresolved:
+            return unresolved
+        agent_definition, unresolved = _resolve_agent_definition(
+            params.agent_definition_id, context
+        )
+        if unresolved:
+            return unresolved
 
         queue = AnnotationQueue(
-            name=params.name,
+            name=queue_name,
             description=params.description or "",
             instructions=params.instructions or "",
-            assignment_strategy=params.assignment_strategy,
+            assignment_strategy=assignment_strategy,
             annotations_required=params.annotations_required,
             requires_review=params.requires_review,
             organization=context.organization,
@@ -139,9 +184,11 @@ class CreateAnnotationQueueTool(BaseTool):
         # Attach labels
         labels_added = 0
         if params.label_ids:
-            labels = AnnotationsLabels.objects.filter(
-                id__in=params.label_ids, organization=context.organization
-            )
+            labels, missing_labels = resolve_labels(params.label_ids, context)
+            if missing_labels:
+                warnings.append(
+                    "Labels not found: " + ", ".join(f"`{ref}`" for ref in missing_labels)
+                )
             for idx, label in enumerate(labels):
                 AnnotationQueueLabel.objects.create(queue=queue, label=label, order=idx)
                 labels_added += 1
@@ -149,12 +196,12 @@ class CreateAnnotationQueueTool(BaseTool):
         # Attach annotators
         annotators_added = 0
         if params.annotator_ids:
-            from accounts.models.user import User
-
-            users = User.objects.filter(
-                id__in=params.annotator_ids,
-                organization=context.organization,
-            )
+            users, missing_users = resolve_users(params.annotator_ids, context)
+            if missing_users:
+                warnings.append(
+                    "Annotators not found: "
+                    + ", ".join(f"`{ref}`" for ref in missing_users)
+                )
             for user in users:
                 AnnotationQueueAnnotator.objects.create(queue=queue, user=user)
                 annotators_added += 1
@@ -165,7 +212,7 @@ class CreateAnnotationQueueTool(BaseTool):
         elif dataset:
             scope = f"Dataset: {dataset.name}"
         elif agent_definition:
-            scope = f"Agent: {agent_definition.name}"
+            scope = f"Agent: {agent_definition.agent_name}"
 
         info = key_value_block(
             [
@@ -177,6 +224,7 @@ class CreateAnnotationQueueTool(BaseTool):
                 ("Labels", str(labels_added)),
                 ("Annotators", str(annotators_added)),
                 ("Status", "draft"),
+                ("Warnings", "; ".join(warnings) if warnings else "None"),
             ]
         )
 
@@ -190,5 +238,78 @@ class CreateAnnotationQueueTool(BaseTool):
                 "status": queue.status,
                 "labels_added": labels_added,
                 "annotators_added": annotators_added,
+                "warnings": warnings,
             },
         )
+
+
+def _not_found_result(entity: str, ref: str, lookup_tool: str) -> ToolResult:
+    return ToolResult(
+        content=section(
+            f"{entity} Not Found",
+            f"`{ref}` was not found. Use `{lookup_tool}` first, then retry with an ID from the result.",
+        ),
+        data={
+            "requires_lookup": True,
+            "entity": entity,
+            "provided": ref,
+            "lookup_tool": lookup_tool,
+        },
+    )
+
+
+def _resolve_project(project_ref: Optional[str], context: ToolContext):
+    ref = clean_ref(project_ref)
+    if not ref:
+        return None, None
+    from tracer.models.project import Project
+
+    ref_uuid = uuid_text(ref)
+    qs = Project.objects.filter(organization=context.organization)
+    if ref_uuid:
+        project = qs.filter(id=ref_uuid).first()
+    else:
+        project = qs.filter(name__iexact=ref).first() or qs.filter(
+            name__icontains=ref
+        ).first()
+    if not project:
+        return None, _not_found_result("Project", ref, "list_projects")
+    return project, None
+
+
+def _resolve_dataset(dataset_ref: Optional[str], context: ToolContext):
+    ref = clean_ref(dataset_ref)
+    if not ref:
+        return None, None
+    from model_hub.models.develop_dataset import Dataset
+
+    ref_uuid = uuid_text(ref)
+    qs = Dataset.objects.filter(organization=context.organization, deleted=False)
+    if ref_uuid:
+        dataset = qs.filter(id=ref_uuid).first()
+    else:
+        dataset = qs.filter(name__iexact=ref).first() or qs.filter(
+            name__icontains=ref
+        ).first()
+    if not dataset:
+        return None, _not_found_result("Dataset", ref, "list_datasets")
+    return dataset, None
+
+
+def _resolve_agent_definition(agent_ref: Optional[str], context: ToolContext):
+    ref = clean_ref(agent_ref)
+    if not ref:
+        return None, None
+    from simulate.models import AgentDefinition
+
+    ref_uuid = uuid_text(ref)
+    qs = AgentDefinition.objects.filter(organization=context.organization, deleted=False)
+    if ref_uuid:
+        agent_definition = qs.filter(id=ref_uuid).first()
+    else:
+        agent_definition = qs.filter(agent_name__iexact=ref).first() or qs.filter(
+            agent_name__icontains=ref
+        ).first()
+    if not agent_definition:
+        return None, _not_found_result("Agent Definition", ref, "list_agents")
+    return agent_definition, None

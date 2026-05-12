@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useMemo } from "react";
+import useFalconStore from "../store/useFalconStore";
 
 // Maps URL prefixes to context domains
 const PAGE_CONTEXT_MAP = [
@@ -15,7 +16,6 @@ const PAGE_CONTEXT_MAP = [
     entity: "evaluation",
   },
   { prefix: "/dashboard/evaluations", page: "evaluations" },
-  { prefix: "/dashboard/observe/", page: "tracing", entity: "trace" },
   { prefix: "/dashboard/observe", page: "tracing" },
   {
     prefix: "/dashboard/experiments/",
@@ -67,10 +67,63 @@ function extractEntityId(pathname, prefix) {
   return segment || null;
 }
 
+function buildObserveContext(pathname) {
+  const parts = pathname.split("/").filter(Boolean);
+  const observeIndex = parts.indexOf("observe");
+  if (observeIndex === -1) return null;
+
+  const projectId = parts[observeIndex + 1];
+  const detailType = parts[observeIndex + 2];
+  const detailId = parts[observeIndex + 3];
+
+  if (detailType === "trace" && detailId) {
+    return {
+      page: "tracing",
+      path: pathname,
+      entity_type: "trace",
+      entity_id: detailId,
+      project_id: projectId || null,
+    };
+  }
+
+  if (detailType === "voice" && detailId) {
+    return {
+      page: "tracing",
+      path: pathname,
+      entity_type: "voice_call",
+      entity_id: detailId,
+      project_id: projectId || null,
+    };
+  }
+
+  if (projectId) {
+    return {
+      page: "tracing",
+      path: pathname,
+      entity_type: "project",
+      entity_id: projectId,
+    };
+  }
+
+  return { page: "tracing", path: pathname };
+}
+
 export function useFalconContext() {
   const { pathname } = useLocation();
+  const activePageContext = useFalconStore((s) => s.activePageContext);
 
   return useMemo(() => {
+    if (activePageContext) {
+      return {
+        page: activePageContext.page || "general",
+        path: pathname,
+        ...activePageContext,
+      };
+    }
+
+    const observeContext = buildObserveContext(pathname);
+    if (observeContext) return observeContext;
+
     for (const mapping of PAGE_CONTEXT_MAP) {
       if (pathname.startsWith(mapping.prefix)) {
         const result = {
@@ -91,5 +144,5 @@ export function useFalconContext() {
       }
     }
     return { page: "general", path: pathname };
-  }, [pathname]);
+  }, [pathname, activePageContext]);
 }

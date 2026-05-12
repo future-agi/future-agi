@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -7,6 +6,7 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_run_test
 
 
 class RunNewEvalsOnSimulationInput(PydanticBaseModel):
@@ -20,7 +20,7 @@ class RunNewEvalsOnSimulationInput(PydanticBaseModel):
         ),
         min_length=1,
     )
-    test_execution_ids: Optional[list[UUID]] = Field(
+    test_execution_ids: list[UUID] | None = Field(
         default=None,
         description=(
             "Specific test execution IDs to evaluate. "
@@ -34,7 +34,7 @@ class RunNewEvalsOnSimulationInput(PydanticBaseModel):
             "When combined with test_execution_ids, those IDs are excluded."
         ),
     )
-    enable_tool_evaluation: Optional[bool] = Field(
+    enable_tool_evaluation: bool | None = Field(
         default=None,
         description="Enable or disable tool evaluation for the run test. If omitted, no change.",
     )
@@ -56,26 +56,22 @@ class RunNewEvalsOnSimulationTool(BaseTool):
         self, params: RunNewEvalsOnSimulationInput, context: ToolContext
     ) -> ToolResult:
         import structlog
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.models.test_execution import CallExecution, TestExecution
 
-        from simulate.models.call_execution import CallExecution
-        from simulate.models.run_test import RunTest
-        from simulate.models.simulate_eval_config import SimulateEvalConfig
-        from simulate.models.test_execution import TestExecution
         from simulate.services.test_executor import (
             run_new_evals_on_call_executions_task,
         )
 
         logger = structlog.get_logger(__name__)
 
-        # Get the run test
-        try:
-            run_test = RunTest.objects.get(
-                id=params.run_test_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Run Test Required To Run New Evals",
+        )
+        if unresolved:
+            return unresolved
 
         # Update enable_tool_evaluation if provided
         if params.enable_tool_evaluation is not None:

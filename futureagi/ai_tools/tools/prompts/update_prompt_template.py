@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -7,10 +6,14 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import resolve_prompt_template_for_tool
 
 
 class UpdatePromptTemplateInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template to update")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template to update. Omit to list candidates.",
+    )
     name: Optional[str] = Field(default=None, description="New name for the template")
     description: Optional[str] = Field(default=None, description="New description")
     folder_id: Optional[str] = Field(
@@ -36,14 +39,13 @@ class UpdatePromptTemplateTool(BaseTool):
 
         from model_hub.models.run_prompt import PromptTemplate
 
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
         update_fields = ["updated_at"]
 
@@ -55,7 +57,7 @@ class UpdatePromptTemplateTool(BaseTool):
                     organization=context.organization,
                     deleted=False,
                 )
-                .exclude(id=params.template_id)
+                .exclude(id=template.id)
                 .exists()
             ):
                 return ToolResult.error(

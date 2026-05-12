@@ -15,7 +15,7 @@ class TaxonomyCategory(str, Enum):
 
 
 class ReadTaxonomyInput(PydanticBaseModel):
-    category: TaxonomyCategory
+    category: TaxonomyCategory | None = None
 
 
 @register_tool
@@ -35,6 +35,19 @@ class ReadTaxonomyTool(BaseTool):
             TaxonomyCategory.trace_span_types: self._trace_span_types,
             TaxonomyCategory.model_types: self._model_types,
         }
+
+        if params.category is None:
+            rows = [
+                [category.value, builder.__name__.removeprefix("_").replace("_", " ")]
+                for category, builder in taxonomy_map.items()
+            ]
+            return ToolResult(
+                content=section(
+                    "Available Taxonomy Categories",
+                    markdown_table(["Category", "Description"], rows),
+                ),
+                data={"categories": [category.value for category in taxonomy_map]},
+            )
 
         builder = taxonomy_map.get(params.category)
         if not builder:

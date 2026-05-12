@@ -4,6 +4,7 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     dashboard_link,
+    format_datetime,
     format_number,
     key_value_block,
     markdown_table,
@@ -13,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class GetExperimentStatsInput(PydanticBaseModel):
-    experiment_id: str = Field(description="Name or UUID of the experiment")
+    experiment_id: str = Field(
+        default="",
+        description="Name or UUID of the experiment. Omit to list candidate experiments with IDs.",
+    )
 
 
 @register_tool
@@ -32,18 +36,26 @@ class GetExperimentStatsTool(BaseTool):
     ) -> ToolResult:
         from django.db.models import Avg
 
-        from ai_tools.resolvers import resolve_experiment
+        from ai_tools.tools.experiments._utils import (
+            candidate_experiments_result,
+            resolve_experiment_for_tool,
+        )
         from model_hub.models.develop_dataset import Cell, Column
         from model_hub.models.experiments import (
             ExperimentComparison,
             ExperimentsTable,
         )
 
-        experiment_obj, err = resolve_experiment(
-            params.experiment_id, context.organization
+        if not params.experiment_id:
+            return candidate_experiments_result(context, "Experiment Required For Stats")
+
+        experiment_obj, unresolved = resolve_experiment_for_tool(
+            params.experiment_id,
+            context,
+            title="Experiment Required For Stats",
         )
-        if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+        if unresolved:
+            return unresolved
 
         try:
             experiment = ExperimentsTable.objects.select_related("dataset").get(

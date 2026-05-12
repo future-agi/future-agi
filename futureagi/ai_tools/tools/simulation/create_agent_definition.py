@@ -24,9 +24,9 @@ class CreateAgentDefinitionInput(PydanticBaseModel):
     agent_name: str = Field(
         min_length=1, max_length=255, description="Name of the agent"
     )
-    agent_type: str = Field(default="voice", description="Type of agent: voice or text")
+    agent_type: str = Field(default="text", description="Type of agent: voice or text")
     description: str = Field(
-        default="",
+        default="General-purpose assistant agent.",
         description="Description of the agent's purpose",
     )
     commit_message: str = Field(

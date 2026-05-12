@@ -1,8 +1,6 @@
-from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -17,15 +15,36 @@ from ai_tools.registry import register_tool
 
 
 class GetEvalLogsInput(PydanticBaseModel):
-    eval_template_id: UUID = Field(
-        description="The UUID of the eval template to get logs for"
+    model_config = ConfigDict(extra="allow")
+
+    eval_template_id: str = Field(
+        default="",
+        description="Name or UUID of the eval template to get logs for. If omitted, returns recent eval logs.",
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search/filter logs by status or source",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["eval_template_id"] = (
+            normalized.get("eval_template_id")
+            or normalized.get("template_id")
+            or normalized.get("eval_id")
+            or normalized.get("evaluation_id")
+            or normalized.get("source_id")
+            or normalized.get("id")
+            or normalized.get("name")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -44,27 +63,46 @@ class GetEvalLogsTool(BaseTool):
         if is_oss():
             return ToolResult.feature_unavailable(EEFeature.AUDIT_LOGS.value)
 
-        from model_hub.models.evals_metric import EvalTemplate
-        from model_hub.utils.eval_validators import validate_eval_template_org_access
+        from django.db.models import Q
+
+        from ai_tools.resolvers import is_uuid, resolve_eval_template
         from ee.usage.models.usage import APICallLog
 
-        # Validate template exists and belongs to org
-        try:
-            template = validate_eval_template_org_access(
-                params.eval_template_id, context.organization
-            )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found("Eval Template", str(params.eval_template_id))
+        eval_ref = str(params.eval_template_id or "").strip()
+        template = None
+        source_label = "recent eval logs"
 
-        # Query logs: source_id stores the eval template ID
-        qs = APICallLog.objects.filter(
-            organization=context.organization,
-            source_id=str(params.eval_template_id),
-        ).order_by("-created_at")
+        if eval_ref:
+            template, err = resolve_eval_template(eval_ref, context.organization)
+            if err:
+                if is_uuid(eval_ref):
+                    fallback_qs = APICallLog.objects.filter(
+                        Q(source_id=eval_ref)
+                        | Q(reference_id=eval_ref)
+                        | Q(log_id=eval_ref),
+                        organization=context.organization,
+                    ).order_by("-created_at")
+                    if fallback_qs.exists():
+                        qs = fallback_qs
+                        source_label = f"source `{eval_ref}`"
+                    else:
+                        return _eval_template_candidates(context, err)
+                else:
+                    return _eval_template_candidates(context, err)
+            else:
+                source_label = template.name
+                qs = APICallLog.objects.filter(
+                    organization=context.organization,
+                    source_id=str(template.id),
+                ).order_by("-created_at")
+        else:
+            qs = (
+                APICallLog.objects.filter(organization=context.organization)
+                .filter(Q(source__icontains="eval") | Q(source_id__isnull=False))
+                .order_by("-created_at")
+            )
 
         if params.search:
-            from django.db.models import Q
-
             qs = qs.filter(
                 Q(status__icontains=params.search) | Q(source__icontains=params.search)
             )
@@ -75,7 +113,7 @@ class GetEvalLogsTool(BaseTool):
         if not logs:
             return ToolResult(
                 content=section(
-                    f"Eval Logs: {template.name}",
+                    f"Eval Logs: {source_label}",
                     "_No execution logs found for this eval template._",
                 ),
                 data={"logs": [], "total": 0},
@@ -114,10 +152,43 @@ class GetEvalLogsTool(BaseTool):
 
         showing = f"Showing {len(rows)} of {total}"
         content = section(
-            f"Eval Logs: {template.name} ({total})", f"{showing}\n\n{table}"
+            f"Eval Logs: {source_label} ({total})", f"{showing}\n\n{table}"
         )
 
         if total > params.offset + params.limit:
             content += f"\n\n_Use offset={params.offset + params.limit} to see more._"
 
         return ToolResult(content=content, data={"logs": data_list, "total": total})
+
+
+def _eval_template_candidates(context: ToolContext, detail: str) -> ToolResult:
+    from django.db.models import Q
+    from model_hub.models.evals_metric import EvalTemplate
+
+    templates = list(
+        EvalTemplate.no_workspace_objects.filter(
+            Q(organization=context.organization) | Q(organization__isnull=True),
+            deleted=False,
+        ).order_by("-created_at")[:10]
+    )
+    rows = [
+        [f"`{template.id}`", truncate(template.name, 48), template.owner or "—"]
+        for template in templates
+    ]
+    body = detail
+    body += "\n\n"
+    body += (
+        markdown_table(["ID", "Name", "Owner"], rows)
+        if rows
+        else "No eval templates found."
+    )
+    return ToolResult(
+        content=section("Eval Template Candidates", body),
+        data={
+            "requires_eval_template_id": True,
+            "templates": [
+                {"id": str(template.id), "name": template.name}
+                for template in templates
+            ],
+        },
+    )

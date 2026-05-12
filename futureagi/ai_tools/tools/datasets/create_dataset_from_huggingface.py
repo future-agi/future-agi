@@ -15,11 +15,11 @@ from model_hub.constants import MAX_DATASET_NAME_LENGTH
 
 class CreateDatasetFromHuggingFaceInput(PydanticBaseModel):
     huggingface_dataset_name: str = Field(
+        default="",
         description=(
             "HuggingFace dataset identifier "
             "(e.g. 'squad', 'glue', 'imdb', 'tatsu-lab/alpaca')"
         ),
-        min_length=1,
     )
     huggingface_dataset_config: Optional[str] = Field(
         default=None,
@@ -29,8 +29,8 @@ class CreateDatasetFromHuggingFaceInput(PydanticBaseModel):
         ),
     )
     huggingface_dataset_split: str = Field(
+        default="train",
         description="Dataset split to import (e.g. 'train', 'test', 'validation')",
-        min_length=1,
     )
     name: Optional[str] = Field(
         default=None,
@@ -75,6 +75,23 @@ class CreateDatasetFromHuggingFaceTool(BaseTool):
             create_dataset_from_huggingface,
         )
 
+        if not params.huggingface_dataset_name:
+            return ToolResult(
+                content=section(
+                    "HuggingFace Dataset Import Requirements",
+                    (
+                        "Provide `huggingface_dataset_name` such as `squad`, `imdb`, "
+                        "or `tatsu-lab/alpaca`. If the external dataset is not "
+                        "reachable, use `create_dataset` and `add_dataset_rows` with "
+                        "the data available in the chat."
+                    ),
+                ),
+                data={
+                    "requires_huggingface_dataset_name": True,
+                    "fallback_tools": ["create_dataset", "add_dataset_rows"],
+                },
+            )
+
         result = create_dataset_from_huggingface(
             hf_dataset_name=params.huggingface_dataset_name,
             hf_config=params.huggingface_dataset_config,
@@ -88,6 +105,42 @@ class CreateDatasetFromHuggingFaceTool(BaseTool):
         )
 
         if isinstance(result, ServiceError):
+            recoverable_codes = {"VALIDATION_ERROR", "NOT_FOUND"}
+            message = result.message or ""
+            external_markers = (
+                "huggingface",
+                "dataset info",
+                "preview",
+                "split",
+                "404",
+                "500",
+                "503",
+                "timeout",
+                "not found",
+                "arbitrary code",
+            )
+            is_external_issue = any(
+                marker in message.lower() for marker in external_markers
+            )
+            if result.code in recoverable_codes or is_external_issue:
+                content = section(
+                    "HuggingFace Dataset Import Not Completed",
+                    (
+                        f"{message}\n\n"
+                        "Try a known dataset and split, for example `squad` / `train`, "
+                        "or create the dataset manually with `create_dataset` and "
+                        "`add_dataset_rows` if the rows are already known."
+                    ),
+                )
+                return ToolResult(
+                    content=content,
+                    data={
+                        "status": "import_not_completed",
+                        "error_code": result.code,
+                        "message": message,
+                        "fallback_tools": ["create_dataset", "add_dataset_rows"],
+                    },
+                )
             return ToolResult.error(result.message, error_code=result.code)
 
         info = key_value_block(

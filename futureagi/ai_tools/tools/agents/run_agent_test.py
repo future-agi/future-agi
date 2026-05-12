@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -11,13 +10,16 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import candidate_run_tests_result, resolve_run_test
+from ai_tools.tools.annotation_queues._utils import uuid_text
 
 
 class RunAgentTestInput(PydanticBaseModel):
-    run_test_id: UUID = Field(
-        description="The UUID of the RunTest (test definition) to execute"
+    run_test_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or exact name of the RunTest (test definition) to execute",
     )
-    scenario_ids: Optional[List[UUID]] = Field(
+    scenario_ids: Optional[List[str]] = Field(
         default=None,
         description=(
             "Optional list of specific scenario UUIDs to execute. "
@@ -40,19 +42,15 @@ class RunAgentTestTool(BaseTool):
 
         from django.utils import timezone
 
-        from simulate.models.run_test import RunTest
         from simulate.models.test_execution import TestExecution
 
-        # Validate run test exists
-        try:
-            run_test = RunTest.objects.select_related(
-                "agent_definition", "simulator_agent"
-            ).get(id=params.run_test_id, organization=context.organization)
-        except RunTest.DoesNotExist:
-            return ToolResult.error(
-                f"RunTest `{params.run_test_id}` not found.",
-                error_code="NOT_FOUND",
-            )
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Agent Test Required For Run",
+        )
+        if unresolved:
+            return unresolved
 
         agent_name = (
             run_test.agent_definition.agent_name if run_test.agent_definition else "—"
@@ -90,12 +88,50 @@ class RunAgentTestTool(BaseTool):
             )
 
         # Get scenarios - use provided scenario_ids or fall back to all configured
-        if params.scenario_ids:
-            scenario_ids = [sid for sid in params.scenario_ids]
-        else:
-            scenario_ids = list(
-                run_test.scenarios.filter(deleted=False).values_list("id", flat=True)
+        configured_scenario_ids = [
+            str(sid)
+            for sid in run_test.scenarios.filter(deleted=False).values_list(
+                "id",
+                flat=True,
             )
+        ]
+        if params.scenario_ids:
+            invalid_scenario_ids = [
+                str(sid) for sid in params.scenario_ids if not uuid_text(sid)
+            ]
+            if invalid_scenario_ids:
+                return candidate_run_tests_result(
+                    context,
+                    "Invalid Scenario IDs",
+                    "Scenario IDs must be UUIDs. Omit `scenario_ids` to run all "
+                    "scenarios configured on the selected test.",
+                )
+            scenario_ids = [uuid_text(sid) for sid in params.scenario_ids]
+            deduped_scenario_ids = []
+            seen_scenario_ids = set()
+            for scenario_id in scenario_ids:
+                if scenario_id not in seen_scenario_ids:
+                    deduped_scenario_ids.append(scenario_id)
+                    seen_scenario_ids.add(scenario_id)
+            scenario_ids = deduped_scenario_ids
+            configured_set = set(configured_scenario_ids)
+            unrelated_scenario_ids = [
+                sid for sid in scenario_ids if sid not in configured_set
+            ]
+            if unrelated_scenario_ids:
+                return candidate_run_tests_result(
+                    context,
+                    "Scenario IDs Not In Selected Test",
+                    (
+                        "Only scenarios configured on the selected test can be run. "
+                        "Omit `scenario_ids` to run all configured scenarios, or use "
+                        "one of the scenario IDs already attached to this test. "
+                        "Rejected IDs: "
+                        + ", ".join(f"`{sid}`" for sid in unrelated_scenario_ids)
+                    ),
+                )
+        else:
+            scenario_ids = configured_scenario_ids
         if not scenario_ids:
             return ToolResult.error(
                 "At least one scenario is required to execute the test. "

@@ -24,8 +24,9 @@ class TestGetUserTool:
     def test_get_nonexistent_user(self, tool_context):
         result = run_tool("get_user", {"user_id": str(uuid.uuid4())}, tool_context)
 
-        assert result.is_error
-        assert "Not Found" in result.content
+        assert not result.is_error
+        assert result.data["requires_user_id"] is True
+        assert "User Not Found" in result.content
 
     def test_get_invalid_uuid(self, tool_context):
         result = run_tool("get_user", {"user_id": "not-a-uuid"}, tool_context)
@@ -130,3 +131,65 @@ class TestListApiKeysTool:
         result = run_tool("list_api_keys", {}, tool_context)
 
         assert not result.is_error
+
+    def test_revoke_missing_api_key_returns_candidates(self, tool_context):
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.objects.create(
+            name="Candidate Key",
+            organization=tool_context.organization,
+            user=tool_context.user,
+            workspace=tool_context.workspace,
+            type="user",
+            enabled=True,
+        )
+
+        result = run_tool(
+            "revoke_api_key",
+            {"key_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_key_id"] is True
+        assert result.data["api_keys"][0]["id"] == str(key.id)
+        assert "API Key Not Found" in result.content
+
+
+class TestUserMutationRecovery:
+    def test_deactivate_missing_user_returns_candidates(self, tool_context):
+        result = run_tool(
+            "deactivate_user",
+            {"user_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_user_id"] is True
+        assert "User Not Found" in result.content
+
+    def test_remove_missing_user_returns_candidates(self, tool_context):
+        result = run_tool(
+            "remove_user",
+            {"user_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_user_id"] is True
+        assert "User Not Found" in result.content
+
+    def test_update_role_missing_user_returns_candidates(self, tool_context):
+        result = run_tool(
+            "update_user_role",
+            {
+                "user_id": str(uuid.uuid4()),
+                "new_role": "Member",
+                "level": "org",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_user_id"] is True
+        assert "User Not Found" in result.content

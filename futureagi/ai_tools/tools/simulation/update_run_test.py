@@ -1,4 +1,3 @@
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -14,22 +13,24 @@ from ai_tools.registry import register_tool
 
 
 class UpdateRunTestInput(PydanticBaseModel):
-    run_test_id: UUID = Field(description="The UUID of the run test to update")
-    name: Optional[str] = Field(default=None, description="New name")
-    description: Optional[str] = Field(default=None, description="New description")
-    scenario_ids: Optional[List[UUID]] = Field(
+    run_test_id: UUID | None = Field(
+        default=None, description="The UUID of the run test to update"
+    )
+    name: str | None = Field(default=None, description="New name")
+    description: str | None = Field(default=None, description="New description")
+    scenario_ids: list[UUID] | None = Field(
         default=None,
         description="New list of scenario UUIDs (replaces existing, at least one required)",
         min_length=1,
     )
-    simulator_agent_id: Optional[UUID] = Field(
+    simulator_agent_id: UUID | None = Field(
         default=None, description="New simulator agent UUID"
     )
-    agent_version_id: Optional[UUID] = Field(
+    agent_version_id: UUID | None = Field(
         default=None,
         description="UUID of the agent version to use for this test suite",
     )
-    enable_tool_evaluation: Optional[bool] = Field(
+    enable_tool_evaluation: bool | None = Field(
         default=None,
         description="Enable or disable automatic tool evaluation for this test suite",
     )
@@ -45,9 +46,39 @@ class UpdateRunTestTool(BaseTool):
     category = "simulation"
     input_model = UpdateRunTestInput
 
+    def _candidate_run_tests_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from simulate.models.run_test import RunTest
+
+        run_tests = RunTest.objects.filter(
+            organization=context.organization, deleted=False
+        ).order_by("-created_at")[:10]
+        rows = [f"- `{run_test.id}` — {run_test.name}" for run_test in run_tests]
+        return ToolResult(
+            content=section(
+                "Run Test Required",
+                (
+                    (message + "\n\n" if message else "")
+                    + "Provide `run_test_id` and at least one field to update.\n\n"
+                    + ("\n".join(rows) if rows else "No run tests found.")
+                ),
+            ),
+            data={
+                "requires_run_test_id": True,
+                "run_tests": [
+                    {"id": str(run_test.id), "name": run_test.name}
+                    for run_test in run_tests
+                ],
+            },
+        )
+
     def execute(self, params: UpdateRunTestInput, context: ToolContext) -> ToolResult:
 
         from simulate.models.run_test import RunTest
+
+        if params.run_test_id is None:
+            return self._candidate_run_tests_result(context)
 
         try:
             run_test = RunTest.objects.get(
@@ -56,7 +87,9 @@ class UpdateRunTestTool(BaseTool):
                 deleted=False,
             )
         except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+            return self._candidate_run_tests_result(
+                context, f"Run test `{params.run_test_id}` was not found."
+            )
 
         updated_fields = []
 
@@ -122,7 +155,7 @@ class UpdateRunTestTool(BaseTool):
                 id__in=params.scenario_ids, organization=context.organization
             )
             if scenarios.count() != len(params.scenario_ids):
-                found_ids = set(str(s.id) for s in scenarios)
+                found_ids = {str(s.id) for s in scenarios}
                 missing = [
                     str(sid) for sid in params.scenario_ids if str(sid) not in found_ids
                 ]
@@ -134,9 +167,17 @@ class UpdateRunTestTool(BaseTool):
             updated_fields.append("scenarios")
 
         if not updated_fields:
-            return ToolResult.error(
-                "No fields provided to update.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Run Test Update Requirements",
+                    (
+                        f"Run test `{run_test.id}` was found. Provide at least one "
+                        "field to update: `name`, `description`, `scenario_ids`, "
+                        "`simulator_agent_id`, `agent_version_id`, or "
+                        "`enable_tool_evaluation`."
+                    ),
+                ),
+                data={"run_test_id": str(run_test.id), "requires_update_fields": True},
             )
 
         info = key_value_block(

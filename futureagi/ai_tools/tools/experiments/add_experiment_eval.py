@@ -1,5 +1,6 @@
-from typing import Optional
+import os
 
+from model_hub.models.choices import ModelChoices
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,25 +10,27 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
-from model_hub.models.choices import ModelChoices
 
 
 class AddExperimentEvalInput(PydanticBaseModel):
-    experiment_id: str = Field(description="Name or UUID of the experiment")
+    experiment_id: str = Field(default="", description="Name or UUID of the experiment")
     name: str = Field(
+        default="falcon_experiment_eval",
         description="Name for the evaluation",
         min_length=1,
         max_length=50,
     )
-    template_id: str = Field(description="Name or UUID of the eval template to use")
-    config: Optional[dict] = Field(
+    template_id: str = Field(
+        default="", description="Name or UUID of the eval template to use"
+    )
+    config: dict | None = Field(
         default=None,
         description=(
             "Config overrides: mapping (template key → column ID) "
             "and config (runtime parameters)"
         ),
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description="LLM model for evaluation",
     )
@@ -48,20 +51,85 @@ class AddExperimentEvalTool(BaseTool):
     category = "experiments"
     input_model = AddExperimentEvalInput
 
+    def _requirements_result(
+        self, context: ToolContext, message: str = ""
+    ) -> ToolResult:
+        from django.db.models import Q
+        from model_hub.models.evals_metric import EvalTemplate
+        from model_hub.models.experiments import ExperimentsTable
+
+        from ai_tools.formatting import markdown_table
+
+        experiments = (
+            ExperimentsTable.objects.filter(
+                dataset__organization=context.organization,
+                deleted=False,
+            )
+            .select_related("dataset")
+            .order_by("-created_at")[:10]
+        )
+        templates = EvalTemplate.objects.filter(
+            Q(organization=context.organization) | Q(organization__isnull=True),
+            deleted=False,
+        ).order_by("-created_at")[:10]
+        experiment_rows = [
+            [
+                f"`{experiment.id}`",
+                experiment.name,
+                experiment.dataset.name if experiment.dataset else "—",
+            ]
+            for experiment in experiments
+        ]
+        rows = [[f"`{template.id}`", template.name] for template in templates]
+        body = (
+            (message + "\n\n" if message else "")
+            + "Provide `experiment_id`, `name`, and `template_id` to add an experiment eval."
+        )
+        if experiment_rows:
+            body += "\n\n### Experiments\n\n" + markdown_table(
+                ["Experiment ID", "Name", "Dataset"], experiment_rows
+            )
+        if rows:
+            body += "\n\n### Eval Templates\n\n" + markdown_table(
+                ["Template ID", "Name"], rows
+            )
+        return ToolResult(
+            content=section(
+                "Experiment Eval Requirements",
+                body,
+            ),
+            data={
+                "requires_experiment_id": True,
+                "requires_template_id": True,
+                "experiments": [
+                    {"id": str(experiment.id), "name": experiment.name}
+                    for experiment in experiments
+                ],
+                "eval_templates": [
+                    {"id": str(template.id), "name": template.name}
+                    for template in templates
+                ],
+            },
+        )
+
     def execute(
         self, params: AddExperimentEvalInput, context: ToolContext
     ) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_eval_template, resolve_experiment
         from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
         from model_hub.models.experiments import ExperimentsTable
+
+        from ai_tools.resolvers import resolve_eval_template, resolve_experiment
+
+        if not params.experiment_id or not params.template_id:
+            return self._requirements_result(context)
 
         # Resolve experiment by name or UUID
         experiment_obj, err = resolve_experiment(
             params.experiment_id, context.organization
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return self._requirements_result(context, err)
 
         try:
             experiment = ExperimentsTable.objects.select_related("dataset").get(
@@ -81,7 +149,7 @@ class AddExperimentEvalTool(BaseTool):
             params.template_id, context.organization
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return self._requirements_result(context, err)
 
         try:
             template = EvalTemplate.objects.get(id=template_obj.id)
@@ -101,6 +169,7 @@ class AddExperimentEvalTool(BaseTool):
 
         # Normalize config using template config
         from model_hub.models.choices import StatusType
+
         from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 
         selected_template = EvalTemplate.no_workspace_objects.get(id=template_obj.id)
@@ -116,7 +185,11 @@ class AddExperimentEvalTool(BaseTool):
             dataset=experiment.dataset,
             config=normalized_config,
             status=status,
-            model=params.model or ModelChoices.TURING_LARGE.value,
+            model=(
+                params.model
+                or os.environ.get("FALCON_AI_MODEL")
+                or ModelChoices.TURING_LARGE.value
+            ),
             source_id=str(experiment.id),
             organization=context.organization,
             workspace=context.workspace,

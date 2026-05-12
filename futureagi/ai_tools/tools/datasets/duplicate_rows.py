@@ -5,18 +5,21 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     dashboard_link,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
 
 
 class DuplicateRowsInput(PydanticBaseModel):
     dataset_id: str = Field(
+        default="",
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
     row_ids: list[str] = Field(
+        default_factory=list,
         description="List of row UUIDs to duplicate",
-        min_length=1,
         max_length=500,
     )
     num_copies: int = Field(
@@ -38,8 +41,7 @@ class DuplicateRowsTool(BaseTool):
     input_model = DuplicateRowsInput
 
     def execute(self, params: DuplicateRowsInput, context: ToolContext) -> ToolResult:
-
-        from ai_tools.resolvers import resolve_dataset
+        from model_hub.models.develop_dataset import Row
         from model_hub.services.dataset_service import (
             ServiceError,
         )
@@ -47,11 +49,30 @@ class DuplicateRowsTool(BaseTool):
             duplicate_rows as svc_duplicate_rows,
         )
 
-        ds, error = resolve_dataset(
-            params.dataset_id, context.organization, context.workspace
+        ds, dataset_result = resolve_dataset_for_tool(
+            params.dataset_id,
+            context,
+            "Dataset Required To Duplicate Rows",
         )
-        if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+        if dataset_result:
+            return dataset_result
+
+        if not params.row_ids:
+            candidates = list(
+                Row.objects.filter(dataset=ds, deleted=False).order_by("order")[:20]
+            )
+            rows = [[str(i), f"`{row.id}`"] for i, row in enumerate(candidates)]
+            body = "Provide one or more `row_ids` to duplicate."
+            if rows:
+                body += "\n\n" + markdown_table(["Index", "Row ID"], rows)
+            return ToolResult(
+                content=section("Rows Required To Duplicate", body),
+                data={
+                    "requires_row_ids": True,
+                    "dataset_id": str(ds.id),
+                    "rows": [{"id": str(row.id)} for row in candidates],
+                },
+            )
 
         result = svc_duplicate_rows(
             dataset_id=str(ds.id),

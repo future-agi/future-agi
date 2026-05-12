@@ -45,6 +45,7 @@ class ModelHubConfig(AppConfig):
         from tracer.services.clickhouse.client import get_clickhouse_client
         from tracer.services.clickhouse.schema import (
             POST_DDL_ALTERS,
+            PRE_DDL_ALTERS_BY_TABLE,
             get_all_schema_ddl,
         )
 
@@ -55,6 +56,12 @@ class ModelHubConfig(AppConfig):
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     logger.warning(f"CH schema {name}: {e}")
+            for alter in PRE_DDL_ALTERS_BY_TABLE.get(name, []):
+                try:
+                    ch.execute(alter)
+                except Exception as e:
+                    if "already exists" not in str(e).lower():
+                        logger.warning(f"CH pre-DDL alter {name}: {e}")
 
         # Ensure materialized columns on CDC tables that PeerDB may recreate
         for alter in POST_DDL_ALTERS:

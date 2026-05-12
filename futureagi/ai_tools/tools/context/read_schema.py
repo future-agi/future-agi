@@ -15,7 +15,7 @@ class EntityType(str, Enum):
 
 
 class ReadSchemaInput(PydanticBaseModel):
-    entity_type: EntityType
+    entity_type: EntityType | None = None
 
 
 @register_tool
@@ -35,6 +35,19 @@ class ReadSchemaTool(BaseTool):
             EntityType.datasets: self._dataset_schema,
             EntityType.traces: self._trace_schema,
         }
+
+        if params.entity_type is None:
+            rows = [
+                [entity_type.value, builder.__name__.removeprefix("_").replace("_", " ")]
+                for entity_type, builder in schema_map.items()
+            ]
+            return ToolResult(
+                content=section(
+                    "Available Schema Entity Types",
+                    markdown_table(["Entity Type", "Description"], rows),
+                ),
+                data={"entity_types": [entity_type.value for entity_type in schema_map]},
+            )
 
         builder = schema_map.get(params.entity_type)
         if not builder:

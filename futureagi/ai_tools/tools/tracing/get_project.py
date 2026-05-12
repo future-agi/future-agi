@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -16,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class GetProjectInput(PydanticBaseModel):
-    project_id: UUID = Field(description="The UUID of the project to retrieve")
+    project_id: str = Field(
+        default="",
+        description="Project UUID or exact/fuzzy project name to retrieve.",
+    )
     include_versions: bool = Field(
         default=True, description="Include project versions in the response"
     )
@@ -33,17 +34,17 @@ class GetProjectTool(BaseTool):
     input_model = GetProjectInput
 
     def execute(self, params: GetProjectInput, context: ToolContext) -> ToolResult:
-        from django.db.models import Count
-
-        from tracer.models.project import Project
         from tracer.models.project_version import ProjectVersion
+        from ai_tools.tools.tracing._utils import resolve_project
 
-        try:
-            project = Project.objects.annotate(trace_count=Count("traces")).get(
-                id=params.project_id, organization=context.organization
-            )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required",
+        )
+        if unresolved:
+            return unresolved
+        project.trace_count = project.traces.count()
 
         info = key_value_block(
             [

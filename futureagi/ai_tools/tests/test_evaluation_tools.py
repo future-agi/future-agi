@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -61,6 +62,51 @@ class TestListEvaluationsTool:
 
         assert not result.is_error
         assert len(result.data["evaluations"]) <= 1
+
+
+class TestCompareEvaluationsTool:
+    def test_compare_missing_ids_returns_candidates(self, tool_context, evaluation):
+        result = run_tool("compare_evaluations", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert "Evaluation IDs Required" in result.content
+        assert str(evaluation.id) in result.content
+        assert result.data["candidate_evaluations"][0]["id"] == str(evaluation.id)
+
+    def test_compare_existing(self, tool_context, evaluation):
+        second_template = make_eval_template(tool_context, name="Second Eval")
+        second = make_evaluation(
+            tool_context,
+            eval_template=second_template,
+            value="Fail",
+            metrics={"accuracy": 0.2},
+        )
+
+        result = run_tool(
+            "compare_evaluations",
+            {"evaluation_ids": [str(evaluation.id), str(second.id)]},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert "Evaluation Comparison (2 evaluations)" in result.content
+        assert str(evaluation.id) in result.content
+        assert str(second.id) in result.content
+
+
+class TestGetEvalLogDetailTool:
+    def test_invalid_log_id_returns_candidates(self, tool_context):
+        with patch("tfc.ee_gating.is_oss", return_value=False):
+            result = run_tool(
+                "get_eval_log_detail",
+                {"log_id": "INVALID-ID-FORMAT"},
+                tool_context,
+            )
+
+        assert not result.is_error
+        assert result.data["requires_log_id"] is True
+        assert "Eval Log Not Found" in result.content
 
 
 class TestGetEvaluationTool:
@@ -131,6 +177,50 @@ class TestGetEvalTemplate:
             "get_eval_template", {"eval_template_id": str(uuid.uuid4())}, tool_context
         )
         assert result.is_error
+
+
+class TestDuplicateEvalTemplateTool:
+    def test_missing_template_returns_candidates(self, tool_context, user_eval_template):
+        result = run_tool(
+            "duplicate_eval_template",
+            {"eval_template_id": str(uuid.uuid4()), "name": "copy_eval"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
+        assert str(user_eval_template.id) in result.content
+
+    def test_system_template_returns_user_owned_candidates(
+        self, tool_context, eval_template, user_eval_template
+    ):
+        result = run_tool(
+            "duplicate_eval_template",
+            {"eval_template_id": str(eval_template.id), "name": "copy_eval"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
+        assert str(user_eval_template.id) in result.content
+
+    def test_existing_name_returns_recoverable_suggestion(
+        self, tool_context, user_eval_template
+    ):
+        result = run_tool(
+            "duplicate_eval_template",
+            {
+                "eval_template_id": str(user_eval_template.id),
+                "name": user_eval_template.name,
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_name"] is True
+        assert result.data["existing_template_id"] == str(user_eval_template.id)
+        assert result.data["suggested_name"] == f"{user_eval_template.name}_2"
 
 
 # ===================================================================
@@ -330,6 +420,15 @@ class TestDeleteEvalTemplateTool:
 
 
 class TestCreateEvalGroupTool:
+    def test_create_group_missing_inputs_returns_candidates(self, tool_context, eval_template):
+        result = run_tool("create_eval_group", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert "Eval Group Inputs Required" in result.content
+        assert str(eval_template.id) in result.content
+        assert result.data["candidate_templates"][0]["id"] == str(eval_template.id)
+
     def test_create_group(self, tool_context, eval_template):
         result = run_tool(
             "create_eval_group",
@@ -372,3 +471,15 @@ class TestCreateEvalGroupTool:
 
         assert not result.is_error
         assert result.data["template_count"] == 2
+
+
+class TestTriggerErrorLocalizationTool:
+    def test_invalid_eval_log_id_returns_candidates(self, tool_context):
+        result = run_tool(
+            "trigger_error_localization",
+            {"eval_log_id": "log_text_sentence_001"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_eval_log_id_or_evaluation_id"] is True

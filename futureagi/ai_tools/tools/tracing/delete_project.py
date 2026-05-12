@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,70 +10,107 @@ from ai_tools.registry import register_tool
 
 
 class DeleteProjectInput(PydanticBaseModel):
-    project_id: UUID = Field(description="The UUID of the project to delete")
+    project_id: str = Field(
+        default="",
+        description="Project UUID or exact project name. Omit to list candidates.",
+    )
+    dry_run: bool = Field(
+        default=True,
+        description="Preview delete impact without modifying data.",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Must be true with dry_run=false to perform the soft delete.",
+    )
 
 
 @register_tool
 class DeleteProjectTool(BaseTool):
     name = "delete_project"
     description = (
-        "Deletes a tracing project by ID. This is a soft delete "
-        "(marks as deleted, does not permanently remove). "
-        "Associated traces and spans are NOT deleted."
+        "Safely soft-deletes a tracing project after confirmation. "
+        "Defaults to a dry-run preview and does not delete associated traces "
+        "or spans."
     )
     category = "tracing"
     input_model = DeleteProjectInput
 
     def execute(self, params: DeleteProjectInput, context: ToolContext) -> ToolResult:
         from django.db.models import Count
-        from django.utils import timezone
 
+        from ai_tools.tools.tracing._utils import resolve_project
         from tracer.models.eval_task import EvalTask
         from tracer.models.monitor import UserAlertMonitor
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.project import Project
         from tracer.models.project_version import ProjectVersion
         from tracer.models.trace import Trace
         from tracer.models.trace_session import TraceSession
 
-        try:
-            project = Project.objects.annotate(trace_count=Count("traces")).get(
-                id=params.project_id, organization=context.organization
-            )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required For Delete",
+        )
+        if unresolved:
+            return unresolved
+
+        project = (
+            type(project)
+            .objects.annotate(trace_count=Count("traces"))
+            .get(id=project.id)
+        )
 
         project_name = project.name
         project_id = str(project.id)
         trace_count = project.trace_count
+        version_count = ProjectVersion.objects.filter(project=project).count()
+        session_count = TraceSession.objects.filter(project=project).count()
+        span_count = ObservationSpan.objects.filter(project=project).count()
+        monitor_count = UserAlertMonitor.objects.filter(
+            project=project, deleted=False
+        ).count()
+        eval_task_count = EvalTask.objects.filter(
+            project=project, deleted=False
+        ).count()
 
-        # Cascade soft-delete related models before deleting the project
-        now = timezone.now()
-        if project.trace_type == "experiment":
-            ProjectVersion.objects.filter(project=project).update(
-                deleted=True, deleted_at=now
+        if params.dry_run or not params.confirm_delete:
+            info = key_value_block(
+                [
+                    ("Project ID", f"`{project_id}`"),
+                    ("Name", project_name),
+                    ("Traces Linked", str(trace_count)),
+                    ("Spans Linked", str(span_count)),
+                    ("Sessions Linked", str(session_count)),
+                    ("Versions Linked", str(version_count)),
+                    ("Alert Monitors Linked", str(monitor_count)),
+                    ("Eval Tasks Linked", str(eval_task_count)),
+                    ("Mutation", "Not applied"),
+                    (
+                        "To Apply",
+                        "Call with `dry_run=false` and `confirm_delete=true`.",
+                    ),
+                ]
             )
-        else:
-            TraceSession.objects.filter(project=project).update(
-                deleted=True, deleted_at=now
+            return ToolResult(
+                content=section("Project Delete Preview", info),
+                data={
+                    "project_id": project_id,
+                    "name": project_name,
+                    "trace_count": trace_count,
+                    "span_count": span_count,
+                    "dry_run": True,
+                    "requires_confirm_delete": True,
+                },
             )
-        Trace.objects.filter(project=project).update(deleted=True, deleted_at=now)
-        ObservationSpan.objects.filter(project=project).update(
-            deleted=True, deleted_at=now
-        )
-        UserAlertMonitor.objects.filter(project=project).update(
-            deleted=True, deleted_at=now
-        )
-        EvalTask.objects.filter(project=project).update(deleted=True, deleted_at=now)
 
-        # Soft delete the project itself
+        # Soft delete only the project. Linked traces/spans remain in storage.
         project.delete()
 
         info = key_value_block(
             [
                 ("Project ID", f"`{project_id}`"),
                 ("Name", project_name),
-                ("Traces in Project", str(trace_count)),
+                ("Traces Linked", str(trace_count)),
                 ("Status", "Deleted"),
             ]
         )
@@ -94,6 +129,7 @@ class DeleteProjectTool(BaseTool):
                 "project_id": project_id,
                 "name": project_name,
                 "trace_count": trace_count,
+                "linked_records_deleted": False,
                 "deleted": True,
             },
         )

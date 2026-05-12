@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,12 +12,19 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
 
 
 class ListPromptSimulationsInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    version_id: Optional[UUID] = Field(
-        default=None, description="Filter by specific version UUID"
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
+    version_id: Optional[str] = Field(
+        default=None, description="Filter by specific version UUID or name"
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
@@ -37,19 +43,16 @@ class ListPromptSimulationsTool(BaseTool):
     def execute(
         self, params: ListPromptSimulationsInput, context: ToolContext
     ) -> ToolResult:
-
-        from model_hub.models.run_prompt import PromptTemplate
         from simulate.models import RunTest
         from simulate.models.test_execution import TestExecution
 
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
         qs = (
             RunTest.objects.filter(
@@ -63,7 +66,14 @@ class ListPromptSimulationsTool(BaseTool):
         )
 
         if params.version_id:
-            qs = qs.filter(prompt_version_id=params.version_id)
+            version, version_result = resolve_prompt_version(
+                template,
+                params.version_id,
+                "Prompt Version Required",
+            )
+            if version_result:
+                return version_result
+            qs = qs.filter(prompt_version_id=version.id)
 
         total = qs.count()
         simulations = qs[params.offset : params.offset + params.limit]

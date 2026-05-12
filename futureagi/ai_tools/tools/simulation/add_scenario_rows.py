@@ -1,5 +1,3 @@
-import uuid as uuid_mod
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 
@@ -12,8 +10,8 @@ from ai_tools.registry import register_tool
 
 
 class AddScenarioRowsInput(PydanticBaseModel):
-    scenario_id: uuid_mod.UUID = Field(
-        description="The UUID of the scenario to add rows to"
+    scenario_id: str = Field(
+        description="The UUID or name of the scenario to add rows to"
     )
     num_rows: int = Field(
         ge=10,
@@ -31,6 +29,11 @@ class AddScenarioRowsInput(PydanticBaseModel):
             raise ValueError("Description cannot be empty or just whitespace.")
         return v.strip()
 
+    @field_validator("scenario_id", mode="before")
+    @classmethod
+    def normalize_scenario_id(cls, value) -> str:
+        return "" if value is None else str(value).strip()
+
 
 @register_tool
 class AddScenarioRowsTool(BaseTool):
@@ -45,25 +48,35 @@ class AddScenarioRowsTool(BaseTool):
 
     def execute(self, params: AddScenarioRowsInput, context: ToolContext) -> ToolResult:
         from django.db.models import Max
-
         from model_hub.models.choices import SourceChoices, StatusType
         from model_hub.models.develop_dataset import Cell, Column, Row
-        from simulate.models.scenarios import Scenarios
+        from ai_tools.tools.simulation._utils import resolve_scenario
+
         from tfc.temporal.simulate import start_add_scenario_rows_workflow_sync
 
-        try:
-            scenario = Scenarios.objects.get(
-                id=params.scenario_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except Scenarios.DoesNotExist:
-            return ToolResult.not_found("Scenario", str(params.scenario_id))
+        scenario, scenario_result = resolve_scenario(
+            params.scenario_id,
+            context,
+            title="Scenario Required",
+        )
+        if scenario_result:
+            return scenario_result
 
         if not scenario.dataset:
-            return ToolResult.error(
-                "Scenario does not have an associated dataset.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult(
+                content=section(
+                    "Scenario Has No Dataset",
+                    (
+                        f"Scenario `{scenario.name}` exists, but it does not have "
+                        "an associated dataset to add generated rows into. Create "
+                        "or attach a dataset-backed scenario before adding rows."
+                    ),
+                ),
+                data={
+                    "scenario_id": str(scenario.id),
+                    "scenario_name": scenario.name,
+                    "requires_dataset": True,
+                },
             )
 
         dataset = scenario.dataset

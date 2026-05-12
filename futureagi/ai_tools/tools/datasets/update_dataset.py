@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,15 +13,16 @@ from model_hub.constants import MAX_DATASET_NAME_LENGTH
 
 class UpdateDatasetInput(PydanticBaseModel):
     dataset_id: str = Field(
-        description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
+        default="",
+        description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'",
     )
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         description="New name for the dataset",
         min_length=1,
         max_length=MAX_DATASET_NAME_LENGTH,
     )
-    model_type: Optional[str] = Field(
+    model_type: str | None = Field(
         default=None,
         description="New model type for the dataset",
     )
@@ -33,8 +32,7 @@ class UpdateDatasetInput(PydanticBaseModel):
 class UpdateDatasetTool(BaseTool):
     name = "update_dataset"
     description = (
-        "Updates a dataset's name or model type. "
-        "Provide at least one field to update."
+        "Updates a dataset's name or model type. Provide at least one field to update."
     )
     category = "datasets"
     input_model = UpdateDatasetInput
@@ -42,13 +40,22 @@ class UpdateDatasetTool(BaseTool):
     def execute(self, params: UpdateDatasetInput, context: ToolContext) -> ToolResult:
 
         from ai_tools.resolvers import resolve_dataset
+        from ai_tools.tools.datasets._utils import candidate_datasets_result
         from model_hub.services.dataset_service import ServiceError
         from model_hub.services.dataset_service import update_dataset as svc_update
 
+        if not params.dataset_id:
+            return candidate_datasets_result(
+                context,
+                "Dataset Required",
+                "Provide `dataset_id` plus `name` or `model_type` to update a dataset.",
+            )
+
         if not params.name and not params.model_type:
-            return ToolResult.error(
-                "Provide at least one of name or model_type.",
-                error_code="VALIDATION_ERROR",
+            return candidate_datasets_result(
+                context,
+                "Dataset Update Requirements",
+                "Provide at least one update field: `name` or `model_type`.",
             )
 
         dataset, error = resolve_dataset(

@@ -7,6 +7,8 @@ import checker from "vite-plugin-checker";
 
 // ----------------------------------------------------------------------
 
+const apiTarget = process.env.VITE_HOST_API || "http://localhost:8000";
+
 export default defineConfig({
   base: "/",
   plugins: [react(), checker({
@@ -80,6 +82,13 @@ export default defineConfig({
     port: 3031,
     hmr: {
       overlay: false,
+    },
+    proxy: {
+      "/ws": {
+        target: apiTarget,
+        ws: true,
+        changeOrigin: true,
+      },
     },
     headers: {
       // Prevent Clickjacking

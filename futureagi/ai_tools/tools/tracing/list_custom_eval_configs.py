@@ -15,7 +15,10 @@ from ai_tools.registry import register_tool
 
 
 class ListCustomEvalConfigsInput(PydanticBaseModel):
-    project_id: UUID = Field(description="The UUID of the project")
+    project_id: str = Field(
+        default="",
+        description="Project UUID or exact/fuzzy project name.",
+    )
     task_id: Optional[UUID] = Field(
         default=None,
         description="Optional eval task ID to filter configs linked to a specific task",
@@ -40,14 +43,15 @@ class ListCustomEvalConfigsTool(BaseTool):
     ) -> ToolResult:
 
         from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing._utils import resolve_project
 
-        try:
-            project = Project.objects.get(
-                id=params.project_id, organization=context.organization
-            )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required To List Eval Configs",
+        )
+        if unresolved:
+            return unresolved
 
         qs = CustomEvalConfig.objects.filter(
             project=project, deleted=False

@@ -248,7 +248,18 @@ else
     echo "FAST_STARTUP mode: skipping DB checks, migrations, and static collection"
 fi
 
-python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+REGISTER_TEMPORAL_SCHEDULES=${REGISTER_TEMPORAL_SCHEDULES:-true}
+TEMPORAL_SCHEDULE_REGISTRATION_TIMEOUT_SECONDS=${TEMPORAL_SCHEDULE_REGISTRATION_TIMEOUT_SECONDS:-45}
+
+if [ "$REGISTER_TEMPORAL_SCHEDULES" = "true" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "${TEMPORAL_SCHEDULE_REGISTRATION_TIMEOUT_SECONDS}s" python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed or timed out (non-fatal), continuing startup..."
+    else
+        python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    fi
+else
+    echo "Skipping Temporal schedule registration because REGISTER_TEMPORAL_SCHEDULES is not true"
+fi
 
 # Start the appropriate service based on SERVICE_TYPE
 case "$SERVICE_TYPE" in

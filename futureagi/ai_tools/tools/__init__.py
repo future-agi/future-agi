@@ -21,7 +21,7 @@ from ai_tools.tools.annotation_queues import list_annotation_queues  # noqa: F40
 from ai_tools.tools.annotation_queues import submit_queue_annotations  # noqa: F401
 from ai_tools.tools.annotation_queues import update_annotation_queue  # noqa: F401
 
-# Annotation tools (13)
+# Annotation tools (15)
 from ai_tools.tools.annotations import annotation_summary  # noqa: F401
 from ai_tools.tools.annotations import create_annotation  # noqa: F401
 from ai_tools.tools.annotations import create_annotation_label  # noqa: F401
@@ -42,9 +42,10 @@ from ai_tools.tools.context import list_workspaces  # noqa: F401
 from ai_tools.tools.context import read_schema  # noqa: F401
 from ai_tools.tools.context import read_taxonomy  # noqa: F401
 from ai_tools.tools.context import search  # noqa: F401
+from ai_tools.tools.context import tool_search  # noqa: F401
 from ai_tools.tools.context import whoami  # noqa: F401
 
-# Dataset tools (29)
+# Dataset tools (31)
 from ai_tools.tools.datasets import add_columns  # noqa: F401
 from ai_tools.tools.datasets import add_dataset_eval  # noqa: F401
 from ai_tools.tools.datasets import add_dataset_rows  # noqa: F401
@@ -52,6 +53,8 @@ from ai_tools.tools.datasets import add_rows_from_existing  # noqa: F401
 from ai_tools.tools.datasets import add_run_prompt_column  # noqa: F401
 from ai_tools.tools.datasets import clone_dataset  # noqa: F401
 from ai_tools.tools.datasets import create_dataset  # noqa: F401
+from ai_tools.tools.datasets import create_dataset_from_file  # noqa: F401
+from ai_tools.tools.datasets import create_dataset_from_huggingface  # noqa: F401
 from ai_tools.tools.datasets import delete_column  # noqa: F401
 from ai_tools.tools.datasets import delete_dataset  # noqa: F401
 from ai_tools.tools.datasets import delete_dataset_eval  # noqa: F401
@@ -80,9 +83,10 @@ from ai_tools.tools.docs import ask_docs  # noqa: F401
 from ai_tools.tools.docs import get_page  # noqa: F401
 from ai_tools.tools.docs import search_docs  # noqa: F401
 
-# Evaluation tools (25)
+# Evaluation tools (34)
 from ai_tools.tools.evaluations import apply_eval_group_to_dataset  # noqa: F401
 from ai_tools.tools.evaluations import compare_evaluations  # noqa: F401
+from ai_tools.tools.evaluations import composite_eval  # noqa: F401
 from ai_tools.tools.evaluations import create_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import create_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import delete_eval_group  # noqa: F401
@@ -98,12 +102,15 @@ from ai_tools.tools.evaluations import get_eval_logs  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_playground  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import get_evaluation  # noqa: F401
+from ai_tools.tools.evaluations import get_error_localization_results  # noqa: F401
+from ai_tools.tools.evaluations import get_error_localization_status  # noqa: F401
 from ai_tools.tools.evaluations import list_eval_groups  # noqa: F401
 from ai_tools.tools.evaluations import list_eval_templates  # noqa: F401
 from ai_tools.tools.evaluations import list_evaluations  # noqa: F401
 from ai_tools.tools.evaluations import run_evaluation  # noqa: F401
 from ai_tools.tools.evaluations import submit_eval_feedback  # noqa: F401
 from ai_tools.tools.evaluations import test_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import trigger_error_localization  # noqa: F401
 from ai_tools.tools.evaluations import update_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import update_eval_template  # noqa: F401
 
@@ -209,6 +216,7 @@ from ai_tools.tools.tracing import analyze_project_traces  # noqa: F401
 from ai_tools.tools.tracing import check_eval_config_exists  # noqa: F401
 from ai_tools.tools.tracing import create_alert_monitor  # noqa: F401
 from ai_tools.tools.tracing import create_custom_eval_config  # noqa: F401
+from ai_tools.tools.tracing import create_dashboard  # noqa: F401
 from ai_tools.tools.tracing import create_eval_task  # noqa: F401
 from ai_tools.tools.tracing import create_project  # noqa: F401
 from ai_tools.tools.tracing import create_score  # noqa: F401
@@ -217,6 +225,7 @@ from ai_tools.tools.tracing import delete_alert_monitor  # noqa: F401
 from ai_tools.tools.tracing import delete_eval_tasks  # noqa: F401
 from ai_tools.tools.tracing import delete_project  # noqa: F401
 from ai_tools.tools.tracing import delete_trace_annotation  # noqa: F401
+
 # tracing/explore_trace.py now registers as ``explore_trace_legacy`` (the
 # Chauffeur read-all-spans + Haiku summary). The short name ``explore_trace``
 # belongs to the eval-context navigator in web/trace_explorer.py.

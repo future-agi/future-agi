@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -13,7 +11,10 @@ from ai_tools.registry import register_tool
 
 
 class UnpauseEvalTaskInput(PydanticBaseModel):
-    eval_task_id: UUID = Field(description="The UUID of the eval task to resume")
+    eval_task_id: str = Field(
+        default="",
+        description="Eval task UUID or exact task name to resume.",
+    )
 
 
 @register_tool
@@ -30,15 +31,25 @@ class UnpauseEvalTaskTool(BaseTool):
 
         from django.utils import timezone
 
-        from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
+        from tracer.models.eval_task import EvalTaskLogger, EvalTaskStatus
+        from ai_tools.tools.tracing._utils import (
+            candidate_eval_tasks_result,
+            resolve_eval_tasks,
+        )
 
-        try:
-            eval_task = EvalTask.objects.get(
-                id=params.eval_task_id,
-                project__organization=context.organization,
+        eval_tasks, missing, unresolved = resolve_eval_tasks(
+            [params.eval_task_id],
+            context,
+        )
+        if unresolved:
+            return unresolved
+        if missing or not eval_tasks:
+            return candidate_eval_tasks_result(
+                context,
+                "Eval Task Required To Resume",
+                f"Eval task `{params.eval_task_id}` was not found.",
             )
-        except EvalTask.DoesNotExist:
-            return ToolResult.not_found("EvalTask", str(params.eval_task_id))
+        eval_task = eval_tasks[0]
 
         if eval_task.status != EvalTaskStatus.PAUSED:
             return ToolResult.error(
@@ -55,11 +66,11 @@ class UnpauseEvalTaskTool(BaseTool):
 
         try:
             eval_task_logger = EvalTaskLogger.objects.get(
-                eval_task_id=params.eval_task_id
+                eval_task_id=eval_task.id
             )
         except EvalTaskLogger.DoesNotExist:
             eval_task_logger = EvalTaskLogger.objects.create(
-                eval_task_id=params.eval_task_id,
+                eval_task_id=eval_task.id,
                 offset=0,
                 status=EvalTaskStatus.PENDING,
             )

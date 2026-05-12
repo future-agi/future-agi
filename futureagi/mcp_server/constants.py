@@ -61,6 +61,14 @@ TOOL_GROUPS = {
         "name": "Docs & Guides",
         "description": "Search and query Future AGI documentation, setup guides, and API references",
     },
+    "web": {
+        "name": "Web & Knowledge Search",
+        "description": "Search the web, knowledge bases, ground truth examples, and large eval context",
+    },
+    "visualization": {
+        "name": "Visualization",
+        "description": "Render widgets and reusable dashboard visualizations for Falcon/Imagine views",
+    },
 }
 
 DEFAULT_TOOL_GROUPS = [
@@ -78,6 +86,8 @@ DEFAULT_TOOL_GROUPS = [
     "users",
     "usage",
     "docs",
+    "web",
+    "visualization",
 ]
 
 # Maps ai_tools category → MCP tool group
@@ -96,6 +106,8 @@ CATEGORY_TO_GROUP = {
     "users": "users",
     "usage": "usage",
     "docs": "docs",
+    "web": "web",
+    "visualization": "visualization",
 }
 
 RATE_LIMITS = {

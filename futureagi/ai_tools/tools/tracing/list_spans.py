@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -15,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class ListSpansInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to list spans for")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name to list spans for.",
+    )
     limit: int = Field(default=50, ge=1, le=200, description="Max spans to return")
     span_type: Optional[str] = Field(
         default=None,
@@ -36,15 +38,15 @@ class ListSpansTool(BaseTool):
     def execute(self, params: ListSpansInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        # Verify trace exists
-        try:
-            trace = Trace.objects.get(
-                id=params.trace_id, project__organization=context.organization
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To List Spans",
+        )
+        if unresolved:
+            return unresolved
 
         qs = ObservationSpan.objects.filter(trace=trace, deleted=False).order_by(
             "start_time", "created_at"
@@ -61,7 +63,7 @@ class ListSpansTool(BaseTool):
             return ToolResult(
                 content=section(
                     "Spans",
-                    f"No spans found for trace `{params.trace_id}`{filter_msg}.",
+                    f"No spans found for trace `{trace.id}`{filter_msg}.",
                 ),
                 data={"spans": [], "total": 0},
             )

@@ -4,11 +4,25 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_dataset, make_dataset_with_rows
+from ai_tools.tests.fixtures import (
+    make_dataset,
+    make_dataset_with_rows,
+    make_eval_template,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
+
+def test_dataset_eval_required_keys_prefers_template_config():
+    from ai_tools.tools.datasets.add_dataset_eval import _get_template_required_keys
+
+    class Template:
+        config = {"required_keys": ["output", "expected"]}
+        required_fields = ["legacy_only"]
+
+    assert _get_template_required_keys(Template()) == ["output", "expected"]
 
 
 @pytest.fixture
@@ -160,6 +174,19 @@ class TestGetDatasetTool:
 
 
 class TestCreateDatasetTool:
+    def test_create_schema_discourages_blank_rows_when_values_known(self):
+        tool = registry.get("create_dataset")
+        schema = tool.input_schema
+
+        rows_description = schema["properties"]["number_of_rows"]["description"]
+        blank_rows_description = schema["properties"]["create_blank_rows"][
+            "description"
+        ]
+
+        assert "planning only" in rows_description
+        assert "blank placeholder rows" in blank_rows_description
+        assert "create_blank_rows=true" in tool.description
+
     def test_create_basic(self, tool_context, mock_resource_limit):
         result = run_tool(
             "create_dataset",
@@ -189,14 +216,48 @@ class TestCreateDatasetTool:
         types = [c["type"] for c in result.data["columns"]]
         assert types == ["float", "boolean", "json"]
 
+    def test_create_number_of_rows_does_not_create_blanks_by_default(
+        self, tool_context, mock_resource_limit
+    ):
+        result = run_tool(
+            "create_dataset",
+            {"name": "Planned Rows DS", "columns": ["input"], "number_of_rows": 20},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["rows_created"] == 0
+        assert result.data["requested_row_count"] == 20
+        assert result.data["requires_add_dataset_rows"] is True
+        assert "add_dataset_rows" in result.content
+
+    def test_create_blank_rows_requires_explicit_flag(
+        self, tool_context, mock_resource_limit
+    ):
+        result = run_tool(
+            "create_dataset",
+            {
+                "name": "Blank Rows DS",
+                "columns": ["input"],
+                "number_of_rows": 3,
+                "create_blank_rows": True,
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["rows_created"] == 3
+        assert result.data["requires_add_dataset_rows"] is False
+
     def test_create_duplicate_name(self, tool_context, mock_resource_limit):
         run_tool("create_dataset", {"name": "Dup", "columns": ["a"]}, tool_context)
         result = run_tool(
             "create_dataset", {"name": "Dup", "columns": ["a"]}, tool_context
         )
 
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert result.data["already_exists"] is True
+        assert "Dataset Already Exists" in result.content
 
     def test_create_mismatched_types_length(self, tool_context, mock_resource_limit):
         result = run_tool(
@@ -225,10 +286,21 @@ class TestCreateDatasetTool:
             tool_context,
         )
 
-        assert result.is_error  # Pydantic min_length=1 validation
+        assert not result.is_error
+        assert result.status == "success"
+        assert result.data["requires_columns"] is True
 
 
 class TestAddDatasetRowsTool:
+    def test_add_rows_schema_requires_rows_in_same_call(self):
+        tool = registry.get("add_dataset_rows")
+        schema = tool.input_schema
+
+        rows_description = schema["properties"]["rows"]["description"]
+
+        assert "Do not call this tool without rows" in rows_description
+        assert "include the rows parameter in the same call" in tool.description
+
     def test_add_rows(self, tool_context, writable_dataset, mock_resource_limit):
         result = run_tool(
             "add_dataset_rows",
@@ -297,6 +369,27 @@ class TestAddDatasetRowsTool:
         )
 
         assert result.is_error  # Pydantic min_length=1
+
+
+class TestAddDatasetEvalTool:
+    def test_missing_template_returns_candidates(
+        self, tool_context, writable_dataset, mock_resource_limit
+    ):
+        make_eval_template(tool_context, name="Candidate Eval")
+
+        result = run_tool(
+            "add_dataset_eval",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "template_id": str(uuid.uuid4()),
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_template_id"] is True
+        assert result.data["templates"]
+        assert "Eval Template Not Found" in result.content
 
 
 class TestDeleteDatasetTool:
@@ -386,8 +479,9 @@ class TestCloneDatasetTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert "already exist" in result.content
+        assert result.data["already_exists"] is True
 
     def test_clone_nonexistent(self, tool_context, mock_resource_limit):
         result = run_tool(
@@ -433,6 +527,23 @@ class TestAddColumnsTool:
         assert not result.is_error
         assert len(result.data["columns"]) == 2
 
+    def test_accepts_column_names_with_parallel_types(
+        self, tool_context, writable_dataset, mock_resource_limit
+    ):
+        result = run_tool(
+            "add_columns",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "columns": '["score_from_agent"]',
+                "column_types": '["float"]',
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["columns"][0]["name"] == "score_from_agent"
+        assert result.data["columns"][0]["data_type"] == "float"
+
     def test_add_duplicate_column_name(
         self, tool_context, writable_dataset, mock_resource_limit
     ):
@@ -448,8 +559,9 @@ class TestAddColumnsTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert result.data["already_exists"] is True
+        assert "already exist" in result.content
 
     def test_add_invalid_type(
         self, tool_context, writable_dataset, mock_resource_limit
@@ -560,6 +672,34 @@ class TestDeleteRowsTool:
         assert not result.is_error
         assert result.data["deleted"] == 0
         assert result.data["remaining"] == 2
+
+
+class TestDatasetEvalRecovery:
+    def test_get_eval_stats_missing_dataset_returns_candidates(self, tool_context):
+        make_dataset(tool_context, name="Candidate Eval Stats Dataset")
+
+        result = run_tool(
+            "get_dataset_eval_stats",
+            {"dataset_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
+        assert "Dataset Not Found" in result.content
+
+    def test_list_dataset_evals_missing_dataset_returns_candidates(self, tool_context):
+        make_dataset(tool_context, name="Candidate Dataset Evals Dataset")
+
+        result = run_tool(
+            "list_dataset_evals",
+            {"dataset_id": "missing-dataset-name"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
+        assert "Dataset Not Found" in result.content
 
 
 class TestUpdateDatasetTool:

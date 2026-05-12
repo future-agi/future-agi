@@ -14,10 +14,12 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.tracing._error_utils import candidate_error_clusters_result
 
 
 class GetErrorClusterDetailInput(PydanticBaseModel):
     cluster_id: str = Field(
+        default="",
         description="The cluster ID to look up (e.g., 'KA1B2C3D4' or 'C01')",
     )
     include_traces: bool = Field(
@@ -60,12 +62,26 @@ class GetErrorClusterDetailTool(BaseTool):
 
         db = TraceErrorAnalysisDB()
 
+        if not params.cluster_id:
+            return candidate_error_clusters_result(
+                context,
+                "Error Cluster Required",
+                "Choose one of these cluster IDs for details.",
+                limit=params.trace_limit,
+            )
+
         # Look up cluster with access check
         cluster = db.get_cluster_with_access_check(
             params.cluster_id, str(context.organization_id)
         )
         if not cluster:
-            return ToolResult.not_found("Error cluster", params.cluster_id)
+            return candidate_error_clusters_result(
+                context,
+                "Error Cluster Not Found",
+                f"Cluster `{params.cluster_id}` was not found or is not accessible.",
+                search=params.cluster_id,
+                limit=params.trace_limit,
+            )
 
         category, error_name = parse_error_type_and_name(cluster.error_type)
         impact = cluster.combined_impact or "MEDIUM"

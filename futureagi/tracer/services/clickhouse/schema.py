@@ -1791,6 +1791,17 @@ SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
 # ============================================================================
 
 
+# ALTER statements that must run immediately after their base table is ensured,
+# before dependent dictionaries/views are created. CREATE TABLE IF NOT EXISTS
+# does not reconcile older local/PeerDB-created tables with newer DDL.
+PRE_DDL_ALTERS_BY_TABLE: dict[str, List[str]] = {
+    "tracer_observation_span": [
+        "ALTER TABLE tracer_observation_span ADD COLUMN IF NOT EXISTS "
+        "schema_version String DEFAULT '1.0' AFTER semconv_source",
+    ],
+}
+
+
 # Post-DDL ALTER statements to ensure materialized columns exist on CDC tables
 # that PeerDB may recreate without them during RESYNC operations.
 POST_DDL_ALTERS: List[str] = [

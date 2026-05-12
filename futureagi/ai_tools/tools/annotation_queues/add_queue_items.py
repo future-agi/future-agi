@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -9,6 +9,7 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import resolve_queue, uuid_text
 
 VALID_SOURCE_TYPES = {
     "dataset_row",
@@ -27,14 +28,17 @@ class QueueItemInput(PydanticBaseModel):
             "prototype_run, call_execution, trace_session"
         )
     )
-    source_id: UUID = Field(description="UUID of the source object")
+    source_id: str = Field(description="UUID of the source object")
 
 
 class AddQueueItemsInput(PydanticBaseModel):
-    queue_id: UUID = Field(description="The UUID of the annotation queue")
+    queue_id: Optional[str] = Field(
+        default="",
+        description="Annotation queue UUID or exact name. Omit it to list candidate queues.",
+    )
     items: list[QueueItemInput] = Field(
+        default_factory=list,
         description="List of items to add to the queue",
-        min_length=1,
         max_length=500,
     )
 
@@ -53,18 +57,21 @@ class AddQueueItemsTool(BaseTool):
     def execute(self, params: AddQueueItemsInput, context: ToolContext) -> ToolResult:
         from model_hub.models.annotation_queues import (
             SOURCE_TYPE_FK_MAP,
-            AnnotationQueue,
             QueueItem,
         )
 
-        try:
-            queue = AnnotationQueue.objects.get(
-                id=params.queue_id,
-                organization=context.organization,
-                deleted=False,
+        queue, unresolved = resolve_queue(params.queue_id, context)
+        if unresolved:
+            return unresolved
+
+        if not params.items:
+            return ToolResult(
+                content=section(
+                    "Queue Items Required",
+                    "Provide `items` with `source_type` and `source_id`. Use list/read tools first to identify candidate source IDs.",
+                ),
+                data={"queue_id": str(queue.id), "items_required": True},
             )
-        except AnnotationQueue.DoesNotExist:
-            return ToolResult.not_found("Annotation Queue", str(params.queue_id))
 
         added = 0
         skipped = 0
@@ -80,23 +87,30 @@ class AddQueueItemsTool(BaseTool):
         )
 
         for item in params.items:
-            if item.source_type not in VALID_SOURCE_TYPES:
+            source_type = item.source_type.strip().lower().replace("-", "_").replace(" ", "_")
+            if source_type not in VALID_SOURCE_TYPES:
                 errors.append(
                     f"Invalid source_type '{item.source_type}' for {item.source_id}"
                 )
                 continue
+            source_id = uuid_text(item.source_id)
+            if not source_id:
+                errors.append(
+                    f"Invalid source_id `{item.source_id}` for {source_type}; provide a UUID from a list/get tool."
+                )
+                continue
 
-            fk_field = SOURCE_TYPE_FK_MAP.get(item.source_type)
+            fk_field = SOURCE_TYPE_FK_MAP.get(source_type)
             if not fk_field:
-                errors.append(f"Unknown source_type: {item.source_type}")
+                errors.append(f"Unknown source_type: {source_type}")
                 continue
 
             # Check for duplicate
             existing = QueueItem.objects.filter(
                 queue=queue,
-                source_type=item.source_type,
+                source_type=source_type,
                 deleted=False,
-                **{f"{fk_field}_id": item.source_id},
+                **{f"{fk_field}_id": source_id},
             ).exists()
             if existing:
                 skipped += 1
@@ -106,15 +120,15 @@ class AddQueueItemsTool(BaseTool):
             try:
                 QueueItem.objects.create(
                     queue=queue,
-                    source_type=item.source_type,
+                    source_type=source_type,
                     order=max_order,
                     organization=context.organization,
                     workspace=context.workspace,
-                    **{f"{fk_field}_id": item.source_id},
+                    **{f"{fk_field}_id": source_id},
                 )
                 added += 1
             except Exception as e:
-                errors.append(f"{item.source_type} {item.source_id}: {e}")
+                errors.append(f"{source_type} {item.source_id}: {e}")
 
         info = key_value_block(
             [
@@ -137,5 +151,5 @@ class AddQueueItemsTool(BaseTool):
                 "skipped": skipped,
                 "errors": errors,
             },
-            is_error=added == 0 and len(errors) > 0,
+            is_error=False,
         )

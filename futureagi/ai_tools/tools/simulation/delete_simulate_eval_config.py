@@ -1,23 +1,31 @@
-from uuid import UUID
-
 from django.utils import timezone
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
+    format_datetime,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
+from ai_tools.tools.agents._utils import resolve_run_test
 
 
 class DeleteSimulateEvalConfigInput(PydanticBaseModel):
-    run_test_id: UUID = Field(
-        description="The UUID of the RunTest that owns the eval config"
+    run_test_id: str = Field(
+        default="",
+        description="RunTest name or UUID that owns the eval config",
     )
-    eval_config_id: UUID = Field(
-        description="The UUID of the SimulateEvalConfig to delete"
+    eval_config_id: str = Field(
+        default="",
+        description="Eval config name or UUID to delete",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms this deletion",
     )
 
 
@@ -35,27 +43,77 @@ class DeleteSimulateEvalConfigTool(BaseTool):
         self, params: DeleteSimulateEvalConfigInput, context: ToolContext
     ) -> ToolResult:
         from simulate.models.eval_config import SimulateEvalConfig
-        from simulate.models.run_test import RunTest
 
-        # Get the run test
-        try:
-            run_test = RunTest.objects.get(
-                id=params.run_test_id,
-                organization=context.organization,
-                deleted=False,
+        def candidate_configs_result(run_test, title: str, detail: str = ""):
+            configs = list(
+                SimulateEvalConfig.objects.filter(
+                    run_test=run_test,
+                    deleted=False,
+                ).order_by("-created_at")[:10]
             )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+            rows = [
+                [
+                    f"`{config.id}`",
+                    config.name or "-",
+                    (
+                        config.eval_template.name
+                        if getattr(config, "eval_template", None)
+                        else "-"
+                    ),
+                    format_datetime(config.created_at),
+                ]
+                for config in configs
+            ]
+            body = detail or ""
+            if rows:
+                body = (body + "\n\n" if body else "") + markdown_table(
+                    ["ID", "Name", "Template", "Created"], rows
+                )
+            else:
+                body = body or f"No eval configs found on `{run_test.name}`."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_eval_config_id": True,
+                    "run_test_id": str(run_test.id),
+                    "configs": [
+                        {"id": str(config.id), "name": config.name}
+                        for config in configs
+                    ],
+                },
+            )
 
-        # Get the eval config
-        try:
-            eval_config = SimulateEvalConfig.objects.get(
-                id=params.eval_config_id,
-                run_test=run_test,
-                deleted=False,
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Run Test Required To Delete Eval Config",
+        )
+        if unresolved:
+            return unresolved
+
+        config_ref = str(params.eval_config_id or "").strip()
+        if not config_ref:
+            return candidate_configs_result(
+                run_test,
+                "Eval Config Required",
+                "Provide `eval_config_id` to preview deletion.",
             )
-        except SimulateEvalConfig.DoesNotExist:
-            return ToolResult.not_found("Eval Config", str(params.eval_config_id))
+
+        qs = SimulateEvalConfig.objects.filter(run_test=run_test, deleted=False)
+        if is_uuid(config_ref):
+            eval_config = qs.filter(id=config_ref).first()
+        else:
+            exact = qs.filter(name__iexact=config_ref)
+            eval_config = exact.first() if exact.count() == 1 else None
+            if eval_config is None:
+                fuzzy = qs.filter(name__icontains=config_ref)
+                eval_config = fuzzy.first() if fuzzy.count() == 1 else None
+        if eval_config is None:
+            return candidate_configs_result(
+                run_test,
+                "Eval Config Not Found",
+                f"Eval config `{config_ref}` was not found on `{run_test.name}`.",
+            )
 
         # Ensure at least one eval config remains
         active_count = SimulateEvalConfig.objects.filter(
@@ -66,6 +124,23 @@ class DeleteSimulateEvalConfigTool(BaseTool):
                 "Cannot delete the last evaluation config. "
                 "At least one evaluation config must remain.",
                 error_code="VALIDATION_ERROR",
+            )
+
+        if not params.confirm_delete:
+            return ToolResult(
+                content=section(
+                    "Eval Config Delete Preview",
+                    (
+                        f"Deletion is ready for `{eval_config.name}` (`{eval_config.id}`) "
+                        f"on `{run_test.name}`. Set `confirm_delete=true` after user confirmation."
+                    ),
+                ),
+                data={
+                    "requires_confirmation": True,
+                    "run_test_id": str(run_test.id),
+                    "eval_config_id": str(eval_config.id),
+                    "name": eval_config.name,
+                },
             )
 
         eval_name = eval_config.name

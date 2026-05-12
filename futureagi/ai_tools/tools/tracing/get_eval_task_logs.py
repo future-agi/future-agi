@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,7 +13,10 @@ from ai_tools.registry import register_tool
 
 
 class GetEvalTaskLogsInput(PydanticBaseModel):
-    eval_task_id: UUID = Field(description="The UUID of the eval task to get logs for")
+    eval_task_id: str = Field(
+        default="",
+        description="Eval task UUID or exact task name to get logs for.",
+    )
 
 
 @register_tool
@@ -34,19 +35,28 @@ class GetEvalTaskLogsTool(BaseTool):
         from django.contrib.postgres.aggregates import ArrayAgg
         from django.db.models import Count, Q
 
-        from tracer.models.eval_task import EvalTask
         from tracer.models.observation_span import EvalLogger
+        from ai_tools.tools.tracing._utils import (
+            candidate_eval_tasks_result,
+            resolve_eval_tasks,
+        )
 
-        try:
-            eval_task = EvalTask.objects.get(
-                id=params.eval_task_id,
-                project__organization=context.organization,
+        eval_tasks, missing, unresolved = resolve_eval_tasks(
+            [params.eval_task_id],
+            context,
+        )
+        if unresolved:
+            return unresolved
+        if missing or not eval_tasks:
+            return candidate_eval_tasks_result(
+                context,
+                "Eval Task Required For Logs",
+                f"Eval task `{params.eval_task_id}` was not found.",
             )
-        except EvalTask.DoesNotExist:
-            return ToolResult.not_found("EvalTask", str(params.eval_task_id))
+        eval_task = eval_tasks[0]
 
         log_stats = EvalLogger.objects.filter(
-            eval_task_id=str(params.eval_task_id), deleted=False
+            eval_task_id=str(eval_task.id), deleted=False
         ).aggregate(
             errors_count=Count("id", filter=Q(error=True)),
             success_count=Count("id", filter=Q(error=False)),

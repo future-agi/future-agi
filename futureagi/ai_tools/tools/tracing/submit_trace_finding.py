@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -7,35 +6,47 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.tools.tracing._error_utils import candidate_error_analysis_traces_result
 
 
 class SubmitTraceFindingInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace this finding belongs to")
+    trace_id: str = Field(
+        default="",
+        description="The UUID of the trace this finding belongs to. Omit to list candidates.",
+    )
     category: str = Field(
+        default="",
         description=(
             "Full taxonomy path, e.g., "
             "'Thinking & Response Issues > Hallucination Errors > Hallucinated Content'"
         ),
     )
     location_spans: list[str] = Field(
+        default_factory=list,
         description="List of span IDs where the error was found",
     )
     evidence_snippets: list[str] = Field(
+        default_factory=list,
         description="Verbatim quotes from span data that prove the error exists",
     )
     description: str = Field(
+        default="",
         description="Clear description of what went wrong",
     )
     impact: str = Field(
+        default="",
         description="Error impact level: HIGH, MEDIUM, or LOW",
     )
     root_causes: list[str] = Field(
+        default_factory=list,
         description="Root cause(s) — why this error happened",
     )
     recommendation: str = Field(
+        default="",
         description="How to fix this error",
     )
     confidence: float = Field(
+        default=0.0,
         ge=0.0,
         le=1.0,
         description="Confidence level (0.0-1.0). Must be >= 0.7 to be accepted.",
@@ -52,7 +63,7 @@ class SubmitTraceFindingInput(PydanticBaseModel):
         default=None,
         description="How this error affects the overall trace execution",
     )
-    analysis_id: Optional[UUID] = Field(
+    analysis_id: Optional[str] = Field(
         default=None,
         description=(
             "The analysis_id returned by a previous submit_trace_finding call "
@@ -78,6 +89,7 @@ class SubmitTraceFindingTool(BaseTool):
     def execute(
         self, params: SubmitTraceFindingInput, context: ToolContext
     ) -> ToolResult:
+        from django.core.exceptions import ValidationError
         from django.db import transaction
 
         from tracer.models.trace import Trace
@@ -85,6 +97,42 @@ class SubmitTraceFindingTool(BaseTool):
             TraceErrorAnalysis,
             TraceErrorDetail,
         )
+
+        if not params.trace_id:
+            return candidate_error_analysis_traces_result(
+                context,
+                "Trace Required For Finding",
+                "Choose a trace ID before submitting a finding.",
+            )
+
+        missing = []
+        if not params.category:
+            missing.append("category")
+        if not params.location_spans:
+            missing.append("location_spans")
+        if not params.evidence_snippets:
+            missing.append("evidence_snippets")
+        if not params.description:
+            missing.append("description")
+        if not params.impact:
+            missing.append("impact")
+        if not params.root_causes:
+            missing.append("root_causes")
+        if not params.recommendation:
+            missing.append("recommendation")
+        if missing:
+            return ToolResult(
+                content=section(
+                    "Direct Trace Evidence Required",
+                    "Finding was not submitted. Provide direct trace evidence and "
+                    f"these missing fields: {', '.join(missing)}.",
+                ),
+                data={
+                    "submitted": False,
+                    "requires_fields": missing,
+                    "trace_id": str(params.trace_id),
+                },
+            )
 
         # Validate confidence threshold
         if params.confidence < 0.7:
@@ -94,9 +142,7 @@ class SubmitTraceFindingTool(BaseTool):
                     f"Confidence {params.confidence:.2f} is below the 0.7 threshold. "
                     "Only submit findings you are confident about.",
                 ),
-                data={"status": "rejected", "reason": "confidence_too_low"},
-                is_error=True,
-                error_code="VALIDATION_ERROR",
+                data={"submitted": False, "reason": "confidence_too_low"},
             )
 
         # Validate impact
@@ -112,8 +158,12 @@ class SubmitTraceFindingTool(BaseTool):
                 id=params.trace_id,
                 project__organization=context.organization,
             )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        except (Trace.DoesNotExist, ValidationError, ValueError, TypeError):
+            return candidate_error_analysis_traces_result(
+                context,
+                "Trace Not Found",
+                f"Trace `{params.trace_id}` was not found or is not accessible.",
+            )
 
         with transaction.atomic():
             analysis = None

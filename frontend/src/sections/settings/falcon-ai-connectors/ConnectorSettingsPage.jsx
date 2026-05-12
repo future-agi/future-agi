@@ -32,8 +32,34 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+const DEFAULT_CONNECTOR_FORM = {
+  name: "",
+  server_url: "",
+  transport: "streamable_http",
+  auth_type: "none",
+  auth_header_name: "",
+  auth_header_value: "",
+};
+
+const CONNECTOR_PRESETS = [
+  {
+    id: "posthog",
+    name: "PostHog",
+    icon: "simple-icons:posthog",
+    values: {
+      ...DEFAULT_CONNECTOR_FORM,
+      name: "PostHog",
+      server_url: "https://mcp.posthog.com/mcp",
+      transport: "streamable_http",
+      auth_type: "oauth",
+      auth_header_name: "Authorization",
+    },
+  },
+];
+
 function getConnectorIcon(connector) {
   const name = (connector.name || "").toLowerCase();
+  if (name.includes("posthog")) return "simple-icons:posthog";
   if (name.includes("github")) return "mdi:github";
   if (name.includes("gitlab")) return "mdi:gitlab";
   if (name.includes("jira")) return "mdi:jira";
@@ -65,6 +91,7 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
+  const [newConnectorPreset, setNewConnectorPreset] = useState(null);
 
   const loadConnectors = useCallback(async () => {
     try {
@@ -111,18 +138,22 @@ export default function ConnectorSettingsPage() {
     setSelectedId(id);
     setIsEditing(false);
     setIsNew(false);
+    setNewConnectorPreset(null);
   };
 
-  const handleNew = () => {
+  const handleNew = (preset = null) => {
     setSelectedId(null);
     setIsNew(true);
     setIsEditing(true);
+    setNewConnectorPreset(preset);
   };
 
-  const handleSaved = () => {
-    loadConnectors();
+  const handleSaved = async (savedId = null) => {
+    await loadConnectors();
     setIsEditing(false);
     setIsNew(false);
+    setNewConnectorPreset(null);
+    if (savedId) setSelectedId(savedId);
   };
 
   const handleDelete = async (id) => {
@@ -180,7 +211,7 @@ export default function ConnectorSettingsPage() {
         <Button
           variant="contained"
           startIcon={<Iconify icon="mdi:plus" width={18} />}
-          onClick={handleNew}
+          onClick={() => handleNew()}
           sx={{ flexShrink: 0 }}
         >
           Add Connector
@@ -192,6 +223,29 @@ export default function ConnectorSettingsPage() {
           {error}
         </Alert>
       )}
+
+      <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap" }}>
+        {CONNECTOR_PRESETS.map((preset) => {
+          const exists = connectors.some(
+            (connector) =>
+              connector.name?.toLowerCase() === preset.name.toLowerCase() ||
+              connector.server_url === preset.values.server_url,
+          );
+          return (
+            <Button
+              key={preset.id}
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon={preset.icon} width={16} />}
+              onClick={() => handleNew(preset)}
+              disabled={exists}
+              sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
+            >
+              {exists ? `${preset.name} added` : `Add ${preset.name}`}
+            </Button>
+          );
+        })}
+      </Box>
 
       {/* 2-column layout */}
       <Box
@@ -313,10 +367,12 @@ export default function ConnectorSettingsPage() {
           {isEditing ? (
             <ConnectorEditor
               connector={isNew ? null : selected}
+              preset={newConnectorPreset}
               onSaved={handleSaved}
               onCancel={() => {
                 setIsEditing(false);
                 setIsNew(false);
+                setNewConnectorPreset(null);
               }}
             />
           ) : selected ? (
@@ -360,14 +416,26 @@ export default function ConnectorSettingsPage() {
                   : "Choose a connector from the list to view its details and tools."}
               </Typography>
               {connectors.length === 0 && (
-                <Button
-                  variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" width={16} />}
-                  onClick={handleNew}
-                  sx={{ mt: 2, textTransform: "none", borderRadius: "8px" }}
-                >
-                  Add your first connector
-                </Button>
+                <Box sx={{ display: "flex", gap: 1, mt: 2, flexWrap: "wrap" }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<Iconify icon="mdi:plus" width={16} />}
+                    onClick={() => handleNew()}
+                    sx={{ textTransform: "none", borderRadius: "8px" }}
+                  >
+                    Add connector
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={
+                      <Iconify icon="simple-icons:posthog" width={16} />
+                    }
+                    onClick={() => handleNew(CONNECTOR_PRESETS[0])}
+                    sx={{ textTransform: "none", borderRadius: "8px" }}
+                  >
+                    Add PostHog
+                  </Button>
+                </Box>
               )}
             </Box>
           )}
@@ -389,7 +457,9 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
   const [reauthing, setReauthing] = useState(false);
 
   const tools = connector.discovered_tools || [];
-  const enabledTools = connector.enabled_tools || [];
+  const toolNames = tools.map((tool) => tool.name || tool.id).filter(Boolean);
+  const enabledTools =
+    connector.enabled_tools || connector.enabled_tool_names || [];
 
   const isToolEnabled = (toolName) => {
     if (enabledTools.length === 0 && tools.length > 0) return true; // all enabled by default
@@ -438,11 +508,15 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
   };
 
   const handleToolToggle = async (toolName) => {
+    const currentEnabled =
+      enabledTools.length === 0 && toolNames.length > 0
+        ? toolNames
+        : enabledTools;
     let updated;
     if (isToolEnabled(toolName)) {
-      updated = enabledTools.filter((t) => t !== toolName);
+      updated = currentEnabled.filter((t) => t !== toolName);
     } else {
-      updated = [...enabledTools, toolName];
+      updated = [...new Set([...currentEnabled, toolName])];
     }
     try {
       await updateConnectorTools(connector.id, updated);
@@ -739,16 +813,9 @@ ConnectorDetail.propTypes = {
 // ---------------------------------------------------------------------------
 // Connector Editor (inline)
 // ---------------------------------------------------------------------------
-function ConnectorEditor({ connector, onSaved, onCancel }) {
+function ConnectorEditor({ connector, preset, onSaved, onCancel }) {
   const isEdit = !!connector;
-  const [form, setForm] = useState({
-    name: "",
-    server_url: "",
-    transport: "streamable_http",
-    auth_type: "none",
-    auth_header_name: "",
-    auth_header_value: "",
-  });
+  const [form, setForm] = useState(DEFAULT_CONNECTOR_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -762,8 +829,13 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         auth_header_name: connector.auth_header_name || "",
         auth_header_value: connector.auth_header_value || "",
       });
+    } else if (preset) {
+      setForm(preset.values);
+    } else {
+      setForm(DEFAULT_CONNECTOR_FORM);
     }
-  }, [connector]);
+    setError(null);
+  }, [connector, preset]);
 
   const handleChange = (field) => (e) =>
     setForm((p) => ({ ...p, [field]: e.target.value }));
@@ -780,12 +852,14 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
     setSaving(true);
     setError(null);
     try {
+      let savedId = null;
       if (isEdit) {
         await updateConnector(connector.id, form);
       } else {
-        await createConnector(form);
+        const response = await createConnector(form);
+        savedId = response?.result?.id || response?.id || null;
       }
-      onSaved();
+      onSaved(savedId);
     } catch (err) {
       setError(
         err?.response?.data?.detail ||
@@ -1003,6 +1077,14 @@ ConnectorEditor.propTypes = {
     auth_header_name: PropTypes.string,
     auth_header_value: PropTypes.string,
   }),
+  preset: PropTypes.shape({
+    values: PropTypes.object.isRequired,
+  }),
   onSaved: PropTypes.func.isRequired,
   onCancel: PropTypes.func.isRequired,
+};
+
+ConnectorEditor.defaultProps = {
+  connector: null,
+  preset: null,
 };

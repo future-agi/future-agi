@@ -14,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class GetPromptTemplateInput(PydanticBaseModel):
-    template_id: str = Field(description="Name or UUID of the prompt template")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidate templates with IDs.",
+    )
 
 
 @register_tool
@@ -34,6 +37,34 @@ class GetPromptTemplateTool(BaseTool):
 
         from ai_tools.resolvers import resolve_prompt_template
         from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+        if not params.template_id:
+            templates = PromptTemplate.objects.order_by("-updated_at")[:10]
+            rows = [
+                [
+                    template.name,
+                    f"`{template.id}`",
+                    format_datetime(template.updated_at),
+                ]
+                for template in templates
+            ]
+            if not rows:
+                return ToolResult(
+                    content="No prompt templates found in this workspace.",
+                    data={"templates": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Candidate Prompt Templates",
+                    markdown_table(["Name", "ID", "Updated"], rows),
+                ),
+                data={
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ]
+                },
+            )
 
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace

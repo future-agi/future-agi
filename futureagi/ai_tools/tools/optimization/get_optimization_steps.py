@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -16,7 +14,10 @@ from ai_tools.registry import register_tool
 
 
 class GetOptimizationStepsInput(PydanticBaseModel):
-    optimization_id: UUID = Field(description="The UUID of the optimization run")
+    optimization_id: str = Field(
+        default="",
+        description="Optimization run UUID or name. If omitted, recent candidates are returned.",
+    )
 
 
 @register_tool
@@ -37,10 +38,63 @@ class GetOptimizationStepsTool(BaseTool):
         from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
         from model_hub.models.optimize_dataset import OptimizeDataset
 
-        try:
-            run = OptimizeDataset.objects.get(id=params.optimization_id)
-        except OptimizeDataset.DoesNotExist:
-            return ToolResult.not_found("Optimization Run", str(params.optimization_id))
+        from ai_tools.resolvers import is_uuid
+
+        optimization_ref = str(params.optimization_id or "").strip()
+        qs = OptimizeDataset.objects.select_related("column", "column__dataset")
+        if context.organization:
+            qs = qs.filter(column__dataset__organization=context.organization)
+
+        def candidate_runs_result(title: str, detail: str = "") -> ToolResult:
+            runs = list(qs.order_by("-created_at")[:10])
+            rows = []
+            data = []
+            for candidate in runs:
+                dataset = candidate.column.dataset if candidate.column else None
+                rows.append(
+                    [
+                        f"`{candidate.id}`",
+                        truncate(candidate.name, 36),
+                        format_status(candidate.status),
+                        dataset.name if dataset else "—",
+                        format_datetime(candidate.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(candidate.id),
+                        "name": candidate.name,
+                        "status": candidate.status,
+                    }
+                )
+            body = detail or "Provide `optimization_id` to inspect optimization steps."
+            if rows:
+                body += "\n\n" + markdown_table(
+                    ["ID", "Name", "Status", "Dataset", "Created"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo optimization runs found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={"requires_optimization_id": True, "runs": data},
+            )
+
+        if not optimization_ref:
+            return candidate_runs_result("Optimization Run Required")
+
+        if is_uuid(optimization_ref):
+            run = qs.filter(id=optimization_ref).first()
+        else:
+            run = qs.filter(name__iexact=optimization_ref).first()
+            if run is None:
+                run = qs.filter(name__icontains=optimization_ref).first()
+
+        if run is None:
+            return candidate_runs_result(
+                "Optimization Run Not Found",
+                f"No optimization run matched `{optimization_ref}`.",
+            )
 
         steps = DatasetOptimizationStep.objects.filter(optimization_run=run).order_by(
             "step_number"

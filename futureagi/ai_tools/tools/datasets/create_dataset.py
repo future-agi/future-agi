@@ -7,6 +7,7 @@ from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
     dashboard_link,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
@@ -19,13 +20,13 @@ from model_hub.constants import (
 
 class CreateDatasetInput(PydanticBaseModel):
     name: str = Field(
+        default="",
         description="Name for the new dataset",
-        min_length=1,
         max_length=MAX_DATASET_NAME_LENGTH,
     )
     columns: list[str] = Field(
+        default_factory=list,
         description="List of column names to create (e.g. ['input', 'expected_output', 'context'])",
-        min_length=1,
         max_length=MAX_MANUAL_COLUMNS,
     )
     column_types: Optional[list[str]] = Field(
@@ -41,8 +42,17 @@ class CreateDatasetInput(PydanticBaseModel):
         ge=0,
         le=MAX_MANUAL_ROWS,
         description=(
-            "Number of empty rows to create (0-100). "
-            "If omitted or 0, the dataset is created with columns only."
+            "Requested row count for planning only. This tool does not create "
+            "blank rows unless create_blank_rows is true. For synthetic or "
+            "generated data, create the dataset first, then call "
+            "add_dataset_rows with exactly this many populated row objects."
+        ),
+    )
+    create_blank_rows: bool = Field(
+        default=False,
+        description=(
+            "Set true only when the user explicitly asks for blank placeholder "
+            "rows. Leave false for generated/synthetic datasets."
         ),
     )
 
@@ -94,7 +104,10 @@ class CreateDatasetTool(BaseTool):
     name = "create_dataset"
     description = (
         "Creates a new empty dataset with the specified columns. "
-        "Returns the dataset ID for adding rows or running evaluations."
+        "Returns the dataset ID for adding rows or running evaluations. "
+        "For synthetic/generated data, call add_dataset_rows with populated "
+        "rows after creation. number_of_rows is planning guidance only unless "
+        "create_blank_rows=true."
     )
     category = "datasets"
     input_model = CreateDatasetInput
@@ -102,6 +115,31 @@ class CreateDatasetTool(BaseTool):
     def execute(self, params: CreateDatasetInput, context: ToolContext) -> ToolResult:
 
         from model_hub.services.dataset_service import ServiceError, create_dataset
+
+        if not params.name or not params.columns:
+            suggested_columns = ["input", "output", "expected_output", "context"]
+            content = section(
+                "Dataset Creation Requirements",
+                (
+                    "Provide `name` and `columns` to create a dataset. "
+                    "For QA/evaluation workflows, a useful starting schema is shown below."
+                ),
+            )
+            content += "\n\n" + markdown_table(
+                ["Suggested Field", "Value"],
+                [
+                    ["name", "`falcon_<purpose>_<short_suffix>`"],
+                    ["columns", ", ".join(f"`{column}`" for column in suggested_columns)],
+                ],
+            )
+            return ToolResult(
+                content=content,
+                data={
+                    "requires_name": not bool(params.name),
+                    "requires_columns": not bool(params.columns),
+                    "suggested_columns": suggested_columns,
+                },
+            )
 
         # Validate column types if provided
         if params.column_types:
@@ -144,16 +182,42 @@ class CreateDatasetTool(BaseTool):
                     organization=context.organization,
                 ).first()
                 if existing:
-                    return ToolResult.error(
-                        f"{result.message} Existing dataset ID: `{existing.id}`. "
-                        f"Use this ID to work with the existing dataset, or choose a different name.",
-                        error_code=result.code,
+                    info = key_value_block(
+                        [
+                            ("Dataset ID", f"`{existing.id}`"),
+                            ("Name", existing.name or "Untitled"),
+                            ("Source", existing.source or "—"),
+                            (
+                                "Link",
+                                dashboard_link(
+                                    "dataset",
+                                    str(existing.id),
+                                    label="View existing dataset",
+                                ),
+                            ),
+                        ]
+                    )
+                    return ToolResult(
+                        content=section("Dataset Already Exists", info)
+                        + "\n\nUse this dataset ID for the next step, or choose a different name if a new dataset is required.",
+                        data={
+                            "dataset_id": str(existing.id),
+                            "name": existing.name,
+                            "already_exists": True,
+                        },
                     )
             return ToolResult.error(result.message, error_code=result.code)
 
-        # Create empty rows if requested (aligned with ManuallyCreateDatasetView)
+        # Create empty rows only when explicitly requested. Falcon often sees
+        # "generate 20 rows" and otherwise calls number_of_rows=20 before it has
+        # actual values, which creates empty rows and makes the final dataset
+        # under-filled.
         rows_created = 0
-        if params.number_of_rows and params.number_of_rows > 0:
+        if (
+            params.number_of_rows
+            and params.number_of_rows > 0
+            and params.create_blank_rows
+        ):
             from model_hub.services.dataset_service import add_dataset_rows
 
             empty_rows = [{} for _ in range(params.number_of_rows)]
@@ -190,6 +254,12 @@ class CreateDatasetTool(BaseTool):
         content = section("Dataset Created", info)
         if rows_created:
             content += f"\n\n_Created {rows_created} empty row(s)._"
+        elif params.number_of_rows and params.number_of_rows > 0:
+            content += (
+                f"\n\n_Dataset schema is ready. Now call `add_dataset_rows` "
+                f"with {params.number_of_rows} populated row object(s); no "
+                "blank placeholder rows were created._"
+            )
         else:
             content += "\n\n_Dataset is empty. Add rows via the dashboard or API._"
 
@@ -203,5 +273,9 @@ class CreateDatasetTool(BaseTool):
                     for c in result["columns"]
                 ],
                 "rows_created": rows_created,
+                "requested_row_count": params.number_of_rows or 0,
+                "requires_add_dataset_rows": bool(
+                    params.number_of_rows and not params.create_blank_rows
+                ),
             },
         )

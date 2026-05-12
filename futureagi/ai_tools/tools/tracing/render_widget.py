@@ -1,9 +1,9 @@
 import json
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.registry import register_tool
@@ -28,6 +28,21 @@ VALID_WIDGET_TYPES = [
     "screenshot_annotated",
 ]
 
+LEGACY_WIDGET_TYPE_ALIASES = {
+    "table": "data_table",
+    "chart": "bar_chart",
+    "bar": "bar_chart",
+    "line": "line_chart",
+    "area": "area_chart",
+    "pie": "pie_chart",
+    "donut": "donut_chart",
+    "metric": "metric_card",
+    "summary": "key_value",
+    "summary_stats": "key_value",
+    "stats": "key_value",
+    "json": "json_tree",
+}
+
 
 class WidgetPosition(PydanticBaseModel):
     row: int = Field(default=0, description="Grid row (0-indexed)")
@@ -37,21 +52,21 @@ class WidgetPosition(PydanticBaseModel):
 
 
 class WidgetConfig(PydanticBaseModel):
-    id: Optional[str] = Field(
+    id: str | None = Field(
         default=None,
         description="Widget ID. Auto-generated if not provided. Use same ID to update.",
     )
     type: str = Field(
         description=f"Widget type. One of: {', '.join(VALID_WIDGET_TYPES)}"
     )
-    title: Optional[str] = Field(
+    title: str | None = Field(
         default=None, description="Widget title displayed above the visualization"
     )
-    position: Optional[WidgetPosition] = Field(
+    position: WidgetPosition | None = Field(
         default=None,
         description="Grid position. Uses 12-column grid. row=0,col=0,colSpan=6 takes left half of first row.",
     )
-    config: Dict[str, Any] = Field(
+    config: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Static widget config (data embedded directly). Use for one-off display.\n"
@@ -64,7 +79,7 @@ class WidgetConfig(PydanticBaseModel):
             "- timeline/agent_graph/span_tree: {spans: 'from_trace'}\n"
         ),
     )
-    dataBinding: Optional[Dict[str, Any]] = Field(
+    dataBinding: dict[str, Any] | None = Field(
         default=None,
         description=(
             "PREFERRED: Dynamic data binding that resolves against any trace.\n"
@@ -95,7 +110,7 @@ class WidgetConfig(PydanticBaseModel):
             "Trace fields: id, name, project_name, created_at, tags."
         ),
     )
-    dynamicAnalysis: Optional[Dict[str, Any]] = Field(
+    dynamicAnalysis: dict[str, Any] | None = Field(
         default=None,
         description=(
             "For markdown widgets: triggers LLM re-analysis when view opens on a new trace.\n"
@@ -116,14 +131,103 @@ class RenderWidgetInput(PydanticBaseModel):
             "'remove' deletes widget by ID"
         ),
     )
-    widget: Optional[WidgetConfig] = Field(
+    widget: WidgetConfig | None = Field(
         default=None,
         description="Widget configuration. Required for add/update/remove.",
     )
-    widgets: Optional[List[WidgetConfig]] = Field(
+    widgets: list[WidgetConfig] | None = Field(
         default=None,
         description="Multiple widgets. Used with replace_all to set entire canvas.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_widget_payload(cls, data):
+        """Accept common flat chart/table payloads older prompts still emit."""
+        if not isinstance(data, dict):
+            return data
+        if data.get("widget") or data.get("widgets"):
+            return data
+
+        flat_widget_keys = {
+            "id",
+            "type",
+            "title",
+            "position",
+            "config",
+            "dataBinding",
+            "dynamicAnalysis",
+            "data",
+            "rows",
+            "columns",
+            "content",
+            "series",
+            "labels",
+            "value",
+            "subtitle",
+        }
+        if not (flat_widget_keys & set(data)):
+            return data
+
+        widget_type = data.get("type") or "markdown"
+        if isinstance(widget_type, str):
+            widget_type = LEGACY_WIDGET_TYPE_ALIASES.get(
+                widget_type.strip().lower(), widget_type
+            )
+
+        config = data.get("config")
+        if not isinstance(config, dict):
+            config = {}
+
+        if "data" in data and "data" not in config:
+            config["data"] = data["data"]
+        if "rows" in data and "rows" not in config:
+            config["rows"] = data["rows"]
+        if "columns" in data and "columns" not in config:
+            config["columns"] = data["columns"]
+        if "content" in data and "content" not in config:
+            config["content"] = data["content"]
+        if "series" in data and "series" not in config:
+            config["series"] = data["series"]
+        if "labels" in data and "labels" not in config:
+            config["labels"] = data["labels"]
+        if "value" in data and "value" not in config:
+            config["value"] = data["value"]
+        if "subtitle" in data and "subtitle" not in config:
+            config["subtitle"] = data["subtitle"]
+        if widget_type == "key_value":
+            stats_data = config.get("data")
+            if isinstance(stats_data, str):
+                try:
+                    stats_data = json.loads(stats_data)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    stats_data = None
+            if isinstance(stats_data, dict) and isinstance(stats_data.get("stats"), list):
+                config.setdefault(
+                    "items",
+                    [
+                        {
+                            "key": str(item.get("label", "")),
+                            "value": str(item.get("value", "")),
+                        }
+                        for item in stats_data["stats"]
+                        if isinstance(item, dict)
+                    ],
+                )
+
+        widget = {
+            "id": data.get("id"),
+            "type": widget_type,
+            "title": data.get("title"),
+            "position": data.get("position"),
+            "config": config,
+            "dataBinding": data.get("dataBinding"),
+            "dynamicAnalysis": data.get("dynamicAnalysis"),
+        }
+        return {
+            "action": data.get("action", "add"),
+            "widget": widget,
+        }
 
 
 @register_tool
@@ -170,7 +274,10 @@ class RenderWidgetTool(BaseTool):
             )
 
         if not params.widget:
-            return ToolResult.error("Widget configuration is required")
+            return ToolResult.needs_input(
+                "Widget configuration is required. Provide `widget` or a flat payload with `type`, `title`, and data/config.",
+                missing_fields=["widget"],
+            )
 
         widget_data = params.widget.model_dump()
         if not widget_data.get("id"):

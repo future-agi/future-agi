@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -6,12 +6,13 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import section
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotations._utils import resolve_annotation
 
 
 class DeleteAnnotationInput(PydanticBaseModel):
-    annotation_ids: list[UUID] = Field(
-        description="List of annotation task UUIDs to delete",
-        min_length=1,
+    annotation_ids: Optional[list[str]] = Field(
+        default=None,
+        description="Annotation task UUIDs or exact names to delete",
         max_length=20,
     )
 
@@ -30,19 +31,34 @@ class DeleteAnnotationTool(BaseTool):
         self, params: DeleteAnnotationInput, context: ToolContext
     ) -> ToolResult:
 
-        from model_hub.models.develop_annotations import Annotations
         from model_hub.models.develop_dataset import Cell, Column
+
+        if not params.annotation_ids:
+            _, unresolved = resolve_annotation(
+                None,
+                context,
+                title="Annotation Task Required For Delete",
+            )
+            return unresolved
+
+        annotations = []
+        seen_ids = set()
+        for annotation_ref in params.annotation_ids:
+            annotation, unresolved = resolve_annotation(
+                annotation_ref,
+                context,
+                title="Annotation Task Required For Delete",
+            )
+            if unresolved:
+                return unresolved
+            if annotation.id not in seen_ids:
+                annotations.append(annotation)
+                seen_ids.add(annotation.id)
 
         deleted_names = []
         errors = []
 
-        for ann_id in params.annotation_ids:
-            try:
-                annotation = Annotations.objects.get(id=ann_id)
-            except Annotations.DoesNotExist:
-                errors.append(f"Annotation `{ann_id}` not found")
-                continue
-
+        for annotation in annotations:
             ann_name = annotation.name
 
             # Find and clean up annotation columns
@@ -50,7 +66,7 @@ class DeleteAnnotationTool(BaseTool):
                 ann_cols = Column.objects.filter(
                     dataset=annotation.dataset,
                     source="annotation_label",
-                    source_id__startswith=str(ann_id),
+                    source_id__startswith=str(annotation.id),
                     deleted=False,
                 )
 

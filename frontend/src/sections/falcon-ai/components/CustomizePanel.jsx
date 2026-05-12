@@ -1632,7 +1632,8 @@ function ConnectorDetailPanel({
   }
 
   const tools = connector.tools || connector.discovered_tools || [];
-  const enabledNames = connector.enabled_tool_names || [];
+  const enabledNames =
+    connector.enabled_tool_names || connector.enabled_tools || [];
   const isVerified = connector.is_verified ?? false;
   const isActive = connector.is_active ?? true;
   const lastError = connector.last_error || "";
@@ -2311,20 +2312,41 @@ export default function CustomizePanel() {
     async (connectorId, tool) => {
       const conn = connectors.find((c) => c.id === connectorId);
       if (!conn) return;
-      const updatedTools = (conn.tools || []).map((t) =>
-        (t.name || t.id) === (tool.name || tool.id)
-          ? { ...t, enabled: t.enabled === false }
-          : t,
-      );
+      const toolsForConnector = conn.tools || conn.discovered_tools || [];
+      const toolNames = toolsForConnector
+        .map((t) => t.name || t.id)
+        .filter(Boolean);
+      const currentEnabled =
+        (conn.enabled_tool_names || conn.enabled_tools || []).length === 0 &&
+        toolNames.length > 0
+          ? toolNames
+          : conn.enabled_tool_names || conn.enabled_tools || [];
+      const targetName = tool.name || tool.id;
+      const isEnabled = currentEnabled.includes(targetName);
+      const updatedEnabledNames = isEnabled
+        ? currentEnabled.filter((name) => name !== targetName)
+        : [...new Set([...currentEnabled, targetName])];
       try {
-        await updateConnectorTools(connectorId, updatedTools);
+        await updateConnectorTools(connectorId, updatedEnabledNames);
         setConnectors((prev) =>
           prev.map((c) =>
-            c.id === connectorId ? { ...c, tools: updatedTools } : c,
+            c.id === connectorId
+              ? {
+                  ...c,
+                  enabled_tool_names: updatedEnabledNames,
+                  enabled_tools: updatedEnabledNames,
+                }
+              : c,
           ),
         );
         setSelectedItem((prev) =>
-          prev?.id === connectorId ? { ...prev, tools: updatedTools } : prev,
+          prev?.id === connectorId
+            ? {
+                ...prev,
+                enabled_tool_names: updatedEnabledNames,
+                enabled_tools: updatedEnabledNames,
+              }
+            : prev,
         );
       } catch {
         // silent

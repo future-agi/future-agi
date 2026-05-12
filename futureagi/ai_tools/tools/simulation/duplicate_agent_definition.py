@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -13,9 +11,15 @@ from ai_tools.registry import register_tool
 
 
 class DuplicateAgentDefinitionInput(PydanticBaseModel):
-    agent_id: UUID = Field(description="The UUID of the agent definition to duplicate")
-    new_name: str = Field(
-        min_length=1, max_length=255, description="Name for the duplicated agent"
+    agent_id: str = Field(
+        default="",
+        description="Agent definition name or UUID to duplicate",
+    )
+    new_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Name for the duplicated agent",
     )
 
 
@@ -36,13 +40,28 @@ class DuplicateAgentDefinitionTool(BaseTool):
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.agent_version import AgentVersion
 
-        try:
-            original = AgentDefinition.objects.get(id=params.agent_id)
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
+        from ai_tools.tools.agents._utils import resolve_agent
+
+        original, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required To Duplicate",
+        )
+        if unresolved:
+            return unresolved
+
+        new_name = params.new_name or f"{original.agent_name} Copy"
+        if AgentDefinition.objects.filter(
+            organization=context.organization,
+            agent_name=new_name,
+            deleted=False,
+        ).exists():
+            return ToolResult.validation_error(
+                f"An agent named `{new_name}` already exists. Provide `new_name`."
+            )
 
         clone = AgentDefinition(
-            agent_name=params.new_name,
+            agent_name=new_name,
             agent_type=original.agent_type,
             contact_number=original.contact_number,
             inbound=original.inbound,

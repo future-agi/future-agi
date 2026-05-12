@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -11,10 +11,14 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import resolve_queue
 
 
 class GetAnnotationQueueInput(PydanticBaseModel):
-    queue_id: UUID = Field(description="The UUID of the annotation queue")
+    queue_id: Optional[str] = Field(
+        default="",
+        description="Annotation queue UUID or exact name. Omit it to list candidate queues.",
+    )
 
 
 @register_tool
@@ -34,20 +38,16 @@ class GetAnnotationQueueTool(BaseTool):
 
         from model_hub.models.annotation_queues import AnnotationQueue
 
-        try:
-            queue = (
-                AnnotationQueue.objects.select_related(
-                    "project", "dataset", "agent_definition", "created_by"
-                )
-                .prefetch_related("queue_labels__label", "queue_annotators__user")
-                .get(
-                    id=params.queue_id,
-                    organization=context.organization,
-                    deleted=False,
-                )
+        queue, unresolved = resolve_queue(params.queue_id, context)
+        if unresolved:
+            return unresolved
+        queue = (
+            AnnotationQueue.objects.select_related(
+                "project", "dataset", "agent_definition", "created_by"
             )
-        except AnnotationQueue.DoesNotExist:
-            return ToolResult.not_found("Annotation Queue", str(params.queue_id))
+            .prefetch_related("queue_labels__label", "queue_annotators__user")
+            .get(id=queue.id)
+        )
 
         # Count items
         item_stats = queue.items.filter(deleted=False).aggregate(

@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,10 +10,17 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotation_queues._utils import candidate_queues_result, resolve_queue
 
 
 class GetQueueProgressInput(PydanticBaseModel):
-    queue_id: UUID = Field(description="The UUID of the annotation queue")
+    queue_id: Optional[str] = Field(
+        default="",
+        description=(
+            "Annotation queue UUID or exact name. Required to get progress; "
+            "omitting it only returns candidate queues and is not a completed progress lookup."
+        ),
+    )
 
 
 @register_tool
@@ -31,19 +38,19 @@ class GetQueueProgressTool(BaseTool):
     ) -> ToolResult:
         from django.db.models import Count, Q
 
-        from model_hub.models.annotation_queues import (
-            AnnotationQueue,
-            ItemAnnotation,
-        )
+        from model_hub.models.annotation_queues import ItemAnnotation
 
-        try:
-            queue = AnnotationQueue.objects.get(
-                id=params.queue_id,
-                organization=context.organization,
-                deleted=False,
+        if not params.queue_id:
+            return candidate_queues_result(
+                context,
+                "Queue ID Required for Queue Progress",
+                "This is a candidate list, not queue progress. Select one queue ID "
+                "from the table and call `get_queue_progress` again with `queue_id`.",
             )
-        except AnnotationQueue.DoesNotExist:
-            return ToolResult.not_found("Annotation Queue", str(params.queue_id))
+
+        queue, unresolved = resolve_queue(params.queue_id, context)
+        if unresolved:
+            return unresolved
 
         # Item status breakdown
         item_stats = queue.items.filter(deleted=False).aggregate(

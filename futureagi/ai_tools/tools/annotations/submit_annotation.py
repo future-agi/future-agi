@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -24,17 +24,20 @@ class LabelValue(PydanticBaseModel):
             "STAR → int (1-N), THUMBS_UP_DOWN → 'thumbs_up' or 'thumbs_down'"
         ),
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         description="Optional annotation description/comment",
     )
 
 
 class SubmitAnnotationInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation task")
+    annotation_id: UUID | None = Field(
+        default=None,
+        description="The UUID of the annotation task. Omit it to list requirements.",
+    )
     label_values: list[LabelValue] = Field(
+        default_factory=list,
         description="List of annotation values to submit",
-        min_length=1,
         max_length=100,
     )
 
@@ -57,6 +60,28 @@ class SubmitAnnotationTool(BaseTool):
         from model_hub.models.develop_annotations import Annotations
         from model_hub.models.develop_dataset import Cell, Column
 
+        if params.annotation_id is None or not params.label_values:
+            annotations = Annotations.objects.select_related("dataset").order_by(
+                "-created_at"
+            )[:10]
+            rows = [
+                f"- `{annotation.id}` — {annotation.name}" for annotation in annotations
+            ]
+            return ToolResult(
+                content=section(
+                    "Submit Annotation Requirements",
+                    (
+                        "Provide `annotation_id` and `label_values`. Use `get_annotate_row` "
+                        "first to retrieve row_id, label_id, column_id, and allowed values.\n\n"
+                        + ("\n".join(rows) if rows else "No annotation tasks found.")
+                    ),
+                ),
+                data={
+                    "annotation_id_required": params.annotation_id is None,
+                    "label_values_required": not params.label_values,
+                },
+            )
+
         try:
             annotation = Annotations.objects.get(id=params.annotation_id)
         except Annotations.DoesNotExist:
@@ -64,9 +89,21 @@ class SubmitAnnotationTool(BaseTool):
 
         # Check user is assigned
         if not annotation.assigned_users.filter(id=context.user.id).exists():
-            return ToolResult.error(
-                "You are not assigned to this annotation task.",
-                error_code="PERMISSION_DENIED",
+            return ToolResult(
+                content=section(
+                    "Cannot Submit Annotation",
+                    (
+                        "You are not assigned to this annotation task. Assign the "
+                        "task to the current user first, or choose an annotation task "
+                        "assigned to you."
+                    ),
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "annotation_name": annotation.name,
+                    "requires_assignment": True,
+                    "error_code": "PERMISSION_DENIED",
+                },
             )
 
         from model_hub.models.develop_annotations import AnnotationsLabels
@@ -74,7 +111,8 @@ class SubmitAnnotationTool(BaseTool):
         # Pre-fetch labels for validation
         label_ids = {lv.label_id for lv in params.label_values}
         labels_by_id = {
-            l.id: l for l in AnnotationsLabels.objects.filter(id__in=label_ids)
+            label.id: label
+            for label in AnnotationsLabels.objects.filter(id__in=label_ids)
         }
 
         updated = 0

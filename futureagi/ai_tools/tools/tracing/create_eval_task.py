@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -14,13 +13,16 @@ from ai_tools.registry import register_tool
 
 
 class CreateEvalTaskInput(PydanticBaseModel):
-    project_id: UUID = Field(description="The UUID of the project to run evals on")
+    project_id: str = Field(
+        default="",
+        description="Project UUID or exact/fuzzy project name to run evals on.",
+    )
     name: str = Field(
         description="Name for this eval task",
         min_length=1,
         max_length=255,
     )
-    eval_config_ids: List[UUID] = Field(
+    eval_config_ids: List[str] = Field(
         description=(
             "List of CustomEvalConfig IDs to run. "
             "These are eval configs already configured on the project. "
@@ -77,15 +79,15 @@ class CreateEvalTaskTool(BaseTool):
             EvalTaskStatus,
             RunType,
         )
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing._utils import resolve_project
 
-        # Validate project
-        try:
-            project = Project.objects.get(
-                id=params.project_id, organization=context.organization
-            )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+        project, unresolved = resolve_project(
+            params.project_id,
+            context,
+            title="Project Required To Create Eval Task",
+        )
+        if unresolved:
+            return unresolved
 
         # Validate run_type
         run_type_map = {
@@ -116,7 +118,7 @@ class CreateEvalTaskTool(BaseTool):
 
         # Build filters
         filters = params.filters or {}
-        filters["project_id"] = str(params.project_id)
+        filters["project_id"] = str(project.id)
 
         # Create eval task
         from django.utils import timezone

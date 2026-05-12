@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -14,11 +12,21 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_simulation,
+    resolve_prompt_template_for_tool,
+)
 
 
 class GetPromptSimulationInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    simulation_id: UUID = Field(description="The UUID of the simulation run (RunTest)")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
+    simulation_id: str = Field(
+        default="",
+        description="Simulation UUID or exact name. Omit to list candidates.",
+    )
 
 
 @register_tool
@@ -34,30 +42,24 @@ class GetPromptSimulationTool(BaseTool):
     def execute(
         self, params: GetPromptSimulationInput, context: ToolContext
     ) -> ToolResult:
-
-        from model_hub.models.run_prompt import PromptTemplate
-        from simulate.models import RunTest, SimulateEvalConfig
+        from simulate.models import SimulateEvalConfig
         from simulate.models.test_execution import TestExecution
 
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
-        try:
-            sim = RunTest.objects.get(
-                id=params.simulation_id,
-                prompt_template=template,
-                source_type="prompt",
-                organization=context.organization,
-                deleted=False,
-            )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Simulation", str(params.simulation_id))
+        sim, simulation_result = resolve_prompt_simulation(
+            template,
+            params.simulation_id,
+            "Prompt Simulation Required",
+        )
+        if simulation_result:
+            return simulation_result
 
         version_label = (
             sim.prompt_version.template_version if sim.prompt_version else "—"

@@ -1,4 +1,5 @@
 from difflib import SequenceMatcher
+import os
 from typing import Optional
 from uuid import UUID
 
@@ -97,10 +98,10 @@ class CreateCustomEvalConfigInput(PydanticBaseModel):
         max_length=255,
     )
     model: Optional[str] = Field(
-        default="turing_large",
+        default=None,
         description=(
-            "Model to use for evaluation. Options: 'turing_large', 'turing_small', 'turing_flash'. "
-            "Default: 'turing_large'."
+            "Model to use for evaluation. Defaults to FALCON_AI_MODEL when configured, "
+            "otherwise turing_large."
         ),
     )
     mapping: Optional[dict] = Field(
@@ -247,7 +248,7 @@ class CreateCustomEvalConfigTool(BaseTool):
             eval_template=template,
             name=params.name,
             project=project,
-            model=params.model or "turing_large",
+            model=params.model or os.environ.get("FALCON_AI_MODEL") or "turing_large",
             mapping=final_mapping,
             config=eval_config,
             error_localizer=params.error_localizer,

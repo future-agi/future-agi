@@ -1,5 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
@@ -11,12 +10,22 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_simulation,
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
+from ai_tools.tools.simulation._utils import resolve_scenarios
 
 
 class UpdatePromptSimulationInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    simulation_id: UUID = Field(
-        description="The UUID of the simulation run (RunTest) to update"
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
+    simulation_id: str = Field(
+        default="",
+        description="Simulation UUID or exact name. Omit to list candidates.",
     )
     name: Optional[str] = Field(
         default=None,
@@ -26,12 +35,11 @@ class UpdatePromptSimulationInput(PydanticBaseModel):
     description: Optional[str] = Field(default=None, description="New description")
     prompt_version_id: Optional[str] = Field(
         default=None,
-        description="New prompt version ID (UUID) or version string (e.g. 'v1')",
+        description="New prompt version ID, version string (e.g. 'v1'), default, or latest",
     )
-    scenario_ids: Optional[List[UUID]] = Field(
+    scenario_ids: Optional[List[str]] = Field(
         default=None,
-        description="New list of scenario UUIDs (replaces existing, at least one required)",
-        min_length=1,
+        description="New list of scenario UUIDs or names. Replaces existing scenarios.",
     )
     enable_tool_evaluation: Optional[bool] = Field(
         default=None,
@@ -63,37 +71,23 @@ class UpdatePromptSimulationTool(BaseTool):
         self, params: UpdatePromptSimulationInput, context: ToolContext
     ) -> ToolResult:
 
-        from django.core.exceptions import ValidationError
         from django.db import transaction
 
-        from model_hub.models.run_prompt import PromptTemplate
-        from simulate.models import RunTest
-        from simulate.utils.prompt_simulation_validators import (
-            resolve_prompt_version,
-            validate_scenarios_in_org,
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
         )
+        if template_result:
+            return template_result
 
-        # Validate template
-        try:
-            template = PromptTemplate.objects.get(
-                id=params.template_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
-
-        # Validate simulation
-        try:
-            run_test = RunTest.objects.get(
-                id=params.simulation_id,
-                prompt_template=template,
-                source_type="prompt",
-                organization=context.organization,
-                deleted=False,
-            )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Simulation", str(params.simulation_id))
+        run_test, simulation_result = resolve_prompt_simulation(
+            template,
+            params.simulation_id,
+            "Prompt Simulation Required",
+        )
+        if simulation_result:
+            return simulation_result
 
         updated_fields = []
 
@@ -107,22 +101,28 @@ class UpdatePromptSimulationTool(BaseTool):
                 updated_fields.append("description")
 
             if params.prompt_version_id is not None:
-                try:
-                    prompt_version = resolve_prompt_version(
-                        params.prompt_version_id, params.template_id
-                    )
-                except ValidationError as e:
-                    return ToolResult.validation_error(e.message)
+                prompt_version, version_result = resolve_prompt_version(
+                    template,
+                    params.prompt_version_id,
+                    "Prompt Version Required",
+                )
+                if version_result:
+                    return version_result
                 run_test.prompt_version = prompt_version
                 updated_fields.append("prompt_version")
 
             if params.scenario_ids is not None:
-                try:
-                    scenarios = validate_scenarios_in_org(
-                        params.scenario_ids, context.organization
+                scenarios, scenario_result = resolve_scenarios(
+                    params.scenario_ids,
+                    context,
+                    title="Scenarios Required For Prompt Simulation",
+                )
+                if scenario_result:
+                    return scenario_result
+                if not scenarios:
+                    return ToolResult.validation_error(
+                        "At least one scenario is required for a prompt simulation."
                     )
-                except ValidationError as e:
-                    return ToolResult.validation_error(e.message)
                 run_test.scenarios.set(scenarios)
                 updated_fields.append("scenarios")
 

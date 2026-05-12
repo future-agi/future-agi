@@ -1,6 +1,4 @@
 from typing import List, Optional
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -13,9 +11,13 @@ from ai_tools.registry import register_tool
 
 
 class CreateScoreInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to annotate")
-    annotation_label_id: UUID = Field(
-        description="The UUID of the annotation label to use"
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name. Omit to list candidates.",
+    )
+    annotation_label_id: str = Field(
+        default="",
+        description="Annotation label UUID or exact label name. Omit to list candidates.",
     )
     value: Optional[str] = Field(
         default=None,
@@ -45,35 +47,50 @@ class CreateScoreTool(BaseTool):
     description = (
         "Creates a score/annotation on a trace or observation span. "
         "Provide the annotation_label_id and the appropriate value field based on label type: "
-        "value (text/categorical), value_float (numeric/star), value_bool (thumbs_up_down)."
+        "value (text/categorical), value_float (numeric/star), value_bool (thumbs_up_down). "
+        "If trace or label IDs are missing, returns candidates instead of failing."
     )
     category = "tracing"
     input_model = CreateScoreInput
 
     def execute(self, params: CreateScoreInput, context: ToolContext) -> ToolResult:
 
-        from model_hub.models.develop_annotations import AnnotationsLabels
         from model_hub.models.score import Score
-        from tracer.models.trace import Trace
         from tracer.models.trace_annotation import TraceAnnotation
 
         from ._annotation_validation import validate_annotation_value
         from .create_trace_annotation import _to_score_value
+        from ._utils import (
+            candidate_annotation_labels_result,
+            resolve_annotation_label,
+            resolve_trace,
+        )
 
-        # Validate trace
-        try:
-            trace = Trace.objects.get(
-                id=params.trace_id, project__organization=context.organization
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required For Score",
+        )
+        if unresolved:
+            return unresolved
 
-        # Validate label
-        try:
-            label = AnnotationsLabels.objects.get(id=params.annotation_label_id)
-        except AnnotationsLabels.DoesNotExist:
-            return ToolResult.not_found(
-                "Annotation Label", str(params.annotation_label_id)
+        label, unresolved = resolve_annotation_label(
+            params.annotation_label_id,
+            context,
+            title="Annotation Label Required For Score",
+        )
+        if unresolved:
+            return unresolved
+
+        if label.project_id and label.project_id != trace.project_id:
+            return candidate_annotation_labels_result(
+                context,
+                "Annotation Label Project Mismatch",
+                (
+                    f"Label `{label.name}` belongs to a different project than "
+                    f"trace `{trace.id}`. Choose a label scoped to the trace project "
+                    "or an organization-level label."
+                ),
             )
 
         # Validate span if provided
@@ -83,9 +100,10 @@ class CreateScoreTool(BaseTool):
 
             try:
                 span = ObservationSpan.objects.get(
-                    id=params.observation_span_id,
-                    project__organization=context.organization,
-                )
+                id=params.observation_span_id,
+                project__organization=context.organization,
+                trace=trace,
+            )
             except ObservationSpan.DoesNotExist:
                 return ToolResult.not_found("Span", params.observation_span_id)
 
@@ -96,9 +114,18 @@ class CreateScoreTool(BaseTool):
             and params.value_bool is None
             and params.value_str_list is None
         ):
-            return ToolResult.error(
-                "Provide at least one of: value, value_float, value_bool, or value_str_list.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult.needs_input(
+                "Provide at least one score value for the selected label. "
+                "Use `value` for text/categorical labels, `value_float` for "
+                "numeric/star labels, `value_bool` for thumbs_up_down labels, "
+                "or `value_str_list` for multi-select categorical labels.",
+                data={
+                    "trace_id": str(trace.id),
+                    "annotation_label_id": str(label.id),
+                    "label_type": label.type,
+                    "requires_score_value": True,
+                },
+                missing_fields=["value"],
             )
 
         # Validate annotation value against label type

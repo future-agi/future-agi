@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,7 +13,10 @@ from ai_tools.registry import register_tool
 
 
 class GetEvalGroupInput(PydanticBaseModel):
-    eval_group_id: UUID = Field(description="The UUID of the eval group to retrieve")
+    eval_group_id: str = Field(
+        default="",
+        description="Eval group name or UUID. If omitted, recent eval group candidates are returned.",
+    )
 
 
 @register_tool
@@ -34,17 +35,50 @@ class GetEvalGroupTool(BaseTool):
         from model_hub.models.eval_groups import EvalGroup
         from model_hub.models.evals_metric import EvalTemplate
 
-        try:
-            group = EvalGroup.no_workspace_objects.get(
-                Q(
-                    id=params.eval_group_id,
-                    organization=context.organization,
-                    workspace=context.workspace,
-                )
-                | Q(id=params.eval_group_id, is_sample=True)
+        if not params.eval_group_id:
+            groups = list(
+                EvalGroup.objects.prefetch_related("eval_templates").order_by(
+                    "-created_at"
+                )[:10]
             )
+            rows = [
+                [
+                    f"`{group.id}`",
+                    truncate(group.name, 40),
+                    str(group.eval_templates.count()),
+                    "Yes" if group.is_sample else "No",
+                ]
+                for group in groups
+            ]
+            return ToolResult(
+                content=section(
+                    "Eval Group Candidates",
+                    markdown_table(["ID", "Name", "Templates", "Sample"], rows)
+                    if rows
+                    else "No eval groups found.",
+                ),
+                data={
+                    "groups": [
+                        {"id": str(group.id), "name": group.name}
+                        for group in groups
+                    ],
+                    "requires_eval_group_id": True,
+                },
+            )
+
+        group_ref = params.eval_group_id.strip()
+        try:
+            query = (
+                Q(id=group_ref, organization=context.organization, workspace=context.workspace)
+                | Q(id=group_ref, is_sample=True)
+                | Q(name__iexact=group_ref, organization=context.organization, workspace=context.workspace)
+                | Q(name__iexact=group_ref, is_sample=True)
+            )
+            group = EvalGroup.no_workspace_objects.get(query)
         except EvalGroup.DoesNotExist:
-            return ToolResult.not_found("Eval Group", str(params.eval_group_id))
+            return ToolResult.not_found("Eval Group", group_ref)
+        except (ValueError, TypeError):
+            return ToolResult.not_found("Eval Group", group_ref)
 
         # Get member templates via through table
         template_ids = list(

@@ -5,8 +5,10 @@ const SKILL_SLUG = "fix-with-falcon";
 const LEVEL_LEAD = {
   eval: "Fix this failing evaluation.",
   span: "Multiple evals failing on this span — diagnose the shared root cause and propose a fix.",
-  trace: "This trace has quality issues. Investigate all sub-flows and propose a concrete fix.",
-  voice: "This voice call has issues. Analyze the transcript, span tree, and eval failures, then propose a fix.",
+  trace:
+    "This trace has quality issues. Investigate all sub-flows and propose a concrete fix.",
+  voice:
+    "This voice call has issues. Analyze the transcript, span tree, and eval failures, then propose a fix.",
 };
 
 function formatValue(v) {
@@ -42,7 +44,9 @@ export function openFixWithFalcon({ level, context = {} }) {
     "Investigate and propose a concrete fix.",
   ].join("\n");
 
-  const { setPendingPrompt, openSidebar } = useFalconStore.getState();
+  const { setCurrentConversation, setPendingPrompt, openSidebar } =
+    useFalconStore.getState();
+  setCurrentConversation(null);
   setPendingPrompt(prompt);
   openSidebar();
 }

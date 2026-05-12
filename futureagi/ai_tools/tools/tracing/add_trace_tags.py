@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,7 +10,10 @@ from ai_tools.registry import register_tool
 
 
 class AddTraceTagsInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace to add tags to")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name. Omit it to list candidate traces.",
+    )
     tags: list[str] = Field(description="List of tag strings to add")
 
 
@@ -28,14 +29,15 @@ class AddTraceTagsTool(BaseTool):
 
     def execute(self, params: AddTraceTagsInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        try:
-            trace = Trace.objects.get(
-                id=params.trace_id, project__organization=context.organization
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To Add Tags",
+        )
+        if unresolved:
+            return unresolved
 
         if not params.tags:
             return ToolResult.error(
@@ -54,7 +56,7 @@ class AddTraceTagsTool(BaseTool):
 
         info = key_value_block(
             [
-                ("Trace ID", f"`{params.trace_id}`"),
+                ("Trace ID", f"`{trace.id}`"),
                 (
                     "Added Tags",
                     (
@@ -80,7 +82,7 @@ class AddTraceTagsTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "trace_id": str(params.trace_id),
+                "trace_id": str(trace.id),
                 "added": sorted(added),
                 "already_present": sorted(already_present),
                 "all_tags": trace.tags,

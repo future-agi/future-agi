@@ -1,17 +1,35 @@
-from uuid import UUID
+from typing import Any
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import format_datetime, key_value_block, section
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
 
 
 class GetErrorLocalizationStatusInput(PydanticBaseModel):
-    task_id: UUID = Field(
-        description="The UUID of the ErrorLocalizerTask to check status for"
+    model_config = ConfigDict(extra="allow")
+
+    task_id: str = Field(
+        default="",
+        description="The UUID of the ErrorLocalizerTask to check status for",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["task_id"] = (
+            normalized.get("task_id")
+            or normalized.get("error_localization_task_id")
+            or normalized.get("id")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -29,13 +47,35 @@ class GetErrorLocalizationStatusTool(BaseTool):
     ) -> ToolResult:
         from model_hub.models.error_localizer_model import ErrorLocalizerTask
 
+        task_id = str(params.task_id or "").strip()
+        if not task_id:
+            return _task_candidates(context)
+        if not is_uuid(task_id):
+            result = _task_candidates(context)
+            result.data = result.data or {}
+            result.data["invalid_task_id"] = task_id
+            result.content += (
+                "\n\nThe supplied task ID was not a valid UUID. Use one of the "
+                "candidate task IDs above."
+            )
+            return result
+
         try:
             task = ErrorLocalizerTask.objects.get(
-                id=params.task_id,
+                id=task_id,
                 organization=context.organization,
             )
         except ErrorLocalizerTask.DoesNotExist:
-            return ToolResult.not_found("Error Localization Task", str(params.task_id))
+            return ToolResult(
+                content=section(
+                    "Error Localization Task Not Found",
+                    (
+                        f"Task `{task_id}` was not found in this workspace. "
+                        "Call without `task_id` to list recent candidates."
+                    ),
+                ),
+                data={"task_id": task_id, "requires_valid_task_id": True},
+            )
 
         info = key_value_block(
             [
@@ -61,3 +101,28 @@ class GetErrorLocalizationStatusTool(BaseTool):
                 "selected_input_key": task.selected_input_key,
             },
         )
+
+
+def _task_candidates(context: ToolContext) -> ToolResult:
+    from model_hub.models.error_localizer_model import ErrorLocalizerTask
+
+    tasks = ErrorLocalizerTask.objects.filter(
+        organization=context.organization
+    ).order_by("-created_at")[:10]
+    rows = [
+        (f"- `{task.id}` — {task.status.upper()} ({format_datetime(task.created_at)})")
+        for task in tasks
+    ]
+    return ToolResult(
+        content=section(
+            "Error Localization Task Required",
+            (
+                "Provide `task_id` to check a specific error localization task.\n\n"
+                + ("\n".join(rows) if rows else "No error localization tasks found.")
+            ),
+        ),
+        data={
+            "requires_task_id": True,
+            "tasks": [{"id": str(task.id), "status": task.status} for task in tasks],
+        },
+    )

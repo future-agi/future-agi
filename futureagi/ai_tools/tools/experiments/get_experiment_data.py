@@ -17,7 +17,10 @@ from ai_tools.registry import register_tool
 
 
 class GetExperimentDataInput(PydanticBaseModel):
-    experiment_id: UUID = Field(description="The UUID of the experiment")
+    experiment_id: Optional[UUID] = Field(
+        default=None,
+        description="The UUID of the experiment. Omit it to list candidate experiments.",
+    )
     limit: int = Field(default=10, ge=1, le=50, description="Max rows to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
 
@@ -38,6 +41,38 @@ class GetExperimentDataTool(BaseTool):
 
         from model_hub.models.develop_dataset import Cell, Column, Row
         from model_hub.models.experiments import ExperimentsTable
+
+        if params.experiment_id is None:
+            experiments = (
+                ExperimentsTable.objects.select_related("dataset")
+                .filter(dataset__organization=context.organization)
+                .order_by("-created_at")[:10]
+            )
+            rows = [
+                [
+                    f"`{experiment.id}`",
+                    experiment.name,
+                    experiment.status or "—",
+                ]
+                for experiment in experiments
+            ]
+            if not rows:
+                return ToolResult(
+                    content=section("Experiment Candidates", "No experiments found."),
+                    data={"experiments": []},
+                )
+            return ToolResult(
+                content=section(
+                    "Experiment Candidates",
+                    markdown_table(["ID", "Name", "Status"], rows),
+                ),
+                data={
+                    "experiments": [
+                        {"id": str(experiment.id), "name": experiment.name}
+                        for experiment in experiments
+                    ]
+                },
+            )
 
         try:
             experiment = ExperimentsTable.objects.select_related("dataset").get(

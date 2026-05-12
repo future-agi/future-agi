@@ -81,3 +81,4 @@ celerybeat-schedule
 
 # Large data directories
 minio_data/
+model_serving/

@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -13,10 +13,14 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_agent
 
 
 class ListAgentVersionsInput(PydanticBaseModel):
-    agent_id: UUID = Field(description="The UUID of the agent definition")
+    agent_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or exact name of the agent definition",
+    )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
 
@@ -35,15 +39,15 @@ class ListAgentVersionsTool(BaseTool):
         self, params: ListAgentVersionsInput, context: ToolContext
     ) -> ToolResult:
 
-        from simulate.models.agent_definition import AgentDefinition
         from simulate.models.agent_version import AgentVersion
 
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id, organization=context.organization
-            )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
+        agent, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required For Version History",
+        )
+        if unresolved:
+            return unresolved
 
         qs = AgentVersion.objects.filter(agent_definition=agent).order_by(
             "-version_number"

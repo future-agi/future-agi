@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -13,11 +11,13 @@ from ai_tools.formatting import (
     truncate,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.tracing._error_utils import candidate_error_analysis_traces_result
 
 
 class GetTraceErrorAnalysisInput(PydanticBaseModel):
-    trace_id: UUID = Field(
-        description="The UUID of the trace to get error analysis for"
+    trace_id: str = Field(
+        default="",
+        description="The UUID of the trace to get error analysis for. Omit to list candidates.",
     )
 
 
@@ -36,12 +36,19 @@ class GetTraceErrorAnalysisTool(BaseTool):
     def execute(
         self, params: GetTraceErrorAnalysisInput, context: ToolContext
     ) -> ToolResult:
-
+        from django.core.exceptions import ValidationError
         from tracer.models.trace import Trace
         from tracer.models.trace_error_analysis import (
             TraceErrorAnalysis,
             TraceErrorDetail,
         )
+
+        if not params.trace_id:
+            return candidate_error_analysis_traces_result(
+                context,
+                "Trace Required For Error Analysis",
+                "Choose one of these trace IDs.",
+            )
 
         # Verify trace exists and belongs to the user's organization
         try:
@@ -49,8 +56,12 @@ class GetTraceErrorAnalysisTool(BaseTool):
                 id=params.trace_id,
                 project__organization=context.organization,
             )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        except (Trace.DoesNotExist, ValidationError, ValueError, TypeError):
+            return candidate_error_analysis_traces_result(
+                context,
+                "Trace Not Found",
+                f"Trace `{params.trace_id}` was not found or is not accessible.",
+            )
 
         # Get latest analysis
         analysis = (

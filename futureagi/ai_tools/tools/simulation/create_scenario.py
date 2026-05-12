@@ -1,3 +1,4 @@
+import json
 from typing import Any
 from uuid import UUID
 
@@ -69,12 +70,9 @@ class CreateScenarioInput(PydanticBaseModel):
             "script (text-based), or dataset (data-driven from existing dataset)."
         ),
     )
-    agent_id: UUID | None = Field(
+    agent_id: str | None = Field(
         default=None,
-        description=(
-            "The UUID of the agent definition to associate with. "
-            "Required when source_type is agent_definition."
-        ),
+        description="Agent definition UUID or name. Required when source_type is agent_definition.",
     )
     source: str | None = Field(
         default=None, description="Source content or reference for the scenario"
@@ -114,9 +112,12 @@ class CreateScenarioInput(PydanticBaseModel):
             "For example: 'Focus on edge cases around payment disputes'."
         ),
     )
-    personas: list[UUID] | None = Field(
+    personas: list[str | UUID] | None = Field(
         default=None,
-        description="List of persona UUIDs to use in the scenario generation.",
+        description=(
+            "List of persona UUIDs or names to use in scenario generation. "
+            "Persona descriptions are folded into custom_instruction instead of failing validation."
+        ),
     )
     add_persona_automatically: bool = Field(
         default=False,
@@ -191,6 +192,24 @@ class CreateScenarioInput(PydanticBaseModel):
             raise ValueError("Maximum 10 custom columns are allowed.")
         return v
 
+    @field_validator("personas", mode="before")
+    @classmethod
+    def normalize_personas(cls, value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    return parsed if isinstance(parsed, list) else [parsed]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    pass
+            return [part.strip() for part in stripped.split(",") if part.strip()]
+        return value
+
     @model_validator(mode="after")
     def validate_cross_fields(self) -> "CreateScenarioInput":
         source_type = self.source_type or "agent_definition"
@@ -211,12 +230,6 @@ class CreateScenarioInput(PydanticBaseModel):
                     "Either generate_graph=True with agent_id or graph data "
                     "is required for graph scenario type."
                 )
-
-        # Validate agent_definition source type requirements
-        if source_type == "agent_definition" and not self.agent_id:
-            raise ValueError(
-                "agent_id is required when source_type is agent_definition."
-            )
 
         # Validate prompt source type requirements
         if source_type == "prompt":
@@ -249,6 +262,28 @@ class CreateScenarioTool(BaseTool):
 
     def execute(self, params: CreateScenarioInput, context: ToolContext) -> ToolResult:
         source_type = params.source_type or "agent_definition"
+        agent = None
+        agent_definition_id = None
+        if source_type == "agent_definition":
+            from ai_tools.tools.agents._utils import resolve_agent
+
+            agent, error = resolve_agent(
+                params.agent_id,
+                context,
+                title="Agent Needed For Scenario",
+            )
+            if error:
+                return error
+            agent_definition_id = agent.id
+
+        persona_ids, persona_notes = self._resolve_persona_refs(
+            params.personas, context
+        )
+        custom_instruction = params.custom_instruction or ""
+        if persona_notes:
+            custom_instruction = (
+                custom_instruction + "\n\n" if custom_instruction else ""
+            ) + "Persona guidance: " + "; ".join(persona_notes)
 
         # Validate custom column names for duplicates (script/graph scenarios)
         if params.scenario_type in ("script", "graph") and params.custom_columns:
@@ -365,7 +400,7 @@ class CreateScenarioTool(BaseTool):
             description=params.description or "",
             scenario_type=params.scenario_type,
             source_type=source_type,
-            agent_definition_id=params.agent_id,
+            agent_definition_id=agent_definition_id,
             agent_version_id=params.agent_version_id,
             dataset_id=params.dataset_id,
             organization=context.organization,
@@ -373,9 +408,11 @@ class CreateScenarioTool(BaseTool):
             user=context.user,
             source=params.source or "",
             no_of_rows=params.no_of_rows,
-            custom_instruction=params.custom_instruction or "",
-            personas=params.personas,
-            add_persona_automatically=params.add_persona_automatically,
+            custom_instruction=custom_instruction,
+            personas=persona_ids or None,
+            add_persona_automatically=(
+                params.add_persona_automatically or bool(persona_notes)
+            ),
             custom_columns=custom_columns_data,
             generate_graph=params.generate_graph,
             graph=params.graph,
@@ -399,7 +436,7 @@ class CreateScenarioTool(BaseTool):
                 ("Type", scenario.scenario_type),
                 (
                     "Agent",
-                    f"`{params.agent_id}`" if params.agent_id else "—",
+                    f"`{agent_definition_id}`" if agent_definition_id else "—",
                 ),
                 ("Source Type", scenario.source_type),
                 (
@@ -421,7 +458,58 @@ class CreateScenarioTool(BaseTool):
                 "id": result["id"],
                 "name": result["name"],
                 "type": result["type"],
-                "agent_id": result["agent_id"],
+                "agent_id": str(result["agent_id"]) if result["agent_id"] else None,
                 "status": result["status"],
             },
         )
+
+    @staticmethod
+    def _resolve_persona_refs(
+        persona_refs: list[str | UUID] | None,
+        context: ToolContext,
+    ) -> tuple[list[UUID], list[str]]:
+        if not persona_refs:
+            return [], []
+
+        from django.core.exceptions import ValidationError
+        from django.db.models import Q
+        from simulate.models.persona import Persona
+
+        persona_ids: list[UUID] = []
+        persona_notes: list[str] = []
+        qs = Persona.objects.filter(
+            Q(persona_type="system") | Q(workspace=context.workspace)
+        )
+
+        for ref in persona_refs:
+            clean_ref = str(ref).strip()
+            if not clean_ref:
+                continue
+            try:
+                persona_ids.append(UUID(clean_ref))
+                continue
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                exact = qs.filter(name__iexact=clean_ref)
+                if exact.count() == 1:
+                    persona_ids.append(exact.first().id)
+                    continue
+                fuzzy = qs.filter(name__icontains=clean_ref)
+                if fuzzy.count() == 1:
+                    persona_ids.append(fuzzy.first().id)
+                    continue
+            except (Persona.DoesNotExist, ValidationError, ValueError, TypeError):
+                pass
+
+            persona_notes.append(clean_ref)
+
+        unique_persona_ids = []
+        seen = set()
+        for persona_id in persona_ids:
+            if persona_id in seen:
+                continue
+            seen.add(persona_id)
+            unique_persona_ids.append(persona_id)
+        return unique_persona_ids, persona_notes

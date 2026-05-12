@@ -1,16 +1,20 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import section
+from ai_tools.formatting import format_datetime, markdown_table, section
 from ai_tools.registry import register_tool
+from ai_tools.resolvers import is_uuid
 
 
 class DeleteEvalTemplateInput(PydanticBaseModel):
-    eval_template_id: UUID = Field(
-        description="The UUID of the eval template to delete"
+    eval_template_id: str = Field(
+        default="",
+        description="User-owned eval template name or UUID to delete",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms this deletion",
     )
 
 
@@ -31,20 +35,83 @@ class DeleteEvalTemplateTool(BaseTool):
     ) -> ToolResult:
         from django.db import transaction
         from django.utils import timezone
-
         from model_hub.models.choices import OwnerChoices
         from model_hub.models.evals_metric import EvalTemplate
 
-        try:
-            template = EvalTemplate.objects.get(
-                id=params.eval_template_id,
-                organization=context.organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
+        def candidate_templates_result(title: str, detail: str = "") -> ToolResult:
+            templates = list(
+                EvalTemplate.objects.filter(
+                    organization=context.organization,
+                    owner=OwnerChoices.USER.value,
+                    deleted=False,
+                ).order_by("-created_at")[:10]
             )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found(
-                "User-owned Eval Template", str(params.eval_template_id)
+            rows = [
+                [
+                    f"`{template.id}`",
+                    template.name,
+                    format_datetime(template.created_at),
+                ]
+                for template in templates
+            ]
+            body = detail or ""
+            if rows:
+                body = (body + "\n\n" if body else "") + markdown_table(
+                    ["ID", "Name", "Created"], rows
+                )
+            else:
+                body = body or "No user-owned eval templates found."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_eval_template_id": True,
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ],
+                },
+            )
+
+        template_ref = str(params.eval_template_id or "").strip()
+        if not template_ref:
+            return candidate_templates_result(
+                "Eval Template Required",
+                "Provide `eval_template_id` to preview deletion.",
+            )
+
+        qs = EvalTemplate.objects.filter(
+            organization=context.organization,
+            owner=OwnerChoices.USER.value,
+            deleted=False,
+        )
+        if is_uuid(template_ref):
+            template = qs.filter(id=template_ref).first()
+        else:
+            exact = qs.filter(name__iexact=template_ref)
+            template = exact.first() if exact.count() == 1 else None
+            if template is None:
+                fuzzy = qs.filter(name__icontains=template_ref)
+                template = fuzzy.first() if fuzzy.count() == 1 else None
+        if template is None:
+            return candidate_templates_result(
+                "Eval Template Not Found",
+                f"User-owned eval template `{template_ref}` was not found.",
+            )
+
+        if not params.confirm_delete:
+            return ToolResult(
+                content=section(
+                    "Eval Template Delete Preview",
+                    (
+                        f"Deletion is ready for `{template.name}` (`{template.id}`). "
+                        "Set `confirm_delete=true` after user confirmation to delete it."
+                    ),
+                ),
+                data={
+                    "requires_confirmation": True,
+                    "eval_template_id": str(template.id),
+                    "name": template.name,
+                },
             )
 
         name = template.name
@@ -148,5 +215,5 @@ class DeleteEvalTemplateTool(BaseTool):
                 "Eval Template Deleted",
                 f"Template **{name}** and all related configurations have been deleted.",
             ),
-            data={"id": str(params.eval_template_id), "name": name},
+            data={"id": str(template.id), "name": name},
         )

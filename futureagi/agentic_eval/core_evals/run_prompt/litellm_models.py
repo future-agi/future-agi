@@ -4,6 +4,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
@@ -161,6 +162,9 @@ class LiteLLMModelManager:
         try:
             api_key_entry = ApiKey.objects.get(**query)
         except ApiKey.DoesNotExist:
+            env_key = self._get_env_api_key(provider)
+            if env_key:
+                return env_key
             raise ValueError(
                 f"API key not configured for {provider}. Please add your API key in settings."
             )
@@ -178,9 +182,39 @@ class LiteLLMModelManager:
         if api_key_entry.actual_json:
             return api_key_entry.actual_json
 
+        env_key = self._get_env_api_key(provider)
+        if env_key:
+            return env_key
+
         raise ValueError(
             f"API key not configured for {provider}. Please add your API key in settings."
         )
+
+    def _get_env_api_key(self, provider=None):
+        env_names = []
+        model_config = next(
+            (
+                model
+                for model in self.models
+                if model.get("model_name") == self.model_name
+            ),
+            {},
+        )
+        if model_config.get("api_key_name"):
+            env_names.append(model_config["api_key_name"])
+        if provider == "anthropic":
+            env_names.append("ANTHROPIC_API_KEY")
+        elif provider == "openai":
+            env_names.append("OPENAI_API_KEY")
+
+        if provider and provider == os.environ.get("FALCON_AI_PROVIDER"):
+            env_names.append("FALCON_AI_API_KEY")
+
+        for env_name in dict.fromkeys(env_names):
+            api_key = os.environ.get(env_name)
+            if api_key:
+                return api_key
+        return None
 
     def get_provider(self, model_name, organization_id=None, workspace_id=None):
         provider = None

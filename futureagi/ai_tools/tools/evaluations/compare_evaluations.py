@@ -18,10 +18,12 @@ from ai_tools.registry import register_tool
 
 
 class CompareEvaluationsInput(PydanticBaseModel):
-    evaluation_ids: list[UUID] = Field(
-        description="List of 2-5 evaluation IDs to compare side-by-side",
-        min_length=2,
-        max_length=5,
+    evaluation_ids: list[UUID] | None = Field(
+        default=None,
+        description=(
+            "List of 2-5 evaluation IDs to compare side-by-side. Omit to list "
+            "candidate evaluations with IDs."
+        ),
     )
 
 
@@ -41,9 +43,59 @@ class CompareEvaluationsTool(BaseTool):
 
         from model_hub.models.evaluation import Evaluation
 
+        if not params.evaluation_ids or len(params.evaluation_ids) < 2:
+            candidates = list(
+                Evaluation.objects.select_related("eval_template")
+                .filter(organization=context.organization)
+                .order_by("-created_at")[:10]
+            )
+            rows = []
+            data = []
+            for ev in candidates:
+                template_name = ev.eval_template.name if ev.eval_template else "—"
+                rows.append(
+                    [
+                        f"`{ev.id}`",
+                        truncate(template_name, 32),
+                        format_status(ev.status),
+                        truncate(ev.value, 30) if ev.value else "—",
+                        format_datetime(ev.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(ev.id),
+                        "template_name": template_name,
+                        "status": ev.status,
+                        "value": str(ev.value) if ev.value else None,
+                    }
+                )
+
+            detail = (
+                "Provide at least two `evaluation_ids` from the candidates below, "
+                "then call `compare_evaluations` again."
+            )
+            if not rows:
+                detail = (
+                    "No evaluation results were found in this workspace. Run an "
+                    "evaluation first, then call `compare_evaluations` with two "
+                    "or more evaluation IDs."
+                )
+            return ToolResult.needs_input(
+                section(
+                    "Evaluation IDs Required",
+                    f"{detail}\n\n"
+                    + markdown_table(
+                        ["ID", "Template", "Status", "Value", "Created"], rows
+                    ),
+                ),
+                data={"candidate_evaluations": data},
+                missing_fields=["evaluation_ids"],
+            )
+
         evals = []
         missing = []
-        for eid in params.evaluation_ids:
+        for eid in params.evaluation_ids[:5]:
             try:
                 ev = Evaluation.objects.select_related("eval_template").get(
                     id=eid, organization=context.organization

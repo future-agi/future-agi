@@ -12,8 +12,14 @@ from ai_tools.registry import register_tool
 
 
 class ResetAnnotationsInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation task")
-    row_id: UUID = Field(description="The UUID of the row to reset annotations for")
+    annotation_id: UUID | None = Field(
+        default=None,
+        description="The UUID of the annotation task. Omit it to list requirements.",
+    )
+    row_id: UUID | None = Field(
+        default=None,
+        description="The UUID of the row to reset annotations for. Omit it to list requirements.",
+    )
 
 
 @register_tool
@@ -33,6 +39,29 @@ class ResetAnnotationsTool(BaseTool):
         from model_hub.models.develop_annotations import Annotations
         from model_hub.models.develop_dataset import Cell, Column, Row
 
+        if params.annotation_id is None or params.row_id is None:
+            annotations = Annotations.objects.select_related("dataset").order_by(
+                "-created_at"
+            )[:10]
+            rows = [
+                f"- `{annotation.id}` — {annotation.name}" for annotation in annotations
+            ]
+            return ToolResult(
+                content=section(
+                    "Reset Annotation Requirements",
+                    (
+                        "This tool only resets the current user's submitted values. "
+                        "Provide both `annotation_id` and `row_id`; use `get_annotate_row` "
+                        "to find a row before resetting.\n\n"
+                        + ("\n".join(rows) if rows else "No annotation tasks found.")
+                    ),
+                ),
+                data={
+                    "annotation_id_required": params.annotation_id is None,
+                    "row_id_required": params.row_id is None,
+                },
+            )
+
         try:
             annotation = Annotations.objects.get(id=params.annotation_id)
         except Annotations.DoesNotExist:
@@ -40,9 +69,21 @@ class ResetAnnotationsTool(BaseTool):
 
         # Check user is assigned
         if not annotation.assigned_users.filter(id=context.user.id).exists():
-            return ToolResult.error(
-                "You are not assigned to this annotation task.",
-                error_code="PERMISSION_DENIED",
+            return ToolResult(
+                content=section(
+                    "Cannot Reset Annotation",
+                    (
+                        "You are not assigned to this annotation task. Assign the "
+                        "task to the current user first, or choose an annotation task "
+                        "assigned to you."
+                    ),
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "annotation_name": annotation.name,
+                    "requires_assignment": True,
+                    "error_code": "PERMISSION_DENIED",
+                },
             )
 
         try:
@@ -50,7 +91,23 @@ class ResetAnnotationsTool(BaseTool):
                 id=params.row_id, dataset=annotation.dataset, deleted=False
             )
         except Row.DoesNotExist:
-            return ToolResult.not_found("Row", str(params.row_id))
+            return ToolResult(
+                content=section(
+                    "Cannot Reset Annotation Row",
+                    (
+                        f"Row `{params.row_id}` was not found in annotation "
+                        f"`{annotation.name}`. Use `get_annotate_row` with this "
+                        "annotation to retrieve a valid row_id before resetting."
+                    ),
+                ),
+                data={
+                    "annotation_id": str(annotation.id),
+                    "annotation_name": annotation.name,
+                    "row_id": str(params.row_id),
+                    "requires_valid_row_id": True,
+                    "error_code": "NOT_FOUND",
+                },
+            )
 
         # Find annotation columns
         ann_cols = Column.objects.filter(

@@ -12,7 +12,10 @@ from ai_tools.registry import register_tool
 
 
 class ListPromptVersionsInput(PydanticBaseModel):
-    template_id: str = Field(description="Name or UUID of the prompt template")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. If omitted, candidates are returned.",
+    )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
     include_drafts: bool = Field(default=True, description="Include draft versions")
@@ -33,14 +36,23 @@ class ListPromptVersionsTool(BaseTool):
         self, params: ListPromptVersionsInput, context: ToolContext
     ) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_prompt_template
         from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+        from ai_tools.resolvers import resolve_prompt_template
+        from ai_tools.tools.prompts._utils import candidate_prompt_templates_result
+
+        if not params.template_id:
+            return candidate_prompt_templates_result(context)
 
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return candidate_prompt_templates_result(
+                context,
+                "Prompt Template Not Found",
+                f"{err} Use one of these template IDs or exact names.",
+            )
 
         try:
             template = PromptTemplate.objects.get(id=template_obj.id)

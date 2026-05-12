@@ -1,7 +1,5 @@
 import copy
 import re
-from typing import Optional
-from uuid import UUID
 
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
@@ -10,19 +8,20 @@ from pydantic import Field
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section, truncate
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import resolve_prompt_version
 
 logger = structlog.get_logger(__name__)
 
 
 class RunPromptInput(PydanticBaseModel):
     template_id: str = Field(
-        description="Name or UUID of the prompt template to execute"
+        default="", description="Name or UUID of the prompt template to execute"
     )
-    version_id: Optional[UUID] = Field(
-        default=None,
-        description="Specific version UUID to run. If omitted, uses the default version.",
+    version_id: str = Field(
+        default="",
+        description="Specific version UUID or name to run. If omitted, uses the default version.",
     )
-    variables: Optional[dict] = Field(
+    variables: dict | None = Field(
         default=None,
         description=(
             "Variable substitutions for {{var}} placeholders in the prompt. "
@@ -30,6 +29,7 @@ class RunPromptInput(PydanticBaseModel):
         ),
     )
     model: str = Field(
+        default="claude-sonnet-4-20250514",
         description="Model to use for this execution (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
     )
 
@@ -48,23 +48,55 @@ class RunPromptTool(BaseTool):
 
     def execute(self, params: RunPromptInput, context: ToolContext) -> ToolResult:
         from django.utils import timezone
+        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         # Resolve template by name or UUID
         from ai_tools.resolvers import resolve_prompt_template
-        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
         from model_hub.services.derived_variable_service import (
             extract_derived_variables_from_output,
         )
         from model_hub.utils.column_utils import is_json_response_format
         from model_hub.utils.utils import remove_empty_text_from_messages
         from model_hub.views.prompt_template import replace_variables
+
         try:
-            from ee.usage.utils.usage_entries import APICallTypeChoices, log_and_deduct_cost_for_api_request
+            from ee.usage.utils.usage_entries import (
+                APICallTypeChoices,
+                log_and_deduct_cost_for_api_request,
+            )
         except ImportError:
             APICallTypeChoices = None
             log_and_deduct_cost_for_api_request = None
+
+        if not params.template_id:
+            templates = PromptTemplate.objects.filter(
+                organization=context.organization,
+                deleted=False,
+            ).order_by("-created_at")[:10]
+            rows = [[f"`{template.id}`", template.name] for template in templates]
+            if not rows:
+                return ToolResult(
+                    content=section(
+                        "Prompt Template Candidates", "No prompt templates found."
+                    ),
+                    data={"templates": []},
+                )
+            from ai_tools.formatting import markdown_table
+
+            return ToolResult(
+                content=section(
+                    "Prompt Template Candidates",
+                    markdown_table(["ID", "Name"], rows),
+                ),
+                data={
+                    "templates": [
+                        {"id": str(template.id), "name": template.name}
+                        for template in templates
+                    ]
+                },
+            )
 
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace
@@ -83,14 +115,13 @@ class RunPromptTool(BaseTool):
 
         # Get version
         if params.version_id:
-            try:
-                version = PromptVersion.objects.get(
-                    id=params.version_id,
-                    original_template=template,
-                    deleted=False,
-                )
-            except PromptVersion.DoesNotExist:
-                return ToolResult.not_found("Prompt Version", str(params.version_id))
+            version, version_result = resolve_prompt_version(
+                template,
+                params.version_id,
+                "Prompt Version Required",
+            )
+            if version_result:
+                return version_result
         else:
             # Get default version (same fallback chain as WebSocket path)
             version = PromptVersion.objects.filter(
@@ -390,6 +421,22 @@ class RunPromptTool(BaseTool):
             from ai_tools.error_codes import code_from_exception
 
             logger.exception("run_prompt_tool_failed", error=str(e))
+            if "API key not configured for" in str(e):
+                return ToolResult(
+                    content=section(
+                        "Prompt Execution Requires Provider Key",
+                        (
+                            f"{str(e)}\n\nAdd the provider key in settings, or run with "
+                            "a model whose provider key is configured for this workspace."
+                        ),
+                    ),
+                    data={
+                        "requires_provider_api_key": True,
+                        "template_id": str(template.id),
+                        "version_id": str(version.id),
+                        "model": model,
+                    },
+                )
             return ToolResult.error(
                 f"Prompt execution failed: {str(e)}",
                 error_code=code_from_exception(e),

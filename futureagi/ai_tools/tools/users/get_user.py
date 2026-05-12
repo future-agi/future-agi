@@ -31,15 +31,16 @@ class GetUserTool(BaseTool):
     def execute(self, params: GetUserInput, context: ToolContext) -> ToolResult:
 
         from accounts.models.organization_membership import OrganizationMembership
-        from accounts.models.user import User
+        from ai_tools.tools.users._utils import resolve_user
         from accounts.models.workspace import WorkspaceMembership
 
-        try:
-            user = User.objects.get(
-                id=params.user_id, organization=context.organization
-            )
-        except User.DoesNotExist:
-            return ToolResult.not_found("User", str(params.user_id))
+        user, user_result = resolve_user(
+            params.user_id,
+            context,
+            title="User Required",
+        )
+        if user_result:
+            return user_result
 
         # Build profile info
         status = "active" if user.is_active else "inactive"

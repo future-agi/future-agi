@@ -1,7 +1,5 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import ConfigDict, Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -16,7 +14,37 @@ from ai_tools.registry import register_tool
 
 
 class GetTestExecutionAnalyticsInput(PydanticBaseModel):
-    test_execution_id: UUID = Field(description="The UUID of the test execution")
+    model_config = ConfigDict(extra="allow")
+
+    test_execution_id: str = Field(
+        default="",
+        description="The UUID of the test execution. If omitted, candidates are returned.",
+    )
+    run_test_id: str = Field(
+        default="",
+        description="Run test UUID or name. When provided, analytics use its latest execution.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["test_execution_id"] = (
+            normalized.get("test_execution_id")
+            or normalized.get("execution_id")
+            or normalized.get("id")
+            or ""
+        )
+        normalized["run_test_id"] = (
+            normalized.get("run_test_id")
+            or normalized.get("run_test")
+            or normalized.get("test_id")
+            or normalized.get("suite_id")
+            or ""
+        )
+        return normalized
 
 
 @register_tool
@@ -33,17 +61,98 @@ class GetTestExecutionAnalyticsTool(BaseTool):
         self, params: GetTestExecutionAnalyticsInput, context: ToolContext
     ) -> ToolResult:
         from django.db.models import Avg, Count, Max, Min, Sum
-
         from simulate.models.test_execution import CallExecution, TestExecution
 
-        try:
-            execution = TestExecution.objects.select_related(
+        from ai_tools.resolvers import is_uuid
+        from ai_tools.tools.agents._utils import resolve_run_test
+
+        def candidate_executions_result(title: str, detail: str = "") -> ToolResult:
+            qs = TestExecution.objects.select_related(
                 "run_test", "agent_definition"
-            ).get(
-                id=params.test_execution_id, run_test__organization=context.organization
+            ).filter(run_test__organization=context.organization)
+            executions = list(qs.order_by("-created_at")[:10])
+            rows = []
+            data = []
+            for candidate in executions:
+                rows.append(
+                    [
+                        f"`{candidate.id}`",
+                        candidate.run_test.name if candidate.run_test else "—",
+                        format_status(candidate.status),
+                        str(candidate.total_calls),
+                        format_datetime(candidate.created_at),
+                    ]
+                )
+                data.append(
+                    {
+                        "id": str(candidate.id),
+                        "run_test_id": (
+                            str(candidate.run_test_id)
+                            if candidate.run_test_id
+                            else None
+                        ),
+                        "run_test_name": (
+                            candidate.run_test.name if candidate.run_test else None
+                        ),
+                        "status": candidate.status,
+                    }
+                )
+            body = detail or (
+                "Provide `test_execution_id`, or provide `run_test_id` to use the "
+                "latest execution for a test suite."
             )
-        except TestExecution.DoesNotExist:
-            return ToolResult.not_found("Test Execution", str(params.test_execution_id))
+            if rows:
+                body += "\n\n" + markdown_table(
+                    ["Execution ID", "Run Test", "Status", "Calls", "Created"],
+                    rows,
+                )
+            else:
+                body += "\n\nNo test executions found in this workspace."
+            return ToolResult(
+                content=section(title, body),
+                data={
+                    "requires_test_execution_id_or_run_test_id": True,
+                    "executions": data,
+                },
+            )
+
+        execution_ref = str(params.test_execution_id or "").strip()
+        run_test_ref = str(params.run_test_id or "").strip()
+
+        if execution_ref and is_uuid(execution_ref):
+            try:
+                execution = TestExecution.objects.select_related(
+                    "run_test", "agent_definition"
+                ).get(id=execution_ref, run_test__organization=context.organization)
+            except TestExecution.DoesNotExist:
+                return candidate_executions_result(
+                    "Test Execution Not Found",
+                    f"Test execution `{execution_ref}` was not found.",
+                )
+        else:
+            if execution_ref and not run_test_ref:
+                run_test_ref = execution_ref
+            if not run_test_ref:
+                return candidate_executions_result("Test Execution Required")
+
+            run_test, unresolved = resolve_run_test(
+                run_test_ref,
+                context,
+                title="Run Test Required For Analytics",
+            )
+            if unresolved:
+                return unresolved
+            execution = (
+                TestExecution.objects.select_related("run_test", "agent_definition")
+                .filter(run_test=run_test)
+                .order_by("-created_at")
+                .first()
+            )
+            if not execution:
+                return candidate_executions_result(
+                    "Test Execution Not Found",
+                    f"No executions were found for run test `{run_test.name}`.",
+                )
 
         run_test_name = execution.run_test.name if execution.run_test else "—"
         agent_name = (

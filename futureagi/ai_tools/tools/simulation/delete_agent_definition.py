@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from django.db import transaction
 from django.utils import timezone
 from pydantic import BaseModel as PydanticBaseModel
@@ -11,11 +9,19 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.agents._utils import resolve_agent
 from simulate.models import AgentVersion
 
 
 class DeleteAgentDefinitionInput(PydanticBaseModel):
-    agent_id: UUID = Field(description="The UUID of the agent definition to delete")
+    agent_id: str = Field(
+        default="",
+        description="Agent definition name or UUID to delete. If omitted, candidates are returned.",
+    )
+    confirm_delete: bool = Field(
+        default=False,
+        description="Set true only after the user confirms deletion.",
+    )
 
 
 @register_tool
@@ -31,14 +37,31 @@ class DeleteAgentDefinitionTool(BaseTool):
     def execute(
         self, params: DeleteAgentDefinitionInput, context: ToolContext
     ) -> ToolResult:
-        from simulate.models.agent_definition import AgentDefinition
+        agent, unresolved = resolve_agent(
+            params.agent_id,
+            context,
+            title="Agent Required To Delete",
+        )
+        if unresolved:
+            return unresolved
 
-        try:
-            agent = AgentDefinition.objects.get(
-                id=params.agent_id, organization=context.organization
+        if not params.confirm_delete:
+            info = key_value_block(
+                [
+                    ("ID", f"`{agent.id}`"),
+                    ("Name", agent.agent_name),
+                    ("Status", "Awaiting confirmation"),
+                ]
             )
-        except AgentDefinition.DoesNotExist:
-            return ToolResult.not_found("Agent", str(params.agent_id))
+            return ToolResult(
+                content=section("Confirm Agent Deletion", info),
+                data={
+                    "requires_confirmation": True,
+                    "confirm_delete": True,
+                    "id": str(agent.id),
+                    "name": agent.agent_name,
+                },
+            )
 
         with transaction.atomic():
             agent_name = agent.agent_name
@@ -51,7 +74,7 @@ class DeleteAgentDefinitionTool(BaseTool):
 
         info = key_value_block(
             [
-                ("ID", f"`{params.agent_id}`"),
+                ("ID", f"`{agent.id}`"),
                 ("Name", agent_name),
                 ("Status", "Deleted"),
             ]
@@ -61,5 +84,5 @@ class DeleteAgentDefinitionTool(BaseTool):
 
         return ToolResult(
             content=content,
-            data={"id": str(params.agent_id), "name": agent_name, "deleted": True},
+            data={"id": str(agent.id), "name": agent_name, "deleted": True},
         )

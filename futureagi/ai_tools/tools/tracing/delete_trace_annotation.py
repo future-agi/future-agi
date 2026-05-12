@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,7 +10,13 @@ from ai_tools.registry import register_tool
 
 
 class DeleteTraceAnnotationInput(PydanticBaseModel):
-    annotation_id: UUID = Field(description="The UUID of the annotation to delete")
+    annotation_id: str = Field(
+        default="",
+        description=(
+            "The UUID of the annotation to delete. Omit it to list candidate "
+            "trace annotations."
+        ),
+    )
 
 
 @register_tool
@@ -29,15 +33,15 @@ class DeleteTraceAnnotationTool(BaseTool):
         self, params: DeleteTraceAnnotationInput, context: ToolContext
     ) -> ToolResult:
 
-        from tracer.models.trace_annotation import TraceAnnotation
+        from ai_tools.tools.tracing._utils import resolve_trace_annotation
 
-        try:
-            annotation = TraceAnnotation.objects.select_related("annotation_label").get(
-                id=params.annotation_id,
-                trace__project__organization=context.organization,
-            )
-        except TraceAnnotation.DoesNotExist:
-            return ToolResult.not_found("Trace Annotation", str(params.annotation_id))
+        annotation, unresolved = resolve_trace_annotation(
+            params.annotation_id,
+            context,
+            title="Trace Annotation Required To Delete",
+        )
+        if unresolved:
+            return unresolved
 
         label_name = (
             annotation.annotation_label.name if annotation.annotation_label else "—"

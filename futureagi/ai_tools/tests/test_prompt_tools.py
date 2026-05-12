@@ -67,6 +67,15 @@ class TestListPromptTemplatesTool:
         assert result.data["total"] == 0
 
 
+class TestCreatePromptSimulationTool:
+    def test_missing_name_returns_needs_input(self, tool_context):
+        result = run_tool("create_prompt_simulation", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_name"] is True
+
+
 class TestGetPromptTemplateTool:
     def test_get_existing(self, tool_context, prompt_template):
         result = run_tool(
@@ -185,6 +194,19 @@ class TestCreatePromptTemplateTool:
 
         assert not result.is_error
 
+    def test_create_normalizes_null_variable_values(self, tool_context):
+        result = run_tool(
+            "create_prompt_template",
+            {
+                "name": "Null Variable Values Prompt",
+                "variable_values": {"customer_message": None, "account_tier": None},
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["name"] == "Null Variable Values Prompt"
+
 
 class TestCreatePromptVersionTool:
     def test_create_new_version(self, tool_context, prompt_template):
@@ -228,6 +250,26 @@ class TestCreatePromptVersionTool:
         assert not result.is_error
         assert result.data["is_default"] is True
 
+    def test_create_version_accepts_dict_config_and_scalar_variable_values(
+        self, tool_context, prompt_template
+    ):
+        result = run_tool(
+            "create_prompt_version",
+            {
+                "template_id": str(prompt_template.id),
+                "prompt_config": {
+                    "messages": [{"role": "user", "content": "Hello {{name}}"}],
+                    "configuration": {"temperature": 0.2},
+                },
+                "model": ["claude-sonnet-4-6"],
+                "variable_values": {"name": "Alice"},
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["version_id"]
+
     def test_create_version_nonexistent_template(self, tool_context):
         result = run_tool(
             "create_prompt_version",
@@ -238,7 +280,8 @@ class TestCreatePromptVersionTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_template_id"] is True
 
     def test_version_numbers_increment(self, tool_context, prompt_template):
         """Successive versions should get incrementing version numbers."""

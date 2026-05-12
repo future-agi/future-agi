@@ -1,0 +1,9 @@
+FROM futureagi/backend:local
+
+WORKDIR /app/backend
+
+COPY . .
+
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["bash", "./entrypoint.sh"]

@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from agentic_eval.core.utils.functions import detect_input_type, is_uuid
-from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core.utils.model_config import LiteLlmProvider, ModelConfigs
 from tfc.telemetry import wrap_for_thread
 
 logger = structlog.get_logger(__name__)
@@ -3011,6 +3011,12 @@ class EvaluationRunner:
         Returns:
             tuple[str, str]: A tuple containing (model, provider)
         """
+        model_name = str(model or "").strip()
+        if model_name.startswith("bedrock/") or model_name.startswith(
+            "arn:aws:bedrock:"
+        ):
+            return model_name, LiteLlmProvider.AWS_BEDROCK_ANTHROPIC.value
+
         futureagi_model_configs = {
             ModelChoices.TURING_LARGE.value: ModelConfigs.TURING_LARGE,
             ModelChoices.TURING_SMALL.value: ModelConfigs.TURING_SMALL,

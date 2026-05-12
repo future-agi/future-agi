@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -17,7 +15,10 @@ LARGE_SPAN_THRESHOLD = 3000
 
 
 class ReadTraceSpanInput(PydanticBaseModel):
-    trace_id: UUID = Field(description="The UUID of the trace")
+    trace_id: str = Field(
+        default="",
+        description="Trace UUID or exact trace name.",
+    )
     span_id: str = Field(description="The ID of the span to read")
     exact: bool = Field(
         default=False,
@@ -56,21 +57,20 @@ class ReadTraceSpanTool(BaseTool):
 
     def execute(self, params: ReadTraceSpanInput, context: ToolContext) -> ToolResult:
         from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing._utils import resolve_trace
 
-        # Verify trace access
-        try:
-            Trace.objects.get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
-            return ToolResult.not_found("Trace", str(params.trace_id))
+        trace, unresolved = resolve_trace(
+            params.trace_id,
+            context,
+            title="Trace Required To Read Span",
+        )
+        if unresolved:
+            return unresolved
 
         # Find span in this trace — try by ID, then by exact name, then partial name
         all_spans = list(
             ObservationSpan.objects.filter(
-                trace_id=params.trace_id, deleted=False
+                trace=trace, deleted=False
             ).values_list("id", "name")
         )
         valid_ids = {str(s[0]) for s in all_spans}
@@ -81,29 +81,37 @@ class ReadTraceSpanTool(BaseTool):
         # 1. Exact ID match
         if params.span_id in valid_ids:
             span = ObservationSpan.objects.get(
-                id=params.span_id, trace_id=params.trace_id
+                id=params.span_id, trace=trace
             )
 
         # 2. Exact name match
         if not span and params.span_id in valid_names:
             span = ObservationSpan.objects.get(
-                id=valid_names[params.span_id], trace_id=params.trace_id
+                id=valid_names[params.span_id], trace=trace
             )
 
         # 3. Case-insensitive name match
         if not span:
             for name, sid in valid_names.items():
                 if params.span_id.lower() == name.lower():
-                    span = ObservationSpan.objects.get(id=sid, trace_id=params.trace_id)
+                    span = ObservationSpan.objects.get(id=sid, trace=trace)
                     break
 
-        # 4. Not found — return error with valid IDs so LLM can self-correct
+        # 4. Not found — return valid IDs so Falcon can self-correct
         if not span:
             hint_lines = [f"  `{s[0]}` — {s[1] or '(unnamed)'}" for s in all_spans[:20]]
-            return ToolResult.error(
+            return ToolResult.needs_input(
                 f"Span `{params.span_id}` not found in trace `{params.trace_id}`.\n\n"
                 f"Valid span IDs for this trace:\n" + "\n".join(hint_lines),
-                error_code="NOT_FOUND",
+                data={
+                    "requires_span_id": True,
+                    "trace_id": str(trace.id),
+                    "spans": [
+                        {"id": str(span_id), "name": name}
+                        for span_id, name in all_spans[:20]
+                    ],
+                },
+                missing_fields=["span_id"],
             )
 
         # Build header

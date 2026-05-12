@@ -1,8 +1,15 @@
+import asyncio
+import os
+
 import structlog
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 logger = structlog.get_logger(__name__)
+
+CHANNEL_LAYER_TIMEOUT_SECONDS = float(
+    os.getenv("WEBSOCKET_CHANNEL_LAYER_TIMEOUT_SECONDS", "2")
+)
 
 
 class DataConsumer(AsyncJsonWebsocketConsumer):
@@ -10,13 +17,24 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.current_subscription = None
         self.user = None
+        self._channel_layer_tasks = set()
 
     async def connect(self):
         self.user = self.scope["user"]
 
         try:
-            # Get room group name asynchronously
-            self.room_group_name = await self.get_room_group_name()
+            try:
+                self.room_group_name = await asyncio.wait_for(
+                    self.get_room_group_name(),
+                    timeout=CHANNEL_LAYER_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                self.room_group_name = None
+                logger.warning(
+                    "websocket_room_group_lookup_timeout",
+                    user_id=str(self.user.id) if self.user else None,
+                    timeout_seconds=CHANNEL_LAYER_TIMEOUT_SECONDS,
+                )
 
             if self.room_group_name is None:
                 logger.warning(
@@ -27,8 +45,8 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 await self.close(code=4002)
                 return
 
-            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.accept()
+            self._start_channel_layer_task(self._safe_group_add(self.room_group_name))
 
         except Exception as e:
             logger.error(
@@ -74,14 +92,19 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         # Automatically unsubscribe from previous subscription
         if self.current_subscription:
-            await self.channel_layer.group_discard(
-                self.current_subscription, self.channel_name
-            )
+            await self._safe_group_discard(self.current_subscription)
 
         # Subscribe to new channel
         channel_name = f"uuid_{uuid}"
 
-        await self.channel_layer.group_add(channel_name, self.channel_name)
+        if not await self._safe_group_add(channel_name):
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": "Subscription backend is unavailable. Please retry shortly.",
+                }
+            )
+            return
         self.current_subscription = channel_name
 
         await self.send_json(
@@ -106,7 +129,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         channel_name = f"uuid_{uuid}"
         if channel_name == self.current_subscription:
-            await self.channel_layer.group_discard(channel_name, self.channel_name)
+            await self._safe_group_discard(channel_name)
             self.current_subscription = None
 
             await self.send_json(
@@ -133,7 +156,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if target_uuid:
             channel_name = f"uuid_{target_uuid}"
             if channel_name == self.current_subscription:
-                await self.channel_layer.group_send(
+                if not await self._safe_group_send(
                     channel_name,
                     {
                         "type": "send_data",
@@ -143,7 +166,13 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                             "uuid": target_uuid,
                         },
                     },
-                )
+                ):
+                    await self.send_json(
+                        {
+                            "type": "error",
+                            "message": "Message backend is unavailable. Please retry shortly.",
+                        }
+                    )
             else:
                 logger.error(
                     f"websocket: User {self.user.id} attempted to send message to {target_uuid} without being subscribed"
@@ -157,17 +186,17 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 )
 
     async def disconnect(self, close_code):
+        for task in list(self._channel_layer_tasks):
+            task.cancel()
+        self._channel_layer_tasks.clear()
+
         # Cleanup base group
         if hasattr(self, "room_group_name"):
-            await self.channel_layer.group_discard(
-                self.room_group_name, self.channel_name
-            )
+            await self._safe_group_discard(self.room_group_name)
 
         # Cleanup current subscription
         if self.current_subscription:
-            await self.channel_layer.group_discard(
-                self.current_subscription, self.channel_name
-            )
+            await self._safe_group_discard(self.current_subscription)
 
     async def send_data(self, event):
         """
@@ -183,6 +212,76 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 logger.exception("websocket_send_failed")
         else:
             pass
+
+    def _start_channel_layer_task(self, awaitable):
+        task = asyncio.create_task(awaitable)
+        self._channel_layer_tasks.add(task)
+
+        def _discard_task(done_task):
+            self._channel_layer_tasks.discard(done_task)
+
+        task.add_done_callback(_discard_task)
+        return task
+
+    async def _safe_channel_layer_call(self, operation, group_name, awaitable):
+        try:
+            await asyncio.wait_for(
+                awaitable,
+                timeout=CHANNEL_LAYER_TIMEOUT_SECONDS,
+            )
+            return True
+        except asyncio.CancelledError:
+            logger.debug(
+                "websocket_channel_layer_cancelled",
+                operation=operation,
+                group_name=group_name,
+                user_id=str(self.user.id) if self.user else None,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "websocket_channel_layer_timeout",
+                operation=operation,
+                group_name=group_name,
+                timeout_seconds=CHANNEL_LAYER_TIMEOUT_SECONDS,
+                user_id=str(self.user.id) if self.user else None,
+            )
+        except Exception as e:
+            logger.warning(
+                "websocket_channel_layer_error",
+                operation=operation,
+                group_name=group_name,
+                reason=str(e),
+                error_type=type(e).__name__,
+                user_id=str(self.user.id) if self.user else None,
+            )
+        return False
+
+    async def _safe_group_add(self, group_name):
+        if not group_name:
+            return False
+        return await self._safe_channel_layer_call(
+            "group_add",
+            group_name,
+            self.channel_layer.group_add(group_name, self.channel_name),
+        )
+
+    async def _safe_group_discard(self, group_name):
+        if not group_name:
+            return False
+        return await self._safe_channel_layer_call(
+            "group_discard",
+            group_name,
+            self.channel_layer.group_discard(group_name, self.channel_name),
+        )
+
+    async def _safe_group_send(self, group_name, message):
+        if not group_name:
+            return False
+        return await self._safe_channel_layer_call(
+            "group_send",
+            group_name,
+            self.channel_layer.group_send(group_name, message),
+        )
 
     @database_sync_to_async
     def get_organization_id(self):

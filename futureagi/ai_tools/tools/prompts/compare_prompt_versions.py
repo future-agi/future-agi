@@ -1,17 +1,28 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section, truncate
 from ai_tools.registry import register_tool
+from ai_tools.tools.prompts._utils import (
+    resolve_prompt_template_for_tool,
+    resolve_prompt_version,
+)
 
 
 class ComparePromptVersionsInput(PydanticBaseModel):
-    template_id: UUID = Field(description="The UUID of the prompt template")
-    version_id_a: UUID = Field(description="First version UUID to compare")
-    version_id_b: UUID = Field(description="Second version UUID to compare")
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. Omit to list candidates.",
+    )
+    version_id_a: str = Field(
+        default="",
+        description="First version UUID or version name to compare.",
+    )
+    version_id_b: str = Field(
+        default="",
+        description="Second version UUID or version name to compare.",
+    )
 
 
 @register_tool
@@ -28,27 +39,29 @@ class ComparePromptVersionsTool(BaseTool):
     def execute(
         self, params: ComparePromptVersionsInput, context: ToolContext
     ) -> ToolResult:
+        template, template_result = resolve_prompt_template_for_tool(
+            params.template_id,
+            context,
+            "Prompt Template Required",
+        )
+        if template_result:
+            return template_result
 
-        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+        ver_a, version_result = resolve_prompt_version(
+            template,
+            params.version_id_a,
+            "First Prompt Version Required",
+        )
+        if version_result:
+            return version_result
 
-        try:
-            template = PromptTemplate.objects.get(id=params.template_id)
-        except PromptTemplate.DoesNotExist:
-            return ToolResult.not_found("Prompt Template", str(params.template_id))
-
-        try:
-            ver_a = PromptVersion.objects.get(
-                id=params.version_id_a, original_template=template
-            )
-        except PromptVersion.DoesNotExist:
-            return ToolResult.not_found("Version A", str(params.version_id_a))
-
-        try:
-            ver_b = PromptVersion.objects.get(
-                id=params.version_id_b, original_template=template
-            )
-        except PromptVersion.DoesNotExist:
-            return ToolResult.not_found("Version B", str(params.version_id_b))
+        ver_b, version_result = resolve_prompt_version(
+            template,
+            params.version_id_b,
+            "Second Prompt Version Required",
+        )
+        if version_result:
+            return version_result
 
         def extract_config(ver):
             """Extract key info from a version's prompt config."""

@@ -56,32 +56,47 @@ export default function FalconAIFullPage() {
     loadSkillsAndConnectors();
   }, [loadSkillsAndConnectors]);
 
-  // Sync URL ↔ store (one-way: URL wins on mount, store wins after)
-  const initializedRef = useRef(false);
+  const loadedConversationRef = useRef(null);
 
-  // On mount: if URL has conversationId, load it into store
+  // Keep store in sync with browser navigation/back-forward between chats.
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-
-    if (urlConversationId) {
-      setCurrentConversation(urlConversationId);
-      getConversation(urlConversationId)
-        .then((data) => {
-          const conv = data.result || data;
-          // Normalize camelCase API response to snake_case for components
-          const messages = (conv.messages || []).map((m) => ({
-            ...m,
-            tool_calls: m.tool_calls || [],
-            completion_card: m.completion_card || null,
-            created_at: m.created_at,
-          }));
-          useFalconStore.getState().setMessages(messages);
-        })
-        .catch(() => {});
+    if (!urlConversationId) {
+      loadedConversationRef.current = null;
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    if (loadedConversationRef.current === urlConversationId) {
+      return;
+    }
+
+    loadedConversationRef.current = urlConversationId;
+    if (currentConversationId !== urlConversationId) {
+      setCurrentConversation(urlConversationId);
+    }
+    getConversation(urlConversationId)
+      .then((data) => {
+        if (loadedConversationRef.current !== urlConversationId) return;
+        const conv = data.result || data;
+        // Normalize camelCase API response to snake_case for components
+        const loadedMessages = (conv.messages || []).map((m) => ({
+          ...m,
+          tool_calls: m.tool_calls || [],
+          completion_card: m.completion_card || null,
+          created_at: m.created_at,
+        }));
+        const store = useFalconStore.getState();
+        if (
+          store.currentConversationId === urlConversationId &&
+          store.isStreaming &&
+          store.messages.length > 0 &&
+          loadedMessages.length === 0
+        ) {
+          return;
+        }
+        store.setMessages(loadedMessages);
+      })
+      .catch(() => {});
+  }, [urlConversationId, currentConversationId, setCurrentConversation]);
 
   const handleSend = useCallback(
     async (text) => {

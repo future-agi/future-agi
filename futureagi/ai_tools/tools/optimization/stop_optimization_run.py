@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -12,8 +10,9 @@ from ai_tools.registry import register_tool
 
 
 class StopOptimizationRunInput(PydanticBaseModel):
-    optimization_id: UUID = Field(
-        description="The UUID of the optimization run to stop"
+    optimization_id: str = Field(
+        default="",
+        description="The UUID or exact name of the optimization run to stop. Omit to list candidates.",
     )
 
 
@@ -32,18 +31,22 @@ class StopOptimizationRunTool(BaseTool):
         self, params: StopOptimizationRunInput, context: ToolContext
     ) -> ToolResult:
 
-        from model_hub.models.optimize_dataset import OptimizeDataset
+        from ai_tools.tools.optimization._utils import resolve_optimization_run
 
-        try:
-            run = OptimizeDataset.objects.get(id=params.optimization_id)
-        except OptimizeDataset.DoesNotExist:
-            return ToolResult.not_found("Optimization Run", str(params.optimization_id))
+        run, unresolved = resolve_optimization_run(
+            params.optimization_id,
+            context,
+            title="Optimization Run Required To Stop",
+        )
+        if unresolved:
+            return unresolved
 
         if run.status not in ("running", "pending"):
-            return ToolResult.error(
+            return ToolResult.blocked(
                 f"Cannot stop optimization with status '{run.status}'. "
                 "Only running or pending runs can be stopped.",
-                error_code="VALIDATION_ERROR",
+                data={"optimization_id": str(run.id), "status": run.status},
+                reason="not_running",
             )
 
         # Try Temporal cancellation

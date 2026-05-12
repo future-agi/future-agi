@@ -1,4 +1,4 @@
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -9,16 +9,25 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from ai_tools.tools.annotations._utils import (
+    annotation_creation_requirements_result,
+    resolve_dataset,
+)
+from ai_tools.tools.annotation_queues._utils import resolve_labels
 
 
 class CreateAnnotationInput(PydanticBaseModel):
-    name: str = Field(
+    name: Optional[str] = Field(
+        default=None,
         description="Name for the annotation task", min_length=1, max_length=255
     )
-    dataset_id: UUID = Field(description="The UUID of the dataset to annotate")
-    label_ids: list[UUID] = Field(
-        description="List of annotation label UUIDs to use in this task",
-        min_length=1,
+    dataset_id: Optional[str] = Field(
+        default=None,
+        description="The UUID or exact name of the dataset to annotate",
+    )
+    label_ids: Optional[list[str]] = Field(
+        default=None,
+        description="Annotation label UUIDs or exact label names to use in this task",
     )
     responses: int = Field(
         default=1,
@@ -43,35 +52,42 @@ class CreateAnnotationTool(BaseTool):
         self, params: CreateAnnotationInput, context: ToolContext
     ) -> ToolResult:
 
-        from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
-        from model_hub.models.develop_dataset import Dataset
+        from model_hub.models.develop_annotations import Annotations
         from model_hub.services.annotation_service import process_annotation_columns
 
-        # Validate dataset
-        try:
-            dataset = Dataset.objects.get(id=params.dataset_id)
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
-
-        # Validate labels (scoped to organization)
-        labels = list(
-            AnnotationsLabels.objects.filter(
-                id__in=params.label_ids,
-                organization=context.organization,
+        if not params.name or not params.dataset_id or not params.label_ids:
+            return annotation_creation_requirements_result(
+                context,
+                detail=(
+                    "`create_annotation` can create the task after these fields are "
+                    "provided."
+                ),
             )
+
+        dataset, unresolved_dataset = resolve_dataset(
+            params.dataset_id,
+            context,
+            title="Dataset Required For Annotation",
         )
-        found_ids = set(str(l.id) for l in labels)
-        missing = [str(lid) for lid in params.label_ids if str(lid) not in found_ids]
-        if missing:
-            return ToolResult.error(
-                f"Label(s) not found: {', '.join(missing)}. "
-                "Use list_annotation_labels to see available labels.",
-                error_code="NOT_FOUND",
+        if unresolved_dataset:
+            return unresolved_dataset
+
+        labels, missing = resolve_labels(params.label_ids, context)
+        if missing or not labels:
+            detail = (
+                f"Could not resolve these label refs: `{', '.join(missing)}`."
+                if missing
+                else "At least one label is required."
+            )
+            return annotation_creation_requirements_result(
+                context,
+                "Annotation Labels Required",
+                detail,
             )
 
         # Create annotation task
         annotation = Annotations(
-            name=params.name,
+            name=params.name.strip(),
             dataset=dataset,
             responses=params.responses,
             organization=context.organization,

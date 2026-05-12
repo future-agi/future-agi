@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -9,28 +9,32 @@ from ai_tools.registry import register_tool
 
 
 class CreatePromptVersionInput(PydanticBaseModel):
-    template_id: str = Field(description="Name or UUID of the prompt template")
-    prompt_config: list[dict] = Field(
+    template_id: str = Field(
+        default="",
+        description="Name or UUID of the prompt template. If omitted, candidates are returned.",
+    )
+    prompt_config: list[dict] | dict | None = Field(
+        default=None,
         description=(
             "Prompt configuration: list of config objects, each with 'messages' "
             "(list of {role, content}), 'model' (string), and optional 'configuration' "
             "(temperature, max_tokens, etc.)"
         ),
     )
-    model: str = Field(
-        default="gpt-4o",
+    model: str | list[str] | None = Field(
+        default=None,
         description="Model to use for this prompt version (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
     )
-    commit_message: Optional[str] = Field(
+    commit_message: str | None = Field(
         default=None, description="Commit message for this version"
     )
     set_default: bool = Field(
         default=False, description="Set this version as the default"
     )
-    metadata: Optional[dict] = Field(
+    metadata: dict | None = Field(
         default=None, description="Optional metadata to attach to this version"
     )
-    variable_values: Optional[dict[str, list[str]]] = Field(
+    variable_values: dict[str, Any] | None = Field(
         default=None,
         description=(
             "Predefined values for template variables. Maps variable names to lists of "
@@ -55,20 +59,47 @@ class CreatePromptVersionTool(BaseTool):
     ) -> ToolResult:
 
         from ai_tools.resolvers import resolve_prompt_template
+        from ai_tools.tools.prompts._utils import candidate_prompt_templates_result
         from model_hub.services.prompt_service import (
             ServiceError,
             create_prompt_version,
         )
+
+        if not params.template_id:
+            return candidate_prompt_templates_result(context)
 
         # Resolve template by name or UUID
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace
         )
         if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+            return candidate_prompt_templates_result(
+                context,
+                "Prompt Template Not Found",
+                f"{err} Use one of these template IDs or exact names.",
+            )
+
+        if not params.prompt_config:
+            return ToolResult(
+                content=section(
+                    "Prompt Version Requires Configuration",
+                    (
+                        "Provide `prompt_config` with at least one message config "
+                        "before creating a prompt version."
+                    ),
+                ),
+                data={
+                    "requires_prompt_config": True,
+                    "template_id": str(template_obj.id),
+                },
+            )
+
+        model_name = _normalize_model(params.model)
 
         # Auto-wrap flat message arrays into proper config format.
         prompt_config = params.prompt_config
+        if isinstance(prompt_config, dict):
+            prompt_config = [prompt_config]
         if prompt_config and isinstance(prompt_config, list) and len(prompt_config) > 0:
             first = prompt_config[0]
             if isinstance(first, dict) and "role" in first and "messages" not in first:
@@ -77,7 +108,7 @@ class CreatePromptVersionTool(BaseTool):
                         "messages": prompt_config,
                         "placeholders": [],
                         "configuration": {
-                            "model": params.model,
+                            "model": model_name,
                             "temperature": 0.7,
                             "max_tokens": 1000,
                             "top_p": 1,
@@ -98,9 +129,9 @@ class CreatePromptVersionTool(BaseTool):
                     cfg["configuration"] = {"model": cfg.pop("model")}
                 # Set model from params if not present in configuration
                 if "configuration" in cfg:
-                    cfg["configuration"].setdefault("model", params.model)
+                    cfg["configuration"].setdefault("model", model_name)
                 else:
-                    cfg["configuration"] = {"model": params.model}
+                    cfg["configuration"] = {"model": model_name}
                 # Ensure placeholders key exists
                 cfg.setdefault("placeholders", [])
                 for msg in cfg.get("messages", []):
@@ -114,7 +145,7 @@ class CreatePromptVersionTool(BaseTool):
             commit_message=params.commit_message,
             set_default=params.set_default,
             metadata=params.metadata,
-            variable_values=params.variable_values,
+            variable_values=_normalize_variable_values(params.variable_values),
         )
 
         if isinstance(result, ServiceError):
@@ -149,8 +180,8 @@ class CreatePromptVersionTool(BaseTool):
         content = section("Prompt Version Created", info)
 
         # Show preview
-        if params.prompt_config and isinstance(params.prompt_config, list):
-            cfg = params.prompt_config[0]
+        if prompt_config and isinstance(prompt_config, list):
+            cfg = prompt_config[0]
             config_obj = cfg.get("configuration", {})
             model_name = config_obj.get("model", cfg.get("model", "—"))
             messages = cfg.get("messages", [])
@@ -183,3 +214,31 @@ class CreatePromptVersionTool(BaseTool):
                 "variable_names": variable_names,
             },
         )
+
+
+def _normalize_model(model: str | list[str] | None) -> str:
+    if isinstance(model, list):
+        for item in model:
+            if item:
+                return str(item)
+    if model:
+        return str(model)
+    import os
+
+    return os.environ.get("FALCON_AI_MODEL") or "gpt-4o"
+
+
+def _normalize_variable_values(
+    values: dict[str, Any] | None,
+) -> dict[str, list[str]] | None:
+    if not values:
+        return values
+    normalized: dict[str, list[str]] = {}
+    for key, value in values.items():
+        if value is None:
+            normalized[key] = []
+        elif isinstance(value, list):
+            normalized[key] = [str(item) for item in value]
+        else:
+            normalized[key] = [str(value)]
+    return normalized
