@@ -923,6 +923,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Saved-view columnState queued before the active sub-tab's primary grid
   // mounted. Drained by onGridReady on the primary grid.
   const pendingColumnStateRef = useRef(null);
+  // Saved-view column visibility, parsed from columnState's `hide` flags.
+  // applyColumnState alone can't persist hide across columnDefs rebuilds —
+  // getTraceListColumnDefs sets `hide: !col?.isVisible` explicitly, so AG
+  // Grid's columnDef value overrides any applied state on the next merge.
+  // To make hide stick, we update col.isVisible in the columns state so
+  // the next columnDefs render reflects the saved-view intent.
+  const pendingHideMapRef = useRef(null);
 
   const {
     setHeaderConfig,
@@ -1719,18 +1726,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
       pendingColumnStateRef.current = null;
+      pendingHideMapRef.current = null;
       primaryTracePendingRef.current = [];
       compareTracePendingRef.current = [];
       primarySpansPendingRef.current = [];
       compareSpansPendingRef.current = [];
       // Strip saved-view custom cols from all grid slots so they don't
-      // linger on the default tab.
+      // linger on the default tab. Also reset isVisible to true for the
+      // remaining standard cols — the saved view we're leaving may have
+      // hidden some, and TraceGrid's merge now preserves isVisible across
+      // fetches (so it won't naturally reset to the backend default).
       setColumns((prev) => {
         const next = {};
         Object.keys(prev).forEach((ck) => {
-          next[ck] = (prev[ck] || []).filter(
-            (c) => c.groupBy !== "Custom Columns",
-          );
+          next[ck] = (prev[ck] || [])
+            .filter((c) => c.groupBy !== "Custom Columns")
+            .map((c) => (c.isVisible ? c : { ...c, isVisible: true }));
         });
         return next;
       });
@@ -1906,7 +1917,49 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     // Apply column state (widths/order/sort) to the active sub-tab's primary
     // grid. If the grid isn't mounted yet, queue for the onGridReady callback.
+    //
+    // Hide flags need a parallel path: applyColumnState's `hide` doesn't
+    // survive the next columnDefs rebuild (getTraceListColumnDefs sets
+    // `hide: !col?.isVisible` explicitly, which wins over applied state).
+    // Build a colId → hide map and stash it; the `[columns]` drain effect
+    // below updates each col's `isVisible` to match, so the next render
+    // produces columnDefs that already reflect the saved-view's hide
+    // intent. applyColumnState still handles widths/order/sort, which
+    // colDefs don't set explicitly and therefore can persist.
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      const hideMap = {};
+      display.columnState.forEach((entry) => {
+        if (entry && entry.colId) hideMap[entry.colId] = !!entry.hide;
+      });
+      // Apply hideMap immediately to all slots so saved-view hide intent
+      // lands in columnDefs even when TraceGrid's merge bails out (e.g.
+      // switching between saved views with identical backend cols, which
+      // makes backendChanged=false → no setColumns call → no drain).
+      setColumns((prev) => {
+        let anyChanged = false;
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          let slotChanged = false;
+          const updated = (prev[ck] || []).map((col) => {
+            if (col && col.id in hideMap) {
+              const desiredVisible = !hideMap[col.id];
+              if (col.isVisible !== desiredVisible) {
+                slotChanged = true;
+                return { ...col, isVisible: desiredVisible };
+              }
+            }
+            return col;
+          });
+          next[ck] = slotChanged ? updated : prev[ck];
+          if (slotChanged) anyChanged = true;
+        });
+        return anyChanged ? next : prev;
+      });
+      // Also queue for cols that arrive later via TraceGrid's merge (e.g.
+      // first-load before backend has responded). The [columns] drain
+      // effect re-applies hideMap once cols land.
+      pendingHideMapRef.current = hideMap;
+
       const activeApi =
         selectedTab === "trace"
           ? primaryTraceGridRef.current?.api
@@ -2020,7 +2073,38 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // unknown cols). This effect catches the case: once customs land in
   // `columns`, re-apply the queued state so widths/order/sort for custom
   // colIds finally stick. Mirrors the drain effect in Sessions-view.
+  //
+  // Also drains the queued hide map by writing the saved-view's hide
+  // intent into each col's `isVisible`. The next columnDefs render then
+  // emits the correct `hide` for AG Grid — without this, the colDef's
+  // explicit `hide: !col?.isVisible` (default-true `isVisible`) wins
+  // over any state previously applied via applyColumnState and the
+  // hidden cols become visible on the very next merge.
   useEffect(() => {
+    if (pendingHideMapRef.current) {
+      const hideMap = pendingHideMapRef.current;
+      setColumns((prev) => {
+        let anyChanged = false;
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          let slotChanged = false;
+          const updated = (prev[ck] || []).map((col) => {
+            if (col && col.id in hideMap) {
+              const desiredVisible = !hideMap[col.id];
+              if (col.isVisible !== desiredVisible) {
+                slotChanged = true;
+                return { ...col, isVisible: desiredVisible };
+              }
+            }
+            return col;
+          });
+          next[ck] = slotChanged ? updated : prev[ck];
+          if (slotChanged) anyChanged = true;
+        });
+        return anyChanged ? next : prev;
+      });
+      pendingHideMapRef.current = null;
+    }
     if (!pendingColumnStateRef.current) return;
     const api =
       selectedTab === "trace"

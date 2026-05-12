@@ -229,17 +229,38 @@ const TraceGrid = React.forwardRef(
                 // where the backend returns the same standard cols would
                 // skip the merge — pending custom cols would stay in the
                 // ref forever.
-                const backendChanged = !_.isEqual(newCols, currentNonCustom);
+                //
+                // backendChanged is computed ignoring `isVisible` so that a
+                // saved-view hide-map applied locally (which makes
+                // currentNonCustom diverge from newCols on isVisible only)
+                // doesn't keep retriggering the merge and clobbering the
+                // local hide state on every page fetch.
+                const stripVis = (cols) =>
+                  (cols || []).map(({ isVisible, ...rest }) => rest);
+                const backendChanged = !_.isEqual(
+                  stripVis(newCols),
+                  stripVis(currentNonCustom),
+                );
                 const hasPending = dedupedPending.length > 0;
                 if (backendChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
+                  // When backendChanged, merge newCols with existing isVisible
+                  // so saved-view hide intent (written to col.isVisible by the
+                  // [columns] drain in LLMTracingView) survives across fetches.
                   // When only pending fired, reuse currentNonCustom to keep
                   // AG Grid's column identity stable (avoid reorder churn).
                   const finalNonCustom = backendChanged
-                    ? newCols
+                    ? newCols.map((nc) => {
+                        const existing = currentNonCustom.find(
+                          (c) => c.id === nc.id,
+                        );
+                        return existing
+                          ? { ...nc, isVisible: existing.isVisible }
+                          : nc;
+                      })
                     : currentNonCustom;
                   setColumns(
                     allCustom.length > 0
