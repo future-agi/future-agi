@@ -101,7 +101,7 @@ services:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
     volumes:
       - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
-      - ./${GOOGLE_APPLICATION_CREDENTIALS}:/app/Vertex_AI_Creds.json
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
     env_file:
       - .env
     environment:
