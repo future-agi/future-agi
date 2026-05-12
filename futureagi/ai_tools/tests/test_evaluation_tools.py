@@ -125,7 +125,8 @@ class TestGetEvaluationTool:
             "get_evaluation", {"evaluation_id": str(uuid.uuid4())}, tool_context
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_evaluation_id"] is True
         assert "Not Found" in result.content
 
     def test_get_shows_metrics(self, tool_context, evaluation):
@@ -140,7 +141,48 @@ class TestGetEvaluationTool:
             "get_evaluation", {"evaluation_id": "not-a-uuid"}, tool_context
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_evaluation_id"] is True
+
+
+class TestSubmitEvalFeedbackTool:
+    def test_missing_template_returns_candidates(self, tool_context, eval_template):
+        result = run_tool("submit_eval_feedback", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_eval_template_id"] is True
+        assert str(eval_template.id) in result.content
+
+    def test_missing_feedback_fields_returns_needs_input(
+        self, tool_context, eval_template
+    ):
+        result = run_tool(
+            "submit_eval_feedback",
+            {"eval_template_id": eval_template.name},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_source_id"] is True
+        assert result.data["requires_feedback_value"] is True
+
+    def test_submit_feedback(self, tool_context, eval_template):
+        result = run_tool(
+            "submit_eval_feedback",
+            {
+                "eval_template_id": str(eval_template.id),
+                "source_id": "falcon_feedback_source",
+                "feedback_value": "passed",
+                "source": "eval_playground",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["eval_template_id"] == str(eval_template.id)
+        assert result.data["value"] == "passed"
 
 
 class TestListEvalTemplates:
@@ -176,7 +218,8 @@ class TestGetEvalTemplate:
         result = run_tool(
             "get_eval_template", {"eval_template_id": str(uuid.uuid4())}, tool_context
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
 
 
 class TestDuplicateEvalTemplateTool:
@@ -262,7 +305,7 @@ class TestCreateEvalTemplateTool:
         assert "criteria-eval" in result.content
 
     def test_create_without_variable_in_criteria(self, tool_context):
-        """Creating eval template without template variable in criteria should fail."""
+        """Falcon repairs criteria without variables by adding safe default variables."""
         result = run_tool(
             "create_eval_template",
             {
@@ -273,11 +316,12 @@ class TestCreateEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "template variable" in result.content.lower()
+        assert not result.is_error
+        assert "{{input}}" in result.data["criteria"]
+        assert "{{output}}" in result.data["criteria"]
 
     def test_create_without_criteria(self, tool_context):
-        """Creating eval template without criteria should fail for non-Function types."""
+        """Falcon supplies default criteria when criteria is omitted."""
         result = run_tool(
             "create_eval_template",
             {
@@ -287,8 +331,9 @@ class TestCreateEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "template variable" in result.content.lower()
+        assert not result.is_error
+        assert "{{input}}" in result.data["criteria"]
+        assert "{{output}}" in result.data["criteria"]
 
     def test_create_duplicate_user_name(self, tool_context):
         run_tool(
@@ -310,8 +355,9 @@ class TestCreateEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert result.data["already_exists"] is True
+        assert "already exists" in result.content.lower()
 
     def test_create_duplicate_system_name(self, tool_context, eval_template):
         """Cannot create user template with same name as system template."""
@@ -393,7 +439,8 @@ class TestDeleteEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
 
     def test_delete_nonexistent(self, tool_context):
         result = run_tool(
@@ -402,12 +449,16 @@ class TestDeleteEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
 
     def test_delete_already_deleted(self, tool_context, user_eval_template):
         run_tool(
             "delete_eval_template",
-            {"eval_template_id": str(user_eval_template.id)},
+            {
+                "eval_template_id": str(user_eval_template.id),
+                "confirm_delete": True,
+            },
             tool_context,
         )
         result = run_tool(
@@ -416,7 +467,8 @@ class TestDeleteEvalTemplateTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_eval_template_id"] is True
 
 
 class TestCreateEvalGroupTool:

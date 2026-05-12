@@ -4,7 +4,12 @@ import uuid
 import pytest
 
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_annotation_label, make_project, make_trace
+from ai_tools.tests.fixtures import (
+    make_annotation_label,
+    make_eval_template,
+    make_project,
+    make_trace,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -95,6 +100,15 @@ class TestSearchTracesTool:
             "search_traces", {"project_id": str(uuid.uuid4())}, tool_context
         )
         assert result.data["total"] == 0
+
+    def test_search_filter_by_project_name(self, tool_context, trace, project):
+        result = run_tool(
+            "search_traces", {"project_id": project.name}, tool_context
+        )
+
+        assert not result.is_error
+        assert result.data["total"] == 1
+        assert result.data["traces"][0]["project_id"] == str(project.id)
 
     def test_search_filter_by_error(self, tool_context, trace):
         result = run_tool("search_traces", {"has_error": False}, tool_context)
@@ -519,6 +533,73 @@ class TestDeleteProjectTool:
         assert not result.is_error
         assert result.status == "needs_input"
         assert result.data["requires_project_id"] is True
+
+
+class TestCreateEvalTaskTool:
+    def test_missing_project_returns_candidates(self, tool_context, project):
+        result = run_tool("create_eval_task", {}, tool_context)
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_project_id"] is True
+        assert any(item["id"] == str(project.id) for item in result.data["projects"])
+
+    def test_ambiguous_eval_configs_returns_candidates(self, tool_context, project):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        template_a = make_eval_template(tool_context, name="Trace Quality A")
+        template_b = make_eval_template(tool_context, name="Trace Quality B")
+        config_a = CustomEvalConfig.objects.create(
+            project=project,
+            eval_template=template_a,
+            name="quality-a",
+        )
+        config_b = CustomEvalConfig.objects.create(
+            project=project,
+            eval_template=template_b,
+            name="quality-b",
+        )
+
+        result = run_tool(
+            "create_eval_task",
+            {"project_id": str(project.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_eval_config_ids"] is True
+        returned_ids = {item["id"] for item in result.data["eval_configs"]}
+        assert {str(config_a.id), str(config_b.id)} <= returned_ids
+
+    def test_create_with_project_and_config_names(self, tool_context, project):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.eval_task import EvalTask
+
+        template = make_eval_template(tool_context, name="Trace Correctness")
+        config = CustomEvalConfig.objects.create(
+            project=project,
+            eval_template=template,
+            name="correctness-config",
+        )
+
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": project.name,
+                "eval_config_ids": [config.name],
+                "run_type": "historical",
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert "Eval Task Created" in result.content
+        assert result.data["project_id"] == str(project.id)
+        assert result.data["eval_config_ids"] == [str(config.id)]
+        task = EvalTask.objects.get(id=result.data["id"])
+        assert task.name.startswith(f"{project.name} eval task")
+        assert task.evals.filter(id=config.id).exists()
 
 
 class TestDeleteEvalTasksTool:

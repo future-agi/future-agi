@@ -111,7 +111,7 @@ class TestAddRunPromptColumnTool:
         assert result.is_error
         assert "not found" in result.content.lower()
 
-    def test_empty_name_rejected(self, tool_context, writable_dataset):
+    def test_empty_name_generates_safe_name(self, tool_context, writable_dataset):
         result = run_tool(
             "add_run_prompt_column",
             {
@@ -122,7 +122,8 @@ class TestAddRunPromptColumnTool:
             },
             tool_context,
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["name"].startswith("falcon_run_prompt_")
 
     def test_missing_column_reference(self, tool_context, writable_dataset):
         result = run_tool(
@@ -166,8 +167,8 @@ class TestAddRunPromptColumnTool:
             },
             tool_context,
         )
-        assert result.is_error
-        assert "already exists" in result.content
+        assert not result.is_error
+        assert result.data["name"].startswith("input_")
 
     def test_first_message_not_assistant(self, tool_context, writable_dataset):
         result = run_tool(
@@ -490,7 +491,36 @@ class TestGetRunPromptColumnConfigTool:
             {"column_id": str(uuid.uuid4())},
             tool_context,
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_column_id"] is True
+
+    def test_invalid_column_id_returns_candidates(
+        self, tool_context, writable_dataset, mock_celery
+    ):
+        create_result = run_tool(
+            "add_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "name": "Candidate Config",
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "Test {{input}}"}],
+                "run": False,
+            },
+            tool_context,
+        )
+        assert not create_result.is_error
+
+        result = run_tool(
+            "get_run_prompt_column_config",
+            {"column_id": "not-a-column-id"},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_column_id"] is True
+        assert create_result.data["column_id"] in result.content
 
     def test_org_isolation(
         self, tool_context, other_org_context, writable_dataset, mock_celery
@@ -513,7 +543,8 @@ class TestGetRunPromptColumnConfigTool:
             {"column_id": column_id},
             other_org_context,
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_column_id"] is True
 
 
 # ===================================================================
@@ -597,7 +628,29 @@ class TestEditRunPromptColumnTool:
             },
             tool_context,
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_column_id"] is True
+
+    def test_edit_missing_column_returns_candidates(
+        self, tool_context, writable_dataset, mock_celery
+    ):
+        create_result = run_tool(
+            "add_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "name": "Candidate",
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "test"}],
+                "run": False,
+            },
+            tool_context,
+        )
+
+        result = run_tool("edit_run_prompt_column", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_column_id"] is True
+        assert create_result.data["column_id"] in result.content
 
     def test_edit_non_run_prompt_column(self, tool_context, writable_dataset):
         """Editing a regular column (not run-prompt source) should fail."""
@@ -641,4 +694,5 @@ class TestEditRunPromptColumnTool:
             },
             other_org_context,
         )
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_column_id"] is True

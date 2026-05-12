@@ -36,7 +36,10 @@ class GetExperimentResultsTool(BaseTool):
         self, params: GetExperimentResultsInput, context: ToolContext
     ) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_experiment
+        from ai_tools.tools.experiments._utils import (
+            candidate_experiments_result,
+            resolve_experiment_for_tool,
+        )
         from model_hub.models.experiments import (
             ExperimentComparison,
             ExperimentDatasetTable,
@@ -44,56 +47,39 @@ class GetExperimentResultsTool(BaseTool):
         )
 
         if not params.experiment_id:
-            experiments = (
-                ExperimentsTable.objects.select_related("dataset")
-                .filter(dataset__organization=context.organization)
-                .order_by("-created_at")[:10]
-            )
-            rows = [
-                [
-                    f"`{experiment.id}`",
-                    experiment.name,
-                    experiment.status or "—",
-                    format_datetime(experiment.created_at),
-                ]
-                for experiment in experiments
-            ]
-            if not rows:
-                return ToolResult(
-                    content=section("Experiment Candidates", "No experiments found."),
-                    data={"experiments": []},
-                )
-            return ToolResult(
-                content=section(
-                    "Experiment Candidates",
-                    markdown_table(["ID", "Name", "Status", "Created"], rows),
-                ),
-                data={
-                    "experiments": [
-                        {"id": str(experiment.id), "name": experiment.name}
-                        for experiment in experiments
-                    ]
-                },
+            return candidate_experiments_result(
+                context,
+                "Experiment Required For Results",
             )
 
-        experiment_obj, err = resolve_experiment(
-            params.experiment_id, context.organization
+        experiment_obj, unresolved = resolve_experiment_for_tool(
+            params.experiment_id,
+            context,
+            title="Experiment Required For Results",
         )
-        if err:
-            return ToolResult.error(err, error_code="NOT_FOUND")
+        if unresolved:
+            return unresolved
 
         try:
             experiment = ExperimentsTable.objects.select_related("dataset").get(
                 id=experiment_obj.id
             )
         except ExperimentsTable.DoesNotExist:
-            return ToolResult.not_found("Experiment", str(experiment_obj.id))
+            return candidate_experiments_result(
+                context,
+                "Experiment Not Found",
+                f"Experiment `{experiment_obj.id}` was not found. Use one of these experiments.",
+            )
 
         if (
             experiment.dataset
             and experiment.dataset.organization_id != context.organization.id
         ):
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
+            return candidate_experiments_result(
+                context,
+                "Experiment Not Found",
+                f"Experiment `{params.experiment_id}` is not available in this workspace.",
+            )
 
         dataset_name = experiment.dataset.name if experiment.dataset else "—"
 

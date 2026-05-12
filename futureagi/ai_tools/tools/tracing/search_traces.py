@@ -17,7 +17,10 @@ from ai_tools.registry import register_tool
 class SearchTracesInput(PydanticBaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    project_id: UUID | None = Field(default=None, description="Filter by project ID")
+    project_id: str | None = Field(
+        default=None,
+        description="Filter by project UUID or exact/fuzzy project name",
+    )
     name: str | None = Field(
         default=None, description="Filter by trace name (case-insensitive contains)"
     )
@@ -57,8 +60,23 @@ class SearchTracesTool(BaseTool):
                 | Q(project__workspace__isnull=True)
             )
 
-        if params.project_id:
-            qs = qs.filter(project_id=params.project_id)
+        resolved_project_id = None
+        project_ref = str(params.project_id or "").strip()
+        if project_ref:
+            try:
+                resolved_project_id = UUID(project_ref)
+            except (TypeError, ValueError):
+                from ai_tools.tools.tracing._utils import resolve_project
+
+                project, unresolved = resolve_project(
+                    project_ref,
+                    context,
+                    title="Project Required For Trace Search",
+                )
+                if unresolved:
+                    return unresolved
+                resolved_project_id = project.id
+            qs = qs.filter(project_id=resolved_project_id)
         if params.name:
             qs = qs.filter(name__icontains=params.name)
         if params.has_error is True:
@@ -109,8 +127,8 @@ class SearchTracesTool(BaseTool):
         )
 
         filters_desc = []
-        if params.project_id:
-            filters_desc.append(f"project={params.project_id}")
+        if project_ref:
+            filters_desc.append(f"project={project_ref}")
         if params.name:
             filters_desc.append(f"name contains '{params.name}'")
         if params.has_error is not None:

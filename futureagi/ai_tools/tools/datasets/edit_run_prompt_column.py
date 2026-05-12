@@ -1,6 +1,5 @@
 import re
 from typing import List, Literal, Optional
-from uuid import UUID
 
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
@@ -14,13 +13,23 @@ from ai_tools.tools.datasets.add_run_prompt_column import (
     VARIABLE_PATTERN,
     MessageInput,
 )
+from ai_tools.tools.datasets.get_run_prompt_column_config import (
+    _candidate_run_prompt_columns_result,
+)
+from ai_tools.tools.tracing._utils import uuid_text
 
 logger = structlog.get_logger(__name__)
 
 
 class EditRunPromptColumnInput(PydanticBaseModel):
-    dataset_id: UUID = Field(description="The UUID of the dataset")
-    column_id: UUID = Field(description="The UUID of the run-prompt column to edit")
+    dataset_id: str = Field(
+        default="",
+        description="Dataset UUID or exact dataset name. Omit if column_id uniquely identifies the run-prompt column.",
+    )
+    column_id: str = Field(
+        default="",
+        description="UUID of the run-prompt column to edit. Omit to list candidates.",
+    )
     name: Optional[str] = Field(
         default=None,
         min_length=1,
@@ -73,7 +82,7 @@ class EditRunPromptColumnInput(PydanticBaseModel):
     tool_choice: Optional[Literal["auto", "required"]] = Field(
         default=None, description="New tool choice mode."
     )
-    tools: Optional[List[UUID]] = Field(
+    tools: Optional[List[str]] = Field(
         default=None, description="New list of tool UUIDs."
     )
     run: bool = Field(
@@ -97,7 +106,8 @@ class EditRunPromptColumnTool(BaseTool):
     name = "edit_run_prompt_column"
     description = (
         "Edits an existing run-prompt column's configuration (model, messages, "
-        "parameters) and optionally re-runs the prompt on all rows."
+        "parameters) and optionally re-runs the prompt on all rows. "
+        "Call without a column ID to list run-prompt column candidates."
     )
     category = "datasets"
     input_model = EditRunPromptColumnInput
@@ -112,23 +122,56 @@ class EditRunPromptColumnTool(BaseTool):
         from model_hub.models.run_prompt import RunPrompter
         from model_hub.tasks.run_prompt import process_prompts_single
 
-        # Validate dataset (organization-filtered)
-        try:
-            dataset = Dataset.objects.get(
-                id=params.dataset_id,
-                deleted=False,
-                organization=context.organization,
+        column_ref = str(params.column_id or "").strip()
+        column_uuid = uuid_text(column_ref)
+        if not column_uuid:
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Required For Edit",
+                (
+                    "Provide `column_id` for the run-prompt column to edit. "
+                    "These are recent candidates."
+                ),
             )
-        except Dataset.DoesNotExist:
-            return ToolResult.not_found("Dataset", str(params.dataset_id))
 
         # Validate column exists and is a run-prompt column
-        try:
-            column = Column.objects.get(
-                id=params.column_id, dataset=dataset, deleted=False
+        column_qs = Column.objects.select_related("dataset").filter(
+            id=column_uuid,
+            deleted=False,
+            dataset__deleted=False,
+            dataset__organization=context.organization,
+        )
+        if context.workspace:
+            column_qs = column_qs.filter(dataset__workspace=context.workspace)
+        column = column_qs.first()
+        if column is None:
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Not Found",
+                f"Column `{column_ref}` was not found in this workspace.",
             )
-        except Column.DoesNotExist:
-            return ToolResult.not_found("Column", str(params.column_id))
+        dataset = column.dataset
+
+        dataset_ref = str(params.dataset_id or "").strip()
+        if dataset_ref:
+            from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
+
+            requested_dataset, dataset_result = resolve_dataset_for_tool(
+                dataset_ref,
+                context,
+                "Dataset Required For Run Prompt Edit",
+            )
+            if dataset_result:
+                return dataset_result
+            if requested_dataset.id != dataset.id:
+                return _candidate_run_prompt_columns_result(
+                    context,
+                    "Run Prompt Column Not In Dataset",
+                    (
+                        f"Column `{column_ref}` belongs to dataset `{dataset.name}`, "
+                        f"not `{requested_dataset.name}`."
+                    ),
+                )
 
         if column.source != SourceChoices.RUN_PROMPT.value:
             return ToolResult.error(
@@ -181,9 +224,12 @@ class EditRunPromptColumnTool(BaseTool):
             from model_hub.models.openai_tools import Tools
 
             for tool_id in params.tools:
+                tool_uuid = uuid_text(tool_id)
+                if not tool_uuid:
+                    return ToolResult.not_found("Tool", str(tool_id))
                 try:
                     tool_obj = Tools.objects.get(
-                        id=tool_id, organization=context.organization
+                        id=tool_uuid, organization=context.organization
                     )
                     tool_objects.append(tool_obj)
                 except Tools.DoesNotExist:

@@ -31,7 +31,7 @@ def dataset(tool_context):
 
     ds = Dataset(
         name="Test Dataset",
-        source="sdk",
+        source="build",
         organization=tool_context.organization,
         workspace=tool_context.workspace,
         user=tool_context.user,
@@ -116,10 +116,10 @@ class TestListDatasetsTool:
     def test_list_filter_by_source(self, tool_context, dataset):
         tool = registry.get("list_datasets")
 
-        result = tool.run({"source": "sdk"}, tool_context)
+        result = tool.run({"source": "build"}, tool_context)
         assert result.data["total"] == 1
 
-        result = tool.run({"source": "build"}, tool_context)
+        result = tool.run({"source": "demo"}, tool_context)
         assert result.data["total"] == 0
 
     def test_list_pagination(self, tool_context, dataset):
@@ -149,7 +149,8 @@ class TestGetDatasetTool:
         fake_id = str(uuid.uuid4())
         result = tool.run({"dataset_id": fake_id}, tool_context)
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
         assert "Not Found" in result.content
 
     def test_get_shows_schema(self, tool_context, dataset_with_columns):
@@ -165,7 +166,8 @@ class TestGetDatasetTool:
         tool = registry.get("get_dataset")
         result = tool.run({"dataset_id": "not-a-uuid"}, tool_context)
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
 
 
 # ===================================================================
@@ -416,7 +418,8 @@ class TestDeleteDatasetTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
 
     def test_delete_already_deleted(
         self, tool_context, writable_dataset, mock_resource_limit
@@ -425,7 +428,8 @@ class TestDeleteDatasetTool:
         run_tool("delete_dataset", {"dataset_ids": [ds_id]}, tool_context)
         result = run_tool("delete_dataset", {"dataset_ids": [ds_id]}, tool_context)
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
 
 
 class TestCloneDatasetTool:
@@ -490,7 +494,8 @@ class TestCloneDatasetTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
 
 
 class TestAddColumnsTool:
@@ -588,7 +593,19 @@ class TestAddColumnsTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
+
+    def test_add_columns_missing_columns(self, tool_context, writable_dataset):
+        result = run_tool(
+            "add_columns",
+            {"dataset_id": str(writable_dataset.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_columns"] is True
 
 
 class TestDeleteColumnTool:
@@ -668,8 +685,8 @@ class TestDeleteRowsTool:
             tool_context,
         )
 
-        # Service returns success with deleted=0 for nonexistent row IDs
         assert not result.is_error
+        assert result.status == "needs_input"
         assert result.data["deleted"] == 0
         assert result.data["remaining"] == 2
 
@@ -749,7 +766,8 @@ class TestUpdateDatasetTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
         assert "at least one" in result.content
 
     def test_update_nonexistent(self, tool_context, mock_resource_limit):
@@ -797,8 +815,7 @@ class TestUpdateCellValueTool:
             tool_context,
         )
 
-        # All cells missing → is_error=True
-        assert result.is_error
+        assert not result.is_error
         assert result.data["updated"] == 0
         assert len(result.data["errors"]) == 1
 
@@ -812,7 +829,8 @@ class TestUpdateCellValueTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_dataset_id"] is True
 
     def test_update_multiple_cells(
         self, tool_context, populated_dataset, mock_resource_limit

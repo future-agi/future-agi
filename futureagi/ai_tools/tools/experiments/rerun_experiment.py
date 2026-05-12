@@ -11,8 +11,8 @@ from ai_tools.registry import register_tool
 
 class RerunExperimentInput(PydanticBaseModel):
     experiment_ids: list[str] = Field(
-        description="List of experiment names or UUIDs to re-run",
-        min_length=1,
+        default_factory=list,
+        description="List of experiment names or UUIDs to re-run. Omit to list candidates.",
         max_length=10,
     )
     max_concurrent_rows: int = Field(
@@ -29,31 +29,35 @@ class RerunExperimentTool(BaseTool):
     description = (
         "Re-runs one or more experiments. "
         "Resets variant statuses and re-processes all rows with the current prompt configs. "
-        "Previous results will be overwritten."
+        "Previous results will be overwritten. Call without experiment IDs to list candidates."
     )
     category = "experiments"
     input_model = RerunExperimentInput
 
     def execute(self, params: RerunExperimentInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_experiment
+        from ai_tools.tools.experiments._utils import candidate_experiments_result
+        from ai_tools.tools.experiments._utils import resolve_experiment_for_tool
         from model_hub.models.experiments import ExperimentsTable
+
+        if not params.experiment_ids:
+            return candidate_experiments_result(
+                context,
+                "Experiment Required To Re-run",
+                "Choose one or more experiment IDs to re-run.",
+            )
 
         # Resolve each identifier (name or UUID) to an experiment
         resolved_ids = []
-        resolve_errors = []
         for identifier in params.experiment_ids:
-            exp_obj, err = resolve_experiment(identifier, context.organization)
-            if err:
-                resolve_errors.append(f"{identifier}: {err}")
-            else:
-                resolved_ids.append(exp_obj.id)
-
-        if resolve_errors and not resolved_ids:
-            return ToolResult.error(
-                "No matching experiments found.\n" + "\n".join(resolve_errors),
-                error_code="NOT_FOUND",
+            exp_obj, unresolved = resolve_experiment_for_tool(
+                identifier,
+                context,
+                title="Experiment Required To Re-run",
             )
+            if unresolved:
+                return unresolved
+            resolved_ids.append(exp_obj.id)
 
         experiments = ExperimentsTable.objects.filter(
             id__in=resolved_ids,

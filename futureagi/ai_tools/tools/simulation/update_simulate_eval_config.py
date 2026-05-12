@@ -1,24 +1,28 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
+    format_datetime,
     key_value_block,
+    markdown_table,
     section,
 )
 from ai_tools.registry import register_tool
 from ai_tools.tools.simulation.create_simulate_eval_config import VALID_EVAL_MODELS
+from ai_tools.tools.tracing._utils import uuid_text
 
 
 class UpdateSimulateEvalConfigInput(PydanticBaseModel):
-    run_test_id: UUID = Field(
-        description="The UUID of the RunTest that owns the eval config"
+    run_test_id: str = Field(
+        default="",
+        description="RunTest UUID or exact/fuzzy name that owns the eval config. Omit to list candidates.",
     )
-    eval_config_id: UUID = Field(
-        description="The UUID of the SimulateEvalConfig to update"
+    eval_config_id: str = Field(
+        default="",
+        description="SimulateEvalConfig UUID or exact/fuzzy name to update. Omit to list candidates.",
     )
     name: Optional[str] = Field(
         default=None,
@@ -63,7 +67,8 @@ class UpdateSimulateEvalConfigTool(BaseTool):
     name = "update_simulate_eval_config"
     description = (
         "Updates an evaluation config on a simulation run test. "
-        "Can change the name, config, mapping, model, or error_localizer setting."
+        "Can change the name, config, mapping, model, or error_localizer setting. "
+        "Call with partial input to list run tests, eval configs, or required update fields."
     )
     category = "simulation"
     input_model = UpdateSimulateEvalConfigInput
@@ -72,29 +77,46 @@ class UpdateSimulateEvalConfigTool(BaseTool):
         self, params: UpdateSimulateEvalConfigInput, context: ToolContext
     ) -> ToolResult:
         from simulate.models.eval_config import SimulateEvalConfig
-        from simulate.models.run_test import RunTest
+        from ai_tools.tools.agents._utils import resolve_run_test
 
         # Get the run test
-        try:
-            run_test = RunTest.objects.get(
-                id=params.run_test_id,
-                organization=context.organization,
-                deleted=False,
-            )
-        except RunTest.DoesNotExist:
-            return ToolResult.not_found("Run Test", str(params.run_test_id))
+        run_test, unresolved = resolve_run_test(
+            params.run_test_id,
+            context,
+            title="Run Test Required To Update Eval Config",
+        )
+        if unresolved:
+            return unresolved
 
         # Get the eval config
-        try:
-            eval_config = SimulateEvalConfig.objects.select_related(
-                "eval_template"
-            ).get(
-                id=params.eval_config_id,
-                run_test=run_test,
-                deleted=False,
+        config_ref = str(params.eval_config_id or "").strip()
+        if not config_ref:
+            return _candidate_simulate_eval_configs_result(
+                run_test,
+                "Eval Config Required For Update",
+                "Provide `eval_config_id` to update an evaluation config.",
             )
-        except SimulateEvalConfig.DoesNotExist:
-            return ToolResult.not_found("Eval Config", str(params.eval_config_id))
+
+        qs = SimulateEvalConfig.objects.select_related("eval_template").filter(
+            run_test=run_test,
+            deleted=False,
+        )
+        config_uuid = uuid_text(config_ref)
+        if config_uuid:
+            eval_config = qs.filter(id=config_uuid).first()
+        else:
+            exact = qs.filter(name__iexact=config_ref)
+            eval_config = exact.first() if exact.count() == 1 else None
+            if eval_config is None:
+                fuzzy = qs.filter(name__icontains=config_ref)
+                eval_config = fuzzy.first() if fuzzy.count() == 1 else None
+        if eval_config is None:
+            return _candidate_simulate_eval_configs_result(
+                run_test,
+                "Eval Config Not Found",
+                f"Eval config `{config_ref}` was not found on `{run_test.name}`.",
+                search="" if config_uuid else config_ref,
+            )
 
         updated_fields = []
 
@@ -126,9 +148,21 @@ class UpdateSimulateEvalConfigTool(BaseTool):
             updated_fields.append("error_localizer")
 
         if not updated_fields:
-            return ToolResult.error(
-                "No fields provided to update.",
-                error_code="VALIDATION_ERROR",
+            return ToolResult.needs_input(
+                section(
+                    "Eval Config Update Fields Required",
+                    (
+                        f"Eval config `{eval_config.name}` was resolved. Provide at "
+                        "least one of `name`, `config`, `mapping`, `model`, or "
+                        "`error_localizer`."
+                    ),
+                ),
+                data={
+                    "run_test_id": str(run_test.id),
+                    "eval_config_id": str(eval_config.id),
+                    "requires_update_fields": True,
+                },
+                missing_fields=["name|config|mapping|model|error_localizer"],
             )
 
         eval_config.save(update_fields=updated_fields)
@@ -147,9 +181,56 @@ class UpdateSimulateEvalConfigTool(BaseTool):
         return ToolResult(
             content=content,
             data={
-                "eval_config_id": str(params.eval_config_id),
+                "eval_config_id": str(eval_config.id),
                 "eval_config_name": eval_config.name,
-                "run_test_id": str(params.run_test_id),
+                "run_test_id": str(run_test.id),
                 "updated_fields": updated_fields,
             },
         )
+
+
+def _candidate_simulate_eval_configs_result(
+    run_test,
+    title: str,
+    detail: str = "",
+    search: str = "",
+) -> ToolResult:
+    from simulate.models.eval_config import SimulateEvalConfig
+
+    qs = SimulateEvalConfig.objects.select_related("eval_template").filter(
+        run_test=run_test,
+        deleted=False,
+    )
+    search = str(search or "").strip()
+    if search and not uuid_text(search):
+        qs = qs.filter(name__icontains=search)
+    configs = list(qs.order_by("-created_at")[:10])
+    rows = [
+        [
+            f"`{config.id}`",
+            config.name or "-",
+            config.eval_template.name if config.eval_template else "-",
+            config.model or "-",
+            format_datetime(config.created_at),
+        ]
+        for config in configs
+    ]
+    body = detail or ""
+    if rows:
+        body = (body + "\n\n" if body else "") + markdown_table(
+            ["ID", "Name", "Template", "Model", "Created"], rows
+        )
+    else:
+        body = body or f"No eval configs found on `{run_test.name}`."
+    return ToolResult.needs_input(
+        section(title, body),
+        data={
+            "requires_eval_config_id": True,
+            "run_test_id": str(run_test.id),
+            "configs": [
+                {"id": str(config.id), "name": config.name}
+                for config in configs
+            ],
+        },
+        missing_fields=["eval_config_id"],
+    )

@@ -22,6 +22,7 @@ class UpdateEvalTaskInput(PydanticBaseModel):
         description="Eval task UUID or exact task name to update.",
     )
     edit_type: str = Field(
+        default="edit_rerun",
         description=(
             "Type of update: 'fresh_run' (delete all results, restart from scratch) "
             "or 'edit_rerun' (preserve existing results, fill gaps)"

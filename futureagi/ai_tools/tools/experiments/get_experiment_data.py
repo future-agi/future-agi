@@ -1,6 +1,3 @@
-from typing import Optional
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -17,9 +14,9 @@ from ai_tools.registry import register_tool
 
 
 class GetExperimentDataInput(PydanticBaseModel):
-    experiment_id: Optional[UUID] = Field(
-        default=None,
-        description="The UUID of the experiment. Omit it to list candidate experiments.",
+    experiment_id: str = Field(
+        default="",
+        description="Name or UUID of the experiment. Omit it to list candidate experiments.",
     )
     limit: int = Field(default=10, ge=1, le=50, description="Max rows to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
@@ -39,53 +36,47 @@ class GetExperimentDataTool(BaseTool):
         self, params: GetExperimentDataInput, context: ToolContext
     ) -> ToolResult:
 
+        from ai_tools.tools.experiments._utils import (
+            candidate_experiments_result,
+            resolve_experiment_for_tool,
+        )
         from model_hub.models.develop_dataset import Cell, Column, Row
         from model_hub.models.experiments import ExperimentsTable
 
-        if params.experiment_id is None:
-            experiments = (
-                ExperimentsTable.objects.select_related("dataset")
-                .filter(dataset__organization=context.organization)
-                .order_by("-created_at")[:10]
+        if not params.experiment_id:
+            return candidate_experiments_result(
+                context,
+                "Experiment Required For Data",
             )
-            rows = [
-                [
-                    f"`{experiment.id}`",
-                    experiment.name,
-                    experiment.status or "—",
-                ]
-                for experiment in experiments
-            ]
-            if not rows:
-                return ToolResult(
-                    content=section("Experiment Candidates", "No experiments found."),
-                    data={"experiments": []},
-                )
-            return ToolResult(
-                content=section(
-                    "Experiment Candidates",
-                    markdown_table(["ID", "Name", "Status"], rows),
-                ),
-                data={
-                    "experiments": [
-                        {"id": str(experiment.id), "name": experiment.name}
-                        for experiment in experiments
-                    ]
-                },
-            )
+
+        experiment_obj, unresolved = resolve_experiment_for_tool(
+            params.experiment_id,
+            context,
+            title="Experiment Required For Data",
+        )
+        if unresolved:
+            return unresolved
 
         try:
             experiment = ExperimentsTable.objects.select_related("dataset").get(
-                id=params.experiment_id
+                id=experiment_obj.id
             )
         except ExperimentsTable.DoesNotExist:
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
+            return candidate_experiments_result(
+                context,
+                "Experiment Not Found",
+                f"Experiment `{experiment_obj.id}` was not found. Use one of these experiments.",
+            )
 
         if (
             experiment.dataset
             and experiment.dataset.organization_id != context.organization.id
         ):
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
+            return candidate_experiments_result(
+                context,
+                "Experiment Not Found",
+                f"Experiment `{params.experiment_id}` is not available in this workspace.",
+            )
 
         dataset = experiment.dataset
         if not dataset:

@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,8 +13,9 @@ from ai_tools.registry import register_tool
 
 
 class CompareExperimentsInput(PydanticBaseModel):
-    experiment_id: UUID = Field(
-        description="The UUID of the experiment to compare variants"
+    experiment_id: str = Field(
+        default="",
+        description="Experiment UUID or exact experiment name. Omit to list candidates."
     )
     weights: dict[str, float] | None = Field(
         default=None,
@@ -33,7 +32,8 @@ class CompareExperimentsTool(BaseTool):
     description = (
         "Compares experiment variants by computing weighted rankings. "
         "Normalizes metrics (scores, response time, tokens) to a 0-10 scale "
-        "and calculates overall ratings and rankings."
+        "and calculates overall ratings and rankings. Call without an experiment "
+        "ID to list candidate experiments."
     )
     category = "experiments"
     input_model = CompareExperimentsInput
@@ -43,23 +43,17 @@ class CompareExperimentsTool(BaseTool):
     ) -> ToolResult:
 
         from model_hub.models.develop_dataset import Cell, Column
-        from model_hub.models.experiments import (
-            ExperimentComparison,
-            ExperimentsTable,
+        from model_hub.models.experiments import ExperimentComparison
+
+        from ai_tools.tools.experiments._utils import resolve_experiment_for_tool
+
+        experiment, unresolved = resolve_experiment_for_tool(
+            params.experiment_id,
+            context,
+            title="Experiment Required For Comparison",
         )
-
-        try:
-            experiment = ExperimentsTable.objects.select_related("dataset").get(
-                id=params.experiment_id
-            )
-        except ExperimentsTable.DoesNotExist:
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
-
-        if (
-            experiment.dataset
-            and experiment.dataset.organization_id != context.organization.id
-        ):
-            return ToolResult.not_found("Experiment", str(params.experiment_id))
+        if unresolved:
+            return unresolved
 
         variant_datasets = list(experiment.experiments_datasets.all())
         if not variant_datasets:

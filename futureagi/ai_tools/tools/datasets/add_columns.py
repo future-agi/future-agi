@@ -41,11 +41,12 @@ class ColumnDef(PydanticBaseModel):
 
 class AddColumnsInput(PydanticBaseModel):
     dataset_id: str = Field(
+        default="",
         description="Dataset name or UUID. Examples: 'my-qa-dataset' or '550e8400-e29b-41d4-a716-446655440000'"
     )
     columns: list[ColumnDef] = Field(
+        default_factory=list,
         description="List of columns to add with name and data_type",
-        min_length=1,
         max_length=20,
     )
     column_types: list[DataTypeLiteral] | None = Field(
@@ -112,24 +113,39 @@ class AddColumnsTool(BaseTool):
     name = "add_columns"
     description = (
         "Adds new columns to an existing dataset. "
-        "Existing rows will have empty cells for the new columns."
+        "Existing rows will have empty cells for the new columns. "
+        "Call without a dataset or columns to get candidates and required fields."
     )
     category = "datasets"
     input_model = AddColumnsInput
 
     def execute(self, params: AddColumnsInput, context: ToolContext) -> ToolResult:
 
-        from ai_tools.resolvers import resolve_dataset
+        from ai_tools.tools.datasets._utils import resolve_dataset_for_tool
         from model_hub.services.dataset_service import ServiceError
         from model_hub.services.dataset_service import add_columns as svc_add_columns
 
         # data_type is already validated by the Literal type in ColumnDef.
 
-        ds, error = resolve_dataset(
-            params.dataset_id, context.organization, context.workspace
+        ds, dataset_result = resolve_dataset_for_tool(
+            params.dataset_id, context, "Dataset Required To Add Columns"
         )
-        if error:
-            return ToolResult.error(error, error_code="NOT_FOUND")
+        if dataset_result:
+            return dataset_result
+
+        if not params.columns:
+            return ToolResult.needs_input(
+                section(
+                    "Columns Required",
+                    (
+                        f"Dataset `{ds.name}` was resolved. Provide `columns` as "
+                        "a list of `{name, data_type}` objects, or a comma-separated "
+                        "list of column names."
+                    ),
+                ),
+                data={"dataset_id": str(ds.id), "requires_columns": True},
+                missing_fields=["columns"],
+            )
 
         columns_data = [
             {"name": c.name, "data_type": c.data_type} for c in params.columns

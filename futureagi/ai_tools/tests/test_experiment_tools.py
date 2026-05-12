@@ -91,6 +91,30 @@ class TestGetExperimentStatsTool:
         assert result.data["requires_experiment_id"] is True
 
 
+class TestGetExperimentResultsTool:
+    def test_get_nonexistent_returns_candidates(self, tool_context):
+        result = run_tool(
+            "get_experiment_results",
+            {"experiment_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
+
+
+class TestGetExperimentDataTool:
+    def test_get_nonexistent_returns_candidates(self, tool_context):
+        result = run_tool(
+            "get_experiment_data",
+            {"experiment_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
+
+
 class TestRunExperimentEvalsTool:
     def test_missing_experiment_returns_candidates(self, tool_context):
         result = run_tool("run_experiment_evals", {}, tool_context)
@@ -170,6 +194,26 @@ class TestRunExperimentEvalsTool:
 
         assert not result.is_error
         assert result.data["eval_template_ids"] == [str(metric.id)]
+
+
+class TestCompareExperimentsTool:
+    def test_missing_experiment_returns_candidates(self, tool_context):
+        result = run_tool(
+            "compare_experiments",
+            {"experiment_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
+
+
+class TestRerunExperimentTool:
+    def test_missing_experiment_returns_candidates(self, tool_context):
+        result = run_tool("rerun_experiment", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
 
 
 # ===================================================================
@@ -338,7 +382,8 @@ class TestDeleteExperimentTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_experiment_id"] is True
 
     def test_delete_existing(
         self,

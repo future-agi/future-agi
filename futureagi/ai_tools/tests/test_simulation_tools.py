@@ -6,7 +6,11 @@ import pytest
 from django.utils import timezone
 
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_agent_definition, make_scenario
+from ai_tools.tests.fixtures import (
+    make_agent_definition,
+    make_eval_template,
+    make_scenario,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -122,6 +126,59 @@ class TestAddScenarioRowsTool:
         assert not result.is_error
         assert result.data["requires_scenario_id"] is True
         assert "Scenario Not Found" in result.content
+
+
+class TestUpdateSimulateEvalConfigTool:
+    def test_missing_run_test_returns_candidates(self, tool_context):
+        result = run_tool("update_simulate_eval_config", {}, tool_context)
+
+        assert not result.is_error
+        assert result.data["requires_run_test_id"] is True
+
+    def test_missing_eval_config_returns_candidates(self, tool_context):
+        from simulate.models.run_test import RunTest
+
+        run_test = RunTest.objects.create(
+            name="Eval Config Candidate Test",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+
+        result = run_tool(
+            "update_simulate_eval_config",
+            {"run_test_id": str(run_test.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_eval_config_id"] is True
+
+    def test_missing_update_fields_returns_needs_input(self, tool_context):
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.models.run_test import RunTest
+
+        template = make_eval_template(tool_context, name="Simulation Quality")
+        run_test = RunTest.objects.create(
+            name="Eval Config Update Test",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+        config = SimulateEvalConfig.objects.create(
+            run_test=run_test,
+            eval_template=template,
+            name="quality-config",
+        )
+
+        result = run_tool(
+            "update_simulate_eval_config",
+            {"run_test_id": run_test.name, "eval_config_id": config.name},
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_update_fields"] is True
 
 
 # ===================================================================
@@ -327,7 +384,9 @@ class TestDeletePersonaTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.status == "needs_input"
+        assert result.data["requires_persona_id"] is True
 
 
 class TestDeleteAgentDefinitionTool:
@@ -357,4 +416,5 @@ class TestDeleteAgentDefinitionTool:
             tool_context,
         )
 
-        assert result.is_error
+        assert not result.is_error
+        assert result.data["requires_agent_id"] is True

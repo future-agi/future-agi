@@ -5,14 +5,76 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import dashboard_link, key_value_block, section
+from ai_tools.formatting import dashboard_link, key_value_block, markdown_table, section, truncate
 from ai_tools.registry import register_tool
 
 logger = structlog.get_logger(__name__)
 
 
 class GetRunPromptColumnConfigInput(PydanticBaseModel):
-    column_id: UUID = Field(description="The UUID of the run-prompt column")
+    column_id: str = Field(
+        default="",
+        description="The UUID of the run-prompt column. If omitted or stale, candidate run-prompt columns are returned.",
+    )
+
+
+def _candidate_run_prompt_columns_result(
+    context: ToolContext,
+    title: str = "Run Prompt Column Required",
+    detail: str = "",
+) -> ToolResult:
+    from model_hub.models.choices import SourceChoices
+    from model_hub.models.develop_dataset import Column
+    from model_hub.models.run_prompt import RunPrompter
+
+    columns = list(
+        Column.objects.filter(
+            dataset__organization=context.organization,
+            deleted=False,
+            source=SourceChoices.RUN_PROMPT.value,
+        )
+        .select_related("dataset")
+        .order_by("-created_at")[:10]
+    )
+    source_ids = [column.source_id for column in columns if column.source_id]
+    run_prompters = {
+        str(run_prompter.id): run_prompter
+        for run_prompter in RunPrompter.objects.filter(id__in=source_ids)
+    }
+    rows = []
+    data = []
+    for column in columns:
+        run_prompter = run_prompters.get(str(column.source_id))
+        dataset_name = column.dataset.name if column.dataset else "-"
+        rows.append(
+            [
+                f"`{column.id}`",
+                truncate(column.name, 36),
+                truncate(dataset_name, 36),
+                run_prompter.status if run_prompter else "-",
+            ]
+        )
+        data.append(
+            {
+                "column_id": str(column.id),
+                "name": column.name,
+                "dataset_id": str(column.dataset_id) if column.dataset_id else None,
+                "run_prompter_id": str(column.source_id) if column.source_id else None,
+            }
+        )
+
+    body = detail or "Choose a run-prompt column ID."
+    if rows:
+        body += "\n\n" + markdown_table(
+            ["Column ID", "Name", "Dataset", "Status"], rows
+        )
+    else:
+        body += "\n\nNo run-prompt columns found. Use `add_run_prompt_column` first."
+    return ToolResult.needs_input(
+        section(title, body),
+        data={"columns": data, "requires_column_id": True},
+        missing_fields=["column_id"],
+    )
 
 
 @register_tool
@@ -32,31 +94,54 @@ class GetRunPromptColumnConfigTool(BaseTool):
         from model_hub.models.develop_dataset import Column
         from model_hub.models.run_prompt import RunPrompter
 
+        column_ref = str(params.column_id or "").strip()
+        if not column_ref:
+            return _candidate_run_prompt_columns_result(context)
+
+        try:
+            column_uuid = UUID(column_ref)
+        except (TypeError, ValueError):
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Not Found",
+                f"Column `{column_ref}` is not a valid UUID. Use one of these column IDs instead.",
+            )
+
         # Validate column exists
         try:
             column = Column.objects.select_related("dataset").get(
-                id=params.column_id, deleted=False
+                id=column_uuid, deleted=False
             )
         except Column.DoesNotExist:
-            return ToolResult.not_found("Column", str(params.column_id))
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Not Found",
+                f"Column `{column_ref}` was not found. Use one of these run-prompt column IDs instead.",
+            )
 
         # Organization check via column's dataset
         if column.dataset.organization_id != context.organization.id:
-            return ToolResult.not_found("Column", str(params.column_id))
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Not Found",
+                f"Column `{column_ref}` is not available in this workspace. Use one of these run-prompt column IDs instead.",
+            )
 
         if column.source != SourceChoices.RUN_PROMPT.value:
-            return ToolResult.error(
-                f"Column '{column.name}' is not a run-prompt column (source: {column.source}).",
-                error_code="VALIDATION_ERROR",
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Column Required",
+                f"Column `{column.name}` is not a run-prompt column (source: {column.source}). Use one of these instead.",
             )
 
         # Get RunPrompter config
         try:
             rp = RunPrompter.objects.get(id=column.source_id)
         except RunPrompter.DoesNotExist:
-            return ToolResult.error(
-                "Run prompt configuration not found for this column.",
-                error_code="NOT_FOUND",
+            return _candidate_run_prompt_columns_result(
+                context,
+                "Run Prompt Config Not Found",
+                "Run prompt configuration was not found for this column. Use one of these run-prompt columns instead.",
             )
 
         dataset = column.dataset

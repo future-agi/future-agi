@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,8 +7,9 @@ from ai_tools.registry import register_tool
 
 
 class RemoveUserInput(PydanticBaseModel):
-    user_id: UUID = Field(
-        description="UUID of the user to remove from the organization"
+    user_id: str = Field(
+        default="",
+        description="UUID, email, or exact/fuzzy name of the user to remove. Omit to list candidates."
     )
 
 
@@ -19,7 +18,8 @@ class RemoveUserTool(BaseTool):
     name = "remove_user"
     description = (
         "Removes a user from the organization entirely. This deactivates the user "
-        "and removes all their workspace memberships. Requires Owner or Admin permissions."
+        "and removes all their workspace memberships. Requires Owner or Admin permissions. "
+        "Call without a user ID to list candidates."
     )
     category = "users"
     input_model = RemoveUserInput

@@ -91,6 +91,34 @@ class DeleteRowsTool(BaseTool):
         )
 
         if isinstance(result, ServiceError):
+            if result.code == "NOT_FOUND":
+                rows = list(
+                    Row.objects.filter(dataset=ds, deleted=False).order_by("id")[:10]
+                )
+                row_table = (
+                    markdown_table(["Row ID"], [[f"`{row.id}`"] for row in rows])
+                    if rows
+                    else "No rows found in this dataset."
+                )
+                return ToolResult.needs_input(
+                    section(
+                        "Rows Not Found",
+                        (
+                            f"{result.message}\n\nUse one of these row IDs from "
+                            f"`{ds.name}` or call `get_dataset_rows` before retrying.\n\n"
+                            f"{row_table}"
+                        ),
+                    ),
+                    {
+                        "requires_row_ids": True,
+                        "dataset_id": str(ds.id),
+                        "rows": [{"id": str(row.id)} for row in rows],
+                        "deleted": 0,
+                        "remaining": Row.objects.filter(
+                            dataset=ds, deleted=False
+                        ).count(),
+                    },
+                )
             return ToolResult.error(result.message, error_code=result.code)
 
         remaining = Row.objects.filter(

@@ -220,12 +220,29 @@ class CreateEvalTemplateTool(BaseTool):
                 },
             )
 
-        # Also check against system templates
-        if EvalTemplate.no_workspace_objects.filter(
+        # Also check against system templates. Compare the canonical tool-facing
+        # name so "Test Eval" and "test_eval" are treated as the same target.
+        system_templates = EvalTemplate.no_workspace_objects.filter(
             name=params.name,
             owner=OwnerChoices.SYSTEM.value,
             deleted=False,
-        ).exists():
+        )
+        canonical_name = re.sub(r"[^a-z0-9_-]+", "_", params.name.strip().lower()).strip(
+            "_-"
+        )
+        canonical_system_match = any(
+            re.sub(
+                r"[^a-z0-9_-]+",
+                "_",
+                (template.name or "").strip().lower(),
+            ).strip("_-")
+            == canonical_name
+            for template in EvalTemplate.no_workspace_objects.filter(
+                owner=OwnerChoices.SYSTEM.value,
+                deleted=False,
+            ).only("name")[:500]
+        )
+        if system_templates.exists() or canonical_system_match:
             return ToolResult.error(
                 f"A system eval template named '{params.name}' already exists. "
                 "Choose a different name.",
