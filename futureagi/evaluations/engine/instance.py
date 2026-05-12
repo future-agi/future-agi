@@ -14,6 +14,42 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 logger = structlog.get_logger(__name__)
 
 
+# Per-evaluator allow-list for per-binding ``run_config`` overrides. Only
+# keys the evaluator's ``__init__`` consumes — unknown kwargs would raise
+# ``TypeError``. ``model`` is intentionally excluded from CustomPromptEvaluator
+# (its kwarg path derives api_key/provider upstream; overwriting later would
+# leave stale auth). ``error_localizer_enabled`` lives on the surface-runner
+# layer, not on the evaluator instance.
+_RUNTIME_ALLOWED_KEYS = {
+    "AgentEvaluator": {
+        "model",
+        "agent_mode",
+        "check_internet",
+        "knowledge_base_id",
+        "knowledge_bases",
+        "tools",
+        "data_injection",
+        "summary",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+    },
+    "CustomPromptEvaluator": {
+        "check_internet",
+        "multi_choice",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+        "knowledge_base_id",
+        "knowledge_bases",
+    },
+}
+
+
 def resolve_version(eval_template, version_number=None, organization=None):
     """
     Resolve the eval template version to use.
@@ -380,52 +416,6 @@ def create_eval_instance(
     # explicit False / 0 / "" overrides survive (e.g. check_internet=False on
     # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
-    # Per-evaluator allow-list of keys that runtime overrides may touch. Only
-    # keys that the evaluator's __init__ actually consumes belong here —
-    # passing unknown kwargs raises TypeError at instantiation.
-    _RUNTIME_ALLOWED_KEYS = {
-        "AgentEvaluator": {
-            "model",
-            "agent_mode",
-            "check_internet",
-            "knowledge_base_id",
-            "knowledge_bases",
-            "tools",
-            "data_injection",
-            "summary",
-            "pass_threshold",
-            "output_type",
-            "choices",
-            "choice_scores",
-            "reverse_output",
-            # error_localizer is handled at the surface-runner layer.
-        },
-        # CustomPromptEvaluator (LLM-as-judge) supports the per-binding
-        # toggles the FE EvalPicker exposes, minus agent-only features
-        # (agent_mode, tools, summary, data_injection — none of which the
-        # single-LLM-call evaluator consumes).
-        #
-        # Note: `model` is intentionally NOT in this allow-list. The model
-        # kwarg has its own resolution path (caller passes `model=` to
-        # create_eval_instance, which prepare_eval_config uses to derive
-        # `api_key` / `provider` for non-Turing models). Letting run_config
-        # overwrite `config["model"]` after that derivation would leave a
-        # stale api_key in config — to override model on an LLM binding,
-        # update UserEvalMetric.model / CustomEvalConfig.model directly so
-        # the kwarg path picks it up.
-        "CustomPromptEvaluator": {
-            "check_internet",
-            "multi_choice",
-            "pass_threshold",
-            "output_type",
-            "choices",
-            "choice_scores",
-            "reverse_output",
-            "knowledge_base_id",
-            "knowledge_bases",
-            # error_localizer is handled at the surface-runner layer.
-        },
-    }
     _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
     if _allowed and runtime_config:
         _overrides = (runtime_config or {}).get("run_config") or {}
