@@ -124,25 +124,27 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         checks = validated_data.get("checks")
         if checks is not None:
-            # Merge: if a credential value is the sentinel, keep existing encrypted value
             existing_secrets = _decrypt_secrets(instance.encrypted_check_configs)
-            sanitized, new_secrets = _extract_secrets(checks)
 
-            # For each check, if a sensitive key was sentinel (not in new_secrets),
-            # preserve the existing encrypted value
-            for check in sanitized:
+            # Capture which sensitive keys the user *explicitly* sent as the
+            # sentinel — those mean "keep existing encrypted value". Must do
+            # this BEFORE _extract_secrets, which sanitizes everything to
+            # sentinel and would otherwise make every key look preserved.
+            preserve = {}  # {check_name: set(keys)}
+            for check in checks:
                 name = check.get("name")
                 cfg = check.get("config")
                 if not name or not isinstance(cfg, dict):
                     continue
-                for key in list(cfg.keys()):
-                    if (
-                        key in SENSITIVE_KEYS
-                        and cfg[key] == ENCRYPTED_SENTINEL
-                        and name in existing_secrets
-                        and key in existing_secrets[name]
-                    ):
-                        # Preserve existing secret
+                for key, value in cfg.items():
+                    if key in SENSITIVE_KEYS and value == ENCRYPTED_SENTINEL:
+                        preserve.setdefault(name, set()).add(key)
+
+            sanitized, new_secrets = _extract_secrets(checks)
+
+            for name, keys in preserve.items():
+                for key in keys:
+                    if name in existing_secrets and key in existing_secrets[name]:
                         new_secrets.setdefault(name, {})[key] = existing_secrets[name][
                             key
                         ]
