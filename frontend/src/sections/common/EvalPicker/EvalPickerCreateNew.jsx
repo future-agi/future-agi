@@ -49,6 +49,7 @@ import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { contextOptionsForRowType } from "./evalPickerConfigUtils";
+
 const TRACING_ROW_TYPE_TO_KEY = {
   Span: "spans",
   Trace: "traces",
@@ -143,9 +144,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
 
-
   const handleSourceRowTypeChange = useCallback((rt) => {
-    const map =  TRACING_ROW_TYPE_TO_KEY;
+    const map = TRACING_ROW_TYPE_TO_KEY;
     const key = map[rt];
     const seeded = key ? contextOptionsForRowType(key) : null;
     if (seeded) setContextOptions(seeded);
