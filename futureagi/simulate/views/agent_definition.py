@@ -37,10 +37,12 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from tfc.ee_stub import _ee_stub
+
 try:
     from ee.voice.services.vapi_service import VapiService
 except ImportError:
-    VapiService = None
+    VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message

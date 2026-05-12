@@ -1335,7 +1335,16 @@ function FilterRow({
 
       <Select
         size="small"
-        value={filter.operator || (isNumber ? "equal_to" : "is")}
+        // Guard against operators that aren't in the type-appropriate ops
+        // list (e.g. `in`/`not_in` leaking back from a partially-mapped
+        // round-trip) — without this, MUI Select silently renders blank.
+        value={
+          ops.some((o) => o.value === filter.operator)
+            ? filter.operator
+            : isNumber
+              ? "equal_to"
+              : "is"
+        }
         onChange={handleOperatorChange}
         sx={{ minWidth: 70, fontSize: 12, height: 28 }}
       >

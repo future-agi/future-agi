@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
@@ -23,7 +24,6 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
-import { enqueueSnackbar } from "src/components/snackbar";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -95,6 +95,7 @@ const EVAL_TYPE_META = {
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
   const theme = useTheme();
+  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
@@ -300,6 +301,7 @@ const TaskConfigPanel = ({
 
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
+  const taskFilters = useWatch({ control, name: "filters" });
   const isProjectSelected = !!project;
   // row_type is immutable after task creation — the dispatcher, the
   // target_type on every EvalLogger row, and the dedup index are all
@@ -777,6 +779,7 @@ const TaskConfigPanel = ({
                 control={control}
                 setValue={setValue}
                 projectId={project}
+                isSimulator={isVoiceProject}
               />
             </FilterErrorBoundary>
           </Box>
@@ -804,6 +807,10 @@ const TaskConfigPanel = ({
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
+        sourceFilters={taskFilters}
+        onFiltersChange={(f) =>
+          setValue("filters", f || [], { shouldDirty: true })
+        }
       />
     </>
   );

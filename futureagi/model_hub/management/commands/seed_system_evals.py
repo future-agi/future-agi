@@ -25,7 +25,7 @@ from django.utils import timezone
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 6
+SYSTEM_EVALS_VERSION = 7
 
 SYSTEM_EVALS_DIR = Path(__file__).resolve().parent.parent.parent / "system_evals"
 CATALOG_YAML = (
