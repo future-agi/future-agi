@@ -949,6 +949,13 @@ class EvaluationRunner:
         scope) or we look it up by the experiment eval column's
         deterministic source_id.
         """
+        # Guard: if the eval was stopped or deleted while we were running,
+        # don't create a new reason column — it would be orphaned.
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        if is_user_eval_stopped(self.user_eval_metric_id):
+            return None
+
         source = SourceChoices.EVALUATION_REASON.value
         source_id = f"{self.replace_column_id}-sourceid-{self.user_eval_metric_id}"
         if self.experiment_dataset:
@@ -1034,14 +1041,15 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                self._create_reason_cell(
-                    self.dataset,
-                    reason_column,
-                    row,
-                    response,
-                    response.get("reason"),
-                    CellStatus.PASS.value,
-                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        response,
+                        response.get("reason"),
+                        CellStatus.PASS.value,
+                    )
             value = self.format_output(response, row)
 
             config_dict = json.loads(api_call_log_row.config)
@@ -1171,23 +1179,25 @@ class EvaluationRunner:
             )
             if should_run_error_localizer:
                 from model_hub.tasks.user_evaluation import (
+                    _eval_passed,
                     trigger_error_localization_for_column,
                 )
 
-                cell = Cell.objects.filter(
-                    column__id=self.replace_column_id, row=row, deleted=False
-                ).first()
+                if not _eval_passed(value):
+                    cell = Cell.objects.filter(
+                        column__id=self.replace_column_id, row=row, deleted=False
+                    ).first()
 
-                trigger_error_localization_for_column(
-                    eval_template=self.user_eval_metric.template,
-                    config=config_error,
-                    required_field=required_field_error,
-                    mapping=mapping_error,
-                    eval_result=value,
-                    response=response,
-                    cell=cell,
-                    log_id=str(api_call_log_row.log_id),
-                )
+                    trigger_error_localization_for_column(
+                        eval_template=self.user_eval_metric.template,
+                        config=config_error,
+                        required_field=required_field_error,
+                        mapping=mapping_error,
+                        eval_result=value,
+                        response=response,
+                        cell=cell,
+                        log_id=str(api_call_log_row.log_id),
+                    )
 
         except Exception as e:
             logger.exception(f"Error in evaluation of row: {str(e)}")
@@ -1210,14 +1220,15 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                self._create_reason_cell(
-                    self.dataset,
-                    reason_column,
-                    row,
-                    {"reason": "No reasoning available. Please rerun the evaluation."},
-                    "No reasoning available. Please rerun the evaluation.",
-                    CellStatus.ERROR.value,
-                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        {"reason": "No reasoning available. Please rerun the evaluation."},
+                        "No reasoning available. Please rerun the evaluation.",
+                        CellStatus.ERROR.value,
+                    )
 
         return response, status, value
 
@@ -1860,7 +1871,9 @@ class EvaluationRunner:
         required_field, mapping = self._prepare_mapping_data(row, mappings)
         config_copy = config.copy()
         eval_instance = self._create_eval_instance(
-            config=config, model=self.user_eval_metric.model
+            config=config,
+            model=self.user_eval_metric.model,
+            kb_id=getattr(self.user_eval_metric, "kb_id", None),
         )
 
         config_error = self._prepare_eval_config(config_copy)
@@ -1986,6 +1999,8 @@ class EvaluationRunner:
             gt_config_in_template = self.eval_template.config.get("ground_truth")
             if gt_config_in_template and gt_config_in_template.get("enabled"):
                 from model_hub.utils.ground_truth_retrieval import (
+                    format_few_shot_examples,
+                    get_ground_truth_few_shot_examples,
                     load_ground_truth_config,
                 )
 
@@ -2000,8 +2015,31 @@ class EvaluationRunner:
                         if gt_obj:
                             gt_config["embedding_status"] = gt_obj.embedding_status
                     except Exception:
-                        pass
-                    _mapped["ground_truth_config"] = gt_config
+                        gt_obj = None
+
+                    template_eval_type_id = self.eval_template.config.get(
+                        "eval_type_id", ""
+                    )
+                    if (
+                        template_eval_type_id == "CustomPromptEvaluator"
+                        and gt_obj
+                        and gt_obj.embedding_status == "completed"
+                    ):
+                        gt_examples = get_ground_truth_few_shot_examples(
+                            gt_config, _mapped
+                        )
+                        if gt_examples:
+                            injection_format = gt_config.get(
+                                "injection_format", "structured"
+                            )
+                            formatted = format_few_shot_examples(
+                                gt_examples,
+                                gt_obj.role_mapping,
+                                injection_format,
+                            )
+                            _mapped["ground_truth_few_shot"] = formatted
+                    else:
+                        _mapped["ground_truth_config"] = gt_config
 
         # For code evals, inject static user-defined params stored in the
         # UserEvalMetric config so they reach evaluate() as **kwargs.
@@ -2796,16 +2834,17 @@ class EvaluationRunner:
                             reason_column = self._create_reason_column(
                                 dataset, reason_column_name
                             )
-                            self._create_reason_cell(
-                                dataset,
-                                reason_column,
-                                row,
-                                {
-                                    "reason": "No reasoning available. Please rerun the evaluation."
-                                },
-                                "No reasoning available. Please rerun the evaluation.",
-                                CellStatus.ERROR.value,
-                            )
+                            if reason_column is not None:
+                                self._create_reason_cell(
+                                    dataset,
+                                    reason_column,
+                                    row,
+                                    {
+                                        "reason": "No reasoning available. Please rerun the evaluation."
+                                    },
+                                    "No reasoning available. Please rerun the evaluation.",
+                                    CellStatus.ERROR.value,
+                                )
                     except Exception as cell_error:
                         logger.error(f"Failed to update cell to ERROR: {cell_error}")
 

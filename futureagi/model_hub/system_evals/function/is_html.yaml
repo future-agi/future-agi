@@ -37,13 +37,30 @@ config:
                 if tag.lower() not in void:
                     self.stack.append(tag.lower())
             def handle_endtag(self, tag):
-                if self.stack and self.stack[-1] == tag.lower():
-                    self.stack.pop()
+                tag = tag.lower()
+                if not self.stack:
+                    self.errors.append(f"orphan </{tag}>")
+                    return
+                if self.stack[-1] != tag:
+                    if tag in self.stack:
+                        self.errors.append(
+                            f"mismatched </{tag}> (expected </{self.stack[-1]}>)"
+                        )
+                        while self.stack and self.stack[-1] != tag:
+                            self.stack.pop()
+                        if self.stack:
+                            self.stack.pop()
+                    else:
+                        self.errors.append(f"orphan </{tag}>")
+                    return
+                self.stack.pop()
         try:
             v = V()
             v.feed(text)
             if not v.has_tags:
                 return {"score": 0.0, "reason": "No HTML tags found"}
+            if v.errors:
+                return {"score": 0.0, "reason": "; ".join(v.errors[:3])}
             if v.stack:
                 return {"score": 0.0, "reason": f"Unclosed tags: {', '.join(v.stack)}"}
             return {"score": 1.0, "reason": "Valid HTML"}

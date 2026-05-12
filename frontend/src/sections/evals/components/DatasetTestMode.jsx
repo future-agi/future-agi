@@ -26,6 +26,7 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
+import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
@@ -143,7 +144,7 @@ function JsonEntries({ data, depth = 0 }) {
 
   const entries = Array.isArray(data)
     ? data.map((v, i) => [String(i), v])
-    : Object.entries(data);
+    : canonicalEntries(data);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>

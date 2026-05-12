@@ -57,6 +57,7 @@ from tfc.telemetry import wrap_for_thread
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
+
 try:
     from ee.usage.exceptions import UsageLimitExceeded
 except ImportError:
@@ -68,6 +69,7 @@ from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
+
 try:
     from ee.usage.models.usage import APICallLog, APICallStatusChoices
 except ImportError:
@@ -107,11 +109,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -1397,9 +1396,7 @@ class EvalTemplateListView(APIView):
                         ),
                         created_by_name=created_by,
                         version_count=max(vcount, 1),
-                        current_version=(
-                            f"V{default_vnum}" if default_vnum else "V1"
-                        ),
+                        current_version=(f"V{default_vnum}" if default_vnum else "V1"),
                         last_updated=template.updated_at.isoformat(),
                         thirty_day_chart=[],
                         thirty_day_error_rate=[],
@@ -2027,9 +2024,11 @@ class EvalTemplateDetailView(APIView):
                     getattr(template, "multi_choice", False)
                     or config.get("multi_choice", False)
                 ),
-                code=(config.get("code") or None)
-                if derive_eval_type(template) == "code"
-                else None,
+                code=(
+                    (config.get("code") or None)
+                    if derive_eval_type(template) == "code"
+                    else None
+                ),
                 code_language=config.get("language")
                 or config.get("code_language")
                 or "python",
@@ -2728,7 +2727,10 @@ class CompositeEvalCreateView(APIView):
             CompositeCreateRequest,
             CompositeCreateResponse,
         )
-        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
+        from model_hub.utils.eval_list import (
+            derive_eval_type,
+            infer_composite_eval_type,
+        )
 
         try:
             try:
@@ -2975,7 +2977,10 @@ class CompositeEvalDetailView(APIView):
             CompositeDetailResponse,
             CompositeUpdateRequest,
         )
-        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
+        from model_hub.utils.eval_list import (
+            derive_eval_type,
+            infer_composite_eval_type,
+        )
 
         try:
             try:
@@ -5023,6 +5028,9 @@ class EvalPlayGroundAPIView(APIView):
                 mapping = validated_data.get("mapping", {})
                 if not mapping and isinstance(runtime_config, dict):
                     mapping = runtime_config.get("mapping", {})
+                mapping_paths = validated_data.get("mapping_paths") or {}
+                if not mapping_paths and isinstance(runtime_config, dict):
+                    mapping_paths = runtime_config.get("mapping_paths", {}) or {}
                 template_id = validated_data.get("template_id", None)
                 input_data_types = validated_data.get("input_data_types", {})
                 if not input_data_types and isinstance(runtime_config, dict):
@@ -5073,14 +5081,19 @@ class EvalPlayGroundAPIView(APIView):
                             # browse and decide which to drill into.
                             # Only fetch essential fields, cap at 200 spans.
                             _span_summaries = list(
-                                ObservationSpan.objects.filter(
-                                    trace=_t, deleted=False
-                                )
+                                ObservationSpan.objects.filter(trace=_t, deleted=False)
                                 .order_by("start_time")
                                 .values(
-                                    "id", "name", "observation_type", "status",
-                                    "status_message", "latency_ms", "model",
-                                    "total_tokens", "cost", "parent_span_id",
+                                    "id",
+                                    "name",
+                                    "observation_type",
+                                    "status",
+                                    "status_message",
+                                    "latency_ms",
+                                    "model",
+                                    "total_tokens",
+                                    "cost",
+                                    "parent_span_id",
                                 )[:200]
                             )
 
@@ -5134,9 +5147,7 @@ class EvalPlayGroundAPIView(APIView):
                         _ss = TraceSession.objects.filter(id=_session_id).first()
                         if _ss:
                             # Get trace IDs for this session
-                            _trace_qs = Trace.objects.filter(
-                                session=_ss, deleted=False
-                            )
+                            _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
 
                             # Aggregate stats across all spans in session
                             _sess_agg = ObservationSpan.objects.filter(
@@ -5153,15 +5164,14 @@ class EvalPlayGroundAPIView(APIView):
                             # Lightweight trace summaries for the agent to
                             # browse and decide which to drill into. Use one
                             # grouped aggregate instead of N+1 per-trace queries.
-                            _traces_page = list(
-                                _trace_qs.order_by("created_at")[:100]
-                            )
+                            _traces_page = list(_trace_qs.order_by("created_at")[:100])
                             _trace_ids = [_tr.id for _tr in _traces_page]
                             _per_trace = {
                                 _row["trace_id"]: _row
                                 for _row in (
-                                    ObservationSpan.objects
-                                    .filter(trace_id__in=_trace_ids, deleted=False)
+                                    ObservationSpan.objects.filter(
+                                        trace_id__in=_trace_ids, deleted=False
+                                    )
                                     .values("trace_id")
                                     .annotate(
                                         span_count=Count("id"),
@@ -5177,28 +5187,29 @@ class EvalPlayGroundAPIView(APIView):
                             for _tr in _traces_page:
                                 _agg = _per_trace.get(_tr.id, {})
                                 _err_count = _agg.get("error_count") or 0
-                                _trace_summaries.append({
-                                    "id": str(_tr.id),
-                                    "name": _tr.name,
-                                    "created_at": (
-                                        _tr.created_at.isoformat()
-                                        if _tr.created_at
-                                        else None
-                                    ),
-                                    "span_count": _agg.get("span_count") or 0,
-                                    "error_count": _err_count,
-                                    "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency") or 0,
-                                    "has_error": bool(_tr.error or _err_count > 0),
-                                })
+                                _trace_summaries.append(
+                                    {
+                                        "id": str(_tr.id),
+                                        "name": _tr.name,
+                                        "created_at": (
+                                            _tr.created_at.isoformat()
+                                            if _tr.created_at
+                                            else None
+                                        ),
+                                        "span_count": _agg.get("span_count") or 0,
+                                        "error_count": _err_count,
+                                        "total_tokens": _agg.get("total_tokens") or 0,
+                                        "total_latency_ms": _agg.get("total_latency")
+                                        or 0,
+                                        "has_error": bool(_tr.error or _err_count > 0),
+                                    }
+                                )
 
                             _start = _sess_agg["start_time"]
                             _end = _sess_agg["end_time"]
                             _duration = None
                             if _start and _end:
-                                _duration = (
-                                    _end - _start
-                                ).total_seconds()
+                                _duration = (_end - _start).total_seconds()
 
                             session_context = {
                                 "id": str(_ss.id),
@@ -5221,17 +5232,66 @@ class EvalPlayGroundAPIView(APIView):
                                     if _sess_agg["total_cost"]
                                     else 0
                                 ),
-                                "start_time": (
-                                    str(_start) if _start else None
-                                ),
-                                "end_time": (
-                                    str(_end) if _end else None
-                                ),
+                                "start_time": (str(_start) if _start else None),
+                                "end_time": (str(_end) if _end else None),
                                 "duration_seconds": _duration,
                                 "traces": _trace_summaries,
                             }
                     except Exception as _e:
                         logger.warning(f"Failed to fetch session {_session_id}: {_e}")
+
+                # Resolve session-level dotted-path mapping server-side.
+                # The TaskLivePreview session branch sends `mapping_paths`
+                # (variable -> dotted path) because its lazy fetch only
+                # populates the first trace's spans, so local resolution
+                # would silently drop deeper mappings. `_process_session_mapping`
+                # walks the real DB models — same code path as the
+                # eval-task runtime, so preview results match prod.
+                logger.info(
+                    "eval_playground_session_mapping_inputs",
+                    extra={
+                        "session_id": str(_session_id) if _session_id else None,
+                        "mapping_paths_keys": (
+                            list(mapping_paths.keys())
+                            if isinstance(mapping_paths, dict)
+                            else None
+                        ),
+                        "incoming_mapping_keys": (
+                            list(mapping.keys()) if isinstance(mapping, dict) else None
+                        ),
+                    },
+                )
+                if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                    from tracer.models.trace_session import TraceSession
+                    from tracer.utils.eval import _process_session_mapping
+
+                    _ss_for_mapping = TraceSession.objects.filter(
+                        id=_session_id
+                    ).first()
+                    if _ss_for_mapping is None:
+                        return self._gm.bad_request(f"Session {_session_id} not found")
+                    try:
+                        resolved_session_mapping = _process_session_mapping(
+                            dict(mapping_paths),
+                            _ss_for_mapping,
+                            template_id,
+                        )
+                    except ValueError as ve:
+                        return self._gm.bad_request(str(ve))
+                    logger.info(
+                        "eval_playground_session_mapping_resolved",
+                        extra={
+                            "session_id": str(_session_id),
+                            "resolved_keys": list(resolved_session_mapping.keys()),
+                        },
+                    )
+                    # FE-supplied resolved `mapping` wins over the
+                    # server-side resolution on key collision — lets the
+                    # caller force a value for a variable if they need to.
+                    _merged = dict(resolved_session_mapping)
+                    _merged.update(mapping or {})
+                    mapping = _merged
+
                 if call_context is None and _call_id:
                     try:
                         from simulate.models.test_execution import (
@@ -5299,6 +5359,16 @@ class EvalPlayGroundAPIView(APIView):
                         get_error_message("MISSING_EVAL_TEMPLATE")
                     )
 
+                # Validate + coerce function params (matches Dataset / Experiments
+                # paths). Without this, FE-sent blank strings flow straight into
+                # int()/float() inside eval bodies and crash with cryptic errors.
+                try:
+                    runtime_config = normalize_eval_runtime_config(
+                        eval_template.config, runtime_config
+                    )
+                except ValueError as ve:
+                    return self._gm.bad_request(str(ve))
+
                 try:
                     # Run the evaluation with the provided config
                     response = run_eval_func(
@@ -5323,7 +5393,9 @@ class EvalPlayGroundAPIView(APIView):
                         response if response else "Evaluation has been updated."
                     )
                 except Exception as e:
-                    if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
+                    if UsageLimitExceeded is not None and isinstance(
+                        e, UsageLimitExceeded
+                    ):
                         logger.warning(f"Eval playground usage limit: {str(e)}")
                         return self._gm.usage_limit_response(e.check_result)
                     logger.error(f"Error in run_eval_func: {str(e)}")

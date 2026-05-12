@@ -144,7 +144,7 @@ class EvalCreateRequest(BaseModel):
         None  # {variables_only, dataset_row, trace_context, ...}
     )
     summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom_instructions: str}
+        None  # {type: short|long|concise|custom, custom: str}
     )
     # Template format — determines how variables are extracted
     template_format: Literal["mustache", "jinja"] = "mustache"

@@ -324,7 +324,31 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return vsm.get_recording_urls(provider_payload) or {}
 
     def get_provider(self, obj):
-        """Return the voice provider for this call (e.g. vapi, retell, livekit_bridge)."""
+        """Return the provider that produced this call's stored provider payload.
+
+        The agent definition can be Vapi while the executed call payload is
+        stored under another provider key (for example LiveKit web/SIP flows).
+        The drawer uses this value for both the chip and provider-specific
+        metrics rendering, so prefer the actual payload key when available.
+        """
+        provider_data = getattr(obj, "provider_call_data", None)
+        if isinstance(provider_data, dict):
+            for provider in (
+                ProviderChoices.VAPI.value,
+                ProviderChoices.RETELL.value,
+                ProviderChoices.LIVEKIT.value,
+                ProviderChoices.ELEVEN_LABS.value,
+                ProviderChoices.OTHERS.value,
+            ):
+                if isinstance(provider_data.get(provider), dict) and provider_data.get(
+                    provider
+                ):
+                    return provider
+
+            for provider, payload in provider_data.items():
+                if isinstance(payload, dict) and payload:
+                    return provider
+
         try:
             return obj.test_execution.agent_definition.provider
         except (AttributeError, Exception):
@@ -591,7 +615,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             columns_by_dataset = ctx.get("columns_by_dataset")
             cells_by_row = ctx.get("cells_by_row")
 
-            if rows_map is not None and row_id_str in rows_map:
+            if rows_map is not None:
+                if row_id_str not in rows_map:
+                    return {}
                 # Fast path: use prefetched data
                 row = rows_map[row_id_str]
                 ds_id = str(row.dataset.id) if row.dataset else None
@@ -599,7 +625,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 row_cells = cells_by_row.get(row_id_str, {})
             else:
                 # Fallback: individual queries (for grouped results or missing context)
-                row = Row.all_objects.get(id=row_id)
+                try:
+                    row = Row.all_objects.get(id=row_id)
+                except Row.DoesNotExist:
+                    return {}
                 dataset_columns = Column.all_objects.filter(
                     id__in=row.dataset.column_order
                 )
@@ -1372,40 +1401,10 @@ class TestExecutionBulkDeleteSerializer(serializers.Serializer):
         return data
 
 
-class RunNewEvalsOnTestExecutionSerializer(serializers.Serializer):
-    """Serializer for running new evaluations on existing test executions"""
+# Migrated to simulate/serializers/requests/run_test_evals.py
+# Re-exported here for backward compatibility.
+from simulate.serializers.requests.run_test_evals import (
+    RunNewEvalsOnTestExecutionSerializer,
+)
 
-    test_execution_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-        help_text="List of specific test execution IDs to run evaluations on",
-    )
-
-    select_all = serializers.BooleanField(
-        default=False,
-        help_text="Whether to run evaluations on all test executions in the run test",
-    )
-
-    eval_config_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=True,
-        help_text="List of SimulateEvalConfig IDs to run on the test executions",
-    )
-
-    enable_tool_evaluation = serializers.BooleanField(
-        required=False,
-        default=None,
-        help_text="Whether to enable tool evaluation for this run (if not provided, uses the run test's current setting)",
-    )
-
-    def validate(self, data):
-        """Validate that either test_execution_ids or select_all is provided, and eval_config_ids is not empty"""
-        if not data.get("select_all") and not data.get("test_execution_ids"):
-            raise serializers.ValidationError(
-                "Either 'select_all' must be True or 'test_execution_ids' must be provided"
-            )
-        if not data.get("eval_config_ids"):
-            raise serializers.ValidationError(
-                "'eval_config_ids' must be provided and cannot be empty"
-            )
-        return data
+__all__ = ["RunNewEvalsOnTestExecutionSerializer"]

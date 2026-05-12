@@ -491,11 +491,19 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
             # Normalize Unicode characters (non-breaking spaces, zero-width chars, etc.)
             # that come from rich text editors / web UI copy-paste
-            from ee.agent_opt.utils.template_variables import (
-                build_template_variable_instruction,
-                extract_template_variables,
-                normalize_prompt_text,
-            )
+            try:
+                from ee.agent_opt.utils.template_variables import (
+                    build_template_variable_instruction,
+                    extract_template_variables,
+                    normalize_prompt_text,
+                )
+            except ImportError:
+                if settings.DEBUG:
+                    logger.warning(
+                        "Could not import ee.agent_opt.utils.template_variables",
+                        exc_info=True,
+                    )
+                return None
 
             initial_prompt = normalize_prompt_text(initial_prompt)
 

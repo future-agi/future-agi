@@ -419,6 +419,59 @@ class TestValidateAllFiles:
         assert "Unexpected" in result["files_with_issues"][0]["error"]
 
 
+class TestCreateKnowledgeBaseEntitlements:
+    @patch("model_hub.views.develop_dataset.User.objects.get")
+    @patch("model_hub.views.develop_dataset.KnowledgeBaseFile.objects.filter")
+    @patch("ee.usage.services.entitlements.Entitlements.check_feature")
+    @patch("ee.usage.services.entitlements.Entitlements.can_create")
+    @patch("model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request")
+    def test_post_uses_entitlements_instead_of_legacy_resource_limit(
+        self,
+        mock_legacy_limit,
+        mock_can_create,
+        mock_check_feature,
+        mock_kb_filter,
+        mock_user_get,
+    ):
+        from ee.usage.models.usage import APICallStatusChoices
+        from model_hub.views.develop_dataset import CreateKnowledgeBaseView
+
+        view = CreateKnowledgeBaseView()
+        view._gm = MagicMock()
+        view._gm.bad_request.return_value = MagicMock(status_code=400)
+        view._gm.too_many_requests.return_value = MagicMock(status_code=429)
+
+        org = MagicMock()
+        org.id = "org-1"
+
+        request = MagicMock()
+        request.organization = org
+        request.user.id = "user-1"
+        request.user.organization = org
+        request.workspace = MagicMock()
+        request.data = {"name": "KB allowed by entitlements"}
+        request.FILES.getlist.return_value = []
+
+        mock_user_get.return_value.name = "tester"
+        mock_kb_filter.return_value.count.return_value = 0
+        mock_can_create.return_value = MagicMock(allowed=True)
+        mock_check_feature.return_value = MagicMock(allowed=True)
+        mock_legacy_limit.return_value = MagicMock(
+            status=APICallStatusChoices.RESOURCE_LIMIT.value
+        )
+
+        view.validate_all_files = MagicMock(
+            return_value={"valid": False, "files_with_issues": []}
+        )
+
+        response = view.post(request)
+
+        mock_can_create.assert_called_once_with("org-1", "knowledge_bases", 0)
+        mock_check_feature.assert_called_once_with("org-1", "has_knowledge_base")
+        mock_legacy_limit.assert_not_called()
+        assert response.status_code == 400
+
+
 @pytest.mark.django_db
 class TestCreateFilesAndUpload:
     """Tests for create_files_and_upload method."""

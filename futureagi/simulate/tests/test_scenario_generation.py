@@ -26,6 +26,10 @@ from simulate.models.simulator_agent import SimulatorAgent
 # ============================================================================
 
 
+def _ee_voice_mapper():
+    return pytest.importorskip("ee.voice.constants.voice_mapper")
+
+
 @pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
@@ -680,30 +684,27 @@ class TestLanguageBasedPersonaSelection:
 
     def test_english_personas_for_en_agent(self):
         """English agent should use English personas."""
-        from ee.voice.constants.voice_mapper import (
-            ENGLISH_PERSONAS,
-            get_personas_by_language,
-        )
+        voice_mapper = _ee_voice_mapper()
+        ENGLISH_PERSONAS = voice_mapper.ENGLISH_PERSONAS
+        get_personas_by_language = voice_mapper.get_personas_by_language
 
         personas = get_personas_by_language("en")
         assert personas == ENGLISH_PERSONAS
 
     def test_hindi_personas_for_hi_agent(self):
         """Hindi agent should use Hindi personas."""
-        from ee.voice.constants.voice_mapper import (
-            HINDI_PERSONAS,
-            get_personas_by_language,
-        )
+        voice_mapper = _ee_voice_mapper()
+        HINDI_PERSONAS = voice_mapper.HINDI_PERSONAS
+        get_personas_by_language = voice_mapper.get_personas_by_language
 
         personas = get_personas_by_language("hi")
         assert personas == HINDI_PERSONAS
 
     def test_default_to_english_for_unknown_language(self):
         """Unknown language should default to English personas."""
-        from ee.voice.constants.voice_mapper import (
-            ENGLISH_PERSONAS,
-            get_personas_by_language,
-        )
+        voice_mapper = _ee_voice_mapper()
+        ENGLISH_PERSONAS = voice_mapper.ENGLISH_PERSONAS
+        get_personas_by_language = voice_mapper.get_personas_by_language
 
         # Unknown languages should fall back to English
         for lang in ["fr", "es", "de", "ja", "unknown"]:

@@ -54,9 +54,15 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
         ).values_list("eval_logger_id", flat=True)
     )
 
+    # PR3: target_type='span' keeps span-level and trace-level results from
+    # being mixed in the same cluster. Trace evals are different semantic
+    # units (one per trace, not per span) and clustering them with span-level
+    # error themes would muddy the cluster centroids. Session evals have no
+    # trace FK and would 404 the trace__project_id filter anyway.
     evals = (
         EvalLogger.objects.filter(
             trace__project_id=project_id,
+            target_type="span",
             custom_eval_config__isnull=False,
         )
         .filter(

@@ -30,11 +30,14 @@ if [[ -t 1 ]]; then
 else
   BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; RESET=""
 fi
-say()   { printf "%s\n" "$*"; }
-step()  { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
-ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
-warn()  { printf "  ${YELLOW}!${RESET} %s\n" "$*" >&2; }
-die()   { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; exit 1; }
+# Helpers write to terminal AND to fd 3 (install log, opened below). Avoids
+# globally tee'ing stdout — that breaks TTY detection for `docker compose`.
+say()   { printf "%s\n" "$*"; printf "%s\n" "$*" >&3; }
+step()  { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; printf "\n==> %s\n" "$*" >&3; }
+ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; printf "  [ok]   %s\n" "$*" >&3; }
+warn()  { printf "  ${YELLOW}!${RESET} %s\n" "$*" >&2; printf "  [warn] %s\n" "$*" >&3; }
+die()   { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; printf "\n[fail] %s\n" "$*" >&3; exit 1; }
+log_only() { printf "%s\n" "$*" >&3; }
 
 on_err() {
   local code=$? line=${1:-?}
@@ -43,6 +46,14 @@ on_err() {
   exit "$code"
 }
 trap 'on_err $LINENO' ERR
+
+# ---------------- log file (gitignored as /install-*.log) ----------------
+# Opened before arg parsing so helpers (esp. die) can append from any point.
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
+exec 3>>"$LOG_FILE"
+printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname 2>/dev/null || echo ?)" "$(uname -a)" >&3
 
 # ---------------- args ----------------
 FULL=0
@@ -70,14 +81,7 @@ done
 # CI / non-TTY runs always behave as non-interactive.
 [[ -n "${CI:-}" || ! -t 0 ]] && NON_INTERACTIVE=1
 
-cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
-
-# ---------------- log file (Coolify pattern) ----------------
-# Tee everything to a timestamped log so users can attach one file to a
-# GitHub issue and we have full state. Logs are gitignored (/install-*.log).
-LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+cd "$ROOT"
 
 # ---------------- welcome banner ----------------
 if [[ -t 1 ]]; then
@@ -550,6 +554,16 @@ elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
 else
   prompt_user
 fi
+
+# ---------------- pull images ----------------
+step "Pulling images"
+log_only "running: $DC pull"
+if ! $DC pull; then
+  log_only "[fail] pull returned $?"
+  die "docker compose pull failed. Check disk space (docker system df) and try again."
+fi
+log_only "[ok]   pull complete"
+ok "Images pulled"
 
 # ---------------- bring up ----------------
 step "Starting the stack"
