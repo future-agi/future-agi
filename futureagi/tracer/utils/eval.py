@@ -393,6 +393,8 @@ def _run_evaluation(
             logger_kwargs["output_bool"] = True if value == "Passed" else False
         elif isinstance(value, list):
             logger_kwargs["output_str_list"] = value
+        elif isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
         else:
             logger_kwargs["output_str"] = str(value)
 
@@ -511,6 +513,8 @@ def _execute_composite_on_span(
             logger_kwargs["output_float"] = float(value)
         elif isinstance(value, list):
             logger_kwargs["output_str_list"] = value
+        elif isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
         else:
             logger_kwargs["output_str"] = str(value)
 
@@ -734,6 +738,8 @@ def _execute_evaluation(
             logger_kwargs["output_bool"] = True if value == "Passed" else False
         elif isinstance(value, list):
             logger_kwargs["output_str_list"] = value
+        elif isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
         else:
             logger_kwargs["output_str"] = str(value)
 
@@ -1874,6 +1880,8 @@ def _execute_evaluation_for_trace(
             logger_kwargs["output_bool"] = True if value == "Passed" else False
         elif isinstance(value, list):
             logger_kwargs["output_str_list"] = value
+        elif isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
         else:
             logger_kwargs["output_str"] = str(value)
 
@@ -2044,6 +2052,8 @@ def _execute_evaluation_for_session(
             logger_kwargs["output_bool"] = True if value == "Passed" else False
         elif isinstance(value, list):
             logger_kwargs["output_str_list"] = value
+        elif isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
         else:
             logger_kwargs["output_str"] = str(value)
 
