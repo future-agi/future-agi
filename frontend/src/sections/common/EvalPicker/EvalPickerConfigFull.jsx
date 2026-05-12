@@ -71,6 +71,7 @@ import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
+  contextOptionsForRowType,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
@@ -481,6 +482,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         } else if (di.variables_only || di.variablesOnly) {
           setContextOptions(["variables_only"]);
         }
+      } else if (source === "task") {
+      const seeded = contextOptionsForRowType(sourceRowType);
+        if (seeded) setContextOptions(seeded);
       }
       setErrorLocalizerEnabled(
         config.error_localizer_enabled ??
@@ -1644,6 +1648,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     localFilters={localApiFilters}
+                    pickerSourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />
                 )}

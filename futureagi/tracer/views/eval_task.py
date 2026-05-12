@@ -93,10 +93,15 @@ def _resolve_input_variables(custom_eval_config, obs_span):
 logger = structlog.get_logger(__name__)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.serializers.eval_task import EditEvalTaskSerializer, EvalTaskSerializer
+from tracer.serializers.eval_task import (
+    EditEvalTaskSerializer,
+    EvalTaskSerializer,
+    PaginationQuerySerializer,
+)
 from tracer.utils.eval_tasks import parsing_evaltask_filters, run_for_processed_spans
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
@@ -334,6 +339,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
                 # frontend can show a "showing top 50 error types" hint.
                 "error_groups_truncated": len(error_groups) == self._ERROR_GROUPS_LIMIT,
+                "row_type": eval_task.row_type,
             }
 
             return self._gm.success_response(result)
@@ -387,10 +393,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # ── Query params ──
-            page = max(int(self.request.query_params.get("page", 0)), 0)
-            page_size = min(
-                max(int(self.request.query_params.get("page_size", 25)), 1), 100
-            )
+            qp = PaginationQuerySerializer(data=self.request.query_params)
+            qp.is_valid(raise_exception=True)
+            page_size = qp.validated_data["page_size"]
             period = self.request.query_params.get("period", "30d")
             # Optional eval filter — tasks may run multiple evals; the UI
             # passes this when the user picks one from the dropdown.
@@ -565,13 +570,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Eager-load the related ObservationSpan + CustomEvalConfig
             # (and through that, the EvalTemplate for output_type) in a
             # single query — without this we'd hit N+1 inside the loop.
+            # PR3: also eager-load trace_session so session-target rows can
+            # surface session_id / session_name without an extra query.
             logs_qs = period_qs.select_related(
                 "observation_span",
                 "custom_eval_config",
                 "custom_eval_config__eval_template",
+                "trace_session",
             ).order_by("-created_at")
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+
+            paginator = ExtendedPageNumberPagination()
+            paginator.page_size = page_size
+            logs_page = paginator.paginate_queryset(
+                logs_qs, self.request, view=self
+            )
 
             log_items = []
             for log in logs_page:
@@ -605,11 +617,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     status = "success"
 
                 obs_span = log.observation_span
+                trace_session = log.trace_session
                 config = log.custom_eval_config
+                target_type = log.target_type
 
-                # Build a short input summary from the obs span attributes
-                # (truncated). Falls back to the span name if no input
-                # field exists. This matches what the eval-usage view does.
+                # Build a short input summary. Span-target and trace-target
+                # rows both have an observation_span (trace target = root
+                # span); session-target rows fall back to the session name.
                 input_str = ""
                 if obs_span:
                     span_attrs = obs_span.span_attributes or {}
@@ -623,6 +637,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         input_str = json.dumps(input_val)[:200]
                     else:
                         input_str = str(input_val)[:200]
+                elif trace_session:
+                    input_str = (trace_session.name or "")[:200]
 
                 reason = log.eval_explanation or log.error_message or ""
 
@@ -639,13 +655,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             log.created_at.isoformat() if log.created_at else ""
                         ),
                         # Cross-references for the side panel — let users
-                        # jump back to the source span/trace in the
-                        # observe page.
+                        # jump back to the source span/trace/session in the
+                        # observe page. Span and trace rows expose span/trace
+                        # IDs (trace target = root span); session rows expose
+                        # session_id with both other IDs NULL.
                         "span_id": str(obs_span.id) if obs_span else None,
                         "trace_id": (
                             str(obs_span.trace_id)
                             if obs_span and obs_span.trace_id
                             else None
+                        ),
+                        "session_id": (
+                            str(trace_session.id) if trace_session else None
                         ),
                         "eval_id": str(config.id) if config else None,
                         "eval_name": config.name if config else None,
@@ -658,12 +679,22 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                                 if config and config.eval_template
                                 else None
                             ),
+                            # PR3: target_type lets the FE side panel switch
+                            # labels per row (Span ID vs Session ID etc.)
+                            # without having to look up the parent EvalTask.
+                            "target_type": target_type,
                             "span_name": obs_span.name if obs_span else None,
                             "span_id": str(obs_span.id) if obs_span else None,
                             "trace_id": (
                                 str(obs_span.trace_id)
                                 if obs_span and obs_span.trace_id
                                 else None
+                            ),
+                            "session_id": (
+                                str(trace_session.id) if trace_session else None
+                            ),
+                            "session_name": (
+                                trace_session.name if trace_session else None
                             ),
                             "output_bool": log.output_bool,
                             "output_float": log.output_float,
@@ -691,12 +722,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 },
                 "evals": evals_meta,
                 "chart": chart_data,
-                "logs": {
-                    "items": log_items,
-                    "total": total_logs,
-                    "page": page,
-                    "page_size": page_size,
-                },
+                # Paginator native shape (matches eval_logs):
+                # {count, next, previous, results, total_pages, current_page}
+                "logs": paginator.get_paginated_response(log_items).data,
                 # Echo back the period actually used. If the user picked
                 # "30D" but the task only has older runs, this will be
                 # "all" — the frontend can show a hint explaining why.
@@ -1061,7 +1089,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(f"Error updating evaluation task: {str(e)}")
 
     def _extract_update_fields(self, validated_data):
-        """Extract valid update fields from validated data"""
+        """Extract valid update fields from validated data.
+
+        ``row_type`` is intentionally absent from the allow-list — it's
+        immutable after task creation (the serializer rejects it earlier,
+        this is a belt-and-braces guard so any future code path that
+        bypasses the serializer still can't write it through).
+        """
         update_fields = {}
         allowed_fields = [
             "name",
@@ -1330,6 +1364,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "sampling_rate": queryset.sampling_rate,
                 "last_run": queryset.last_run,
                 "run_type": queryset.run_type,
+                "row_type": queryset.row_type,
             }
 
             return self._gm.success_response(result)

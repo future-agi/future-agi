@@ -25,6 +25,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
@@ -51,6 +52,7 @@ import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePrevi
 import { JsonValueTree } from "./DatasetTestMode";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
+import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
@@ -237,6 +239,14 @@ const TracingTestMode = React.forwardRef(
       // TestPlayground (eval detail) where there's no parent form to
       // wire filters from.
       hostsFilter = false,
+      // Optional: precomputed mapping-path list from the parent picker
+      // (e.g. TaskConfigPanel sends sessions / traces paths fetched from
+      // get_eval_attributes_list). When provided AND rowType is Session
+      // or Trace, the variable-mapping dropdown reads from this list
+      // instead of walking the loaded row's data — so users see all
+      // candidate paths immediately, regardless of drill-in depth.
+      // When null/empty, falls back to today's walked-detail behaviour.
+      pickerSourceColumns = null,
     },
     ref,
   ) => {
@@ -509,6 +519,51 @@ const TracingTestMode = React.forwardRef(
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
 
+    // ── Session drill-down queries (rowType=Session only) ──
+    // The mapping dropdown is sourced from `pickerSourceColumns` (the
+    // precomputed paths from get_eval_attributes_list) when present, so
+    // these queries primarily power the preview pane: showing real
+    // values from the session's first trace + spans so users can sanity-
+    // check what their mapping resolves to. Two queries: session detail
+    // (paginated traces) and the first trace's spans (eager-fetched on
+    // session select). React Query handles caching and dedup; cache keys
+    // are namespaced under `picker-` to stay isolated from any sibling
+    // hook in the wider app.
+    const sessionRowSessionId =
+      rowType === "Session" ? currentRow?.session_id : null;
+
+    const sessionDetailQuery = useQuery({
+      queryKey: ["picker-session-detail", sessionRowSessionId],
+      queryFn: async () => {
+        const resp = await axios.get(
+          `${endpoints.project.traceSession}${sessionRowSessionId}/`,
+          { params: { page_number: 0, page_size: 30 } },
+        );
+        return resp.data?.result || {};
+      },
+      enabled: !!sessionRowSessionId,
+      staleTime: 30_000,
+    });
+
+    const sessionFirstTraceId =
+      sessionDetailQuery.data?.response?.[0]?.trace_id || null;
+
+    const sessionFirstTraceSpansQuery = useQuery({
+      queryKey: ["picker-trace-spans", sessionFirstTraceId],
+      queryFn: async () => {
+        const resp = await axios.get(
+          endpoints.project.getTrace(sessionFirstTraceId),
+        );
+        const r = resp.data?.result || {};
+        return {
+          trace: r.trace,
+          spans: flattenSpanTree(r.observation_spans || []),
+        };
+      },
+      enabled: !!sessionFirstTraceId,
+      staleTime: 30_000,
+    });
+
     // ── Fetch full span/trace detail when row changes ──
     useEffect(() => {
       if (!currentRow) {
@@ -575,8 +630,17 @@ const TracingTestMode = React.forwardRef(
                 spans: allSpans,
               };
             }
+          } else if (rowType === "Session") {
+            // Sessions are assembled via React Query at the top of the
+            // component (sessionDetailQuery + sessionFirstTraceSpansQuery)
+            // so the picker can show real session metadata + traces +
+            // first-trace spans in the preview pane. The actual
+            // assembly/setSpanDetail happens in the watcher effect
+            // below — return early here so we don't clobber it with
+            // stale row-only data.
+            setLoadingDetail(false);
+            return;
           } else {
-            // Sessions: use row data directly
             detailData = { ...currentRow };
           }
 
@@ -591,6 +655,49 @@ const TracingTestMode = React.forwardRef(
 
       fetchDetail();
     }, [currentRow, currentRowIndex, rowType, columns]);
+
+    // ── Session detail watcher ──
+    // Compose `spanDetail` from the React Query results when in Session
+    // mode. Watches both queries' data so the preview updates as soon as
+    // the session detail lands and again when the first-trace spans
+    // arrive. Pure assembly — no fetching here, just shaping the object
+    // the walker / preview consume.
+    useEffect(() => {
+      if (rowType !== "Session") return;
+      if (!sessionRowSessionId) {
+        setSpanDetail(null);
+        return;
+      }
+      const sessionMeta = sessionDetailQuery.data?.session_metadata;
+      const traces = sessionDetailQuery.data?.response || [];
+      if (!sessionMeta && traces.length === 0) {
+        setLoadingDetail(sessionDetailQuery.isLoading);
+        return;
+      }
+      const firstTraceSpans = sessionFirstTraceSpansQuery.data?.spans || [];
+      const detailData = {
+        ...(sessionMeta || {}),
+        traces: traces.map((t, i) => ({
+          ...t,
+          // First trace gets eager-fetched spans for immediate preview;
+          // remaining traces start empty and would be filled when the
+          // user clicks them (lazy fetch hook to be added in a follow-
+          // up if the basic preview proves not enough).
+          spans: i === 0 ? firstTraceSpans : [],
+        })),
+      };
+      setSpanDetail(detailData);
+      setLoadingDetail(
+        sessionDetailQuery.isLoading || sessionFirstTraceSpansQuery.isLoading,
+      );
+    }, [
+      rowType,
+      sessionRowSessionId,
+      sessionDetailQuery.data,
+      sessionDetailQuery.isLoading,
+      sessionFirstTraceSpansQuery.data,
+      sessionFirstTraceSpansQuery.isLoading,
+    ]);
 
     // ── Extract displayable fields from current row ──
     const rowFields = useMemo(() => {
@@ -723,10 +830,25 @@ const TracingTestMode = React.forwardRef(
       return flattened;
     }, [spanDetail]);
 
-    const fieldNames = useMemo(
-      () => walkedFromDetail || rowFields.map((f) => f?.colId || f?.key),
-      [walkedFromDetail, rowFields],
-    );
+    // Mapping-dropdown source. For Session / Trace row types when the
+    // parent picker passed in a precomputed list (TaskConfigPanel does
+    // this with the get_eval_attributes_list result), use it directly so
+    // users see every candidate path the moment they pick the row-type
+    // tab — no drill-in required. Span row type and any caller that
+    // doesn't pass pickerSourceColumns falls back to walking the loaded
+    // detail (existing behaviour).
+    const fieldNames = useMemo(() => {
+      const usePrecomputed =
+        Array.isArray(pickerSourceColumns) &&
+        pickerSourceColumns.length > 0 &&
+        (rowType === "Session" || rowType === "Trace");
+      if (usePrecomputed) {
+        return pickerSourceColumns
+          .map((c) => (typeof c === "string" ? c : c?.field || c?.name || c?.headerName))
+          .filter(Boolean);
+      }
+      return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
+    }, [pickerSourceColumns, rowType, walkedFromDetail, rowFields]);
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -866,17 +988,20 @@ const TracingTestMode = React.forwardRef(
         };
         walkValues(spanDetail, "");
 
-        // Build the soft-flattened lookup: strip `span_attributes.`
-        // prefix (top-level keys win on collision, matching the
-        // fieldNames dropdown behaviour).
+        // Build the soft-flattened lookup via `stripAttributePathPrefix`
+        // — the same util the `fieldNames` walker uses, so the dropdown
+        // and resolution keys stay in lockstep. The util strips any
+        // `span_attributes.` segment (anchored or nested under
+        // `spans.<n>.` / `traces.<i>.spans.<j>.`), which the previous
+        // anchored-only strip got wrong for trace/session row types
+        // (their detail nests `span_attributes.` mid-path).
         const flatValueMap = {};
         for (const [path, val] of Object.entries(valueMap)) {
-          const short = path.startsWith("span_attributes.")
-            ? path.slice("span_attributes.".length)
-            : path;
-          // Top-level keys take priority — only add span_attributes
-          // paths when there is no existing top-level entry.
-          if (!(short in flatValueMap) || !path.startsWith("span_attributes.")) {
+          const short = stripAttributePathPrefix(path);
+          // Top-level (unstripped) paths win — only fall back to a
+          // stripped path when no top-level entry exists for that short
+          // form.
+          if (!(short in flatValueMap) || short === path) {
             flatValueMap[short] = val;
           }
         }
@@ -1538,304 +1663,13 @@ const TracingTestMode = React.forwardRef(
                   );
                 })}
 
-              {/* Spans section (Trace mode) — each span as a collapsible row */}
-              {spanDetail.spans?.map((span, idx) => {
-                const spanKey = `span-${span.id || idx}`;
-                const depth = span._depth || 0;
-                const indent = depth * 16;
-                const spanName = span.name || span.span_name || "span";
-                const spanType = span.observation_type || "";
-                const isExpanded = expandedCols[spanKey];
-                const hasDuplicateName = (span._nameTotal || 1) > 1;
-                const nameLabel = hasDuplicateName
-                  ? `${spanName} #${span._nameIndex}`
-                  : spanName;
-
-                return (
-                  <Box key={spanKey}>
-                    {/* Span header row */}
-                    <Box
-                      onClick={() =>
-                        setExpandedCols((prev) => ({
-                          ...prev,
-                          [spanKey]: !prev[spanKey],
-                        }))
-                      }
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        px: 1.5,
-                        py: 0.75,
-                        pl: `${12 + indent}px`,
-                        borderBottom: "1px solid",
-                        borderColor: "divider",
-                        cursor: "pointer",
-                        backgroundColor: (theme) =>
-                          theme.palette.mode === "dark"
-                            ? "rgba(124,77,255,0.04)"
-                            : "rgba(124,77,255,0.02)",
-                        "&:hover": { backgroundColor: "action.hover" },
-                        gap: 0.75,
-                      }}
-                    >
-                      <Iconify
-                        icon={
-                          isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"
-                        }
-                        width={14}
-                        sx={{ color: "text.disabled", flexShrink: 0 }}
-                      />
-                      {/* Global index badge */}
-                      <Box
-                        sx={{
-                          minWidth: 18,
-                          height: 18,
-                          borderRadius: "4px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,255,255,0.08)"
-                              : "rgba(0,0,0,0.06)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <Typography
-                          sx={{
-                            fontSize: "10px",
-                            fontWeight: 700,
-                            color: "text.secondary",
-                          }}
-                        >
-                          {idx + 1}
-                        </Typography>
-                      </Box>
-                      {/* Type icon */}
-                      <Iconify
-                        icon={
-                          spanType === "GENERATION"
-                            ? "mdi:creation"
-                            : spanType === "TOOL"
-                              ? "mdi:wrench"
-                              : spanType === "RETRIEVAL"
-                                ? "mdi:database-search"
-                                : "mdi:layers-outline"
-                        }
-                        width={14}
-                        sx={{
-                          color:
-                            spanType === "GENERATION"
-                              ? "primary.main"
-                              : spanType === "TOOL"
-                                ? "warning.main"
-                                : spanType === "RETRIEVAL"
-                                  ? "info.main"
-                                  : "text.secondary",
-                          flexShrink: 0,
-                        }}
-                      />
-                      {/* Name with # suffix for duplicates */}
-                      <Typography
-                        variant="caption"
-                        fontWeight={600}
-                        sx={{ fontSize: "12px" }}
-                        noWrap
-                      >
-                        {nameLabel}
-                      </Typography>
-                      {/* Model chip */}
-                      {span.model && (
-                        <Box
-                          sx={{
-                            px: 0.75,
-                            py: 0.1,
-                            borderRadius: "4px",
-                            flexShrink: 0,
-                            backgroundColor: (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.04)",
-                          }}
-                        >
-                          <Typography
-                            sx={{
-                              fontSize: "10px",
-                              color: "text.secondary",
-                              fontFamily: "monospace",
-                            }}
-                          >
-                            {span.model}
-                          </Typography>
-                        </Box>
-                      )}
-                      {/* Status */}
-                      {span.status && span.status !== "OK" && (
-                        <Box
-                          sx={(t) => ({
-                            px: 0.5,
-                            py: 0.1,
-                            borderRadius: "4px",
-                            // error.lighter is a fixed light pink that looks
-                            // out of place in dark mode; use a theme-reactive
-                            // tint derived from error.main.
-                            backgroundColor:
-                              span.status === "ERROR"
-                                ? alpha(
-                                    t.palette.error.main,
-                                    t.palette.mode === "dark" ? 0.16 : 0.08,
-                                  )
-                                : "transparent",
-                          })}
-                        >
-                          <Typography
-                            sx={{
-                              fontSize: "9px",
-                              fontWeight: 600,
-                              color:
-                                span.status === "ERROR"
-                                  ? "error.main"
-                                  : "text.disabled",
-                            }}
-                          >
-                            {span.status}
-                          </Typography>
-                        </Box>
-                      )}
-                      {/* Tokens */}
-                      {span.total_tokens > 0 && (
-                        <Typography
-                          sx={{ fontSize: "10px", color: "text.disabled" }}
-                        >
-                          {span.total_tokens}tok
-                        </Typography>
-                      )}
-                      {/* Latency — pushed to right */}
-                      {span.latency_ms != null && (
-                        <Typography
-                          sx={{
-                            fontSize: "10px",
-                            color: "text.disabled",
-                            ml: "auto",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {span.latency_ms}ms
-                        </Typography>
-                      )}
-                    </Box>
-
-                    {/* Expanded span attributes */}
-                    {isExpanded && (
-                      <Box
-                        sx={{
-                          pl: `${24 + indent}px`,
-                          borderBottom: "1px solid",
-                          borderColor: "divider",
-                        }}
-                      >
-                        {sortEntries(
-                          canonicalEntries(span).filter(
-                            ([k]) => !k.startsWith("_"),
-                          ),
-                        )
-                          .filter(([k, v]) => {
-                            if (!tableSearch.trim()) return true;
-                            const q = tableSearch.toLowerCase();
-                            return (
-                              k.toLowerCase().includes(q) || deepMatch(v, q)
-                            );
-                          })
-                          .map(([k, v]) => {
-                            const isO =
-                              v !== null &&
-                              v !== undefined &&
-                              typeof v === "object";
-                            const emp =
-                              v === null ||
-                              v === undefined ||
-                              v === "" ||
-                              (isO &&
-                                !Array.isArray(v) &&
-                                Object.keys(v).length === 0);
-                            return (
-                              <Box
-                                key={k}
-                                sx={{
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  px: 1.5,
-                                  py: 0.4,
-                                  "&:hover": {
-                                    backgroundColor: "action.hover",
-                                  },
-                                }}
-                              >
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                  noWrap
-                                  sx={{
-                                    width: 120,
-                                    flexShrink: 0,
-                                    pt: 0.15,
-                                    fontSize: "11px",
-                                  }}
-                                >
-                                  {k}
-                                </Typography>
-                                <Box
-                                  sx={{
-                                    flex: 1,
-                                    minWidth: 0,
-                                    overflow: "hidden",
-                                  }}
-                                >
-                                  {emp ? (
-                                    <Typography
-                                      variant="caption"
-                                      color="text.disabled"
-                                      sx={{ fontSize: "11px" }}
-                                    >
-                                      —
-                                    </Typography>
-                                  ) : isO ? (
-                                    <JsonValueTree
-                                      value={v}
-                                      expanded={expandedCols[`${spanKey}-${k}`]}
-                                      onToggle={() =>
-                                        setExpandedCols((prev) => ({
-                                          ...prev,
-                                          [`${spanKey}-${k}`]:
-                                            !prev[`${spanKey}-${k}`],
-                                        }))
-                                      }
-                                    />
-                                  ) : (
-                                    <Typography
-                                      variant="caption"
-                                      color="primary.main"
-                                      sx={{
-                                        fontSize: "11px",
-                                        wordBreak: "break-all",
-                                      }}
-                                    >
-                                      {typeof v === "boolean"
-                                        ? String(v)
-                                        : typeof v === "string"
-                                          ? `"${v}"`
-                                          : String(v)}
-                                    </Typography>
-                                  )}
-                                </Box>
-                              </Box>
-                            );
-                          })}
-                      </Box>
-                    )}
-                  </Box>
-                );
-              })}
+              {/* Spans section — shared renderer with TaskLivePreview. */}
+              <SpanRowList
+                spans={spanDetail.spans}
+                expandedCols={expandedCols}
+                setExpandedCols={setExpandedCols}
+                tableSearch={tableSearch}
+              />
             </Box>
           </Box>
         )}

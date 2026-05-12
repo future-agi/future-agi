@@ -53,20 +53,29 @@ export const NewTaskValidationSchema = () =>
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
-        .transform((evals, ctx) => {
-          if (evals?.some((e) => !e?.id)) {
-            // Block submit silently — the per-eval-card warning is the
-            // UI signal that tells the user which eval is broken.
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "" });
-            return z.NEVER;
-          }
-          return evals.map((e) => e.id);
-        }),
+        .refine(
+          (evals) =>
+            evals.every(
+              (e) => typeof e?.id === "string" && e.id.length > 0,
+            ),
+          {
+            message:
+              "Remove the highlighted evaluation(s) and re-add them before continuing.",
+          },
+        )
+        .transform((evals) => evals.map((e) => e.id)),
       startDate: z.string(),
       endDate: z.string(),
       runType: z.enum(["historical", "continuous"], {
         message: "Run Type is required",
       }),
+      // Without listing rowType here, zod's .object() strips it before
+      // the transform runs and the form-state value (set by the
+      // Spans/Traces/Sessions tabs in TaskConfigPanel) is silently
+      // dropped — every payload then defaults to "spans".
+      rowType: z
+        .enum(["spans", "traces", "sessions", "voiceCalls"])
+        .optional(),
       filters: z
         .array(
           z.object({
@@ -107,6 +116,7 @@ export const NewTaskValidationSchema = () =>
         samplingRate: data?.samplingRate,
         evals: data?.evalsDetails,
         runType: data?.runType,
+        rowType: data?.rowType ?? "spans",
         filters: {
           ...filters,
           ...(attributeFilters && attributeFilters?.length > 0

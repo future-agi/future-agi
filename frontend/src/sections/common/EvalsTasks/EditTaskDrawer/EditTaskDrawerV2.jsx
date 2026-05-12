@@ -162,6 +162,7 @@ const EditTaskDrawerV2Content = ({
   });
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const formValues = useWatch({ control });
 
   const { field: startDateField } = useController({
@@ -211,10 +212,13 @@ const EditTaskDrawerV2Content = ({
 
   // Fetch eval attributes for variable mapping
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", filters],
+    queryKey: ["eval-attributes", rowType, filters],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify(objectCamelToSnake(filters)) },
+        params: {
+          row_type: rowType,
+          filters: JSON.stringify(objectCamelToSnake(filters)),
+        },
       }),
     select: (d) => d.data?.result,
   });
@@ -261,9 +265,23 @@ const EditTaskDrawerV2Content = ({
     (editType) => {
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
-      const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observationType")
-        .map((f) => f?.filterConfig?.filterValue);
+
+      // Generic system filter aggregation: every non-attribute filter
+      // row contributes its value to a BE key named after `f.property`.
+      // Mirrors the create-side getNewTaskFilters (validation.js) so
+      // span_kind, latency_ms, total_tokens, etc. all round-trip
+      // without each one being hard-coded.
+      const systemFilters = {};
+      (data.filters || []).forEach((f) => {
+        if (!f?.property || f.property === "attributes") return;
+        const v = f?.filterConfig?.filterValue;
+        if (v === undefined || v === null || v === "") return;
+        if (systemFilters[f.property]) {
+          systemFilters[f.property].push(v);
+        } else {
+          systemFilters[f.property] = [v];
+        }
+      });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -273,18 +291,18 @@ const EditTaskDrawerV2Content = ({
             new Date(startDateField.value).toISOString(),
             new Date(endDateField.value).toISOString(),
           ],
-          ...(observationTypes?.length > 0
-            ? { observation_type: observationTypes }
-            : {}),
+          ...systemFilters,
           ...(attributeFilters?.length > 0
             ? { span_attributes_filters: attributeFilters }
             : {}),
         },
-        observation_type: observationTypes,
         project_id: data.project,
         name: data.name,
         project: data.project,
         run_type: data.runType,
+        // row_type intentionally omitted — immutable after task creation.
+        // The BE serializer rejects it on PATCH; the picker is also
+        // locked on edit (see TaskConfigPanel rowTypeLocked).
         sampling_rate: data.samplingRate,
         spans_limit: String(data.spansLimit),
         edit_type: editType,
