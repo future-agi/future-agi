@@ -16,19 +16,35 @@ config:
   config_params_desc: {reference: Ground truth transcription, hypothesis: ASR output}
   code: |
     def evaluate(input, output, expected, context, **kwargs):
+        def _align_counts(ref, hyp):
+            n, m = len(ref), len(hyp)
+            dp = [[0] * (m + 1) for _ in range(n + 1)]
+            for i in range(n + 1): dp[i][0] = i
+            for j in range(m + 1): dp[0][j] = j
+            for i in range(1, n + 1):
+                for j in range(1, m + 1):
+                    cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+                    dp[i][j] = min(dp[i - 1][j - 1] + cost, dp[i - 1][j] + 1, dp[i][j - 1] + 1)
+            hits = sub = dele = ins = 0
+            i, j = n, m
+            while i > 0 or j > 0:
+                if i > 0 and j > 0 and ref[i - 1] == hyp[j - 1] and dp[i][j] == dp[i - 1][j - 1]:
+                    hits += 1; i -= 1; j -= 1
+                elif i > 0 and j > 0 and dp[i][j] == dp[i - 1][j - 1] + 1:
+                    sub += 1; i -= 1; j -= 1
+                elif i > 0 and dp[i][j] == dp[i - 1][j] + 1:
+                    dele += 1; i -= 1
+                else:
+                    ins += 1; j -= 1
+            return hits, sub, dele, ins
+
         ref = str(kwargs.get("reference", expected or "")).strip().lower().split()
         hyp = str(kwargs.get("hypothesis", output or "")).strip().lower().split()
-        if not ref and not hyp: return {"score": 1.0, "reason": "MER: 0% (both empty)"}
-        if not ref: return {"score": 0.0, "reason": "Empty reference"}
-        n, m = len(ref), len(hyp)
-        dp = list(range(m+1))
-        for i in range(1, n+1):
-            prev = dp[:]
-            dp[0] = i
-            for j in range(1, m+1):
-                cost = 0 if ref[i-1] == hyp[j-1] else 1
-                dp[j] = min(dp[j-1]+1, prev[j]+1, prev[j-1]+cost)
-        d = dp[m]
-        hits = max(0, n - d)
-        mer = d/(hits+d) if hits+d > 0 else 1.0
-        return {"score": float(max(0, 1-mer)), "reason": f"MER: {mer*100:.1f}%"}
+        if not ref and not hyp:
+            return {"score": 1.0, "reason": "MER: 0% (both empty)"}
+        if not ref:
+            return {"score": 0.0, "reason": "Empty reference"}
+        hits, S, D, I = _align_counts(ref, hyp)
+        ops = S + D + I
+        mer = ops / (hits + ops) if (hits + ops) > 0 else 1.0
+        return {"score": float(max(0.0, 1 - mer)), "reason": f"MER: {mer * 100:.1f}% (H={hits}, S={S}, D={D}, I={I})"}

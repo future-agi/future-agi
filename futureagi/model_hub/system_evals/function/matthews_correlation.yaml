@@ -30,20 +30,22 @@ config:
             if val is None:
                 return []
             if isinstance(val, list):
-                return [str(v).lower() for v in val]
+                return [str(v).strip().lower() for v in val]
             if isinstance(val, str):
                 try:
                     p = json.loads(val)
                     if isinstance(p, list):
-                        return [str(v).lower() for v in p]
+                        return [str(v).strip().lower() for v in p]
                 except (json.JSONDecodeError, ValueError):
                     pass
                 return [val.strip().lower()]
-            return [str(val).lower()]
+            return [str(val).strip().lower()]
         preds = _parse(kwargs.get("output", output))
         labels = _parse(kwargs.get("expected", expected))
-        if len(preds) != len(labels) or not labels:
-            return {"score": 0.0, "reason": "Invalid input"}
+        if not preds and not labels:
+            return {"score": 1.0, "reason": "Both empty"}
+        if len(preds) != len(labels):
+            return {"score": 0.0, "reason": f"Length mismatch: {len(preds)} vs {len(labels)}"}
         cats = sorted(set(labels) | set(preds))
         if len(cats) == 2:
             pos = cats[0]
