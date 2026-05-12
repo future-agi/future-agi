@@ -45,6 +45,20 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     () => `user-trace-customcols-${projectId}-${userId}`,
     [projectId, userId],
   );
+  // Two-phase guard. The hydrate writes into a ref, not state, so on the
+  // first render `columns` is still empty when the save effect fires in
+  // the same flush — without this gate it would call removeItem and wipe
+  // the saved customs before TraceGrid's merge has a chance to drain the
+  // pending ref into columns state.
+  //
+  // - `hasDrainedRef` flips true on the first render that observes a
+  //   non-empty `columns` array (i.e. after TraceGrid's merge landed).
+  //   Until then the save effect refuses to delete the stored customs.
+  // - `skipNextSaveRef` (mirrors the Sessions / UsersView pattern) skips
+  //   the very next save fire after a hydrate so the in-batch closure
+  //   over pre-hydrate state can't overwrite what we just loaded.
+  const hasDrainedRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(customColsStorageKey);
@@ -52,6 +66,7 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       const saved = JSON.parse(raw);
       if (Array.isArray(saved) && saved.length > 0) {
         pendingCustomColumnsRef.current = saved;
+        skipNextSaveRef.current = true;
       }
     } catch {
       /* ignore corrupted localStorage */
@@ -59,9 +74,26 @@ const UserTraceTabV2 = ({ dateFilter }) => {
   }, [customColsStorageKey]);
 
   useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
     const customCols = (columns || []).filter(
       (c) => c.groupBy === "Custom Columns",
     );
+    // Don't overwrite stored customs until at least one merge has landed,
+    // otherwise the first-render empty `columns` would delete the saved
+    // entry before TraceGrid drains the pending ref.
+    if (!hasDrainedRef.current && customCols.length === 0) {
+      if ((columns || []).length > 0) {
+        // Real merge with no customs — fine to persist the empty state.
+        hasDrainedRef.current = true;
+      } else {
+        return;
+      }
+    } else {
+      hasDrainedRef.current = true;
+    }
     try {
       if (customCols.length > 0) {
         localStorage.setItem(customColsStorageKey, JSON.stringify(customCols));

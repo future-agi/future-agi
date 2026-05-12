@@ -1226,11 +1226,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           // Preserve existing custom columns AND drain pending custom cols
           // queued by the localStorage hydrate / saved-view apply effect.
           // Voice projects render through CallLogsGrid (not TraceGrid), so
-          // there's no merge logic on the grid side to drain those refs —
-          // this callback is the only path that writes to columns["*-trace"]
-          // for voice, so it has to handle the drain itself. Without this,
-          // custom cols loaded from localStorage or a saved view sit in the
-          // pending ref forever and never appear in the grid.
+          // there's no per-fetch merge step on the grid side to drain those
+          // refs. The apply effect's voice branches drain on saved-view +
+          // back-to-default transitions; this callback handles the path
+          // where the backend column count changes (initial mount, schema
+          // change). Without these drains, custom cols loaded from
+          // localStorage or a saved view sit in the pending ref forever
+          // and never appear in the grid.
           const drainPending = (key, ref) => {
             const existing = prev[key] || [];
             const customCols = existing.filter(
@@ -1697,9 +1699,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Tracked separately so the null-branch reset only fires on a genuine
   // saved-view → default transition, not on initial mount where
   // activeViewConfig is null only because hydration hasn't landed yet.
-  // Without this guard, the destructive resets below clobber state that
-  // the localStorage rehydrate (line 1816) and the apply branch are
-  // about to set from the saved view itself.
+  // Without this guard, the destructive resets below would clobber state
+  // that the null-branch localStorage rehydrate and the apply-branch
+  // saved-view writes are about to set themselves.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
@@ -1983,6 +1985,28 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     };
   }, [activeViewConfig, selectedTab]);
 
+  // Re-apply queued columnState whenever `columns` updates. The retry effect
+  // above only fires on activeViewConfig/selectedTab change; if it ran
+  // successfully before TraceGrid's merge landed the custom cols, AG Grid
+  // silently dropped state for those colIds (it skips state entries for
+  // unknown cols). This effect catches the case: once customs land in
+  // `columns`, re-apply the queued state so widths/order/sort for custom
+  // colIds finally stick. Mirrors the drain effect in Sessions-view.
+  useEffect(() => {
+    if (!pendingColumnStateRef.current) return;
+    const api =
+      selectedTab === "trace"
+        ? primaryTraceGridRef.current?.api
+        : primarySpanGridRef.current?.api;
+    if (!api?.applyColumnState) return;
+    api.applyColumnState({
+      state: pendingColumnStateRef.current,
+      applyOrder: true,
+    });
+    pendingColumnStateRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns]);
+
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
   // ---------------------------------------------------------------------------
@@ -2005,10 +2029,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const compareSpansPendingRef = useRef([]);
 
   // Load display settings from localStorage on mount (for default tab).
-  // Saved-view tabs hydrate from the backend view config (apply effect at
-  // line ~1684); seeding pending refs from localStorage here on a hard
-  // refresh into a saved-view URL drains the wrong custom cols into the
-  // grid before the view config arrives.
+  // Saved-view tabs hydrate from the backend view config via the
+  // `useEffect([activeViewConfig])` apply effect above; seeding pending
+  // refs from localStorage here on a hard refresh into a saved-view URL
+  // would drain the wrong custom cols into the grid before the view
+  // config arrives.
   useEffect(() => {
     if (activeViewTabId) return;
     try {
