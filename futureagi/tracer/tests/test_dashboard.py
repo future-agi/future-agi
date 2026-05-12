@@ -331,6 +331,172 @@ class TestMetricsEndpoint:
         assert "call.user_wpm" not in metric_names
         assert "freeform.attr" in metric_names
 
+    # ------------------------------------------------------------------
+    # Regression: TH-4914 — annotation labels via observation_span FK
+    # ------------------------------------------------------------------
+    # The project-scoped Score lookup previously only joined back via
+    # ``trace__project_id``; span-attached scores (``Score.trace=NULL``,
+    # ``Score.observation_span=<span>``) were missed, so the picker's
+    # Annotations category was empty.
+
+    @pytest.fixture
+    def _annotation_label_factory(self, db, organization, workspace):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        def _make(name="Test Annotation Label"):
+            return AnnotationsLabels.objects.create(
+                name=name,
+                type=AnnotationTypeChoices.NUMERIC.value,
+                organization=organization,
+                workspace=workspace,
+                settings={
+                    "min": 0,
+                    "max": 10,
+                    "step_size": 1,
+                    "display_type": "slider",
+                },
+            )
+
+        return _make
+
+    @pytest.mark.django_db
+    def test_metrics_returns_span_attached_annotation_label(
+        self,
+        auth_client,
+        organization,
+        observe_project,
+        user,
+        _annotation_label_factory,
+    ):
+        """Span-attached Score (trace=NULL) must surface its label in the metrics API."""
+        from model_hub.models.score import Score
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+
+        trace = Trace.objects.create(project=observe_project, name="Span-Anno Trace")
+        span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            name="Span With Annotation",
+            observation_type="llm",
+        )
+        label = _annotation_label_factory(name="Span Attached Label")
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=span,
+            label=label,
+            annotator=user,
+            value={"value": 5.0},
+            score_source="human",
+            organization=organization,
+        )
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        annotation_ids = [
+            m["name"] for m in metrics if m.get("category") == "annotation_metric"
+        ]
+        assert str(label.id) in annotation_ids, (
+            "Span-attached annotation label was not returned — regression of TH-4914"
+        )
+
+    @pytest.mark.django_db
+    def test_metrics_returns_trace_attached_annotation_label(
+        self,
+        auth_client,
+        organization,
+        observe_project,
+        user,
+        _annotation_label_factory,
+    ):
+        """Trace-attached Score path keeps working alongside the span branch."""
+        from model_hub.models.score import Score
+        from tracer.models.trace import Trace
+
+        trace = Trace.objects.create(
+            project=observe_project,
+            name="Trace For Annotation",
+        )
+        label = _annotation_label_factory(name="Trace Attached Label")
+        Score.objects.create(
+            source_type="trace",
+            trace=trace,
+            label=label,
+            annotator=user,
+            value={"value": 7.0},
+            score_source="human",
+            organization=organization,
+        )
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        annotation_ids = [
+            m["name"] for m in metrics if m.get("category") == "annotation_metric"
+        ]
+        assert str(label.id) in annotation_ids
+
+    @pytest.mark.django_db
+    def test_metrics_excludes_annotation_label_from_other_project(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        observe_project,
+        user,
+        _annotation_label_factory,
+    ):
+        """A label used only in a different project must not leak into this one."""
+        from model_hub.models.ai_model import AIModel
+        from model_hub.models.score import Score
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.project import Project
+        from tracer.models.trace import Trace
+
+        other_project = Project.objects.create(
+            name="Other Project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        other_trace = Trace.objects.create(project=other_project, name="Other Trace")
+        other_span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=other_project,
+            trace=other_trace,
+            name="Other Span",
+            observation_type="llm",
+        )
+        label = _annotation_label_factory(name="Other Project Label")
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=other_span,
+            label=label,
+            annotator=user,
+            value={"value": 1.0},
+            score_source="human",
+            organization=organization,
+        )
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+        assert response.status_code == 200
+        annotation_ids = [
+            m["name"]
+            for m in response.json()["result"]["metrics"]
+            if m.get("category") == "annotation_metric"
+        ]
+        assert str(label.id) not in annotation_ids
+
 
 # ===========================================================================
 # DashboardQueryBuilder
