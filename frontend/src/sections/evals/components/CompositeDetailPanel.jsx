@@ -73,6 +73,8 @@ const CompositeDetailPanel = ({
   pickerSourceId = "",
   pickerSourceRowType = null,
   pickerSourceColumns = [],
+  pickerSourceFilters = null,
+  pickerOnFiltersChange = null,
   onNameChange,
   onDescriptionChange,
   onAggregationEnabledChange,
@@ -472,6 +474,8 @@ const CompositeDetailPanel = ({
           sourceId={pickerSourceId || ""}
           sourceRowType={pickerSourceRowType}
           sourceColumns={pickerSourceColumns || []}
+          sourceFilters={pickerSourceFilters}
+          onFiltersChange={pickerOnFiltersChange}
           lockedFilters={axisToLockedFilters(compositeChildAxis)}
         />
       )}
@@ -530,6 +534,8 @@ CompositeDetailPanel.propTypes = {
   pickerSourceId: PropTypes.string,
   pickerSourceRowType: PropTypes.string,
   pickerSourceColumns: PropTypes.array,
+  pickerSourceFilters: PropTypes.array,
+  pickerOnFiltersChange: PropTypes.func,
   onNameChange: PropTypes.func,
   onDescriptionChange: PropTypes.func,
   onAggregationEnabledChange: PropTypes.func,
