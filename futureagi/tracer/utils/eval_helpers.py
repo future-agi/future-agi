@@ -1,6 +1,50 @@
 """Lightweight eval utility functions — no heavy imports at module level."""
 
 
+_EVAL_FIELD_DENY = frozenset({"deleted", "deleted_at"})
+
+
+def evalable_field_names(model) -> frozenset:
+    """Concrete DB columns on ``model`` usable as eval mapping targets.
+
+    FKs expose the bare relation name (``session``, ``project``) — the
+    resolver maps it to the underlying ``*_id`` UUID via
+    ``evalable_fk_remap``. Reverse relations and ``_EVAL_FIELD_DENY`` names
+    are excluded.
+    """
+    from django.db.models import ForeignKey, OneToOneField
+
+    names = set()
+    for f in model._meta.get_fields():
+        if f.is_relation and not (f.many_to_one or f.one_to_one):
+            continue
+        if isinstance(f, (ForeignKey, OneToOneField)):
+            names.add(f.name)
+            continue
+        if not getattr(f, "concrete", False):
+            continue
+        if f.name in _EVAL_FIELD_DENY:
+            continue
+        names.add(f.name)
+    return frozenset(names)
+
+
+def evalable_fk_remap(model) -> dict:
+    """Picker-name → ``getattr`` target for FK columns on ``model``.
+
+    ``getattr(trace, "session")`` would return a TraceSession instance —
+    not JSON-serialisable. Resolvers translate FK picker names to their
+    ``*_id`` attname so they read the UUID instead.
+    """
+    from django.db.models import ForeignKey, OneToOneField
+
+    return {
+        f.name: f.attname
+        for f in model._meta.get_fields()
+        if isinstance(f, (ForeignKey, OneToOneField))
+    }
+
+
 def resolve_eval_template_id(eval_id, organization_id=None):
     """Resolve eval template name to UUID, scoped by organization.
 
