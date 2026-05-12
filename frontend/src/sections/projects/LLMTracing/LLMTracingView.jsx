@@ -2083,6 +2083,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   useEffect(() => {
     if (pendingHideMapRef.current) {
       const hideMap = pendingHideMapRef.current;
+      // Did this columns snapshot have ANY col whose id appears in the
+      // hideMap? If not, slots are still empty (or none of the standard
+      // cols have arrived yet) and we MUST NOT clear pendingHideMapRef —
+      // otherwise a cold-load apply effect that queues hideMap, then fires
+      // drain on an empty-slot change, would wipe the queue before
+      // TraceGrid/SpanGrid's first setColumns lands the backend cols.
+      let sawMatch = false;
       setColumns((prev) => {
         let anyChanged = false;
         const next = {};
@@ -2090,6 +2097,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           let slotChanged = false;
           const updated = (prev[ck] || []).map((col) => {
             if (col && col.id in hideMap) {
+              sawMatch = true;
               const desiredVisible = !hideMap[col.id];
               if (col.isVisible !== desiredVisible) {
                 slotChanged = true;
@@ -2103,7 +2111,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         return anyChanged ? next : prev;
       });
-      pendingHideMapRef.current = null;
+      if (sawMatch) {
+        pendingHideMapRef.current = null;
+      }
     }
     if (!pendingColumnStateRef.current) return;
     const api =
