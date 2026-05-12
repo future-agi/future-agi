@@ -14,7 +14,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models.user import User
-
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -40,20 +39,38 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.develop_dataset import ColumnSerializer
+
 try:
     from ee.voice.constants.voice_mapper import get_personas_by_language
 except ImportError:
     get_personas_by_language = None
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
-from simulate.serializers.scenarios import (
-    AddScenarioColumnsSerializer,
-    AddScenarioRowsSerializer,
-    CreateScenarioSerializer,
-    EditScenarioPromptsSerializer,
-    EditScenarioSerializer,
-    ScenariosSerializer,
+from simulate.serializers.requests.scenarios import (
+    ScenarioAddColumnsRequestSerializer,
+    ScenarioAddRowsRequestSerializer,
+    ScenarioCreateRequestSerializer,
+    ScenarioEditPromptsRequestSerializer,
+    ScenarioEditRequestSerializer,
+    ScenarioFilterSerializer,
+    ScenarioMultiDatasetFilterSerializer,
+)
+from simulate.serializers.response.scenarios import (
+    ScenarioAddColumnsResponseSerializer,
+    ScenarioAddRowsResponseSerializer,
+    ScenarioCreateResponseSerializer,
+    ScenarioDeleteResponseSerializer,
+    ScenarioDetailResponseSerializer,
+    ScenarioEditResponseSerializer,
+    ScenarioErrorResponseSerializer,
+    ScenarioListResponseSerializer,
+    ScenarioMultiDatasetResponseSerializer,
+    ScenarioPromptsUpdateResponseSerializer,
+    ScenarioResponseSerializer,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.views import agent_definition
@@ -182,6 +199,17 @@ class ScenariosListView(APIView):
         self.response = self.finalize_response(request, response, *args, **kwargs)
         return self.response
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="List scenarios",
+        operation_description="Returns a paginated list of scenarios for the user's organization.",
+        query_serializer=ScenarioFilterSerializer,
+        responses={
+            200: ScenarioListResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of scenarios for the user's organization
@@ -202,7 +230,9 @@ class ScenariosListView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Get search query parameter
+            # Validate and parse query params
+            filter_ser = ScenarioFilterSerializer(data=request.query_params)
+            filter_ser.is_valid()  # defaults applied even if invalid; raw fallback kept below
             search_query = request.query_params.get("search", "").strip()
             agent_definition_id = request.query_params.get("agent_definition_id", None)
             agent_type = request.query_params.get("agent_type", None)
@@ -259,7 +289,7 @@ class ScenariosListView(APIView):
             result_page = paginator.paginate_queryset(scenarios, request)
 
             # Serialize the data
-            serializer = ScenariosSerializer(result_page, many=True)
+            serializer = ScenarioResponseSerializer(result_page, many=True)
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -272,17 +302,30 @@ class ScenariosListView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Get multi-dataset column configs",
+        operation_description="Returns column configurations for multiple scenarios.",
+        query_serializer=ScenarioMultiDatasetFilterSerializer,
+        responses={
+            200: ScenarioMultiDatasetResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+        },
+    )
     def get_multi_datasets_column_configs(self, request, *args, **kwargs):
-        try:
-            scenario_ids = json.loads(request.query_params.get("scenarios"))
+        filter_ser = ScenarioMultiDatasetFilterSerializer(data=request.query_params)
+        if not filter_ser.is_valid():
+            return self._gm.bad_request(filter_ser.errors)
+        scenario_ids = filter_ser.validated_data["scenarios"]
 
+        try:
             # Get all unique dataset IDs from the filtered scenarios
             scenarios = Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
 
             return Response(
-                {
-                    "column_configs": ScenariosSerializer(scenarios, many=True).data,
-                },
+                ScenarioMultiDatasetResponseSerializer(
+                    {"column_configs": scenarios}
+                ).data,
                 status=status.HTTP_200_OK,
             )
         except Exception as e:
@@ -300,6 +343,17 @@ class CreateScenarioView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Create scenario",
+        operation_description="Creates a new scenario (dataset, script, or graph kind). Returns 202 with processing status.",
+        request_body=ScenarioCreateRequestSerializer,
+        responses={
+            202: ScenarioCreateResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def post(self, request, *args, **kwargs):
         """
         Create a new scenario by copying the specified dataset
@@ -310,72 +364,17 @@ class CreateScenarioView(APIView):
         check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
 
         try:
-            serializer = CreateScenarioSerializer(
+            serializer = ScenarioCreateRequestSerializer(
                 data=request.data, context={"request": request}
             )
 
             if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
+                return self.gm.bad_request(
+                    {"error": "Invalid data", "details": serializer.errors}
+                )
 
             validated_data = serializer.validated_data
-            scenario_kind = validated_data.get("kind", "dataset")
-
-            # Validate custom columns for duplicate names (for script and graph scenarios)
-            if scenario_kind in ["script", "graph"]:
-                custom_columns = validated_data.get("custom_columns", [])
-                if custom_columns:
-                    column_names = [col["name"] for col in custom_columns]
-                    duplicate_names = [
-                        name for name in column_names if column_names.count(name) > 1
-                    ]
-                    if duplicate_names:
-                        return self.gm.bad_request(
-                            f"Duplicate column name(s) in custom columns: {', '.join(set(duplicate_names))}"
-                        )
-
-            # Validate persona column data type for dataset scenarios before creating temp scenario
-            if scenario_kind == "dataset" and "dataset_id" in validated_data:
-                source_dataset = get_object_or_404(
-                    Dataset,
-                    id=validated_data["dataset_id"],
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-
-                existing_persona_column = Column.objects.filter(
-                    dataset=source_dataset, name="persona", deleted=False
-                ).first()
-
-                if (
-                    existing_persona_column
-                    and existing_persona_column.data_type
-                    != DataTypeChoices.PERSONA.value
-                ):
-                    return self.gm.bad_request(
-                        f"Invalid data type for 'persona' column. Expected '{DataTypeChoices.PERSONA.value}' "
-                        f"but found '{existing_persona_column.data_type}'. Please ensure the persona column "
-                        f"has the correct data type before creating a scenario."
-                    )
-
-                # Check for duplicate column names in source dataset
-                source_columns = Column.objects.filter(
-                    dataset=source_dataset, deleted=False
-                ).exclude(
-                    source__in=[
-                        SourceChoices.EXPERIMENT.value,
-                        SourceChoices.EXPERIMENT_EVALUATION.value,
-                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                    ]
-                )
-                column_names = [col.name for col in source_columns]
-                duplicate_names = [
-                    name for name in column_names if column_names.count(name) > 1
-                ]
-                if duplicate_names:
-                    return self.gm.bad_request(
-                        f"Source dataset contains duplicate column name(s): {', '.join(set(duplicate_names))}"
-                    )
+            scenario_kind = validated_data.get("kind", Scenarios.ScenarioTypes.DATASET)
 
             # Create a temporary scenario record with PROCESSING status
             temp_scenario = self._create_temp_scenario(request, validated_data)
@@ -406,13 +405,14 @@ class CreateScenarioView(APIView):
                 )
 
             # Return immediate response with processing status
-            scenario_serializer = ScenariosSerializer(temp_scenario)
             return Response(
-                {
-                    "message": f"{scenario_kind.title()} scenario creation started",
-                    "scenario": scenario_serializer.data,
-                    "status": "processing",
-                },
+                ScenarioCreateResponseSerializer(
+                    {
+                        "message": f"{scenario_kind.title()} scenario creation started",
+                        "scenario": temp_scenario,
+                        "status": "processing",
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -586,6 +586,16 @@ class ScenarioDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Get scenario detail",
+        operation_description="Returns full detail of a specific scenario including graph data and prompts.",
+        responses={
+            200: ScenarioDetailResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def get(self, request, scenario_id, *args, **kwargs):
         """
         Get details of a specific scenario with graph and prompts information
@@ -649,8 +659,11 @@ class ScenarioDetailView(APIView):
             else:
                 response_data["dataset_rows"] = 0
 
-            # Return the response
-            return Response(response_data, status=status.HTTP_200_OK)
+            # Return the response — pass through serializer to whitelist permitted fields
+            return Response(
+                ScenarioDetailResponseSerializer(response_data).data,
+                status=status.HTTP_200_OK,
+            )
 
         except Http404:
             return Response(
@@ -700,6 +713,16 @@ class DeleteScenarioView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Delete scenario",
+        operation_description="Soft-deletes a scenario by setting deleted=True.",
+        responses={
+            200: ScenarioDeleteResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def delete(self, request, scenario_id, *args, **kwargs):
         """
         Soft delete a scenario by setting deleted=True
@@ -719,7 +742,10 @@ class DeleteScenarioView(APIView):
             scenario.save()
 
             return Response(
-                {"message": "Scenario deleted successfully"}, status=status.HTTP_200_OK
+                ScenarioDeleteResponseSerializer(
+                    {"message": "Scenario deleted successfully"}
+                ).data,
+                status=status.HTTP_200_OK,
             )
 
         except Http404:
@@ -744,6 +770,18 @@ class EditScenarioView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Edit scenario",
+        operation_description="Updates scenario name, description, graph, or prompt.",
+        request_body=ScenarioEditRequestSerializer,
+        responses={
+            200: ScenarioEditResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario name and description
@@ -759,7 +797,7 @@ class EditScenarioView(APIView):
             )
 
             # Validate the data
-            serializer = EditScenarioSerializer(data=request.data)
+            serializer = ScenarioEditRequestSerializer(data=request.data)
 
             if not serializer.is_valid():
                 return self.gm.bad_request(serializer.errors)
@@ -804,14 +842,13 @@ class EditScenarioView(APIView):
                 scenario.simulator_agent.save()
             scenario.save()
 
-            # Serialize and return the updated scenario
-            scenario_serializer = ScenariosSerializer(scenario)
-
             return Response(
-                {
-                    "message": "Scenario updated successfully",
-                    "scenario": scenario_serializer.data,
-                },
+                ScenarioEditResponseSerializer(
+                    {
+                        "message": "Scenario updated successfully",
+                        "scenario": scenario,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -837,6 +874,18 @@ class EditScenarioPromptsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Edit scenario prompts",
+        operation_description="Updates the simulator agent prompt for a scenario.",
+        request_body=ScenarioEditPromptsRequestSerializer,
+        responses={
+            200: ScenarioPromptsUpdateResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario prompts
@@ -852,7 +901,7 @@ class EditScenarioPromptsView(APIView):
             )
 
             # Validate the data
-            serializer = EditScenarioPromptsSerializer(data=request.data)
+            serializer = ScenarioEditPromptsRequestSerializer(data=request.data)
 
             if not serializer.is_valid():
                 return self.gm.bad_request(serializer.errors)
@@ -874,10 +923,12 @@ class EditScenarioPromptsView(APIView):
             scenario.simulator_agent.save()
 
             return Response(
-                {
-                    "message": "Scenario prompts updated successfully",
-                    "prompts": prompts,
-                },
+                ScenarioPromptsUpdateResponseSerializer(
+                    {
+                        "message": "Scenario prompts updated successfully",
+                        "prompts": prompts,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
@@ -903,12 +954,24 @@ class AddScenarioRowsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Add rows to scenario",
+        operation_description="Adds new rows to a scenario's dataset via Temporal workflow. Returns 202 Accepted.",
+        request_body=ScenarioAddRowsRequestSerializer,
+        responses={
+            202: ScenarioAddRowsResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def post(self, request, scenario_id, *args, **kwargs):
         """
         Add new rows to a scenario's dataset
         Expected payload:
         {
-            "num_rows": int (required, 1-100),
+            "num_rows": int (required, 10-20000),
             "description": str (optional)
         }
         """
@@ -934,7 +997,7 @@ class AddScenarioRowsView(APIView):
                 )
 
             # Validate the input data
-            serializer = AddScenarioRowsSerializer(data=request.data)
+            serializer = ScenarioAddRowsRequestSerializer(data=request.data)
 
             if not serializer.is_valid():
                 return self.gm.bad_request(serializer.errors)
@@ -1009,12 +1072,14 @@ class AddScenarioRowsView(APIView):
             )
 
             return Response(
-                {
-                    "message": f"Started generating {num_rows} new rows for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "num_rows": num_rows,
-                },
+                ScenarioAddRowsResponseSerializer(
+                    {
+                        "message": f"Started generating {num_rows} new rows for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "num_rows": num_rows,
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -1043,6 +1108,18 @@ class AddScenarioColumnsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Add columns to scenario",
+        operation_description="Adds new columns to a scenario's dataset via Temporal workflow. Returns 202 Accepted.",
+        request_body=ScenarioAddColumnsRequestSerializer,
+        responses={
+            202: ScenarioAddColumnsResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def post(self, request, scenario_id, *args, **kwargs):
         """
         Add new columns to a scenario's dataset
@@ -1089,8 +1166,11 @@ class AddScenarioColumnsView(APIView):
                     "Scenario does not have an associated dataset."
                 )
 
-            # Validate the input data
-            serializer = AddScenarioColumnsSerializer(data=request.data)
+            # Phase 0.2: pass scenario via context so serializer validates duplicates
+            serializer = ScenarioAddColumnsRequestSerializer(
+                data=request.data,
+                context={"request": request, "scenario": scenario},
+            )
 
             if not serializer.is_valid():
                 return self.gm.bad_request(serializer.errors)
@@ -1098,31 +1178,8 @@ class AddScenarioColumnsView(APIView):
             validated_data = serializer.validated_data
             columns_info = validated_data["columns"]
 
-            # Check for duplicate column names within the request
-            column_names = [col["name"] for col in columns_info]
-            duplicate_names = [
-                name for name in column_names if column_names.count(name) > 1
-            ]
-            if duplicate_names:
-                return self.gm.bad_request(
-                    f"Duplicate column name(s) in request: {', '.join(set(duplicate_names))}"
-                )
-
             # Get the dataset
             dataset = scenario.dataset
-
-            # Check if columns already exist in the dataset
-            existing_column_names = set(
-                Column.objects.filter(dataset=dataset, deleted=False).values_list(
-                    "name", flat=True
-                )
-            )
-
-            for column in columns_info:
-                if column["name"] in existing_column_names:
-                    return self.gm.bad_request(
-                        f"Column '{column['name']}' already exists in the dataset."
-                    )
 
             # Get all rows in the dataset
             all_rows = Row.objects.filter(dataset=dataset, deleted=False)
@@ -1199,12 +1256,14 @@ class AddScenarioColumnsView(APIView):
             )
 
             return Response(
-                {
-                    "message": f"Started generating {len(columns_info)} new column(s) for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "columns": [col["name"] for col in columns_info],
-                },
+                ScenarioAddColumnsResponseSerializer(
+                    {
+                        "message": f"Started generating {len(columns_info)} new column(s) for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "columns": [col["name"] for col in columns_info],
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 

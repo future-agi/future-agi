@@ -19,6 +19,7 @@ import { getChipColor, getChipLabel, getFontColor } from "../common";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
+import { canonicalEntries } from "src/utils/utils";
 
 const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
   const theme = useTheme();
@@ -296,7 +297,11 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                 typeof data === "object" &&
                 data?.errorAnalysis &&
                 (() => {
-                  const hasOrgSegment = Object.values(data?.errorAnalysis)
+                  const errorAnalysisEntries = canonicalEntries(
+                    data?.errorAnalysis,
+                  );
+                  const hasOrgSegment = errorAnalysisEntries
+                    .map(([, value]) => value)
                     .flat()
                     .some((entry) => entry?.orgSegment);
 
@@ -311,7 +316,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                     );
                   }
 
-                  return Object.entries(data?.errorAnalysis)
+                  return errorAnalysisEntries
                     .filter(([_, value]) => value?.length)
                     .map(([key, value]) => (
                       <ErrorLocalizeCard

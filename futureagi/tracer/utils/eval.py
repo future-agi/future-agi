@@ -19,7 +19,9 @@ from sdk.utils.helpers import _get_api_call_type
 from tfc.temporal import temporal_activity
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.eval_task import EvalTask
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
+from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import FieldConfig, get_default_trace_config
 from tracer.views.project import get_default_project_version_config
 try:
@@ -766,14 +768,17 @@ def _execute_evaluation(
             ).get(pk=eval_log.pk)
 
         if custom_eval_config.error_localizer:
-            trigger_error_localization_for_span(
-                eval_template=eval_model,
-                eval_logger=eval_log,
-                mapping=raw_mapping,
-                eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                value=value,
-                log_id=str(log_id),
-            )
+            from model_hub.tasks.user_evaluation import _eval_passed
+
+            if not _eval_passed(value):
+                trigger_error_localization_for_span(
+                    eval_template=eval_model,
+                    eval_logger=eval_log,
+                    mapping=raw_mapping,
+                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                    value=value,
+                    log_id=str(log_id),
+                )
 
         if type == EXPERIMENT:
             # updating project version config
@@ -991,8 +996,10 @@ def evaluate_observation_span_observe(
         observation_span_id=observation_span_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-        deleted=False,
     ).exists():
+        # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
+        # already excluded, so an explicit ``deleted=False`` would be a
+        # tautology.
         logger.info(
             f"EvalLogger with observation_span_id {observation_span_id} and custom_eval_config_id {custom_eval_config_id} already exists for eval task {eval_task_id}."
         )
@@ -1378,3 +1385,954 @@ def score_categorical(evals: list, value):
                 passed_count += 1
 
     return round(passed_count / total_count, 2) * 100 if total_count > 0 else 0
+
+
+# ============================================================================
+# Trace + session evaluator helpers
+# ============================================================================
+#
+# The trace and session evaluators mirror evaluate_observation_span_observe
+# but resolve their mapping variables from a different subject (a Trace or a
+# TraceSession instead of an ObservationSpan), and write to EvalLogger with
+# different target_type / FK shape:
+#
+#   target_type='trace'   -> observation_span = trace's root span,
+#                            trace = the trace, trace_session = NULL
+#   target_type='session' -> observation_span = NULL, trace = NULL,
+#                            trace_session = the session
+#
+# Mapping resolvers walk dotted paths against the subject:
+#
+#   Trace fields:  ``input``, ``output``, ``name``, ``error``, ``tags``,
+#                  ``metadata``, ``external_id``
+#   Session fields: ``name``, ``bookmarked``
+#   Hierarchy:      ``spans.<n>.<field>`` (n = 0-indexed integer or
+#                   ``first``/``last``); for sessions also
+#                   ``traces.<n>.spans.<m>.<field>``.
+#
+# Composite eval support is intentionally span-only here: the helpers raise
+# NotImplementedError if a composite template is used. Composite fan-out
+# for trace/session subjects is deferred until the UX questions around
+# per-target_type composite templates are settled.
+
+
+# ── Anchor span resolution ──
+#
+# Trace-level eval rows MUST land with a non-NULL observation_span (per the
+# EvalLogger check constraint). The "anchor" is the trace's root span — the one
+# whose parent_span_id is NULL. If a trace has no explicit root (anomalous
+# data), fall back to the earliest span by start_time. If a trace has zero
+# spans, return None — the caller records failure on EvalTask.failed_spans
+# and skips the EvalLogger write.
+
+
+def _find_anchor_span(trace: Trace):
+    # Single query: root spans (parent_span_id IS NULL) get rank 0 so they
+    # sort first; non-root spans fall back to rank 1. Ties within a rank
+    # break on start_time then id for determinism. Empty traces → first()
+    # returns None, matching the original contract. Saves one DB round-trip
+    # per trace — meaningful when process_eval_task dispatches across
+    # hundreds of traces per tick.
+    from django.db.models import Case, IntegerField, When
+
+    return (
+        trace.observation_spans.annotate(
+            _root_rank=Case(
+                When(parent_span_id__isnull=True, then=0),
+                default=1,
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("_root_rank", "start_time", "id")
+        .first()
+    )
+
+
+# ── Path resolution ──
+#
+# Recursive walker that handles the dot-notation grammar specified in the
+# row_type plan: scalar fields, JSONField traversal, indexed/positional
+# child collections (``spans.0`` / ``spans.first`` / ``traces.last``), and
+# composed paths through children (``traces.0.spans.0.input``).
+
+
+def _resolve_collection_path(items: list, path: str, item_resolver):
+    """Walk into an ordered collection — supports indices and ``first``/``last``."""
+    if not path:
+        return items
+    parts = path.split(".", 1)
+    head = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if head == "first":
+        return item_resolver(items[0], rest) if items else _MISSING
+    if head == "last":
+        return item_resolver(items[-1], rest) if items else _MISSING
+
+    try:
+        idx = int(head)
+    except ValueError:
+        return _MISSING
+    if idx < 0 or idx >= len(items):
+        return _MISSING
+    return item_resolver(items[idx], rest)
+
+
+# Allow-list of model attributes the trace + session mapping resolvers
+# expose. Prevents users from mapping eval inputs to internal Django state
+# (``_state``, ``pk``, manager refs, methods, FK-Model objects) and keeps
+# the mappable surface a deliberate API contract — not "whatever happens
+# to be on the model". When a new field is added to one of these models,
+# decide whether it belongs in the eval-mapping surface and update the
+# set if so. Span resolution intentionally has no allow-list — it routes
+# through the OTel ``span_attributes`` JSONField bag, which is the
+# canonical surface the span mapping picker exposes today.
+_TRACE_PUBLIC_FIELDS = frozenset(
+    {"input", "output", "name", "error", "tags", "metadata", "external_id"}
+)
+_SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
+
+
+def _resolve_span_path(span: ObservationSpan, path: str):
+    """Walk a path against a span via the ``span_attributes`` bag.
+
+    Routes through ``_resolve_attr(span_attrs, path)`` — same surface as the
+    pre-existing ``_process_mapping`` resolver, so a saved span mapping that
+    works at the span level also works when the path bottoms out at a span
+    via ``spans.<n>.<field>`` from a trace or session resolver. The SDK
+    mirrors model fields (``input``, ``output``, ``model``, etc.) into
+    ``span_attributes`` during ingestion, so users don't lose access to
+    them.
+
+    The explicit ``span_attributes`` head case lets a path return the
+    whole bag (``spans.0.span_attributes``) or walk into a nested key
+    (``spans.0.span_attributes.foo.bar``) without going through the
+    aliasing fallback in ``_resolve_attr``.
+    """
+    from tracer.utils.attribute_accessor import get_span_attributes
+
+    if not path:
+        return span
+
+    parts = path.split(".", 1)
+    head = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if head == "span_attributes":
+        span_attrs = get_span_attributes(span)
+        if not rest:
+            return span_attrs
+        walked = _walk_dotted_path(span_attrs, rest)
+        return walked if walked is not None else _MISSING
+
+    span_attrs = get_span_attributes(span)
+    return _resolve_attr(span_attrs, path)
+
+
+def _resolve_trace_path(trace: Trace, path: str):
+    """Walk a path against a trace; supports ``spans.<n>.<field>`` recursion."""
+    if not path:
+        return trace
+
+    parts = path.split(".", 1)
+    head = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if head in _TRACE_PUBLIC_FIELDS:
+        value = getattr(trace, head)
+        if not rest:
+            return value
+        walked = _walk_dotted_path(value, rest)
+        return walked if walked is not None else _MISSING
+
+    if head == "spans":
+        spans = list(trace.observation_spans.order_by("start_time", "id"))
+        return _resolve_collection_path(spans, rest, _resolve_span_path)
+
+    return _MISSING
+
+
+def _resolve_session_path(trace_session: TraceSession, path: str):
+    """Walk a path against a session; supports ``traces.<n>.spans.<m>.<field>``."""
+    if not path:
+        return trace_session
+
+    parts = path.split(".", 1)
+    head = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if head in _SESSION_PUBLIC_FIELDS:
+        value = getattr(trace_session, head)
+        if not rest:
+            return value
+        walked = _walk_dotted_path(value, rest)
+        return walked if walked is not None else _MISSING
+
+    if head == "traces":
+        # Match the trace-listing UI's ordering (``list_traces_of_session``
+        # in ``tracer/views/trace.py``): earliest root span's ``start_time``,
+        # falling back to ``created_at`` when no root span has landed yet.
+        # Without this, sessions whose traces share a ``created_at`` (the
+        # SDK stamps every trace in a run with the same instant) tie-break
+        # by id alphabetically -- picking a "trace 0" the user never sees
+        # at the top of the trace list.
+        from django.db.models import OuterRef, Subquery
+        from django.db.models.functions import Coalesce
+
+        root_start = (
+            ObservationSpan.objects.filter(
+                trace_id=OuterRef("id"), parent_span_id__isnull=True
+            )
+            .order_by("start_time")
+            .values("start_time")[:1]
+        )
+        traces = list(
+            trace_session.traces.annotate(
+                _root_start=Coalesce(Subquery(root_start), "created_at")
+            ).order_by("_root_start", "id")
+        )
+        return _resolve_collection_path(traces, rest, _resolve_trace_path)
+
+    return _MISSING
+
+
+def _process_trace_mapping(
+    mapping: dict | None, trace: Trace, eval_template_id
+) -> dict:
+    """Resolve a saved mapping against a Trace.
+
+    Mirrors ``_process_mapping`` (the span resolver) but walks the trace
+    path grammar: trace fields, child-span aggregators, and dotted paths
+    into ``spans.<n>.<field>``. Raises ``ValueError`` on a required-key
+    miss so the caller writes an error EvalLogger row and continues.
+    """
+    if not mapping:
+        return {}
+
+    parsed: dict = {}
+
+    try:
+        given_eval_template = EvalTemplate.no_workspace_objects.get(
+            id=eval_template_id
+        )
+        optional_keys = given_eval_template.config.get("optional_keys", []) or []
+        for key in optional_keys:
+            if key in mapping and (mapping[key] is None or mapping[key] == ""):
+                mapping.pop(key)
+    except EvalTemplate.DoesNotExist:
+        # A missing EvalTemplate means we cannot determine which mapping
+        # keys are optional, so treating every key as required would
+        # produce misleading "Required attribute X not found" errors for
+        # legitimately-optional keys. Fail fast — the caller writes a
+        # failed EvalLogger row and continues, same as on a required-key
+        # miss below.
+        logger.error(
+            f"EvalTemplate {eval_template_id} not found while processing "
+            f"trace mapping for trace {trace.id}"
+        )
+        raise ValueError(
+            f"EvalTemplate {eval_template_id} not found"
+        )
+
+    for key, attribute in mapping.items():
+        value = _resolve_trace_path(trace, attribute) if attribute else _MISSING
+        if value is _MISSING:
+            logger.error(
+                f"Required attribute '{attribute}' for key '{key}' not found "
+                f"on trace {trace.id}"
+            )
+            raise ValueError(
+                f"Required attribute '{attribute}' for key '{key}' not found "
+                f"on trace {trace.id}"
+            )
+        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+
+    return parsed
+
+
+def _process_session_mapping(
+    mapping: dict | None, trace_session: TraceSession, eval_template_id
+) -> dict:
+    """Resolve a saved mapping against a TraceSession."""
+    if not mapping:
+        return {}
+
+    parsed: dict = {}
+
+    try:
+        given_eval_template = EvalTemplate.no_workspace_objects.get(
+            id=eval_template_id
+        )
+        optional_keys = given_eval_template.config.get("optional_keys", []) or []
+        for key in optional_keys:
+            if key in mapping and (mapping[key] is None or mapping[key] == ""):
+                mapping.pop(key)
+    except EvalTemplate.DoesNotExist:
+        # See ``_process_trace_mapping`` above for the rationale: silently
+        # skipping optional-keys handling on a missing template produces
+        # misleading "required attribute not found" errors. Fail fast.
+        logger.error(
+            f"EvalTemplate {eval_template_id} not found while processing "
+            f"session mapping for session {trace_session.id}"
+        )
+        raise ValueError(
+            f"EvalTemplate {eval_template_id} not found"
+        )
+
+    for key, attribute in mapping.items():
+        value = (
+            _resolve_session_path(trace_session, attribute)
+            if attribute
+            else _MISSING
+        )
+        if value is _MISSING:
+            logger.error(
+                f"Required attribute '{attribute}' for key '{key}' not found "
+                f"on session {trace_session.id}"
+            )
+            raise ValueError(
+                f"Required attribute '{attribute}' for key '{key}' not found "
+                f"on session {trace_session.id}"
+            )
+        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+
+    return parsed
+
+
+# ── Eval execution: trace ──
+
+
+def _execute_evaluation_for_trace(
+    *,
+    trace: Trace,
+    anchor_span: ObservationSpan,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    run_params: dict,
+    feedback_id=None,
+):
+    """Run the eval engine against a trace + persist the EvalLogger row.
+
+    Twin of ``_execute_evaluation`` — same flow (cost log → run_eval → write
+    logger), but resolves project/org/workspace off the trace and writes
+    a target_type='trace' row anchored to ``anchor_span``. Composite
+    templates raise ``NotImplementedError`` (span-only).
+    """
+    from evaluations.constants import FUTUREAGI_EVAL_TYPES
+    from evaluations.engine import EvalRequest, run_eval
+
+    eval_template = custom_eval_config.eval_template
+    if eval_template.template_type == "composite":
+        raise NotImplementedError(
+            "Composite eval templates are span-only. Trace-level "
+            "composite fan-out is not supported yet."
+        )
+    eval_type_id = eval_template.config.get("eval_type_id")
+    futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+
+    org_id = str(trace.project.organization.id)
+    workspace = trace.project.workspace
+    if workspace is None:
+        workspace = Workspace.objects.get(
+            organization=trace.project.organization,
+            is_default=True,
+            is_active=True,
+        )
+    ws_id = str(workspace.id) if workspace else None
+
+    source_config = {
+        "reference_id": str(trace.id),
+        "is_futureagi_eval": futureagi_eval,
+        "custom_eval_config_id": str(custom_eval_config.id),
+        "mappings": run_params,
+        "required_keys": list(run_params.keys()) if run_params else [],
+        "trace_id": str(trace.id),
+        "span_id": str(anchor_span.id),
+        "target_type": EvalTargetType.TRACE.value,
+        "source": "tracer",
+    }
+    if feedback_id:
+        source_config["feedback_id"] = str(feedback_id)
+
+    api_call_type = _get_api_call_type(custom_eval_config.model)
+    api_call_log_row = log_and_deduct_cost_for_api_request(
+        organization=trace.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if not api_call_log_row:
+        raise ValueError("API call not allowed : Error validating the api call.")
+    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
+
+    try:
+        result = run_eval(
+            EvalRequest(
+                eval_template=eval_template,
+                inputs=run_params or {},
+                model=custom_eval_config.model,
+                kb_id=(
+                    getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
+                    if custom_eval_config.kb_id
+                    else None
+                ),
+                runtime_config=custom_eval_config.config,
+                organization_id=org_id,
+                workspace_id=ws_id,
+            )
+        )
+
+        config_dict = json.loads(api_call_log_row.config)
+        config_dict.update(
+            {
+                "input": result.data,
+                "output": {"output": result.value, "reason": result.reason},
+            }
+        )
+        api_call_log_row.config = json.dumps(config_dict)
+        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+        api_call_log_row.save()
+
+        metadata = result.metadata
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        value = result.value
+        response = {
+            "data": result.data,
+            "failure": result.failure,
+            "reason": result.reason,
+            "runtime": result.runtime,
+            "model": result.model_used,
+            "metrics": result.metrics,
+            "metadata": result.metadata,
+            "output": result.output_type,
+            "start_time": result.start_time,
+            "end_time": result.end_time,
+            "duration": result.duration,
+        }
+        logger_kwargs = {
+            "target_type": EvalTargetType.TRACE.value,
+            "trace": trace,
+            "observation_span": anchor_span,
+            "trace_session": None,
+            "output_metadata": {**metadata},
+            "eval_explanation": result.reason,
+            "results_explanation": response,
+            "eval_task_id": eval_task_id,
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": eval_type_id,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        error_message = str(e)
+        try:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            current_config = json.loads(api_call_log_row.config)
+            current_config.update(
+                {"output": {"output": None, "reason": str(e)}}
+            )
+            api_call_log_row.config = json.dumps(current_config)
+            api_call_log_row.save()
+        except Exception:
+            pass
+        logger_kwargs = {
+            "target_type": EvalTargetType.TRACE.value,
+            "trace": trace,
+            "observation_span": anchor_span,
+            "trace_session": None,
+            "output_metadata": {
+                "error": error_message,
+                "custom_eval_config_name": custom_eval_config.name,
+                "eval_template_name": eval_template.name,
+            },
+            "eval_explanation": f"Error during evaluation: {error_message}",
+            "results_explanation": {"reason": error_message},
+            "output_str": "ERROR",
+            "error": True,
+            "error_message": f"Error during evaluation: {error_message}",
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": eval_type_id,
+            "eval_task_id": eval_task_id,
+        }
+        value = "ERROR"
+
+    if value != "ERROR":
+        if isinstance(value, bool):
+            logger_kwargs["output_bool"] = value
+        elif isinstance(value, float) or isinstance(value, int):
+            logger_kwargs["output_float"] = float(value)
+        elif value in ["Passed", "Failed"]:
+            logger_kwargs["output_bool"] = True if value == "Passed" else False
+        elif isinstance(value, list):
+            logger_kwargs["output_str_list"] = value
+        else:
+            logger_kwargs["output_str"] = str(value)
+
+    EvalLogger.objects.create(**logger_kwargs)
+
+
+def _execute_evaluation_for_session(
+    *,
+    trace_session: TraceSession,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    run_params: dict,
+    feedback_id=None,
+):
+    """Twin of ``_execute_evaluation_for_trace`` but for sessions."""
+    from evaluations.constants import FUTUREAGI_EVAL_TYPES
+    from evaluations.engine import EvalRequest, run_eval
+
+    eval_template = custom_eval_config.eval_template
+    if eval_template.template_type == "composite":
+        raise NotImplementedError(
+            "Composite eval templates are span-only. Session-level "
+            "composite fan-out is not supported yet."
+        )
+    eval_type_id = eval_template.config.get("eval_type_id")
+    futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+
+    org_id = str(trace_session.project.organization.id)
+    workspace = trace_session.project.workspace
+    if workspace is None:
+        workspace = Workspace.objects.get(
+            organization=trace_session.project.organization,
+            is_default=True,
+            is_active=True,
+        )
+    ws_id = str(workspace.id) if workspace else None
+
+    source_config = {
+        "reference_id": str(trace_session.id),
+        "is_futureagi_eval": futureagi_eval,
+        "custom_eval_config_id": str(custom_eval_config.id),
+        "mappings": run_params,
+        "required_keys": list(run_params.keys()) if run_params else [],
+        "session_id": str(trace_session.id),
+        "target_type": EvalTargetType.SESSION.value,
+        "source": "tracer",
+    }
+    if feedback_id:
+        source_config["feedback_id"] = str(feedback_id)
+
+    api_call_type = _get_api_call_type(custom_eval_config.model)
+    api_call_log_row = log_and_deduct_cost_for_api_request(
+        organization=trace_session.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if not api_call_log_row:
+        raise ValueError("API call not allowed : Error validating the api call.")
+    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
+
+    try:
+        result = run_eval(
+            EvalRequest(
+                eval_template=eval_template,
+                inputs=run_params or {},
+                model=custom_eval_config.model,
+                kb_id=(
+                    getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
+                    if custom_eval_config.kb_id
+                    else None
+                ),
+                runtime_config=custom_eval_config.config,
+                organization_id=org_id,
+                workspace_id=ws_id,
+            )
+        )
+
+        config_dict = json.loads(api_call_log_row.config)
+        config_dict.update(
+            {
+                "input": result.data,
+                "output": {"output": result.value, "reason": result.reason},
+            }
+        )
+        api_call_log_row.config = json.dumps(config_dict)
+        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+        api_call_log_row.save()
+
+        metadata = result.metadata
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        value = result.value
+        response = {
+            "data": result.data,
+            "failure": result.failure,
+            "reason": result.reason,
+            "runtime": result.runtime,
+            "model": result.model_used,
+            "metrics": result.metrics,
+            "metadata": result.metadata,
+            "output": result.output_type,
+            "start_time": result.start_time,
+            "end_time": result.end_time,
+            "duration": result.duration,
+        }
+        logger_kwargs = {
+            "target_type": EvalTargetType.SESSION.value,
+            "trace": None,
+            "observation_span": None,
+            "trace_session": trace_session,
+            "output_metadata": {**metadata},
+            "eval_explanation": result.reason,
+            "results_explanation": response,
+            "eval_task_id": eval_task_id,
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": eval_type_id,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        error_message = str(e)
+        try:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            current_config = json.loads(api_call_log_row.config)
+            current_config.update(
+                {"output": {"output": None, "reason": str(e)}}
+            )
+            api_call_log_row.config = json.dumps(current_config)
+            api_call_log_row.save()
+        except Exception:
+            pass
+        logger_kwargs = {
+            "target_type": EvalTargetType.SESSION.value,
+            "trace": None,
+            "observation_span": None,
+            "trace_session": trace_session,
+            "output_metadata": {
+                "error": error_message,
+                "custom_eval_config_name": custom_eval_config.name,
+                "eval_template_name": eval_template.name,
+            },
+            "eval_explanation": f"Error during evaluation: {error_message}",
+            "results_explanation": {"reason": error_message},
+            "output_str": "ERROR",
+            "error": True,
+            "error_message": f"Error during evaluation: {error_message}",
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": eval_type_id,
+            "eval_task_id": eval_task_id,
+        }
+        value = "ERROR"
+
+    if value != "ERROR":
+        if isinstance(value, bool):
+            logger_kwargs["output_bool"] = value
+        elif isinstance(value, float) or isinstance(value, int):
+            logger_kwargs["output_float"] = float(value)
+        elif value in ["Passed", "Failed"]:
+            logger_kwargs["output_bool"] = True if value == "Passed" else False
+        elif isinstance(value, list):
+            logger_kwargs["output_str_list"] = value
+        else:
+            logger_kwargs["output_str"] = str(value)
+
+    EvalLogger.objects.create(**logger_kwargs)
+
+
+# ── Error helpers ──
+
+
+def _create_error_eval_logger_for_trace(
+    trace: Trace,
+    anchor_span: ObservationSpan,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    error_message: str,
+):
+    """Persist a target_type='trace' EvalLogger row with error=True."""
+    EvalLogger.objects.create(
+        target_type=EvalTargetType.TRACE.value,
+        trace=trace,
+        observation_span=anchor_span,
+        trace_session=None,
+        output_metadata={"error": error_message},
+        eval_explanation=f"Error during evaluation: {error_message}",
+        results_explanation={"reason": error_message},
+        eval_task_id=eval_task_id,
+        custom_eval_config=custom_eval_config,
+        error=True,
+        error_message=f"Error during evaluation: {error_message}",
+        output_str="ERROR",
+    )
+
+
+def _create_error_eval_logger_for_session(
+    trace_session: TraceSession,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    error_message: str,
+):
+    """Persist a target_type='session' EvalLogger row with error=True."""
+    EvalLogger.objects.create(
+        target_type=EvalTargetType.SESSION.value,
+        trace=None,
+        observation_span=None,
+        trace_session=trace_session,
+        output_metadata={"error": error_message},
+        eval_explanation=f"Error during evaluation: {error_message}",
+        results_explanation={"reason": error_message},
+        eval_task_id=eval_task_id,
+        custom_eval_config=custom_eval_config,
+        error=True,
+        error_message=f"Error during evaluation: {error_message}",
+        output_str="ERROR",
+    )
+
+
+# ── Temporal activities ──
+
+
+@temporal_activity(
+    max_retries=3,
+    retry_delay=60,
+    time_limit=3600,
+    queue="tasks_s",
+)
+def evaluate_trace_observe(
+    trace_id=None,
+    custom_eval_config_id=None,
+    eval_task_id=None,
+    feedback_id=None,
+):
+    """Per-trace evaluator dispatched by ``process_eval_task`` for row_type=traces.
+
+    Mirrors ``evaluate_observation_span_observe`` but scoped to a Trace:
+    look up the trace + eval config, idempotency-check on
+    ``(trace_id, target_type='trace', eval_config, eval_task)``, soft-delete
+    any prior attempts for the same triple, resolve mapping variables off
+    the trace via ``_process_trace_mapping``, run the engine, write a
+    target_type='trace' EvalLogger row anchored to the trace's root span.
+    """
+    if not trace_id or not custom_eval_config_id:
+        raise ValueError(
+            "trace_id and custom_eval_config_id are required parameters"
+        )
+
+    try:
+        custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
+        trace = Trace.objects.select_related(
+            "project", "project__organization", "project__workspace"
+        ).get(id=trace_id)
+    except CustomEvalConfig.DoesNotExist:
+        raise ValueError(
+            f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
+        )
+    except Trace.DoesNotExist:
+        raise ValueError(f"Trace with id {trace_id} does not exist.")
+
+    # Idempotency: the dispatcher writes one row per (trace, eval_config, task).
+    # ``eval_task_id`` already scopes the check to this task's row_type — every
+    # row sharing this eval_task_id is target_type='trace' by construction
+    # (the dispatcher dispatched this activity because EvalTask.row_type='traces').
+    if EvalLogger.objects.filter(
+        trace_id=trace_id,
+        custom_eval_config_id=custom_eval_config_id,
+        eval_task_id=eval_task_id,
+    ).exists():
+        logger.info(
+            f"EvalLogger (target_type=trace) for trace_id {trace_id} and "
+            f"custom_eval_config_id {custom_eval_config_id} already exists "
+            f"for eval task {eval_task_id}."
+        )
+        return
+
+    anchor_span = _find_anchor_span(trace)
+    if anchor_span is None:
+        # Trace has zero spans — can't write a trace EvalLogger row (the
+        # check constraint forbids target_type='trace' with NULL span).
+        # Record the failure on EvalTask.failed_spans and bail.
+        if eval_task_id:
+            try:
+                with transaction.atomic():
+                    eval_task = EvalTask.objects.select_for_update().get(
+                        id=eval_task_id
+                    )
+                    failed = list(eval_task.failed_spans or [])
+                    failed.append(
+                        {
+                            "trace_id": str(trace_id),
+                            "custom_eval_config_id": str(custom_eval_config_id),
+                            "error": (
+                                f"Trace {trace_id} has zero spans — "
+                                "cannot anchor a trace-level eval result."
+                            ),
+                        }
+                    )
+                    eval_task.failed_spans = failed
+                    eval_task.save(update_fields=["failed_spans", "updated_at"])
+            except Exception as save_err:
+                logger.error(
+                    f"Failed to record zero-span trace failure on eval task: {save_err}"
+                )
+        return False
+
+    try:
+        run_params = _process_trace_mapping(
+            custom_eval_config.mapping,
+            trace,
+            custom_eval_config.eval_template.id,
+        )
+        _execute_evaluation_for_trace(
+            trace=trace,
+            anchor_span=anchor_span,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+            run_params=run_params,
+            feedback_id=feedback_id,
+        )
+        return True
+    except ValueError as e:
+        logger.error(f"Error during evaluation in evaluate_trace_observe: {e}")
+        if eval_task_id:
+            try:
+                with transaction.atomic():
+                    eval_task = EvalTask.objects.select_for_update().get(
+                        id=eval_task_id
+                    )
+                    failed = list(eval_task.failed_spans or [])
+                    failed.append(
+                        {
+                            "trace_id": str(trace_id),
+                            "custom_eval_config_id": str(custom_eval_config_id),
+                            "error": str(e),
+                        }
+                    )
+                    eval_task.failed_spans = failed
+                    eval_task.save(update_fields=["failed_spans", "updated_at"])
+            except EvalTask.DoesNotExist:
+                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+            except Exception as save_err:
+                logger.error(
+                    f"Error updating failed_spans during trace eval error: {save_err}"
+                )
+        _create_error_eval_logger_for_trace(
+            trace, anchor_span, custom_eval_config, eval_task_id, str(e)
+        )
+        return False
+    except Exception as e:
+        logger.exception(
+            f"Exception during evaluation in evaluate_trace_observe: {e}"
+        )
+        return False
+
+
+@temporal_activity(
+    max_retries=3,
+    retry_delay=60,
+    time_limit=3600,
+    queue="tasks_s",
+)
+def evaluate_trace_session_observe(
+    session_id=None,
+    custom_eval_config_id=None,
+    eval_task_id=None,
+    feedback_id=None,
+):
+    """Per-session evaluator dispatched by ``process_eval_task`` for row_type=sessions.
+
+    Mirrors ``evaluate_trace_observe`` but scoped to a TraceSession.
+    Writes a target_type='session' EvalLogger row with NULL span/trace
+    and the session FK populated.
+    """
+    if not session_id or not custom_eval_config_id:
+        raise ValueError(
+            "session_id and custom_eval_config_id are required parameters"
+        )
+
+    try:
+        custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
+        trace_session = TraceSession.objects.select_related(
+            "project", "project__organization", "project__workspace"
+        ).get(id=session_id)
+    except CustomEvalConfig.DoesNotExist:
+        raise ValueError(
+            f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
+        )
+    except TraceSession.DoesNotExist:
+        raise ValueError(f"TraceSession with id {session_id} does not exist.")
+
+    # Same idempotency rationale as the trace evaluator: eval_task_id alone
+    # scopes the check to this task's row_type (target_type='session'), so a
+    # redundant target_type filter would be a tautology.
+    if EvalLogger.objects.filter(
+        trace_session_id=session_id,
+        custom_eval_config_id=custom_eval_config_id,
+        eval_task_id=eval_task_id,
+    ).exists():
+        logger.info(
+            f"EvalLogger (target_type=session) for session_id {session_id} "
+            f"and custom_eval_config_id {custom_eval_config_id} already "
+            f"exists for eval task {eval_task_id}."
+        )
+        return
+
+    try:
+        run_params = _process_session_mapping(
+            custom_eval_config.mapping,
+            trace_session,
+            custom_eval_config.eval_template.id,
+        )
+        _execute_evaluation_for_session(
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+            run_params=run_params,
+            feedback_id=feedback_id,
+        )
+        return True
+    except ValueError as e:
+        logger.error(
+            f"Error during evaluation in evaluate_trace_session_observe: {e}"
+        )
+        if eval_task_id:
+            try:
+                with transaction.atomic():
+                    eval_task = EvalTask.objects.select_for_update().get(
+                        id=eval_task_id
+                    )
+                    failed = list(eval_task.failed_spans or [])
+                    failed.append(
+                        {
+                            "session_id": str(session_id),
+                            "custom_eval_config_id": str(custom_eval_config_id),
+                            "error": str(e),
+                        }
+                    )
+                    eval_task.failed_spans = failed
+                    eval_task.save(update_fields=["failed_spans", "updated_at"])
+            except EvalTask.DoesNotExist:
+                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+            except Exception as save_err:
+                logger.error(
+                    f"Error updating failed_spans during session eval error: {save_err}"
+                )
+        _create_error_eval_logger_for_session(
+            trace_session, custom_eval_config, eval_task_id, str(e)
+        )
+        return False
+    except Exception as e:
+        logger.exception(
+            f"Exception during evaluation in evaluate_trace_session_observe: {e}"
+        )
+        return False

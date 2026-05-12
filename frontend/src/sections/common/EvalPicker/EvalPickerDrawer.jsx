@@ -280,6 +280,8 @@ const EvalPickerDrawer = ({
   // can queue more evals back-to-back. Used by dataset adds where the
   // picker doubles as a multi-eval entry surface.
   keepOpenAfterSave = false,
+  sourceFilters = null,
+  onFiltersChange = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -330,6 +332,8 @@ const EvalPickerDrawer = ({
         lockedFilters={lockedFilters}
         requiredColumnId={requiredColumnId}
         keepOpenAfterSave={keepOpenAfterSave}
+        sourceFilters={sourceFilters}
+        onFiltersChange={onFiltersChange}
       >
         <EvalPickerContent onStepChange={setCurrentStep} />
       </EvalPickerProvider>
@@ -355,6 +359,8 @@ EvalPickerDrawer.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
+  sourceFilters: PropTypes.array,
+  onFiltersChange: PropTypes.func,
 };
 
 export default EvalPickerDrawer;

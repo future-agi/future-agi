@@ -85,6 +85,12 @@ def normalize_function_params(
         nullable = bool(definition.get("nullable", False))
         raw_value = params.get(name, definition.get("default"))
 
+        # FE form fields serialize blank inputs as the empty string instead
+        # of omitting the key — treat that as "not provided" so the param
+        # falls back to its schema default (typically None for optionals).
+        if isinstance(raw_value, str) and raw_value.strip() == "":
+            raw_value = definition.get("default")
+
         if raw_value is None:
             if required and not nullable:
                 raise ValueError(f"{name} is required")

@@ -49,7 +49,7 @@ const TaskDetailPage = () => {
   });
 
   const { control, handleSubmit, getValues, setValue, reset } = useForm({
-    defaultValues: { ...getDefaultTaskValues(null, null), rowType: "spans" },
+    defaultValues: getDefaultTaskValues(null, null),
     resolver: zodResolver(NewTaskValidationSchema()),
   });
 
@@ -59,7 +59,7 @@ const TaskDetailPage = () => {
   // Populate form once task is loaded
   useEffect(() => {
     if (taskDetails) {
-      reset({ ...getDefaultTaskValues(taskDetails, null), rowType: "spans" });
+      reset(getDefaultTaskValues(taskDetails, null));
     }
   }, [taskDetails, reset]);
 

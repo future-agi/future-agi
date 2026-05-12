@@ -296,3 +296,10 @@ export const APP_CONSTANTS = {
 export const ORIGIN_OF_COLUMNS = {
   EXPERIMENT: "experiment",
 };
+
+export const ROW_TYPE_LABELS = {
+  spans: "Spans",
+  traces: "Traces",
+  sessions: "Sessions",
+  voiceCalls: "Voice Calls",
+};

@@ -50,12 +50,19 @@ from model_hub.models.score import Score
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EndUser,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 
 session_logger = structlog.get_logger(__name__)
 from tracer.models.trace_session import TraceSession
+from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
     TraceSessionExportSerializer,
     TraceSessionSerializer,
@@ -476,7 +483,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 any(output) AS output,
                 min(CASE WHEN parent_span_id IS NULL OR parent_span_id = '' THEN latency_ms ELSE NULL END) AS root_latency_ms,
                 round(sum(cost), 6) AS total_cost,
-                min(start_time) AS start_time,
+                min(start_time) AS trace_min_start_time,
                 sum(total_tokens) AS total_tokens,
                 sum(prompt_tokens) AS input_tokens,
                 sum(completion_tokens) AS output_tokens
@@ -485,7 +492,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
               AND trace_session_id = %(session_id)s
               AND _peerdb_is_deleted = 0
             GROUP BY trace_id
-            ORDER BY min(start_time) ASC
+            ORDER BY trace_min_start_time ASC
             LIMIT %(limit)s
             OFFSET %(offset)s
         """
@@ -571,7 +578,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "system_metrics": {
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "total_cost": trace_row.get("total_cost", 0),
-                    "start_time": format_datetime_to_iso(trace_row.get("start_time")),
+                    "start_time": format_datetime_to_iso(
+                        trace_row.get("trace_min_start_time")
+                    ),
                     "total_tokens": trace_row.get("total_tokens", 0),
                     "input_tokens": trace_row.get("input_tokens", 0),
                     "output_tokens": trace_row.get("output_tokens", 0),
@@ -1783,3 +1792,125 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             traceback.print_exc()
             return self._gm.bad_request(f"Error fetching the traces list: {str(e)}")
+
+    @action(detail=True, methods=["get"])
+    def eval_logs(self, request, *args, **kwargs):
+        """Session-scoped eval log feed for TracesDrawer's "Evals" tab.
+
+        Session-level eval results are walled off from span/trace surfaces
+        by ``target_type='session'`` — this endpoint is the only place
+        they appear.
+
+        Query params:
+            page (int, 1-indexed, default 1)
+            page_size (int, default 25, max 100)
+
+        Returns:
+            Paginated DRF response: {count, next, previous, results,
+            total_pages, current_page}. Each ``results`` item carries the
+            same fields ``EvalTaskView.get_usage`` exposes, minus
+            span/trace-only fields (NULL on session rows per the
+            ``eval_logger_target_type_fks`` check constraint).
+        """
+        try:
+            # get_object() applies the org-scoped queryset filter and
+            # raises 404 if the caller can't access the session.
+            session = self.get_object()
+
+            qp = PaginationQuerySerializer(data=request.query_params)
+            qp.is_valid(raise_exception=True)
+            page_size = qp.validated_data["page_size"]
+
+            logs_qs = (
+                EvalLogger.objects.filter(
+                    trace_session_id=session.id,
+                    target_type=EvalTargetType.SESSION,
+                )
+                .select_related(
+                    "custom_eval_config",
+                    "custom_eval_config__eval_template",
+                )
+                .order_by("-created_at")
+            )
+
+            paginator = ExtendedPageNumberPagination()
+            paginator.page_size = page_size
+            logs_page = paginator.paginate_queryset(logs_qs, request, view=self)
+
+            items = []
+            for log in logs_page:
+                # Same Pass/Fail derivation as EvalTaskView.get_usage so
+                # the two surfaces render identically.
+                if log.error:
+                    result_label = "Error"
+                    score = None
+                    status = "error"
+                elif log.output_bool is True:
+                    result_label = "Passed"
+                    score = 1.0
+                    status = "success"
+                elif log.output_bool is False:
+                    result_label = "Failed"
+                    score = 0.0
+                    status = "success"
+                elif log.output_float is not None:
+                    score = float(log.output_float)
+                    result_label = "Passed" if score >= 0.5 else "Failed"
+                    status = "success"
+                elif log.output_str:
+                    result_label = log.output_str[:50]
+                    score = None
+                    status = "success"
+                else:
+                    result_label = ""
+                    score = None
+                    status = "success"
+
+                config = log.custom_eval_config
+                reason = log.eval_explanation or log.error_message or ""
+
+                items.append(
+                    {
+                        "id": str(log.id),
+                        "input": (session.name or "")[:200],
+                        "result": result_label,
+                        "score": score,
+                        "reason": reason,
+                        "status": status,
+                        "source": "eval_task",
+                        "created_at": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        ),
+                        "session_id": str(session.id),
+                        "eval_id": str(config.id) if config else None,
+                        "eval_name": config.name if config else None,
+                        "model": config.model if config else None,
+                        "detail": {
+                            "eval_name": config.name if config else None,
+                            "model": config.model if config else None,
+                            "output_type": (
+                                config.eval_template.output_type_normalized
+                                if config and config.eval_template
+                                else None
+                            ),
+                            "target_type": log.target_type,
+                            "session_id": str(session.id),
+                            "session_name": session.name,
+                            "output_bool": log.output_bool,
+                            "output_float": log.output_float,
+                            "output_str": log.output_str,
+                            "results_explanation": log.results_explanation,
+                            "error_message": log.error_message,
+                        },
+                    }
+                )
+
+            # ExtendedPageNumberPagination response shape:
+            # {count, next, previous, results, total_pages, current_page}
+            paginated = paginator.get_paginated_response(items)
+            return self._gm.success_response(paginated.data)
+        except Exception as e:
+            logger.exception(f"Error in fetching session eval logs: {str(e)}")
+            return self._gm.bad_request(
+                f"Error fetching session eval logs: {str(e)}"
+            )

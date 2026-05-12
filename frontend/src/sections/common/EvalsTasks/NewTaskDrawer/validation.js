@@ -69,6 +69,13 @@ export const NewTaskValidationSchema = () =>
       runType: z.enum(["historical", "continuous"], {
         message: "Run Type is required",
       }),
+      // Without listing rowType here, zod's .object() strips it before
+      // the transform runs and the form-state value (set by the
+      // Spans/Traces/Sessions tabs in TaskConfigPanel) is silently
+      // dropped — every payload then defaults to "spans".
+      rowType: z
+        .enum(["spans", "traces", "sessions", "voiceCalls"])
+        .optional(),
       filters: z
         .array(
           z.object({
@@ -109,6 +116,7 @@ export const NewTaskValidationSchema = () =>
         samplingRate: data?.samplingRate,
         evals: data?.evalsDetails,
         runType: data?.runType,
+        rowType: data?.rowType ?? "spans",
         filters: {
           ...filters,
           ...(attributeFilters && attributeFilters?.length > 0

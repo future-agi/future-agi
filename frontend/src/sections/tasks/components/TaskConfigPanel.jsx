@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
@@ -98,6 +99,7 @@ const EVAL_TYPE_META = {
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
   const theme = useTheme();
+  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
@@ -303,7 +305,13 @@ const TaskConfigPanel = ({
 
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
+  const taskFilters = useWatch({ control, name: "filters" });
   const isProjectSelected = !!project;
+  // row_type is immutable after task creation — the dispatcher, the
+  // target_type on every EvalLogger row, and the dedup index are all
+  // wired off it. The BE rejects row_type on PATCH; the FE matches by
+  // locking the picker in edit mode so the user can't try.
+  const rowTypeLocked = mode === "edit";
 
   // Fetch project details to detect voice projects (simulator source)
   const { data: projectDetails } = useGetProjectDetails(
@@ -356,13 +364,17 @@ const TaskConfigPanel = ({
     enabled: !projectLocked,
   });
 
-  // Eval attributes for variable mapping
+  // Eval attributes for variable mapping. Includes rowType so the picker
+  // shows the right paths per target type — span attribute keys for spans,
+  // trace fields + spans.first/last.<key> for traces, session fields +
+  // traces.{first,last}.spans.{first,last}.<key> for sessions.
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
@@ -588,7 +600,10 @@ const TaskConfigPanel = ({
                 </Typography>
                 <Tabs
                   value={rowType}
-                  onChange={(_, v) => setValue("rowType", v)}
+                  onChange={(_, v) => {
+                    if (rowTypeLocked) return;
+                    setValue("rowType", v);
+                  }}
                   variant="standard"
                   scrollButtons={false}
                   TabIndicatorProps={{ style: { display: "none" } }}
@@ -620,6 +635,7 @@ const TaskConfigPanel = ({
                     <Tab
                       key={t.value}
                       value={t.value}
+                      disabled={rowTypeLocked && rowType !== t.value}
                       label={
                         <Box
                           sx={{
@@ -761,6 +777,7 @@ const TaskConfigPanel = ({
                 control={control}
                 setValue={setValue}
                 projectId={project}
+                isSimulator={isVoiceProject}
               />
             </FilterErrorBoundary>
           </Box>
@@ -788,6 +805,10 @@ const TaskConfigPanel = ({
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
+        sourceFilters={taskFilters}
+        onFiltersChange={(f) =>
+          setValue("filters", f || [], { shouldDirty: true })
+        }
       />
     </>
   );
