@@ -162,10 +162,15 @@ const CreateSimulationPreviewMode = React.forwardRef(
       onReadyChange,
       onTestResult,
       previewData,
+      initialMapping = null,
     },
     ref,
   ) => {
-    const [mapping, setMapping] = useState({});
+    const [mapping, setMapping] = useState(
+      initialMapping && typeof initialMapping === "object"
+        ? { ...initialMapping }
+        : {},
+    );
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 

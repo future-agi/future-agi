@@ -32,7 +32,10 @@ import axios, { endpoints } from "src/utils/axios";
 import { useSnackbar } from "notistack";
 import { useRouter } from "src/routes/hooks";
 import { useDebounce } from "src/hooks/use-debounce";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
 import EmptyLayout from "../EmptyLayout/EmptyLayout";
 import SvgColor from "../svg-color";
 import { FormSearchSelectFieldState } from "../FromSearchSelectField";
@@ -178,8 +181,18 @@ const CreateRunTestPage = ({ open, onClose }) => {
   const [openEvaluationDialog, setOpenEvaluationDialog] = useState(false);
   const [openUpdateKeysDialog, setOpenUpdateKeysDialog] = useState(false);
   // When non-null, the new EvalPickerDrawer opens directly at the config
-  // step with this template loaded (edit flow).
-  const [editingEvalItem, setEditingEvalItem] = useState(null);
+  // step with the matching row from `evaluationsConfig` loaded (edit flow).
+  // We track only the id and look the row up at render time so we never
+  // hold a stale snapshot if `evaluationsConfig` changes underneath us.
+  const [editingEvalId, setEditingEvalId] = useState(null);
+  const editingEvalItem = useMemo(
+    () =>
+      editingEvalId
+        ? evaluationsConfig.find((e) => e.evalId === editingEvalId) || null
+        : null,
+    [editingEvalId, evaluationsConfig],
+  );
+
   useEffect(() => {
     if (open) {
       setActiveStep(0);
@@ -197,7 +210,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
       });
       setEvaluationsConfig([]);
       setOpenEvaluationDialog(false);
-      setEditingEvalItem(null);
+      setEditingEvalId(null);
       setCompleted({});
     }
   }, [open]);
@@ -618,44 +631,47 @@ const CreateRunTestPage = ({ open, onClose }) => {
     });
   };
 
-  // Transform the new EvalPickerDrawer's camelCase payload into the legacy
-  // `evaluationsConfig` shape expected by the existing render + final POST.
-  // Keeps the rest of CreateRunTestPage untouched.
-  const toLegacyEvalShape = (evalConfig, versionedName) => ({
-    evalId: `${evalConfig.templateId}_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 8)}`,
-    templateId: evalConfig.templateId,
-    name: versionedName,
-    evalTemplateName: evalConfig.evalTemplate?.name || evalConfig.name,
-    description: evalConfig.evalTemplate?.description || "",
-    type: "user_built",
-    config: {
-      ...(evalConfig.config || {}),
+  
+ 
+  const toLegacyEvalShape = (evalConfig, versionedName) => {
+    const serialized = serializeEvalConfig(evalConfig);
+    return {
+      evalId: `${evalConfig.templateId}_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+      templateId: evalConfig.templateId,
+      name: versionedName,
+      evalTemplateName: evalConfig.evalTemplate?.name || evalConfig.name,
+      description: evalConfig.evalTemplate?.description || "",
+      type: "user_built",
       mapping: evalConfig.mapping || {},
-      ...(evalConfig.instructions != null && {
-        instructions: evalConfig.instructions,
-      }),
-      ...(evalConfig.passThreshold != null && {
-        pass_threshold: evalConfig.passThreshold,
-      }),
-      ...(evalConfig.choiceScores &&
-        Object.keys(evalConfig.choiceScores).length > 0 && {
-          choice_scores: evalConfig.choiceScores,
+      config: {
+        ...serialized.config,
+        mapping: evalConfig.mapping || {},
+        ...(evalConfig.instructions != null && {
+          instructions: evalConfig.instructions,
         }),
-    },
-    model: evalConfig.model,
-    evalRequiredKeys:
-      evalConfig.evalTemplate?.required_keys ||
-      evalConfig.evalTemplate?.requiredKeys ||
-      [],
-    evalTemplateTags: evalConfig.evalTemplate?.tags || [],
-    errorLocalizer: false,
-  });
+        ...(evalConfig.passThreshold != null && {
+          pass_threshold: evalConfig.passThreshold,
+        }),
+        ...(evalConfig.choiceScores &&
+          Object.keys(evalConfig.choiceScores).length > 0 && {
+            choice_scores: evalConfig.choiceScores,
+          }),
+      },
+      model: evalConfig.model,
+      evalRequiredKeys:
+        evalConfig.evalTemplate?.required_keys ||
+        evalConfig.evalTemplate?.requiredKeys ||
+        [],
+      evalTemplateTags: evalConfig.evalTemplate?.tags || [],
+      errorLocalizer: !!evalConfig.error_localizer_enabled,
+    };
+  };
 
   const handleAddEvaluation = async (evalConfig) => {
     // Capture edit-target before we close the drawer and clear state.
-    const editingId = editingEvalItem?.evalId || null;
+    const editingId = editingEvalId;
 
     setEvaluationsConfig((prev) => {
       let updated = [...prev];
@@ -671,7 +687,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     });
 
     setOpenEvaluationDialog(false);
-    setEditingEvalItem(null);
+    setEditingEvalId(null);
   };
 
   const handleRemoveEvaluation = (id, isGroupEval) => {
@@ -810,10 +826,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
       enableToolEvaluation: value,
     }));
   };
-  const handleEditEvalItem = (evalConfig) => {
-    // Pass through to the new picker via `initialEval`: it only needs `.id`
-    // (the eval template id) to load the full template at the config step.
-    setEditingEvalItem(evalConfig);
+
+  const handleEditEvalItem = (evalItem) => {
+    setEditingEvalId(evalItem.evalId);
     setOpenEvaluationDialog(true);
   };
   useEffect(() => {
@@ -1535,7 +1550,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                   variant="contained"
                   startIcon={<Iconify icon="eva:plus-fill" />}
                   onClick={() => {
-                    setEditingEvalItem(null);
+                    setEditingEvalId(null);
                     setOpenEvaluationDialog(true);
                   }}
                   sx={{
@@ -1568,7 +1583,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                       variant="outlined"
                       size="small"
                       onClick={() => {
-                        setEditingEvalItem(null);
+                        setEditingEvalId(null);
                         setOpenEvaluationDialog(true);
                       }}
                       startIcon={
@@ -2325,20 +2340,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
         open={openEvaluationDialog}
         onClose={() => {
           setOpenEvaluationDialog(false);
-          setEditingEvalItem(null);
+          setEditingEvalId(null);
         }}
         source="create-simulate"
         sourceColumns={evalColumnsToDisplay}
         sourcePreviewData={sourcePreviewData}
         onEvalAdded={handleAddEvaluation}
-        initialEval={
-          editingEvalItem
-            ? {
-                id: editingEvalItem.templateId,
-                template_id: editingEvalItem.templateId,
-              }
-            : null
-        }
+        existingEvals={editingEvalItem ? [] : evaluationsConfig}
+        initialEval={editingEvalItem || null}
       />
     </>
   );

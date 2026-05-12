@@ -508,7 +508,8 @@ const EvalPickerList = ({ onSelectEval }) => {
         (e) =>
           e.id === evalId ||
           e.eval_template_id === evalId ||
-          e.template_id === evalId,
+          e.template_id === evalId ||
+          e["templateId"] === evalId,
       ),
     [existingEvals],
   );
