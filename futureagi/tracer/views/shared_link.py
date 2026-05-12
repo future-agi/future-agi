@@ -215,18 +215,18 @@ def query_shared_widget(request, token):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    # Reuse the DashboardWidgetViewSet query logic
+    # Execute the widget's query directly using the already-fetched widget
     from tracer.views.dashboard import DashboardWidgetViewSet
 
-    view = DashboardWidgetViewSet()
-    view.request = request
-    view.format_kwarg = None
-    view.kwargs = {"pk": widget_id}
-    view._gm = GeneralMethods()
-    view.permission_classes = []
+    if not widget.query_config or not widget.query_config.get("metrics"):
+        return Response(
+            {"error": "Widget has no query configuration or metrics defined."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    # Call the view's execute_query method directly
-    return view.execute_query(request, pk=widget_id)
+    viewset = DashboardWidgetViewSet()
+    viewset._gm = GeneralMethods()
+    return viewset._execute_ch_query_config(widget.query_config, request.workspace)
 
 
 # --------------------------------------------------------------------------
