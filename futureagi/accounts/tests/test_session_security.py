@@ -136,12 +136,15 @@ class TestDeactivatedUserCannotAccess:
     """B3: Deactivated user cannot access authenticated APIs."""
 
     def test_deactivated_user_login_fails(self, api_client, user):
-        """A deactivated user cannot login."""
+        """A deactivated user cannot login and gets LOGIN_ACCOUNT_DEACTIVATED."""
         user.is_active = False
         user.save()
 
         resp = _login(api_client, user.email)
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        data = resp.json()
+        result = data.get("result", data)
+        assert result.get("error_code") == "LOGIN_ACCOUNT_DEACTIVATED"
 
     def test_deactivated_user_existing_token_fails(self, api_client, user):
         """If user is deactivated after login, their token should fail."""
@@ -673,11 +676,12 @@ class TestLoginRateLimiting:
     """Rate limiting on failed login attempts."""
 
     def test_failed_logins_tracked(self, api_client, user):
-        """Multiple failed logins should be tracked and report remaining attempts."""
+        """Multiple failed logins should be tracked, report remaining attempts, and include error_code."""
         for i in range(3):
             resp = _login(api_client, user.email, "wrong-password")
             assert resp.status_code == status.HTTP_400_BAD_REQUEST
             data = resp.json()
             result = data.get("result", data)
-            # Should contain error and remaining_attempts info
+            # Should contain error, remaining_attempts, and structured error_code
             assert "error" in result or "remaining_attempts" in result
+            assert result.get("error_code") == "LOGIN_INVALID_CREDENTIALS"
