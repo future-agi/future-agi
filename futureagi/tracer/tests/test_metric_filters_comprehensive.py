@@ -121,8 +121,8 @@ class TestCHMetricFilters:
 
     def test_errors_filter_generates_status_condition(self):
         where, params = self._builder().translate([_errors_filter()])
-        assert "status" in where
-        assert "ERROR" in params.values()
+        assert "lower(status)" in where
+        assert "error" in params.values()
 
     # --- combinations ---
 
@@ -214,14 +214,14 @@ class TestCHMetricFilters:
     # --- NULL safety (critical for NOT IN) ---
 
     def test_has_annotation_false_excludes_null_trace_ids(self):
-        """Subquery MUST filter NULL resolved trace_ids via coalesce IS NOT NULL."""
+        """Subquery MUST filter NULL resolved trace_ids."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "IS NOT NULL" in where
+        assert "isNotNull(" in where
 
     def test_has_annotation_true_excludes_null_trace_ids(self):
         """IN subquery should also exclude NULL trace_ids for correctness."""
         where, _ = self._builder().translate([_has_annotation_filter(True)])
-        assert "IS NOT NULL" in where
+        assert "isNotNull(" in where
 
     def test_has_eval_true_excludes_null_trace_ids(self):
         """has_eval subquery should exclude NULL trace_ids."""
@@ -238,14 +238,14 @@ class TestCHMetricFilters:
     def test_has_annotation_joins_through_span(self):
         """Score.trace_id is often NULL — must join via observation_span to resolve trace_id."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "tracer_observation_span" in where
-        assert "coalesce" in where
+        assert "LEFT JOIN spans AS sp" in where
+        assert "sp.id = s.observation_span_id" in where
 
     def test_has_eval_casts_to_string(self):
         """Subquery must use toString(trace_id) because spans.trace_id is String
         but tracer_eval_logger.trace_id is UUID."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "toString(trace_id)" in where
+        assert "toString(el.trace_id)" in where
 
 
 # ============================================================================

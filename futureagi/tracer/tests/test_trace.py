@@ -502,9 +502,9 @@ class TestTraceListTracesOfSessionAPI:
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_list_session_traces_missing_session_id(self, auth_client):
-        """List session traces fails without session ID."""
+        """List session traces supports org-scoped listing without session ID."""
         response = auth_client.get("/tracer/trace/list_traces_of_session/")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_200_OK
 
     def test_list_session_traces_success(
         self, auth_client, observe_project, trace_session, session_trace

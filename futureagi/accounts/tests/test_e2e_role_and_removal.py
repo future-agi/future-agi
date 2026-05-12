@@ -289,27 +289,29 @@ class TestAdminRoleUpdates:
         resp = self._update_role(admin_client, target, Level.MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
 
-    # DENY: escalation -- can't promote to own level or above
+    # ALLOW: Admin may assign their own level to lower-level members.
 
-    def test_admin_cannot_promote_member_to_admin(
+    def test_admin_can_promote_member_to_admin(
         self, admin_client, organization, workspace
     ):
         target = _make_user(organization, "m2a@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(admin_client, target, Level.ADMIN)
-        assert resp.status_code == status.HTTP_403_FORBIDDEN, resp.json()
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+
+    def test_admin_can_promote_viewer_to_admin(
+        self, admin_client, organization, workspace
+    ):
+        target = _make_user(organization, "v2a@futureagi.com", "Viewer", Level.VIEWER)
+        resp = self._update_role(admin_client, target, Level.ADMIN)
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+
+    # DENY: escalation -- can't promote above own level
 
     def test_admin_cannot_promote_member_to_owner(
         self, admin_client, organization, workspace
     ):
         target = _make_user(organization, "m2o@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(admin_client, target, Level.OWNER)
-        assert resp.status_code == status.HTTP_403_FORBIDDEN, resp.json()
-
-    def test_admin_cannot_promote_viewer_to_admin(
-        self, admin_client, organization, workspace
-    ):
-        target = _make_user(organization, "v2a@futureagi.com", "Viewer", Level.VIEWER)
-        resp = self._update_role(admin_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_403_FORBIDDEN, resp.json()
 
     def test_admin_cannot_promote_viewer_to_owner(

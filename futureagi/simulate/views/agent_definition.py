@@ -279,7 +279,7 @@ class CreateAgentDefinitionView(APIView):
                 assistant_id=assistant_id,
                 authentication_method=validated.get("authentication_method") or "",
                 language=validated.get("language"),
-                languages=validated.get("languages"),
+                languages=validated.get("languages") or ["en"],
                 contact_number=validated.get("contact_number"),
                 inbound=validated.get("inbound", True),
                 knowledge_base_id=validated.get("knowledge_base"),

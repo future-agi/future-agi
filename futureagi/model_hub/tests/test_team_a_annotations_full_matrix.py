@@ -1254,14 +1254,14 @@ class TestQueueLabelManagement:
     def test_add_required_label_blocked_by_entitlement(
         self, auth_client, queue, star_label
     ):
-        """required=True hits an EE entitlement → 403 on test plan."""
+        """required=True hits an EE entitlement on the free/test plan."""
         resp = auth_client.post(
             _add_label_url(queue),
             {"label_id": str(star_label.id), "required": True},
             format="json",
         )
-        # Either 200 (entitlement exists) or 403 (no entitlement) — not 500.
-        assert resp.status_code in (200, 403), resp.data
+        # Either 200 (entitlement exists) or an entitlement denial — not 500.
+        assert resp.status_code in (200, 402, 403), resp.data
 
     def test_remove_label_soft_deletes_binding(self, auth_client, queue, star_label):
         AnnotationQueueLabel.objects.create(queue_id=queue, label=star_label)

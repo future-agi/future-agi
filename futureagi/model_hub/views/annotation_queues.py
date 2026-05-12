@@ -2178,11 +2178,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 Entitlements = None
 
             org = getattr(request, "organization", None) or request.user.organization
-            feat_check = Entitlements.check_feature(
-                str(org.id), "has_agreement_metrics"
-            )
-            if not feat_check.allowed:
-                return self._gm.forbidden_response(feat_check.reason)
+            if Entitlements is not None:
+                feat_check = Entitlements.check_feature(
+                    str(org.id), "has_agreement_metrics"
+                )
+                if not feat_check.allowed:
+                    return self._gm.forbidden_response(feat_check.reason)
         except ImportError:
             pass
 
@@ -2347,6 +2348,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         if not label_id:
             return self._gm.bad_request("label_id is required.")
+
+        if required:
+            from tfc.ee_gating import EEFeature, check_ee_feature
+
+            org = getattr(request, "organization", None) or request.user.organization
+            check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
         try:
             label = AnnotationsLabels.objects.get(id=label_id, deleted=False)

@@ -123,6 +123,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         )
 
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+    kb_id = (eval_config or {}).get("kb_id")
 
     # --- Ground Truth Injection (caller-side, before engine call) ---
     gt_inputs = dict(inputs) if inputs else {}
@@ -168,6 +169,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         futureagi_eval,
         gt_inputs,
         model=model,
+        kb_id=kb_id,
         workspace=workspace,
     )
 
@@ -179,6 +181,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                 inputs=gt_inputs,
                 model=model,
                 runtime_config=eval_config,
+                kb_id=kb_id,
                 organization_id=str(user.organization.id),
                 workspace_id=str(workspace.id) if workspace else None,
             )

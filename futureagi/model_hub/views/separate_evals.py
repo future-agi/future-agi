@@ -5806,18 +5806,15 @@ class TestEvaluationTemplateAPIView(APIView):
             input_data_types = validated_data.get("input_data_types", {})
             model = validated_data.get("model", None)
             config = validated_data.get("config", {})
-
-            try:
-                eval_template = EvalTemplate.no_workspace_objects.get(
-                    name="deterministic_evals"
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+            org = getattr(request, "organization", None) or request.user.organization
+            workspace = getattr(request, "workspace", None)
+            eval_template = None
 
             if not template_type:
                 return self._gm.bad_request(get_error_message("MISSING_TEMPLATE_TYPE"))
 
             config = prepare_user_eval_config(validated_data, True)
+            template_eval_type = "llm"
             if template_type == EvalTemplateType.FUTUREAGI.value:
                 eval_id = "DeterministicEvaluator"
 
@@ -5825,14 +5822,12 @@ class TestEvaluationTemplateAPIView(APIView):
                 eval_id = "CustomPromptEvaluator"
                 data_config = config.get("config", {})
                 data_config["organization_id"] = str(
-                    (
-                        getattr(request, "organization", None)
-                        or request.user.organization
-                    ).id
+                    org.id
                 )
                 config["config"] = data_config
 
             elif template_type == EvalTemplateType.FUNCTION.value:
+                template_eval_type = "code"
                 eval_id = validated_data.get("eval_type_id")
                 if not eval_id:
                     return self._gm.bad_request(
@@ -5848,6 +5843,7 @@ class TestEvaluationTemplateAPIView(APIView):
                 )
 
                 function_template = function_template.order_by("-updated_at").first()
+                eval_template = function_template
 
                 if function_template and has_function_params_schema(
                     function_template.config
@@ -5877,12 +5873,31 @@ class TestEvaluationTemplateAPIView(APIView):
                     f"Unsupported template_type: {template_type}"
                 )
 
+            if eval_template is None:
+                template_config = dict(config.get("config", {}) or {})
+                template_config.setdefault("eval_type_id", eval_id)
+                template_config.setdefault("output", config.get("output"))
+                eval_template = EvalTemplate(
+                    id=uuid.uuid4(),
+                    name=validated_data.get("name") or "eval_playground_test",
+                    description=validated_data.get("description") or "",
+                    organization=org,
+                    workspace=workspace,
+                    owner=OwnerChoices.USER.value,
+                    eval_type=template_eval_type,
+                    config=template_config,
+                    criteria=validated_data.get("criteria") or "",
+                    choices=config.get("choices") or [],
+                    multi_choice=validated_data.get("multi_choice", False),
+                    model=model,
+                )
+
             # Run the evaluation with the provided config
             response = run_eval_func(
                 config,
                 mappings,
                 eval_template,
-                getattr(request, "organization", None) or request.user.organization,
+                org,
                 input_data_types=input_data_types,
                 type="user_built",
                 model=model,
@@ -5890,7 +5905,7 @@ class TestEvaluationTemplateAPIView(APIView):
                 error_localizer=validated_data.get("error_localizer", False),
                 test=True,
                 source="eval_playground_test",
-                workspace=request.workspace,
+                workspace=workspace,
             )
 
             return self._gm.success_response(response)

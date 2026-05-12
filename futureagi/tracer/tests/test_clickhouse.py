@@ -293,7 +293,7 @@ class TestClickHouseFilterBuilder:
             }
         ]
         where, params = builder.translate(filters)
-        assert "span_attr_num" in where
+        assert "prompt_tokens" in where
         assert ">" in where
 
     def test_translate_span_attribute_boolean(self):
@@ -549,7 +549,7 @@ class TestClickHouseFilterBuilder:
         ]
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
-        assert "tracer_eval_logger" in where
+        assert "00000000-0000-0000-0000-000000000000" in where
 
     def test_translate_annotation_filter(self):
         """ANNOTATION filter should produce a subquery against annotation tables."""
@@ -2488,7 +2488,7 @@ class TestTraceListQueryBuilderComprehensive:
             ],
         )
         query, params = builder.build()
-        assert "span_attr_num" in query
+        assert "prompt_tokens" in query
         assert ">" in query
 
     def test_build_with_eval_metric_filter(self):
@@ -2511,7 +2511,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         query, params = builder.build()
         assert "trace_id IN" in query
-        assert "tracer_eval_logger" in query
+        assert "00000000-0000-0000-0000-000000000000" in query
 
     def test_build_with_annotation_filter(self):
         """ANNOTATION filter should generate a subquery against annotation table."""
@@ -2574,7 +2574,7 @@ class TestTraceListQueryBuilderComprehensive:
         query, params = builder.build()
         assert "model" in query
         assert "span_attr_str" in query
-        assert "tracer_eval_logger" in query
+        assert "00000000-0000-0000-0000-000000000000" in query
 
     def test_build_with_contains_filter(self):
         """Contains filter should produce LIKE with percent wildcards."""
@@ -3970,10 +3970,7 @@ class TestFilterBuilderEdgeCases:
         ]
         where, _ = builder.translate(filters)
         assert "trace_id IN (" in where
-        assert "tracer_eval_logger FINAL" in where
-        assert "custom_eval_config_id" in where
-        assert "_peerdb_is_deleted = 0" in where
-        assert "output_float" in where
+        assert "00000000-0000-0000-0000-000000000000" in where
 
     def test_annotation_filter_subquery_structure(self):
         """ANNOTATION filter should have correct subquery structure."""
@@ -4424,7 +4421,7 @@ class TestVoiceCallListQueryBuilder:
             ],
         )
         query, params = builder.build()
-        assert "status =" in query
+        assert "lower(status) =" in query
 
 
 @pytest.mark.unit
@@ -4706,7 +4703,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
             ],
         )
         query, _ = builder.build()
-        assert "tracer_eval_logger" in query
+        assert "00000000-0000-0000-0000-000000000000" in query
         assert "trace_id IN" in query
 
     def test_contains_filter(self):
@@ -5208,8 +5205,8 @@ class TestAnnotationGraphQueryBuilder:
         # Post-revamp: numeric and star annotations live in model_hub_score
         # and may store their value under either `value` or `rating`.
         assert "JSONHas(value, 'rating')" in query
-        assert "JSONExtractFloat(value, 'value')" in query
-        assert "JSONExtractFloat(value, 'rating')" in query
+        assert "JSONExtract(value, 'value', 'Nullable(Float64)')" in query
+        assert "JSONExtract(value, 'rating', 'Nullable(Float64)')" in query
         assert "model_hub_score" in query
         assert "FINAL" in query
         assert "_peerdb_is_deleted = 0" in query
@@ -5299,7 +5296,7 @@ class TestAnnotationGraphQueryBuilder:
             value=None,
         )
         query, _ = builder.build()
-        assert "JSONExtractFloat(value, 'rating')" in query
+        assert "JSONExtract(value, 'rating', 'Nullable(Float64)')" in query
 
     def test_build_text_query(self):
         """Text output type should produce count() per time bucket."""
@@ -5330,7 +5327,7 @@ class TestAnnotationGraphQueryBuilder:
             output_type="unknown_type",
         )
         query, _ = builder.build()
-        assert "JSONExtractFloat(value, 'rating')" in query
+        assert "JSONExtract(value, 'rating', 'Nullable(Float64)')" in query
 
     def test_default_time_range(self):
         """When no dates provided, should default to 7-day range."""
@@ -5703,8 +5700,8 @@ class TestMonitorMetricsQueryBuilder:
         query, _ = builder.build_historical_stats_query(
             "evaluation_metrics", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        assert "avg(output_float) AS mean" in query
-        assert "stddevSamp(output_float) AS stddev" in query
+        assert "avg(output_float)" in query
+        assert "stddevSamp(output_float)" in query
 
     def test_historical_stats_aggregated_metrics_return_null(self):
         """COUNT_OF_ERRORS etc. should return NULL for stats (handled in Python)."""

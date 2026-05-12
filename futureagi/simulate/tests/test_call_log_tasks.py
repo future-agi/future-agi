@@ -34,6 +34,22 @@ except ImportError:
 
 
 @pytest.fixture
+def keep_test_db_connection_open():
+    """The helper closes stale worker connections in production; keep pytest's
+    transaction connection open while exercising the helper directly."""
+    with (
+        patch("ee.voice.tasks.call_log_tasks.close_old_connections", return_value=None),
+        patch("tfc.temporal.drop_in.decorator.close_old_connections", return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _keep_test_db_connection_open(keep_test_db_connection_open):
+    yield
+
+
+@pytest.fixture
 def agent_definition(db, organization, workspace):
     return AgentDefinition.objects.create(
         agent_name="Test Agent",
@@ -163,9 +179,7 @@ class TestIngestCallLogsHelper:
             _fake_log_payload("first line"),
             _fake_log_payload("second line", severity="WARN", category="model"),
         ]
-        with patch(
-            "simulate.tasks.call_log_tasks.VoiceServiceManager"
-        ) as MockVSM:
+        with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
             MockVSM.return_value.iter_call_logs.return_value = iter(payloads)
 
             ok = _ingest_call_logs(
@@ -185,9 +199,7 @@ class TestIngestCallLogsHelper:
         assert call_execution.customer_logs_summary["total_entries"] == 2
 
     def test_customer_vs_agent_summary_field(self, call_execution):
-        with patch(
-            "simulate.tasks.call_log_tasks.VoiceServiceManager"
-        ) as MockVSM:
+        with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
             MockVSM.return_value.iter_call_logs.return_value = iter(
                 [_fake_log_payload("x")]
             )
@@ -228,9 +240,7 @@ def test_ingest_call_logs_task_delegates_to_helper(call_execution):
     """The Temporal-decorated wrapper must remain a thin pass-through so the
     legacy TestExecutor code path continues working. Run it on an empty
     iterator — the wrapper's only job is to forward args to the helper."""
-    with patch(
-        "simulate.tasks.call_log_tasks.VoiceServiceManager"
-    ) as MockVSM:
+    with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
         MockVSM.return_value.iter_call_logs.return_value = iter([])
         ok = ingest_call_logs_task(
             str(call_execution.id),

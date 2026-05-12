@@ -699,7 +699,7 @@ class TestCrossOrgIsolation:
             format="json",
         )
         assert resp.status_code != status.HTTP_200_OK
-        q = AnnotationQueue.objects.get(pk=queue)
+        q = AnnotationQueue.all_objects.get(pk=queue)
         assert q.name != "hijacked"
 
     def test_other_org_label_list_is_isolated(

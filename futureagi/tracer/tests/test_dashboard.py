@@ -406,8 +406,8 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         assert len(queries) == 1
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
-        assert "output_float" in sql
+        assert "usage_apicalllog" in sql
+        assert "eval_score" in sql
 
     def test_eval_metric_pass_fail(self):
         config = {
@@ -428,7 +428,8 @@ class TestDashboardQueryBuilder:
         builder = DashboardQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
-        assert "output_bool" in sql
+        assert "eval_output_str" in sql
+        assert "eval_score" in sql
 
     def test_system_metric_sum_aggregation(self):
         config = {
@@ -592,7 +593,7 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         assert "model_hub_score" in sql
-        assert "JSONExtractFloat(a.value, 'value')" in sql
+        assert "JSONExtract(a.value, 'value', 'Nullable(Float64)')" in sql
         assert params["annotation_label_id"]
 
     def test_annotation_star_metric_uses_rating_value(self):
@@ -615,7 +616,7 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         assert "model_hub_score" in sql
-        assert "JSONExtractFloat(a.value, 'rating')" in sql
+        assert "JSONExtract(a.value, 'rating', 'Nullable(Float64)')" in sql
 
     def test_custom_attribute_query(self):
         config = {
@@ -1682,8 +1683,8 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         assert len(queries) == 1
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
-        assert params["eval_config_id"] == eval_uuid
+        assert "usage_apicalllog" in sql
+        assert params["eval_template_id"] == eval_uuid
 
     # --- Annotation metrics ---
 
@@ -1888,7 +1889,7 @@ class TestFrontendPayloadSimulation:
         builder = DashboardQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
+        assert "eval_score" in sql
         assert "trace_id IN" in sql
 
     # --- Breakdowns ---

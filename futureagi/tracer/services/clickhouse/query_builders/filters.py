@@ -392,6 +392,8 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> Optional[str]:
         """Dispatch to the appropriate condition builder based on column type."""
+        filter_op = normalize_filter_op(filter_op)
+
         # The dashboard/metrics + get_span_attributes_list endpoints can
         # surface the same logical metric (e.g. ``gen_ai.usage.total_tokens``)
         # under both ``system_metric`` and ``custom_attribute`` categories,

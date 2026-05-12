@@ -42,6 +42,7 @@ from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import corpus_builder
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -405,6 +406,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             return self._gm.success_response("Annotation created successfully")
         except ValidationError:
             return self._gm.bad_request(get_error_message("ANNOTATION_CREATION_FAILED"))
+        except FeatureUnavailable:
+            raise
         except Exception as e:
             logger.exception(f"Error in creating annotation: {str(e)}")
             return self._gm.internal_server_error_response(

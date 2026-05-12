@@ -2270,6 +2270,25 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             dashboard__workspace=self.request.workspace,
         )
 
+    def _get_trace_query_timeout_ms(self, trace_config):
+        return DashboardViewSet._get_trace_query_timeout_ms(self, trace_config)
+
+    def _empty_simulation_metric_result(self, metric):
+        return DashboardViewSet._empty_simulation_metric_result(self, metric)
+
+    def _run_simulation_queries(self, simulation_config, fetch_rows):
+        return DashboardViewSet._run_simulation_queries(
+            self, simulation_config, fetch_rows
+        )
+
+    def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
+        return DashboardViewSet._run_simulation_clickhouse_queries(
+            self, ch_client, simulation_config
+        )
+
+    def _normalize_metric_sources(self, metrics):
+        return DashboardViewSet._normalize_metric_sources(self, metrics)
+
     def create(self, request, *args, **kwargs):
         try:
             dashboard_id = self.kwargs.get("dashboard_pk") or self.kwargs.get(
