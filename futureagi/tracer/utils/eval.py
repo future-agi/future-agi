@@ -171,10 +171,9 @@ def build_session_context(session) -> dict | None:
                 )
             )
         }
-        # Pre-fetch span metadata for every trace in the page so each trace
-        # carries its concrete span IDs. Without this the agent sees trace
-        # ids only, has to guess that list_trace_spans exists, and gives up
-        # when other actions return NO_SPANS. Cap per-trace at 50 spans.
+        # Inline span metadata per trace so the agent has concrete span
+        # ids in its context and can call span_detail directly. Cap 50 per
+        # trace to bound payload size.
         spans_by_trace: dict = {}
         for s in (
             ObservationSpan.objects.filter(
@@ -200,11 +199,8 @@ def build_session_context(session) -> dict | None:
 
         trace_summaries = []
         for t in traces_page:
-            # Defensive attribute access — Trace rows from older surfaces
-            # (or partial writes from an in-flight ingest) can have None on
-            # nullable columns. getattr keeps build_session_context robust
-            # against incomplete rows; the outer try/except still backstops
-            # any unexpected shape.
+            # getattr guards against incomplete Trace rows (None on nullable
+            # columns from in-flight ingests or older surfaces).
             t_id = getattr(t, "id", None)
             if t_id is None:
                 continue

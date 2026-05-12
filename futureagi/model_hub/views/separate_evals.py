@@ -2512,29 +2512,23 @@ class EvalTemplateVersionCreateView(APIView):
 
 @dataclass(frozen=True)
 class _SnapshotField:
-    """Declarative descriptor for a snapshot column to restore from version → template.
-
-    Centralizes the "column-level snapshot fields" list so a future addition
-    only needs an entry here; the apply / capture logic does not have to be
-    touched per field. NULL on the version row is the sentinel for "version
-    pre-dates this snapshot column" and the field is skipped — the template
-    keeps its current value rather than being wiped.
-    """
+    """Snapshot column to restore from version → template. Future fields
+    add one entry to ``_VERSION_SNAPSHOT_FIELDS`` below; no apply/capture
+    rewrite needed."""
 
     name: str
     transform: Optional[Callable[[Any], Any]] = None
 
 
-# Column-level snapshot fields added in TH-4787. Each is nullable on
-# EvalTemplateVersion; NULL → skip on restore so pre-snapshot rows preserve
-# the live template's current value.
+# Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
+# so pre-fix rows preserve the live template's current value. eval_tags
+# is list()-copied so later template mutations don't propagate into the
+# version snapshot.
 _VERSION_SNAPSHOT_FIELDS: tuple = (
     _SnapshotField("output_type_normalized"),
     _SnapshotField("pass_threshold"),
     _SnapshotField("choice_scores"),
     _SnapshotField("error_localizer_enabled"),
-    # ArrayField → list copy so later mutations to template.eval_tags don't
-    # propagate back into the version snapshot.
     _SnapshotField("eval_tags", transform=list),
 )
 
@@ -2542,26 +2536,12 @@ _VERSION_SNAPSHOT_FIELDS: tuple = (
 def _apply_version_snapshot_to_template(template, version):
     """Copy a version's snapshot fields onto the live EvalTemplate.
 
-    Used by both SetDefaultVersionView (when the user activates a version)
-    and RestoreVersionView (after creating a new version that mirrors an
-    older one). Both flows need the runtime EvalTemplate row to reflect
-    the chosen version's state so detail / list / runtime resolution stay
-    coherent.
-
-    Behavior per field:
-      - ``config``, ``criteria`` — always overwritten (empty string / dict
-        is a valid version state).
-      - ``model`` — restored when the version captured a non-empty model
-        string. (CharField with default="" → "" means "version pre-dates
-        the model snapshot or composite has no model"; in that case keep
-        the template's current value.)
-      - Column-level snapshot fields declared in ``_VERSION_SNAPSHOT_FIELDS``
-        — each is nullable; NULL means "this version pre-dates the
-        snapshot fix" and we skip it, preserving the template's current
-        value rather than wiping it.
-
-    Returns the list of ``EvalTemplate`` field names that were modified
-    (caller passes to ``template.save(update_fields=...)``).
+    Shared by SetDefaultVersionView (activating a version) and
+    RestoreVersionView (after creating a mirror version). ``config`` and
+    ``criteria`` are always overwritten; ``model`` is restored only when
+    non-empty; each ``_VERSION_SNAPSHOT_FIELDS`` entry is restored only
+    when non-NULL on the version row. Returns the list of changed field
+    names for ``template.save(update_fields=...)``.
     """
     fields_to_update = ["config", "criteria", "updated_at"]
     template.config = version.config_snapshot or {}

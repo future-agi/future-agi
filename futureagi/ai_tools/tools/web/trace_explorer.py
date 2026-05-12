@@ -159,12 +159,8 @@ class TraceExplorerTool(BaseTool):
         if params.action == "list_trace_spans":
             return self._list_trace_spans(params.query, params.limit)
 
-        # span_detail is also DB-backed when no spans are loaded in context.
-        # This lets agents at session-level (where session_context holds
-        # trace summaries, not individual spans) drill into specific spans
-        # via the span_id they get back from list_trace_spans. Without this,
-        # session-level evals can navigate the session graph but never read
-        # actual span input/output content.
+        # DB-backed fallback: lets session-level evals drill into specific
+        # spans by id when no spans are pre-loaded in the in-memory context.
         if params.action == "span_detail" and not spans:
             if not params.query:
                 return ToolResult.error("Provide a span ID in `query` to fetch span detail.")
