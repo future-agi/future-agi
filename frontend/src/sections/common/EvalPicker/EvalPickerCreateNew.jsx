@@ -107,7 +107,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     onFiltersChange,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
-  console.log("EvalPickerCreateNew source info", { source, sourceId, sourceRowType, sourceColumns });
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
