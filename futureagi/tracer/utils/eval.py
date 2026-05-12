@@ -171,6 +171,33 @@ def build_session_context(session) -> dict | None:
                 )
             )
         }
+        # Pre-fetch span metadata for every trace in the page so each trace
+        # carries its concrete span IDs. Without this the agent sees trace
+        # ids only, has to guess that list_trace_spans exists, and gives up
+        # when other actions return NO_SPANS. Cap per-trace at 50 spans.
+        spans_by_trace: dict = {}
+        for s in (
+            ObservationSpan.objects.filter(
+                trace_id__in=trace_ids, deleted=False
+            )
+            .order_by("start_time")
+            .values("id", "trace_id", "name", "observation_type", "status", "parent_span_id")
+        ):
+            bucket = spans_by_trace.setdefault(s["trace_id"], [])
+            if len(bucket) >= 50:
+                continue
+            bucket.append(
+                {
+                    "id": str(s["id"]),
+                    "name": s.get("name"),
+                    "observation_type": s.get("observation_type"),
+                    "status": s.get("status"),
+                    "parent_span_id": (
+                        str(s["parent_span_id"]) if s.get("parent_span_id") else None
+                    ),
+                }
+            )
+
         trace_summaries = []
         for t in traces_page:
             agg = per_trace.get(t.id, {})
@@ -187,6 +214,7 @@ def build_session_context(session) -> dict | None:
                     "total_tokens": agg.get("total_tokens") or 0,
                     "total_latency_ms": agg.get("total_latency") or 0,
                     "has_error": bool(t.error or err_count > 0),
+                    "spans": spans_by_trace.get(t.id, []),
                 }
             )
 
@@ -1908,9 +1936,58 @@ def _execute_evaluation_for_trace(
         (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
     )
     if _di["trace_context"]:
+        # Enrich trace_context with span aggregates so the agent sees the
+        # trace has content worth investigating. A bare {id, name} stub
+        # causes agents to read the two keys and conclude the trace is
+        # empty, skipping the list_trace_spans drill. With aggregates the
+        # agent sees span_count > 0 upfront and is motivated to drill.
+        try:
+            from django.db.models import Count, Q, Sum
+            _trace_agg = ObservationSpan.objects.filter(
+                trace=trace, deleted=False
+            ).aggregate(
+                span_count=Count("id"),
+                error_count=Count("id", filter=Q(status="ERROR")),
+                total_tokens=Sum("total_tokens"),
+                total_latency_ms=Sum("latency_ms"),
+            )
+            _span_index = list(
+                ObservationSpan.objects.filter(trace=trace, deleted=False)
+                .order_by("start_time")
+                .values("id", "name", "observation_type", "status", "parent_span_id")[:200]
+            )
+        except Exception:
+            _trace_agg = {}
+            _span_index = []
         _eval_inputs["trace_context"] = {
             "id": str(trace.id),
             "name": trace.name,
+            "created_at": (
+                trace.created_at.isoformat()
+                if getattr(trace, "created_at", None)
+                else None
+            ),
+            "span_count": _trace_agg.get("span_count") or 0,
+            "error_count": _trace_agg.get("error_count") or 0,
+            "total_tokens": _trace_agg.get("total_tokens") or 0,
+            "total_latency_ms": _trace_agg.get("total_latency_ms") or 0,
+            "has_error": bool(_trace_agg.get("error_count") or 0),
+            # Inline span index so the agent sees concrete span IDs and can go
+            # straight to `span_detail` query="<id>" — no guessing, no failed
+            # `list_trace_spans`/`span_tree` calls. Metadata only; actual
+            # input/output still requires `span_detail`.
+            "spans": [
+                {
+                    "id": str(s["id"]),
+                    "name": s.get("name"),
+                    "observation_type": s.get("observation_type"),
+                    "status": s.get("status"),
+                    "parent_span_id": (
+                        str(s["parent_span_id"]) if s.get("parent_span_id") else None
+                    ),
+                }
+                for s in _span_index
+            ],
         }
     if _di["session_context"]:
         _session = getattr(trace, "session", None)
