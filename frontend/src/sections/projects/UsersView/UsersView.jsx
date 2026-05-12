@@ -537,8 +537,6 @@ const UsersView = ({
         setShowErrors(display.showErrors);
       if (typeof display.showNonAnnotated === "boolean")
         setShowNonAnnotated(display.showNonAnnotated);
-      if (typeof display.showNonAnnotated === "boolean")
-        setShowNonAnnotated(display.showNonAnnotated);
       if (typeof display.hasEvalFilter === "boolean")
         setHasEvalFilter(display.hasEvalFilter);
       // Strip any pre-existing custom cols before adding this view's set,

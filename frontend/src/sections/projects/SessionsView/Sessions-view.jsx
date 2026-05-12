@@ -583,6 +583,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // Pending column state queued before the grid was ready. Drain effect
   // below applies it once `sessionGridApiRef.current.api` shows up.
   const pendingColumnStateRef = useRef(null);
+  // Queued saved-view refresh, set when the saved-view apply effect fires
+  // before the grid has mounted. Drained in `onGridReady` once the api
+  // shows up. Without this, the apply effect's optional-chain refresh
+  // silently no-ops on hard-refresh-into-saved-view, leaving the pending
+  // custom-col ref stranded.
+  const pendingRefreshRef = useRef(false);
 
   // Apply a saved view's config — push display options into URL-synced
   // state (matches UsersView / LLMTracingView). UserDetailTabBar still
@@ -719,8 +725,17 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // below — finalFilters doesn't recompute, Session-grid's dataSource
     // memo doesn't recreate, and no fetch fires. The pending ref then
     // sits there forever and customs never appear.
+    //
+    // On a hard refresh the grid api isn't ready yet, so the optional
+    // chain bails silently. Queue the request via `pendingRefreshRef`;
+    // `onGridReady` (below) drains it once the api shows up.
     if (savedCustomCols.length > 0) {
-      sessionGridApiRef.current?.api?.refreshServerSide?.({ purge: true });
+      const api = sessionGridApiRef.current?.api;
+      if (api?.refreshServerSide) {
+        api.refreshServerSide({ purge: true });
+      } else {
+        pendingRefreshRef.current = true;
+      }
     }
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
       // Always queue columnState when there are custom cols pending —
@@ -925,6 +940,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           applyOrder: true,
         });
         pendingColumnStateRef.current = null;
+      }
+      // Drain a queued refresh request — fires when the saved-view apply
+      // effect ran before the grid mounted (hard refresh into a saved
+      // view URL). Without this drain the queued custom-col ref would
+      // sit forever waiting for a fetch that never comes.
+      if (pendingRefreshRef.current && params.api?.refreshServerSide) {
+        params.api.refreshServerSide({ purge: true });
+        pendingRefreshRef.current = false;
       }
     },
     [setHeaderConfig],
