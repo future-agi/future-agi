@@ -211,6 +211,20 @@ def _run_evaluation(
     feedback_id=None,
 ):
     try:
+        # TH-4909: fail loudly if a silent CEC made it to dispatch despite the
+        # save-time guard. Without this, an Agent eval with config={} would
+        # run, raise an opaque downstream error, and never produce an
+        # eval_logger row — the original silent-eval class of bug.
+        if getattr(eval_model, "eval_type", None) == "agent":
+            _cfg = (custom_eval_config.config or {}) if custom_eval_config else {}
+            _missing = [k for k in ("output", "rule_prompt") if not _cfg.get(k)]
+            if _missing:
+                raise ValueError(
+                    f"Custom eval config {custom_eval_config.id if custom_eval_config else '<unknown>'} "
+                    f"for agent template '{eval_model.name}' is missing required "
+                    f"field(s) {_missing} at dispatch time. Re-attach the eval to repopulate."
+                )
+
         source_config = {
             "reference_id": observation_span.id,
             "is_futureagi_eval": futureagi_eval,

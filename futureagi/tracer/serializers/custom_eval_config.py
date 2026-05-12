@@ -57,6 +57,30 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
                     else getattr(self.instance, "config", {})
                 ),
             )
+            # TH-4909: reject silent configs for agent-type templates. The
+            # bulk-attach path used to persist `config={}` for AgentEvaluators
+            # — the resulting CECs ran but never produced eval_logger rows.
+            # After normalize, the template's fields should have been merged
+            # in; if they still aren't present, both the CEC and the linked
+            # template are incomplete and the eval can't dispatch.
+            if getattr(eval_template, "eval_type", None) == "agent":
+                merged = attrs["config"] or {}
+                missing = [
+                    field
+                    for field in ("output", "rule_prompt")
+                    if not merged.get(field)
+                ]
+                if missing:
+                    raise serializers.ValidationError(
+                        {
+                            "config": (
+                                f"Agent eval template '{eval_template.name}' "
+                                f"is missing required field(s) {missing} in both "
+                                f"the request and the linked template config. "
+                                f"Cannot attach an incomplete agent eval."
+                            )
+                        }
+                    )
         return attrs
 
 

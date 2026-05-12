@@ -128,6 +128,27 @@ def normalize_function_params(
     return normalized
 
 
+# Keys copied from template_config into runtime_config when missing. Keeps
+# bulk-attach and serializer save paths from persisting a CEC with no
+# dispatch-time fields (TH-4909).
+_TEMPLATE_PASSTHROUGH_KEYS = (
+    "output",
+    "rule_prompt",
+    "eval_type_id",
+    "required_keys",
+    "requiredKeys",
+    "optional_keys",
+    "optionalKeys",
+    "template_format",
+    "pass_threshold",
+    "choice_scores",
+    "config_params_desc",
+    "configParamsDesc",
+    "param_modalities",
+    "paramModalities",
+)
+
+
 def normalize_eval_runtime_config(
     template_config: dict | None, runtime_config: dict | None
 ):
@@ -137,6 +158,12 @@ def normalize_eval_runtime_config(
         raise ValueError("Invalid configuration input. Please refresh and try again.")
 
     normalized_config = deepcopy(runtime_config)
+
+    if isinstance(template_config, dict):
+        for key in _TEMPLATE_PASSTHROUGH_KEYS:
+            if normalized_config.get(key) in (None, "", [], {}) and template_config.get(key) not in (None, "", [], {}):
+                normalized_config[key] = deepcopy(template_config[key])
+
     schema = get_function_params_schema(template_config)
     if not schema:
         return normalized_config
