@@ -16,7 +16,6 @@ import {
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
-import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
