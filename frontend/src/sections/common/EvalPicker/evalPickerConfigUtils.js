@@ -7,7 +7,7 @@ const OUTPUT_TYPE_CONFIG_MAP = {
 const ROW_TYPE_CONTEXT_OPTIONS = {
   spans: ["span_context"],
   traces: ["trace_context"],
-  sessions: ["session_context"],
+  sessions: ["session_context", "trace_context"],
   voiceCalls: ["call_context"],
 };
 
