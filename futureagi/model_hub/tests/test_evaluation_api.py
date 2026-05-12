@@ -475,6 +475,35 @@ class TestGetEvalsListView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_get_evals_list_excludes_draft_templates(
+        self, auth_client, dataset, organization, workspace
+    ):
+        """Draft templates are stored as visible_ui=False and stay out of the drawer."""
+        visible_template = EvalTemplate.objects.create(
+            name="visible-user-eval",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=True,
+        )
+        draft_template = EvalTemplate.objects.create(
+            name="draft-hidden-eval",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=False,
+        )
+
+        response = auth_client.get(f"/model-hub/develops/{dataset.id}/get_evals_list/")
+
+        assert response.status_code == status.HTTP_200_OK
+        names = {
+            item["name"]
+            for item in response.data["result"]["evals"]
+            if item["id"] in {str(visible_template.id), str(draft_template.id)}
+        }
+        assert names == {"visible-user-eval"}
+
     def test_get_evals_list_invalid_dataset(self, auth_client):
         """Test that invalid dataset_id returns error."""
         fake_dataset_id = uuid.uuid4()
