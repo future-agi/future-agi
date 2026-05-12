@@ -22,6 +22,7 @@ type FutureAGIGuardrail struct {
 	secretKey string
 	baseURL   string
 	callType  string
+	maxTokens int
 	retry     int
 	client    *http.Client
 }
@@ -33,12 +34,14 @@ type evalRequest struct {
 }
 
 type evalInput struct {
-	Input    string `json:"input"`
-	CallType string `json:"call_type,omitempty"`
+	Input     string `json:"input"`
+	CallType  string `json:"call_type,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
 }
 
 type evalConfig struct {
-	CallType string `json:"call_type,omitempty"`
+	CallType  string `json:"call_type,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
 }
 
 // evalResponse is the top-level API response.
@@ -62,11 +65,12 @@ type evaluation struct {
 // New creates a FutureAGIGuardrail from rule config.
 func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	g := &FutureAGIGuardrail{
-		name:     name,
-		baseURL:  "https://api.futureagi.com",
-		callType: "protect",
-		retry:    0,
-		client:   &http.Client{Timeout: 15 * time.Second},
+		name:      name,
+		baseURL:   "https://api.futureagi.com",
+		callType:  "protect",
+		maxTokens: 10,
+		retry:     0,
+		client:    &http.Client{Timeout: 15 * time.Second},
 	}
 
 	if cfg == nil {
@@ -94,6 +98,14 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 			g.retry = n
 		case float64:
 			g.retry = int(n)
+		}
+	}
+	if v, ok := cfg["max_tokens"]; ok {
+		switch n := v.(type) {
+		case int:
+			g.maxTokens = n
+		case float64:
+			g.maxTokens = int(n)
 		}
 	}
 	if v, ok := cfg["timeout"].(string); ok {
@@ -224,7 +236,7 @@ func extractContentText(raw json.RawMessage) string {
 func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalResponse, error) {
 	payload := evalRequest{
 		Inputs: []evalInput{
-			{Input: text, CallType: g.callType},
+			{Input: text, CallType: g.callType, MaxTokens: g.maxTokens},
 		},
 		Config: map[string]evalConfig{
 			g.evalID: {CallType: g.callType},

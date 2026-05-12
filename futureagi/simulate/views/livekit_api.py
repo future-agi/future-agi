@@ -15,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
+from asgiref.sync import async_to_sync
 from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -405,7 +406,6 @@ class ValidateLiveKitCredentialsView(APIView):
         )
 
         from simulate.serializers.agent_definition import _is_masked
-        from ee.voice.services.livekit.service import _run_async
 
         data = request.data
         livekit_url = (data.get("livekit_url") or "").strip()
@@ -483,7 +483,7 @@ class ValidateLiveKitCredentialsView(APIView):
                 await lkapi.aclose()
 
         try:
-            _run_async(_validate())
+            async_to_sync(_validate)()
         except Exception as exc:
             logger.warning(
                 "livekit_validate_credentials_failed",

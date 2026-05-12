@@ -26,8 +26,12 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
 import {
   useEvalDetail,
   useUpdateEval,
@@ -104,6 +108,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     sourcePreviewData,
     isEditMode,
     requiredColumnId,
+    onFiltersChange,
+    filterForm: localFilterForm,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -155,6 +161,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
   const sourceRef = useRef(null);
+
+  const localFormFilters = useWatch({
+    control: localFilterForm.control,
+    name: "filters",
+  });
+  const localApiFilters = useMemo(
+    () => buildApiFilterArray(localFormFilters),
+    [localFormFilters],
+  );
 
   const handleSourceReadyChange = useCallback((ready, mapping) => {
     setSourceReady(ready);
@@ -774,6 +789,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }
 
+    if (source === "task" && onFiltersChange) {
+      onFiltersChange(localFilterForm.getValues("filters") || []);
+    }
+
     // Build a data_injection config from context options.
     const dataInjection = (() => {
       if (
@@ -915,6 +934,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onSave,
     requiredColumnId,
     sourceColumns,
+    source,
+    onFiltersChange,
+    localFilterForm,
   ]);
 
   if (isLoading) {
@@ -1474,6 +1496,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   sx={{ alignItems: "flex-start" }}
                 />
               )}
+
             </Box>
           }
           rightPanel={
@@ -1487,18 +1510,60 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 flexDirection: "column",
               }}
             >
-              {/* Source label */}
-              <Typography
-                variant="body2"
-                fontWeight={600}
-                sx={{ mb: 1.5, fontSize: "13px" }}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  mb: 1.5,
+                }}
               >
-                {source === "composite"
-                  ? "Test Playground"
-                  : `${SOURCE_LABELS[source] || "Preview"} — Variable Mapping`}
-              </Typography>
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ fontSize: "13px" }}
+                >
+                  {source === "composite"
+                    ? "Test Playground"
+                    : `${SOURCE_LABELS[source] || "Preview"} — Variable Mapping`}
+                </Typography>
+                {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
+                  <Chip
+                    label={ROW_TYPE_LABELS[sourceRowType]}
+                    size="small"
+                    sx={{
+                      height: 18,
+                      fontSize: "10px",
+                      bgcolor: "background.neutral",
+                      color: "text.secondary",
+                      "& .MuiChip-label": { px: 0.75 },
+                    }}
+                  />
+                )}
+              </Box>
 
-              {/* Render the source-specific component directly (no tabs) */}
+              {source === "task" && sourceId && (
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
+                  >
+                    Narrow down which{" "}
+                    {(ROW_TYPE_LABELS[sourceRowType] || "rows").toLowerCase()}{" "}
+                    this task runs on
+                  </Typography>
+                  <TaskFilterBar
+                    control={localFilterForm.control}
+                    setValue={localFilterForm.setValue}
+                    projectId={sourceId}
+                    isSimulator={String(sourceRowType || "")
+                      .toLowerCase()
+                      .startsWith("voice")}
+                  />
+                </Box>
+              )}
+
               <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
@@ -1582,6 +1647,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    localFilters={localApiFilters}
                     pickerSourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />

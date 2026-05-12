@@ -605,20 +605,21 @@ class AgentccGatewayViewSet(ViewSet):
         try:
             from model_hub.models.evals_metric import EvalTemplate
 
-            # Protect-compatible metric names (from DeterministicEvaluator._resolve_protect_metric)
+            # Protect-compatible eval templates.
             protect_metrics = [
                 "toxicity",
                 "bias_detection",
                 "prompt_injection",
                 "data_privacy_compliance",
-                "pii",
-                "content_moderation",
+                "protect_flash",
             ]
 
-            templates = EvalTemplate.objects.filter(
+            # System eval templates have organization_id=None, workspace_id=None,
+            # so WorkspaceContextMiddleware filters them out. Use no_workspace_objects
+            # to bypass workspace filtering.
+            templates = EvalTemplate.no_workspace_objects.filter(
                 owner="system",
                 deleted=False,
-                config__eval_type_id="DeterministicEvaluator",
                 name__in=protect_metrics,
             ).values("eval_id", "name", "description")
 

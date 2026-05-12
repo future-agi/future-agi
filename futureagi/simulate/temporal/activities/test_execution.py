@@ -203,8 +203,11 @@ def _build_voice_settings(
     """Build voice settings from persona data and simulator agent defaults."""
     import os
 
-    from ee.voice.constants.voice_catalog import resolve_voice_id
-    from ee.voice.constants.voice_mapper import select_voice_id
+    try:
+        from ee.voice.constants.voice_catalog import resolve_voice_id
+        from ee.voice.constants.voice_mapper import select_voice_id
+    except ImportError:
+        return {}
     from tracer.models.observability_provider import ProviderChoices
 
     # Voice_id format is determined by the system voice provider (the
@@ -320,9 +323,13 @@ async def create_call_execution_records(
         from simulate.models import Scenarios
         from simulate.models.run_test import CreateCallExecution
         from simulate.models.test_execution import CallExecution, TestExecution
-        from ee.voice.utils.prompt_builder import generate_dynamic_prompt
         from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
         from tfc.temporal.common.heartbeat import Heartbeater
+
+        try:
+            from ee.voice.utils.prompt_builder import generate_dynamic_prompt
+        except ImportError:
+            generate_dynamic_prompt = None
 
         test_execution = await TestExecution.objects.select_related(
             "run_test__workspace",
@@ -460,7 +467,12 @@ async def create_call_execution_records(
 
                         # Generate system prompt using dynamic prompt builder
                         system_prompt = base_prompt
-                        if row_data and simulator_agent and agent_version:
+                        if (
+                            generate_dynamic_prompt
+                            and row_data
+                            and simulator_agent
+                            and agent_version
+                        ):
                             try:
                                 system_prompt = generate_dynamic_prompt(
                                     prompt_template=base_prompt,
