@@ -4,7 +4,9 @@ import traceback
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any, Callable, Optional
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -2508,6 +2510,35 @@ class EvalTemplateVersionCreateView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@dataclass(frozen=True)
+class _SnapshotField:
+    """Declarative descriptor for a snapshot column to restore from version → template.
+
+    Centralizes the "column-level snapshot fields" list so a future addition
+    only needs an entry here; the apply / capture logic does not have to be
+    touched per field. NULL on the version row is the sentinel for "version
+    pre-dates this snapshot column" and the field is skipped — the template
+    keeps its current value rather than being wiped.
+    """
+
+    name: str
+    transform: Optional[Callable[[Any], Any]] = None
+
+
+# Column-level snapshot fields added in TH-4787. Each is nullable on
+# EvalTemplateVersion; NULL → skip on restore so pre-snapshot rows preserve
+# the live template's current value.
+_VERSION_SNAPSHOT_FIELDS: tuple = (
+    _SnapshotField("output_type_normalized"),
+    _SnapshotField("pass_threshold"),
+    _SnapshotField("choice_scores"),
+    _SnapshotField("error_localizer_enabled"),
+    # ArrayField → list copy so later mutations to template.eval_tags don't
+    # propagate back into the version snapshot.
+    _SnapshotField("eval_tags", transform=list),
+)
+
+
 def _apply_version_snapshot_to_template(template, version):
     """Copy a version's snapshot fields onto the live EvalTemplate.
 
@@ -2524,11 +2555,10 @@ def _apply_version_snapshot_to_template(template, version):
         string. (CharField with default="" → "" means "version pre-dates
         the model snapshot or composite has no model"; in that case keep
         the template's current value.)
-      - ``output_type_normalized`` / ``pass_threshold`` / ``choice_scores``
-        / ``error_localizer_enabled`` / ``eval_tags`` — column-level
-        snapshot fields added in TH-4787. Each is nullable; NULL means
-        "this version pre-dates the snapshot fix" and we skip it,
-        preserving the template's current value rather than wiping it.
+      - Column-level snapshot fields declared in ``_VERSION_SNAPSHOT_FIELDS``
+        — each is nullable; NULL means "this version pre-dates the
+        snapshot fix" and we skip it, preserving the template's current
+        value rather than wiping it.
 
     Returns the list of ``EvalTemplate`` field names that were modified
     (caller passes to ``template.save(update_fields=...)``).
@@ -2541,25 +2571,14 @@ def _apply_version_snapshot_to_template(template, version):
         template.model = version.model
         fields_to_update.append("model")
 
-    # Column-level snapshots — skip on pre-snapshot versions (NULL) so we
-    # don't wipe the template's current state with stale data.
-    if version.output_type_normalized is not None:
-        template.output_type_normalized = version.output_type_normalized
-        fields_to_update.append("output_type_normalized")
-    if version.pass_threshold is not None:
-        template.pass_threshold = version.pass_threshold
-        fields_to_update.append("pass_threshold")
-    if version.choice_scores is not None:
-        template.choice_scores = version.choice_scores
-        fields_to_update.append("choice_scores")
-    if version.error_localizer_enabled is not None:
-        template.error_localizer_enabled = version.error_localizer_enabled
-        fields_to_update.append("error_localizer_enabled")
-    if version.eval_tags is not None:
-        # ArrayField → list copy so subsequent mutations to template.eval_tags
-        # don't propagate back into the version snapshot.
-        template.eval_tags = list(version.eval_tags)
-        fields_to_update.append("eval_tags")
+    for snap in _VERSION_SNAPSHOT_FIELDS:
+        value = getattr(version, snap.name)
+        if value is None:
+            continue
+        if snap.transform is not None:
+            value = snap.transform(value)
+        setattr(template, snap.name, value)
+        fields_to_update.append(snap.name)
 
     return fields_to_update
 

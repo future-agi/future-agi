@@ -161,8 +161,14 @@ class EvalTemplate(ModelBaseModel):
     )
 
     # --- Scoring Revamp Fields (Phase 2) ---
+    class OutputTypeNormalized(models.TextChoices):
+        PASS_FAIL = "pass_fail", "Pass/Fail"
+        PERCENTAGE = "percentage", "Percentage"
+        DETERMINISTIC = "deterministic", "Deterministic"
+
     output_type_normalized = models.CharField(
         max_length=20,
+        choices=OutputTypeNormalized.choices,
         null=True,
         blank=True,
         help_text="Normalized output type: pass_fail, percentage, deterministic",
@@ -671,6 +677,7 @@ class EvalTemplateVersion(ModelBaseModel):
     # current value intact in that case.
     output_type_normalized = models.CharField(
         max_length=20,
+        choices=EvalTemplate.OutputTypeNormalized.choices,
         null=True,
         blank=True,
         help_text=(

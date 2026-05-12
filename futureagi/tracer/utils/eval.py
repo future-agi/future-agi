@@ -200,21 +200,29 @@ def build_session_context(session) -> dict | None:
 
         trace_summaries = []
         for t in traces_page:
-            agg = per_trace.get(t.id, {})
+            # Defensive attribute access — Trace rows from older surfaces
+            # (or partial writes from an in-flight ingest) can have None on
+            # nullable columns. getattr keeps build_session_context robust
+            # against incomplete rows; the outer try/except still backstops
+            # any unexpected shape.
+            t_id = getattr(t, "id", None)
+            if t_id is None:
+                continue
+            t_created = getattr(t, "created_at", None)
+            t_error = getattr(t, "error", None)
+            agg = per_trace.get(t_id, {})
             err_count = agg.get("error_count") or 0
             trace_summaries.append(
                 {
-                    "id": str(t.id),
-                    "name": t.name,
-                    "created_at": (
-                        t.created_at.isoformat() if t.created_at else None
-                    ),
+                    "id": str(t_id),
+                    "name": getattr(t, "name", None),
+                    "created_at": t_created.isoformat() if t_created else None,
                     "span_count": agg.get("span_count") or 0,
                     "error_count": err_count,
                     "total_tokens": agg.get("total_tokens") or 0,
                     "total_latency_ms": agg.get("total_latency") or 0,
-                    "has_error": bool(t.error or err_count > 0),
-                    "spans": spans_by_trace.get(t.id, []),
+                    "has_error": bool(t_error or err_count > 0),
+                    "spans": spans_by_trace.get(t_id, []),
                 }
             )
 
