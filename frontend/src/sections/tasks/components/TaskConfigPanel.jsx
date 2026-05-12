@@ -389,10 +389,7 @@ const TaskConfigPanel = ({
         editingIndex !== null ? configuredEvals[editingIndex]?.id : undefined;
 
       const serialized = serializeEvalConfig(evalConfig);
-      const kbList = Array.isArray(evalConfig.knowledge_bases)
-        ? evalConfig.knowledge_bases
-        : [];
-      const kbId = kbList[0] || null;
+
 
       const corePayload = {
         eval_template: tplId,
@@ -404,7 +401,6 @@ const TaskConfigPanel = ({
           mapping: evalConfig.mapping || {},
         },
         error_localizer: !!evalConfig.errorLocalizerEnabled,
-        kb_id: kbId,
       };
 
       let finalEval = { ...evalConfig, template_id: tplId };
