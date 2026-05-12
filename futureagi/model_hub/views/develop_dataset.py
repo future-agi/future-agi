@@ -14059,15 +14059,11 @@ class CreateKnowledgeBaseView(APIView):
             if updated_size > MAX_KB_SIZE:
                 return self._gm.bad_request(get_error_message("MAX_KB_SIZE_EXCEEDED"))
 
-            # New entitlement check (Phase 3)
+            entitlements_checked = False
             try:
-                from model_hub.models.develop_dataset import KnowledgeBase
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
+                from ee.usage.services.entitlements import Entitlements
 
-                kb_count = KnowledgeBase.objects.filter(
+                kb_count = KnowledgeBaseFile.objects.filter(
                     organization=org, deleted=False
                 ).count()
                 ent_check = Entitlements.can_create(
@@ -14076,30 +14072,30 @@ class CreateKnowledgeBaseView(APIView):
                 if not ent_check.allowed:
                     return self._gm.forbidden_response(ent_check.reason)
 
-                # Also check boolean feature
                 feat_check = Entitlements.check_feature(
                     str(org.id), "has_knowledge_base"
                 )
                 if not feat_check.allowed:
                     return self._gm.forbidden_response(feat_check.reason)
+                entitlements_checked = True
             except ImportError:
                 pass
 
-            # Legacy resource limit check (kept for backward compat during migration)
-            call_log_row = log_and_deduct_cost_for_resource_request(
-                organization=org,
-                api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("KB_CREATION_LIMIT_REACHED")
+            if not entitlements_checked:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    organization=org,
+                    api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
+                    workspace=request.workspace,
                 )
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("KB_CREATION_LIMIT_REACHED")
+                    )
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             # Validate ALL files FIRST (before creating KB)
             # Uses is_file_readable for full validation (password check, content parsing)

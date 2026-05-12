@@ -308,6 +308,73 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
     setHoveredData(null);
   }, [value, datapoint, column]);
 
+  const renderLocalizerDetails = (item) => {
+    const reason = item?.reason;
+    const improvement = item?.improvement;
+    const rankReason = item?.rank_reason || item?.rankReason;
+
+    if (!reason && !improvement && !rankReason) return null;
+
+    return (
+      <Box
+        sx={{
+          mt: 1,
+          p: 1.25,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "6px",
+          backgroundColor: "background.paper",
+        }}
+      >
+        {reason && (
+          <Box sx={{ mb: improvement || rankReason ? 1 : 0 }}>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Reason
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {reason}
+            </Typography>
+          </Box>
+        )}
+        {improvement && (
+          <Box sx={{ mb: rankReason ? 1 : 0 }}>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Suggested fix
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {improvement}
+            </Typography>
+          </Box>
+        )}
+        {rankReason && (
+          <Box>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Severity
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {rankReason}
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
   const highlightText = (text, startEx, endEx, weight, data) => {
     if (!text) return "";
     let fullText = text;
@@ -505,26 +572,43 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                               )}
                             </Box>
                           </Typography>
+                          {renderLocalizerDetails(i)}
                           {value.length > 1 && index < value.length - 1 && (
                             <Divider />
                           )}
                         </React.Fragment>
                       ))
                     ) : (
-                      // Show single paragraph with all highlights when expanded
-                      <Typography
-                        sx={{
-                          marginY: theme.spacing(1.5),
-                          overflowY: "auto",
-                          ...sx,
-                        }}
-                        variant="s2"
-                      >
-                        {renderTextWithAllHighlights(
-                          datapoint?.input_data[datapoint.selected_input_key],
-                          value,
-                        )}
-                      </Typography>
+                      <>
+                        <Typography
+                          sx={{
+                            marginY: theme.spacing(1.5),
+                            overflowY: "auto",
+                            ...sx,
+                          }}
+                          variant="s2"
+                        >
+                          {renderTextWithAllHighlights(
+                            datapoint?.input_data[datapoint.selected_input_key],
+                            value,
+                          )}
+                        </Typography>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 1,
+                          }}
+                        >
+                          {value.map((item, index) => (
+                            <React.Fragment
+                              key={item.unitKey || item.unit_key || index}
+                            >
+                              {renderLocalizerDetails(item)}
+                            </React.Fragment>
+                          ))}
+                        </Box>
+                      </>
                     )}
                     <ShowComponent condition={showMoreCondition}>
                       <Box
@@ -655,7 +739,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                     key={imageKey}
                     imageUrl={imageData?.dataFile}
                     value={value}
-                    weight={datapoint?.errorAnalysis[0]?.weight}
+                    weight={value?.[0]?.weight}
                     boxWidth={400}
                     boxHeight={400}
                   />
@@ -670,7 +754,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
 };
 
 ErrorLocalizeCard.propTypes = {
-  value: PropTypes.object,
+  value: PropTypes.oneOfType([PropTypes.array, PropTypes.object]),
   column: PropTypes.string,
   sx: PropTypes.object,
   datapoint: PropTypes.object,

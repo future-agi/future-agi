@@ -1152,6 +1152,8 @@ export const endpoints = {
     patchEvalTask: () => `/tracer/eval-task/update_eval_task/`,
     getEvalTaskLogs: () => `/tracer/eval-task/get_eval_task_logs/`,
     getEvalTaskUsage: () => `/tracer/eval-task/get_usage/`,
+    getSessionEvalLogs: (sessionId) =>
+      `/tracer/trace-session/${sessionId}/eval_logs/`,
     createEvalTaskConfig: () => `/tracer/custom-eval-config/`,
     updateEvalTaskConfig: (id) => `/tracer/custom-eval-config/${id}/`,
     getEvalTaskConfig: () =>

@@ -1098,18 +1098,26 @@ def _get_trace_totals_batch(trace_ids: List[str]) -> dict:
 
 
 def _get_trace_score(trace_id: str) -> Optional[float]:
-    """Avg eval score for a trace. Bool-typed evals contribute as 0/1."""
-    return EvalLogger.objects.filter(trace_id=trace_id).aggregate(
-        avg=Avg(EVAL_SCORE_EXPR)
-    )["avg"]
+    """Average EvalLogger score across span-level evals on the trace.
+
+    PR3: target_type='span' keeps this average comparable to its pre-row_type
+    behaviour. Trace-level evals (PR4) are a different semantic unit (one
+    per trace, not per span); their score should surface separately.
+
+    Bool-typed evals contribute via EVAL_SCORE_EXPR (0/1) — sim/voice
+    clusters need this or output_bool-only evals silently score 0.
+    """
+    return EvalLogger.objects.filter(
+        trace_id=trace_id, target_type="span"
+    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
 
 
 def _get_trace_scores_batch(trace_ids: List[str]) -> dict:
-    """Return {trace_id_str: avg eval score} — bool evals counted as 0/1."""
+    """Return {trace_id_str: avg eval score} — span-level evals; bool counted as 0/1."""
     if not trace_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids)
+        EvalLogger.objects.filter(trace_id__in=trace_ids, target_type="span")
         .values("trace_id")
         .annotate(avg=Avg(EVAL_SCORE_EXPR))
         .filter(avg__isnull=False)
@@ -1444,9 +1452,9 @@ def _fetch_traces_aggregates(cluster_id: str) -> TracesAggregates:
     failing = sum(1 for v in has_issues_map.values() if v)
     passing = sum(1 for v in has_issues_map.values() if not v)
 
-    # Avg eval score across all trace-level EvalLogger rows. Use the
-    # bool-aware helper so sim/voice eval clusters don't show 0.00 when
-    # only output_bool is populated.
+    # PR3: span-only via _avg_eval_score — keeps the avg comparable to
+    # pre-row_type semantics. Trace-level evals (PR4) surface elsewhere.
+    # Helper uses EVAL_SCORE_EXPR for bool-aware avg (sim/voice clusters).
     avg_score = _avg_eval_score(trace_ids) or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace
@@ -1587,17 +1595,17 @@ def _users_affected_in_window(trace_ids: List[str]) -> int:
 
 
 def _avg_eval_score(trace_ids: List[str]) -> Optional[float]:
-    """Average eval score over a list of traces.
+    """Average eval score over span-level evals on a list of traces.
 
-    Uses ``output_float`` when set, falls back to ``output_bool`` cast to 1/0.
-    Bool-only eval clusters (sim/voice projects) need the bool path or this
-    silently returns 0 even though evals ran.
+    PR3: span-only filter. Trace-level evals (PR4) surface elsewhere.
+    Uses EVAL_SCORE_EXPR so bool-only eval clusters (sim/voice) don't
+    silently return 0 when output_bool is the only populated column.
     """
     if not trace_ids:
         return None
-    return EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
-        avg=Avg(EVAL_SCORE_EXPR)
-    )["avg"]
+    return EvalLogger.objects.filter(
+        trace_id__in=trace_ids, target_type="span"
+    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
 
 
 def _project_scope_total(
