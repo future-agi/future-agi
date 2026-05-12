@@ -27,6 +27,7 @@ describe("resetAllUserStores", () => {
       .getState()
       .setGlobalVariables({ apiKey: "sk-leaked" });
     useAgentDetailsStore.getState().setAgentName("leaked-agent");
+    useAgentDetailsStore.getState().setLatestVersionNumber(42);
     usePromptStore.setState({ searchQuery: "leaked-search" });
     useGraphStore.getState().addNode("conversation", { x: 0, y: 0 }, false);
 
@@ -56,6 +57,7 @@ describe("resetAllUserStores", () => {
       {},
     );
     expect(useAgentDetailsStore.getState().agentName).toBe("");
+    expect(useAgentDetailsStore.getState().latestVersionNumber).toBe(0);
     expect(usePromptStore.getState().searchQuery).toBe("");
     expect(useGraphStore.getState().nodes.length).toBe(initialGraphNodeCount);
     expect(useGraphStore.getState().edges).toEqual([]);
