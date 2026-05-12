@@ -15,7 +15,18 @@ from typing import List, Optional, Tuple
 import structlog
 from django.contrib.auth import get_user_model
 from django.db import models
-from django.db.models import Avg, Count, Q, QuerySet, Sum
+from django.db.models import (
+    Avg,
+    Case,
+    Count,
+    F,
+    FloatField,
+    Q,
+    QuerySet,
+    Sum,
+    Value,
+    When,
+)
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -68,6 +79,18 @@ from tracer.types.feed_types import (
 
 logger = structlog.get_logger(__name__)
 User = get_user_model()
+
+
+# Coerce EvalLogger rows to a 0..1 score in SQL: prefer output_float when set,
+# otherwise treat output_bool as 1.0/0.0. Mirrors the pattern in
+# tracer/views/trace.py so eval aggregation has one canonical shape.
+EVAL_SCORE_EXPR = Case(
+    When(output_float__isnull=False, then=F("output_float")),
+    When(output_bool=True, then=Value(1.0)),
+    When(output_bool=False, then=Value(0.0)),
+    default=None,
+    output_field=FloatField(),
+)
 
 
 # Priority (backend) ↔ severity (frontend) mapping
@@ -214,22 +237,30 @@ def _fetch_sessions_batch(cluster_ids: List[str]) -> dict:
 
 
 def _fetch_latest_trace_id_batch(cluster_ids: List[str]) -> dict:
-    """Return {cluster_id: latest_trace_id_str}."""
+    """Return {cluster_id: latest_trace_id_str}.
+
+    Single Postgres DISTINCT ON query — relies on the
+    (cluster, -created_at) index to pick the newest membership row per
+    cluster without a per-cluster round-trip.
+    """
     if not cluster_ids:
         return {}
 
-    result: dict = {}
-    # One query per cluster is acceptable here — cluster_ids is page-size (≤100)
-    for cid in cluster_ids:
-        latest = (
-            ErrorClusterTraces.objects.filter(cluster__cluster_id=cid)
-            .order_by("-created_at")
-            .values_list("trace_id", flat=True)
-            .first()
+    rows = (
+        ErrorClusterTraces.objects.filter(
+            cluster__cluster_id__in=cluster_ids,
+            trace_id__isnull=False,
         )
-        if latest:
-            result[cid] = str(latest)
-    return result
+        .order_by("cluster__cluster_id", "-created_at")
+        .distinct("cluster__cluster_id")
+        .values("cluster__cluster_id", "trace_id")
+    )
+
+    return {
+        str(r["cluster__cluster_id"]): str(r["trace_id"])
+        for r in rows
+        if r["trace_id"]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -933,27 +964,24 @@ def _eval_score_insights(trace_ids: List[str]) -> List[PatternInsight]:
     Returns one card per CustomEvalConfig that has scores on the cluster's traces,
     sorted by lowest average first (worst evals surface first).
     """
-    from django.db.models import Avg
-
     rows = (
         EvalLogger.objects.filter(
             trace_id__in=trace_ids,
             custom_eval_config__isnull=False,
-            output_float__isnull=False,
             deleted=False,
         )
         .values("custom_eval_config__name")
-        .annotate(avg_score=Avg("output_float"))
+        .annotate(avg_score=Avg(EVAL_SCORE_EXPR))
+        .filter(avg_score__isnull=False)
         .order_by("avg_score")
     )
-
-    insights = []
-    for row in rows:
-        name = row["custom_eval_config__name"]
-        avg = row["avg_score"]
-        pct = round(avg * 100)
-        insights.append(PatternInsight(value=f"{pct}%", caption=f"avg {name}"))
-    return insights
+    return [
+        PatternInsight(
+            value=f"{round(r['avg_score'] * 100)}%",
+            caption=f"avg {r['custom_eval_config__name']}",
+        )
+        for r in rows
+    ]
 
 
 def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
@@ -1024,6 +1052,21 @@ def _get_root_span(trace_id: str) -> Optional[ObservationSpan]:
     )
 
 
+def _get_root_spans_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: ObservationSpan} — first root span per trace."""
+    if not trace_ids:
+        return {}
+    rows = ObservationSpan.objects.filter(trace_id__in=trace_ids).filter(
+        models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id="")
+    )
+    out: dict = {}
+    for span in rows:
+        tid = str(span.trace_id)
+        if tid not in out:
+            out[tid] = span
+    return out
+
+
 def _get_trace_totals(
     trace_id: str,
 ) -> tuple[Optional[int], Optional[int], Optional[int]]:
@@ -1036,12 +1079,65 @@ def _get_trace_totals(
     return agg["latency"], agg["prompt"], agg["completion"]
 
 
-def _get_trace_score(trace_id: str) -> Optional[float]:
-    """Average EvalLogger.output_float across the trace."""
-    agg = EvalLogger.objects.filter(trace_id=trace_id).aggregate(
-        avg=Avg("output_float")
+def _get_trace_totals_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans."""
+    if not trace_ids:
+        return {}
+    rows = (
+        ObservationSpan.objects.filter(trace_id__in=trace_ids)
+        .values("trace_id")
+        .annotate(
+            latency=Sum("latency_ms"),
+            prompt=Sum("prompt_tokens"),
+            completion=Sum("completion_tokens"),
+        )
     )
-    return agg["avg"]
+    return {
+        str(r["trace_id"]): (r["latency"], r["prompt"], r["completion"]) for r in rows
+    }
+
+
+def _get_trace_score(trace_id: str) -> Optional[float]:
+    """Average EvalLogger score across span-level evals on the trace.
+
+    PR3: target_type='span' keeps this average comparable to its pre-row_type
+    behaviour. Trace-level evals (PR4) are a different semantic unit (one
+    per trace, not per span); their score should surface separately.
+
+    Bool-typed evals contribute via EVAL_SCORE_EXPR (0/1) — sim/voice
+    clusters need this or output_bool-only evals silently score 0.
+    """
+    return EvalLogger.objects.filter(
+        trace_id=trace_id, target_type="span"
+    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
+
+
+def _get_trace_scores_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: avg eval score} — span-level evals; bool counted as 0/1."""
+    if not trace_ids:
+        return {}
+    rows = (
+        EvalLogger.objects.filter(trace_id__in=trace_ids, target_type="span")
+        .values("trace_id")
+        .annotate(avg=Avg(EVAL_SCORE_EXPR))
+        .filter(avg__isnull=False)
+    )
+    return {str(r["trace_id"]): r["avg"] for r in rows}
+
+
+def _get_scan_results_batch(trace_ids: List[str]) -> dict:
+    """Return {trace_id_str: TraceScanResult} — first scan result per trace."""
+    if not trace_ids:
+        return {}
+    rows = TraceScanResult.objects.filter(trace_id__in=trace_ids).only(
+        "id", "trace_id", "meta", "key_moments"
+    )
+    out: dict = {}
+    for sr in rows:
+        tid = str(sr.trace_id)
+        if tid not in out:
+            out[tid] = sr
+    return out
 
 
 def _highlight_text(text: str, terms: List[str], hl: str) -> object:
@@ -1107,16 +1203,34 @@ def _build_representative_trace(
     has_issues: bool,
     pass_reel: Optional[List[dict]] = None,
     highlight_terms: Optional[List[str]] = None,
+    *,
+    root: Optional[ObservationSpan] = None,
+    totals: Optional[Tuple[Optional[int], Optional[int], Optional[int]]] = None,
+    score: Optional[float] = None,
+    scan_result: Optional[TraceScanResult] = None,
+    _prefetched: bool = False,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
+
+    Prefetched values (``root``, ``totals``, ``score``, ``scan_result``)
+    can be supplied by ``_fetch_representative_traces`` to avoid the per-
+    trace round-trips. Pass ``_prefetched=True`` to skip the single-trace
+    fallbacks even when a prefetched value is missing (i.e. genuine None
+    rather than "not provided").
 
     ``highlight_terms`` should come from ``_cluster_highlight_terms`` — a
     TF-IDF ranking computed once per cluster — so every trace in the same
     cluster lights up the same distinctive words.
     """
-    root = _get_root_span(str(trace.id))
-    latency, prompt_tokens, completion_tokens = _get_trace_totals(str(trace.id))
-    score = _get_trace_score(str(trace.id))
+    trace_id_str = str(trace.id)
+
+    if not _prefetched and root is None:
+        root = _get_root_span(trace_id_str)
+    if not _prefetched and totals is None:
+        totals = _get_trace_totals(trace_id_str)
+    latency, prompt_tokens, completion_tokens = totals or (None, None, None)
+    if not _prefetched and score is None:
+        score = _get_trace_score(trace_id_str)
 
     model = root.model if root else None
     input_text = None
@@ -1131,11 +1245,12 @@ def _build_representative_trace(
 
     turns = None
     fail_reel: List[dict] = []
-    scan_result = (
-        TraceScanResult.objects.filter(trace_id=trace.id)
-        .only("id", "meta", "key_moments")
-        .first()
-    )
+    if not _prefetched and scan_result is None:
+        scan_result = (
+            TraceScanResult.objects.filter(trace_id=trace.id)
+            .only("id", "meta", "key_moments")
+            .first()
+        )
     if scan_result:
         if scan_result.meta:
             turns = scan_result.meta.get("turn_count")
@@ -1245,26 +1360,48 @@ def _fetch_representative_traces(
         .select_related("trace")
         .order_by("-created_at")
     )
-    ect_rows = qs[: limit * 3] if limit else qs  # over-fetch for dedupe when limited
+    ect_rows = list(
+        qs[: limit * 3] if limit else qs
+    )  # over-fetch for dedupe when limited
 
-    result: List[RepresentativeTrace] = []
+    # First pass: dedupe by trace id so the batch helpers below only fetch
+    # what we'll actually emit.
+    deduped: List[Trace] = []
     seen_ids: set = set()
     for ect in ect_rows:
-        if not ect.trace or str(ect.trace.id) in seen_ids:
+        if not ect.trace:
             continue
-        result.append(
-            _build_representative_trace(
-                ect.trace,
-                has_issues=True,
-                pass_reel=pass_reel,
-                highlight_terms=highlight_terms,
-            )
-        )
-        seen_ids.add(str(ect.trace.id))
-        if limit and len(result) >= limit:
+        tid = str(ect.trace.id)
+        if tid in seen_ids:
+            continue
+        seen_ids.add(tid)
+        deduped.append(ect.trace)
+        if limit and len(deduped) >= limit:
             break
 
-    return result
+    if not deduped:
+        return []
+
+    trace_ids = [str(t.id) for t in deduped]
+    roots = _get_root_spans_batch(trace_ids)
+    totals = _get_trace_totals_batch(trace_ids)
+    scores = _get_trace_scores_batch(trace_ids)
+    scans = _get_scan_results_batch(trace_ids)
+
+    return [
+        _build_representative_trace(
+            trace,
+            has_issues=True,
+            pass_reel=pass_reel,
+            highlight_terms=highlight_terms,
+            root=roots.get(str(trace.id)),
+            totals=totals.get(str(trace.id)),
+            score=scores.get(str(trace.id)),
+            scan_result=scans.get(str(trace.id)),
+            _prefetched=True,
+        )
+        for trace in deduped
+    ]
 
 
 def get_overview(cluster_id: str) -> Optional[OverviewResponse]:
@@ -1315,13 +1452,10 @@ def _fetch_traces_aggregates(cluster_id: str) -> TracesAggregates:
     failing = sum(1 for v in has_issues_map.values() if v)
     passing = sum(1 for v in has_issues_map.values() if not v)
 
-    # Avg eval score across all trace-level EvalLogger rows
-    avg_score = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
-            avg=Avg("output_float")
-        )["avg"]
-        or 0.0
-    )
+    # PR3: span-only via _avg_eval_score — keeps the avg comparable to
+    # pre-row_type semantics. Trace-level evals (PR4) surface elsewhere.
+    # Helper uses EVAL_SCORE_EXPR for bool-aware avg (sim/voice clusters).
+    avg_score = _avg_eval_score(trace_ids) or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace
     per_trace_latency: List[int] = []
@@ -1461,18 +1595,46 @@ def _users_affected_in_window(trace_ids: List[str]) -> int:
 
 
 def _avg_eval_score(trace_ids: List[str]) -> Optional[float]:
-    """Average EvalLogger.output_float over a list of traces."""
+    """Average eval score over span-level evals on a list of traces.
+
+    PR3: span-only filter. Trace-level evals (PR4) surface elsewhere.
+    Uses EVAL_SCORE_EXPR so bool-only eval clusters (sim/voice) don't
+    silently return 0 when output_bool is the only populated column.
+    """
     if not trace_ids:
         return None
-    return EvalLogger.objects.filter(trace_id__in=trace_ids).aggregate(
-        avg=Avg("output_float")
-    )["avg"]
+    return EvalLogger.objects.filter(
+        trace_id__in=trace_ids, target_type="span"
+    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
+
+
+def _project_scope_total(
+    project_id: str, source: str, start, end=None
+) -> int:
+    """Total project-wide events in a window, matched to the cluster's source.
+
+    Scanner clusters: scanner ran on every trace, so denominator = scanner runs.
+    Eval clusters: the scanner may not have run at all (e.g. sim/voice
+    projects), so denominator = trace rows in the project window.
+    """
+    if source == ClusterSource.EVAL:
+        qs = Trace.objects.filter(project_id=project_id, created_at__gte=start)
+        if end is not None:
+            qs = qs.filter(created_at__lt=end)
+        return qs.count()
+    qs = TraceScanResult.objects.filter(project_id=project_id, created_at__gte=start)
+    if end is not None:
+        qs = qs.filter(created_at__lt=end)
+    return qs.count()
 
 
 def _fetch_trend_metrics(
     cluster_id: str, project_id: str, days: int
 ) -> List[TrendMetric]:
     """Build the 3 KPI cards — current vs previous window."""
+    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster_source = cluster.source if cluster else ClusterSource.SCANNER
+
     now = timezone.now()
     window = timedelta(days=days)
     cur_start = now - window
@@ -1481,14 +1643,10 @@ def _fetch_trend_metrics(
     cur_traces = _trace_ids_in_cluster_window(cluster_id, cur_start)
     prev_traces = _trace_ids_in_cluster_window(cluster_id, prev_start, cur_start)
 
-    cur_total = TraceScanResult.objects.filter(
-        project_id=project_id, created_at__gte=cur_start
-    ).count()
-    prev_total = TraceScanResult.objects.filter(
-        project_id=project_id,
-        created_at__gte=prev_start,
-        created_at__lt=cur_start,
-    ).count()
+    cur_total = _project_scope_total(project_id, cluster_source, cur_start)
+    prev_total = _project_scope_total(
+        project_id, cluster_source, prev_start, cur_start
+    )
 
     cur_err_rate = (100.0 * len(cur_traces) / cur_total) if cur_total else 0.0
     prev_err_rate = (100.0 * len(prev_traces) / prev_total) if prev_total else 0.0
@@ -1595,30 +1753,28 @@ def _fetch_score_trends(
         EvalLogger.objects.filter(
             trace_id__in=trace_ids,
             created_at__gte=since,
-            output_float__isnull=False,
             custom_eval_config__isnull=False,
         )
-        .annotate(day=TruncDate("created_at"))
-        .values(
-            "day",
-            "custom_eval_config__name",
-            "output_float",
-            "created_at",
-        )
+        .annotate(day=TruncDate("created_at"), score=EVAL_SCORE_EXPR)
+        .filter(score__isnull=False)
+        .values("day", "custom_eval_config__name", "score", "created_at")
     )
     if not rows:
         return []
 
-    # Group: {label: {day: [scores...], "_prev": [...], "_cur": [...]}}
+    # Group: {label: {day: [scores...], "_prev": [...], "_cur": [...]}}.
+    # Score coercion (float vs bool) is done in SQL via EVAL_SCORE_EXPR so the
+    # sparkline tracks pass-rate for sim/voice projects too.
     groups: dict = {}
     for r in rows:
+        score = r["score"]
         label = r["custom_eval_config__name"] or "Unnamed eval"
         g = groups.setdefault(label, {"days": {}, "prev": [], "cur": [], "count": 0})
-        g["days"].setdefault(r["day"], []).append(r["output_float"])
+        g["days"].setdefault(r["day"], []).append(score)
         if r["created_at"] >= midpoint:
-            g["cur"].append(r["output_float"])
+            g["cur"].append(score)
         else:
-            g["prev"].append(r["output_float"])
+            g["prev"].append(score)
         g["count"] += 1
 
     # Keep top N labels by sample count so we don't overwhelm the UI

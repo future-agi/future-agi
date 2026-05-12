@@ -21,6 +21,10 @@ import GenerateDiffText from "./GenerateDiffText";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import CellMarkdown from "./CellMarkdown";
 import CustomTooltip from "src/components/tooltip";
+import {
+  parseAnnotationValue,
+  renderAnnotationValue,
+} from "./DevelopCellRenderer/AnnotationCellRenderer/renderAnnotationValue";
 const DatapointCard = ({
   value,
   column,
@@ -133,7 +137,30 @@ const DatapointCard = ({
     return null;
   }, [value?.valueInfos]);
 
+  const isAnnotationColumn = column?.originType === "annotation_label";
+
+  // Annotation cells store the typed envelope (e.g. {"selected":[...]},
+  // {"value":"up"}, {"rating":4}). Pull out the primitive once so the rest
+  // of the card (raw tab, copy, float-as-% formatting) sees the user-facing
+  // value rather than the envelope JSON.
+  const annotationUnwrapped = useMemo(() => {
+    if (!isAnnotationColumn) return undefined;
+    const parsed = parseAnnotationValue(value?.cellValue);
+    if (Array.isArray(parsed)) return JSON.stringify(parsed);
+    if (parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed.selected))
+        return JSON.stringify(parsed.selected);
+      if (typeof parsed.rating === "number") return String(parsed.rating);
+      if (typeof parsed.value === "string" || typeof parsed.value === "number")
+        return String(parsed.value);
+      if (typeof parsed.text === "string") return parsed.text;
+      return value?.cellValue;
+    }
+    return parsed == null ? "" : String(parsed);
+  }, [isAnnotationColumn, value?.cellValue]);
+
   const formattedValue = useMemo(() => {
+    if (isAnnotationColumn) return annotationUnwrapped;
     if (dataType === "float") {
       return `${getScorePercentage(parseFloat(value?.cellValue) * 10)}%`;
     }
@@ -142,7 +169,12 @@ const DatapointCard = ({
       return isNaN(date.getTime()) ? value?.cellValue : date.toLocaleString();
     }
     return value?.cellValue;
-  }, [value?.cellValue, dataType]);
+  }, [value?.cellValue, dataType, isAnnotationColumn, annotationUnwrapped]);
+
+  const annotationContent = useMemo(
+    () => (isAnnotationColumn ? renderAnnotationValue(value?.cellValue, theme) : null),
+    [isAnnotationColumn, value?.cellValue, theme],
+  );
   const parsedJson = useMemo(() => {
     if (!isJsonValue(formattedValue)) return null;
     try {
@@ -412,6 +444,14 @@ const DatapointCard = ({
                       >
                         <ShowComponent
                           condition={
+                            isAnnotationColumn && annotationContent !== null
+                          }
+                        >
+                          {annotationContent}
+                        </ShowComponent>
+                        <ShowComponent
+                          condition={
+                            !isAnnotationColumn &&
                             column?.originType === "run_prompt" &&
                             isJsonValue(formattedValue) &&
                             parsedJson !== null
@@ -424,6 +464,7 @@ const DatapointCard = ({
                         </ShowComponent>
                         <ShowComponent
                           condition={
+                            !isAnnotationColumn &&
                             !(
                               column?.originType === "run_prompt" &&
                               isJsonValue(formattedValue) &&

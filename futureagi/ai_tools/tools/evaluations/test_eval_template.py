@@ -16,18 +16,22 @@ class TestEvalTemplateInput(PydanticBaseModel):
 
     eval_template_id: str = Field(
         default="",
-        description="Eval template name or UUID. If omitted, recent eval template candidates are returned.",
+        description=(
+            "Eval template name or UUID. If omitted, recent eval template "
+            "candidates are returned."
+        ),
     )
     mapping: dict | str = Field(
         default_factory=dict,
         description=(
-            "Mapping of template keys to test values. "
-            'Example: {"response": "The capital of France is Paris.", "query": "What is the capital of France?"}'
+            "Mapping of template variable names to test values. "
+            'Example: {"input": "What is the capital of France?", '
+            '"output": "Paris is the capital."}'
         ),
     )
     model: str | None = Field(
         default=None,
-        description="Override model for the test run",
+        description="Override model for the test run (optional).",
     )
 
     @model_validator(mode="before")
@@ -73,8 +77,9 @@ class TestEvalTemplateTool(BaseTool):
     name = "test_eval_template"
     description = (
         "Runs a dry-run test of an evaluation template with provided input data. "
-        "Returns the evaluation result without persisting anything. "
-        "Use this to validate template configuration before applying to datasets."
+        "Returns the evaluation result without persisting anything. Works with "
+        "LLM, code, and agent eval types. Use this to validate template "
+        "configuration before applying to datasets."
     )
     category = "evaluations"
     input_model = TestEvalTemplateInput
@@ -86,35 +91,21 @@ class TestEvalTemplateTool(BaseTool):
         from model_hub.models.evals_metric import EvalTemplate
 
         template_ref = self._clean_template_ref(params.eval_template_id or "")
+        scope = Q(organization=context.organization) | Q(organization__isnull=True)
+
         if not template_ref:
             templates = list(
-                EvalTemplate.no_workspace_objects.filter(
-                    Q(organization=context.organization) | Q(organization__isnull=True)
-                ).order_by("-created_at")[:10]
+                EvalTemplate.no_workspace_objects.filter(scope).order_by(
+                    "-created_at"
+                )[:10]
             )
             return self._candidate_result(
                 templates,
                 "Provide `eval_template_id` and optional `mapping` to dry-run a template.",
             )
 
-        # Look up the user template
-        scope = Q(organization=context.organization) | Q(organization__isnull=True)
-        user_template = None
-        if self._looks_like_uuid(template_ref):
-            try:
-                user_template = EvalTemplate.no_workspace_objects.get(
-                    scope,
-                    id=template_ref,
-                )
-            except EvalTemplate.DoesNotExist:
-                user_template = None
-        if user_template is None:
-            user_template = EvalTemplate.no_workspace_objects.filter(
-                scope,
-                name__iexact=template_ref,
-            ).first()
-
-        if not user_template:
+        template = self._resolve_template(EvalTemplate, scope, template_ref)
+        if not template:
             candidates = list(
                 EvalTemplate.no_workspace_objects.filter(
                     scope, name__icontains=template_ref
@@ -128,11 +119,14 @@ class TestEvalTemplateTool(BaseTool):
                 )
             return self._candidate_result(
                 candidates,
-                f"No exact eval template matched `{template_ref}`. Use one of these IDs to dry-run a template.",
+                (
+                    f"No exact eval template matched `{template_ref}`. Use one of "
+                    "these IDs to dry-run a template."
+                ),
             )
 
-        config = user_template.config or {}
-        required_keys = config.get("required_keys", [])
+        config = template.config or {}
+        required_keys = config.get("required_keys", []) if isinstance(config, dict) else []
         mapping = self._normalize_mapping(params.mapping, required_keys)
         for key in required_keys:
             mapping.setdefault(key, self._sample_value_for_key(key))
@@ -140,16 +134,16 @@ class TestEvalTemplateTool(BaseTool):
         rule_prompt = (
             config.get("rule_prompt")
             or config.get("criteria")
-            or user_template.criteria
-            or user_template.description
+            or template.criteria
+            or template.description
             or "Evaluate whether the output satisfies the requested task."
         )
         if "rule_prompt" in required_keys:
             mapping.setdefault("rule_prompt", rule_prompt)
 
-        if getattr(user_template, "template_type", "") == "composite":
+        if getattr(template, "template_type", "") == "composite":
             return self._test_composite_template(
-                user_template=user_template,
+                template=template,
                 mapping=mapping,
                 params=params,
                 context=context,
@@ -159,21 +153,19 @@ class TestEvalTemplateTool(BaseTool):
             params.model
             or os.environ.get("FALCON_AI_MODEL")
             or os.environ.get("TURING_SMALL_MODEL")
-            or user_template.model
+            or template.model
         )
         if model:
-            # In-memory only. The eval runner prefers user-template model for
-            # user-owned templates, so keep this dry run on Falcon's configured
-            # provider without persisting a template change.
-            user_template.model = model
+            # In-memory only. The eval runner reads the model from the saved
+            # template in some branches, so override without persisting.
+            template.model = model
 
-        # Try to run the evaluation
         try:
             from model_hub.utils.function_eval_params import (
                 has_function_params_schema,
                 normalize_eval_runtime_config,
             )
-            from model_hub.views.separate_evals import run_eval_func
+            from model_hub.views.utils.evals import run_eval_func
 
             extra = getattr(params, "model_extra", {}) or {}
             runtime_config = self._normalize_runtime_config(extra)
@@ -181,13 +173,10 @@ class TestEvalTemplateTool(BaseTool):
                 extra.get("input_data_types")
             )
 
-            # Saved templates are now tested through the eval playground path.
-            # The old test-evaluation endpoint is for unsaved form payloads and
-            # wraps config with a generic runner template; using it here loses
-            # saved-template fields such as eval_type_id, code params, messages,
-            # scoring, and agent settings.
-            if config.get("eval_type_id") == "CustomCodeEval" and has_function_params_schema(
-                config
+            if (
+                isinstance(config, dict)
+                and config.get("eval_type_id") == "CustomCodeEval"
+                and has_function_params_schema(config)
             ):
                 runtime_config = normalize_eval_runtime_config(
                     config, runtime_config
@@ -196,7 +185,7 @@ class TestEvalTemplateTool(BaseTool):
             response = run_eval_func(
                 runtime_config,
                 mapping,
-                user_template,
+                template,
                 context.organization,
                 model=model,
                 error_localizer=bool(extra.get("error_localizer", False)),
@@ -211,7 +200,6 @@ class TestEvalTemplateTool(BaseTool):
                 call_context=extra.get("call_context"),
             )
 
-            # Format the response
             result_info = []
             if isinstance(response, dict):
                 for key, value in response.items():
@@ -219,11 +207,16 @@ class TestEvalTemplateTool(BaseTool):
             else:
                 result_info.append(("Result", truncate(str(response), 500)))
 
+            eval_type_labels = {"llm": "LLM", "code": "Code", "agent": "Agent"}
             info = key_value_block(
                 [
+                    ("Template", f"{template.name} (`{str(template.id)}`)"),
                     (
-                        "Template",
-                        f"{user_template.name} (`{str(user_template.id)}`)",
+                        "Type",
+                        eval_type_labels.get(
+                            template.eval_type or "llm",
+                            template.eval_type or "-",
+                        ),
                     ),
                     ("Model", model or "default"),
                 ]
@@ -232,28 +225,33 @@ class TestEvalTemplateTool(BaseTool):
 
             return ToolResult(
                 content=section("Eval Template Test Result", info),
-                data={"template_id": str(user_template.id), "result": response},
+                data={
+                    "template_id": str(template.id),
+                    "eval_type": template.eval_type,
+                    "result": response,
+                    "test_completed": True,
+                },
             )
 
-        except Exception as e:
+        except Exception as exc:
             from ai_tools.error_codes import code_from_exception
 
-            error_code = code_from_exception(e)
+            error_code = code_from_exception(exc)
             info = key_value_block(
                 [
-                    ("Template", f"{user_template.name} (`{str(user_template.id)}`)"),
+                    ("Template", f"{template.name} (`{str(template.id)}`)"),
                     ("Model", model or "template default"),
                     ("Status", "test did not complete"),
-                    ("Reason", truncate(str(e), 500)),
+                    ("Reason", truncate(str(exc), 500)),
                     ("Error Code", error_code),
                 ]
             )
             return ToolResult(
                 content=section("Eval Template Test Did Not Complete", info),
                 data={
-                    "template_id": str(user_template.id),
+                    "template_id": str(template.id),
                     "test_completed": False,
-                    "error": str(e),
+                    "error": str(exc),
                     "error_code": error_code,
                     "blocked_reason": "eval_runtime_unavailable",
                 },
@@ -261,79 +259,71 @@ class TestEvalTemplateTool(BaseTool):
             )
 
     @staticmethod
+    def _resolve_template(EvalTemplate, scope, template_ref: str):
+        if TestEvalTemplateTool._looks_like_uuid(template_ref):
+            try:
+                return EvalTemplate.no_workspace_objects.get(scope, id=template_ref)
+            except EvalTemplate.DoesNotExist:
+                return None
+        return EvalTemplate.no_workspace_objects.filter(
+            scope,
+            name__iexact=template_ref,
+        ).first()
+
+    @staticmethod
     def _test_composite_template(
         *,
-        user_template,
+        template,
         mapping: dict,
         params: TestEvalTemplateInput,
         context: ToolContext,
     ) -> ToolResult:
-        from ai_tools.tools.evaluations.composite_eval import (
+        from ai_tools.tools.evaluations.execute_composite_eval import (
             ExecuteCompositeEvalInput,
             ExecuteCompositeEvalTool,
         )
 
         extra = getattr(params, "model_extra", {}) or {}
-        child_required_keys = TestEvalTemplateTool._composite_required_keys(
-            user_template
-        )
+        child_required_keys = TestEvalTemplateTool._composite_required_keys(template)
         mapping = dict(mapping)
         for key in child_required_keys:
             mapping.setdefault(key, TestEvalTemplateTool._sample_value_for_key(key))
 
-        run_if_mapping_empty = bool(
-            extra.get("run_if_mapping_empty", not child_required_keys)
-        )
         composite_params = ExecuteCompositeEvalInput.model_validate(
             {
-                "composite_eval_id": str(user_template.id),
+                "composite_eval_id": str(template.id),
                 "mapping": mapping,
                 "model": params.model,
-                "config": TestEvalTemplateTool._normalize_runtime_config(extra),
-                "error_localizer": bool(extra.get("error_localizer", False)),
-                "input_data_types": TestEvalTemplateTool._normalize_extra_dict(
-                    extra.get("input_data_types")
-                ),
+                "row_context": extra.get("row_context"),
                 "span_context": extra.get("span_context"),
                 "trace_context": extra.get("trace_context"),
-                "session_context": extra.get("session_context"),
-                "call_context": extra.get("call_context"),
-                "row_context": extra.get("row_context"),
-                "run_if_mapping_empty": run_if_mapping_empty,
-                "run_now": bool(extra.get("run_now", False)),
             }
         )
         result = ExecuteCompositeEvalTool().execute(composite_params, context)
         result.data = result.data or {}
-        requires_mapping = bool(
-            result.data.get("requires_mapping") or result.data.get("missing_keys")
-        )
         result.data.update(
             {
-                "template_id": str(user_template.id),
+                "template_id": str(template.id),
                 "template_type": "composite",
-                "test_completed": not result.is_error and not requires_mapping,
+                "test_completed": not result.is_error,
             }
         )
-        if requires_mapping:
-            result.status = "needs_input"
-            result.data["tool_status"] = "needs_input"
         result.content = section(
             "Composite Eval Template Test",
             (
-                f"`{user_template.name}` is a Composite Eval, so Falcon used "
-                "`execute_composite_eval` preflight instead of the single-eval runner."
+                f"`{template.name}` is a Composite Eval, so Falcon used "
+                "`execute_composite_eval` instead of the single-eval runner."
             ),
         ) + f"\n\n{result.content}"
         return result
 
     @staticmethod
-    def _composite_required_keys(user_template) -> list[str]:
+    def _composite_required_keys(template) -> list[str]:
         from model_hub.models.evals_metric import CompositeEvalChild
 
         required_keys: list[str] = []
         links = CompositeEvalChild.objects.filter(
-            parent=user_template,
+            parent=template,
             deleted=False,
         ).select_related("child")
         for link in links:
@@ -355,11 +345,20 @@ class TestEvalTemplateTool(BaseTool):
         if key_lower in {"input", "query", "question", "prompt"}:
             return "What is the refund policy for an enterprise customer?"
         if key_lower in {"output", "response", "answer", "generated"}:
-            return "Enterprise customers can request a refund through support within the policy window."
+            return (
+                "Enterprise customers can request a refund through support within "
+                "the policy window."
+            )
         if key_lower in {"expected", "expected_output", "reference", "ground_truth"}:
-            return "Refunds are handled by support according to the customer's contract and policy window."
+            return (
+                "Refunds are handled by support according to the customer's "
+                "contract and policy window."
+            )
         if key_lower in {"context", "document", "source"}:
-            return "Enterprise refund requests should be reviewed against the customer contract and policy window."
+            return (
+                "Enterprise refund requests should be reviewed against the "
+                "customer contract and policy window."
+            )
         return f"Sample value for {key}"
 
     @staticmethod
@@ -421,7 +420,7 @@ class TestEvalTemplateTool(BaseTool):
 
     @staticmethod
     def _clean_template_ref(value: str) -> str:
-        return (value or "").strip().strip("`'\"“”‘’")
+        return (value or "").strip().strip("`'\"")
 
     @staticmethod
     def _looks_like_uuid(value: str) -> bool:
@@ -444,8 +443,8 @@ class TestEvalTemplateTool(BaseTool):
                 [
                     f"`{template.id}`",
                     truncate(template.name, 40),
-                    template.owner or "—",
-                    ", ".join(required_keys[:4]) if required_keys else "—",
+                    template.owner or "-",
+                    ", ".join(required_keys[:4]) if required_keys else "-",
                 ]
             )
             data.append(

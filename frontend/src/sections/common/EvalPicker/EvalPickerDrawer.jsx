@@ -35,6 +35,7 @@ const EvalPickerContent = ({ onStepChange }) => {
     onClose,
     skipConfig,
     isEditMode,
+    keepOpenAfterSave,
   } = useEvalPickerContext();
 
   const [isSaving, setIsSaving] = useState(false);
@@ -90,7 +91,11 @@ const EvalPickerContent = ({ onStepChange }) => {
         } else {
           setSelectedEval(null);
           setStep("list");
-          onClose?.();
+          // When the host wants the picker to stay open (e.g. dataset
+          // adds, where the user often queues several evals back-to-back),
+          // skip the close so the user lands back on the list step
+          // without re-opening the drawer.
+          if (!keepOpenAfterSave) onClose?.();
         }
       } catch {
         // Keep on config screen if save fails
@@ -98,7 +103,14 @@ const EvalPickerContent = ({ onStepChange }) => {
         setIsSaving(false);
       }
     },
-    [isEditMode, onEvalAdded, onClose, setSelectedEval, setStep],
+    [
+      isEditMode,
+      onEvalAdded,
+      onClose,
+      setSelectedEval,
+      setStep,
+      keepOpenAfterSave,
+    ],
   );
 
   return (
@@ -264,6 +276,12 @@ const EvalPickerDrawer = ({
   // When set, at least one mapping field must reference this column ID.
   // Used in the optimization context to ensure the optimized column is scored.
   requiredColumnId = "",
+  // When true, the drawer stays open after a successful save so the user
+  // can queue more evals back-to-back. Used by dataset adds where the
+  // picker doubles as a multi-eval entry surface.
+  keepOpenAfterSave = false,
+  sourceFilters = null,
+  onFiltersChange = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -313,6 +331,9 @@ const EvalPickerDrawer = ({
         skipConfig={skipConfig}
         lockedFilters={lockedFilters}
         requiredColumnId={requiredColumnId}
+        keepOpenAfterSave={keepOpenAfterSave}
+        sourceFilters={sourceFilters}
+        onFiltersChange={onFiltersChange}
       >
         <EvalPickerContent onStepChange={setCurrentStep} />
       </EvalPickerProvider>
@@ -337,6 +358,9 @@ EvalPickerDrawer.propTypes = {
   lockedFilters: PropTypes.object,
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
+  keepOpenAfterSave: PropTypes.bool,
+  sourceFilters: PropTypes.array,
+  onFiltersChange: PropTypes.func,
 };
 
 export default EvalPickerDrawer;

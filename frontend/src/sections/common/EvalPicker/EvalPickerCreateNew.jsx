@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -19,8 +20,12 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -75,8 +80,16 @@ const SOURCE_LABELS = {
 };
 
 const EvalPickerCreateNew = ({ onBack, onSave }) => {
-  const { source, sourceId, sourceColumns, setSelectedEval, setStep } =
-    useEvalPickerContext();
+  const {
+    source,
+    sourceId,
+    sourceRowType,
+    sourceColumns,
+    setSelectedEval,
+    setStep,
+    onFiltersChange,
+    filterForm: localFilterForm,
+  } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -102,6 +115,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
 
+  const localFormFilters = useWatch({
+    control: localFilterForm.control,
+    name: "filters",
+  });
+  const localApiFilters = useMemo(
+    () => buildApiFilterArray(localFormFilters),
+    [localFormFilters],
+  );
+
   // Composite eval state (only used when evalType === "composite")
   const [selectedChildren, setSelectedChildren] = useState([]);
   const [childWeights, setChildWeights] = useState({});
@@ -112,6 +134,29 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Union of every child template's required_keys — drives the top
   // TestPlayground so the user sees inputs for all child variables.
   const compositeUnionKeys = useCompositeChildrenUnionKeys(selectedChildren);
+  const compositeAdhocConfig = useMemo(
+    () =>
+      mode !== "composite"
+        ? null
+        : {
+            child_template_ids: selectedChildren.map((c) => c.child_id),
+            aggregation_enabled: aggregationEnabled,
+            aggregation_function: aggregationFunction,
+            composite_child_axis: compositeChildAxis || "",
+            child_weights:
+              Object.keys(childWeights || {}).length > 0 ? childWeights : null,
+            pass_threshold: passThreshold ?? 0.5,
+          },
+    [
+      mode,
+      selectedChildren,
+      aggregationEnabled,
+      aggregationFunction,
+      compositeChildAxis,
+      childWeights,
+      passThreshold,
+    ],
+  );
 
   // Draft management
   const [draftId, setDraftId] = useState(null);
@@ -282,8 +327,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         "Instructions must contain at least one template variable (e.g. {{input}})";
     }
 
-    // Mapping
-    if (!sourceReady) next.mapping = "Map all variables before saving";
+    // Mapping — no dataset to map against in the composite child-picker flow,
+    // so skip this check. Matches the canSave bypass below.
+    if (!sourceReady && source !== "composite") {
+      next.mapping = "Map all variables before saving";
+    }
 
     // pass_threshold must be 0–1
     if (passThreshold < 0 || passThreshold > 1) {
@@ -313,6 +361,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     code,
     instructions,
     sourceReady,
+    source,
     passThreshold,
     outputType,
     choiceScores,
@@ -389,6 +438,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         tags,
         publish: true,
       });
+      if (source === "task" && onFiltersChange) {
+        onFiltersChange(localFilterForm.getValues("filters") || []);
+      }
       // Now add to the current context
       onSave({
         templateId: draftId,
@@ -421,6 +473,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     instructions,
     enqueueSnackbar,
     isOSS,
+    source,
+    onFiltersChange,
+    localFilterForm,
   ]);
 
   // Save & Add — composite branch. Composite templates are created via
@@ -494,11 +549,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   ]);
 
   const isComposite = mode === "composite";
+  // `source === "composite"` means this drawer was opened from a composite's
+  // child picker with no dataset bound — there's no variable mapping to
+  // complete here, so don't gate saving on `sourceReady`.
   const canSave = isComposite
     ? !!name.trim() && selectedChildren.length > 0
     : name.trim() &&
       (evalType === "code" ? code.trim() : instructions.trim()) &&
-      sourceReady;
+      (source === "composite" || sourceReady);
 
   // Variables from instructions
   const variables = useMemo(() => {
@@ -690,11 +748,18 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   compositeChildAxis={compositeChildAxis}
                   childWeights={childWeights}
                   children={selectedChildren}
-                  // Forward the dataset context so the inner child
+                  // Forward the source context so the inner child
                   // picker shows the variable-mapping screen for each
-                  // child instead of directly appending it.
+                  // child against the same source the parent composite
+                  // was opened from (task, dataset, tracing, ...).
+                  pickerSource={source}
                   pickerSourceId={sourceId}
+                  pickerSourceRowType={sourceRowType}
                   pickerSourceColumns={sourceColumns}
+                  pickerSourceFilters={localFormFilters}
+                  pickerOnFiltersChange={(f) =>
+                    localFilterForm.setValue("filters", f || [])
+                  }
                   onNameChange={setName}
                   onDescriptionChange={setDescription}
                   onAggregationEnabledChange={setAggregationEnabled}
@@ -777,6 +842,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onTemplateFormatChange={setTemplateFormat}
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
+                    mappedVariables={sourceMapping}
                   />
                   {errors.instructions && (
                     <Typography variant="caption" color="error.main">
@@ -912,6 +978,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
+
             </Box>
           }
           rightPanel={
@@ -923,17 +990,60 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 flexDirection: "column",
               }}
             >
-              <Typography
-                variant="body2"
-                fontWeight={600}
-                sx={{ mb: 1.5, fontSize: "13px" }}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  mb: 1.5,
+                }}
               >
-                {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
-              </Typography>
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ fontSize: "13px" }}
+                >
+                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+                </Typography>
+                {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
+                  <Chip
+                    label={ROW_TYPE_LABELS[sourceRowType]}
+                    size="small"
+                    sx={{
+                      height: 18,
+                      fontSize: "10px",
+                      bgcolor: "background.neutral",
+                      color: "text.secondary",
+                      "& .MuiChip-label": { px: 0.75 },
+                    }}
+                  />
+                )}
+              </Box>
+
+              {source === "task" && sourceId && (
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
+                  >
+                    Narrow down which{" "}
+                    {(ROW_TYPE_LABELS[sourceRowType] || "rows").toLowerCase()}{" "}
+                    this task runs on
+                  </Typography>
+                  <TaskFilterBar
+                    control={localFilterForm.control}
+                    setValue={localFilterForm.setValue}
+                    projectId={sourceId}
+                    isSimulator={String(sourceRowType || "")
+                      .toLowerCase()
+                      .startsWith("voice")}
+                  />
+                </Box>
+              )}
               <Box sx={{ flex: 1, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
-                  source === "task" ||
                   source === "custom" ||
                   source === "run-experiment" ||
                   source === "run-optimization") && (
@@ -947,9 +1057,25 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
+                  />
+                )}
+                {source === "task" && (
+                  <TracingTestMode
+                    ref={sourceRef}
+                    templateId={draftId}
+                    variables={isComposite ? compositeUnionKeys : variables}
+                    onTestResult={handleTestResult}
+                    onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
+                    initialProjectId={sourceId}
+                    initialRowType={sourceRowType}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
+                    localFilters={localApiFilters}
                   />
                 )}
                 {source === "tracing" && (
@@ -959,6 +1085,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {(source === "simulation" ||
@@ -970,6 +1098,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    isComposite={isComposite}
+                    compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
                 {/* Fallback: no source context (standalone composite create page) */}
@@ -994,6 +1124,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}
                       isComposite
+                      compositeAdhocConfig={compositeAdhocConfig}
                       showVersions={false}
                       onTestResult={handleTestResult}
                       onColumnsLoaded={handleColumnsLoaded}

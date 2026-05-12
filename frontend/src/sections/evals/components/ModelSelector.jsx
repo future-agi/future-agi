@@ -59,9 +59,9 @@ const CONTEXT_OPTIONS = [
   {
     value: "variables_only",
     label: "Template variables",
-    desc: "Only mapped {{variables}}",
+    desc: "Only mapped {{variables}} (default)",
     icon: "mdi:code-braces",
-    always: true,
+    isDefault: true,
   },
   {
     value: "dataset_row",
@@ -70,10 +70,10 @@ const CONTEXT_OPTIONS = [
     icon: "mdi:table-row",
   },
   {
-    value: "span_variables",
-    label: "Span variables",
-    desc: "Variables from matched spans",
-    icon: "mdi:code-tags",
+    value: "call_context",
+    label: "Call context",
+    desc: "Call transcript, recording, scenario",
+    icon: "mdi:phone-outline",
   },
   {
     value: "span_context",
@@ -1627,25 +1627,29 @@ const ModelSelector = ({
             {plusSubmenu === "injection" && (
               <Box>
                 {CONTEXT_OPTIONS.map((opt) => {
-                  const isActive =
-                    opt.always || activeContextOptions.includes(opt.value);
+                  const isActive = activeContextOptions.includes(opt.value);
                   return (
                     <MenuItem
                       key={opt.value}
                       onClick={() => {
-                        if (opt.always) return;
-                        setActiveContextOptions((prev) =>
-                          prev.includes(opt.value)
+                        setActiveContextOptions((prev) => {
+                          if (opt.isDefault) {
+                            // Clicking "variables_only" deselects everything else
+                            return ["variables_only"];
+                          }
+                          // Toggle the clicked option
+                          let next = prev.includes(opt.value)
                             ? prev.filter((x) => x !== opt.value)
-                            : [...prev, opt.value],
-                        );
+                            : [...prev.filter((x) => x !== "variables_only"), opt.value];
+                          // If nothing left, revert to variables_only
+                          if (next.length === 0) next = ["variables_only"];
+                          return next;
+                        });
                       }}
                       sx={{
                         borderRadius: "6px",
                         py: 0.6,
                         gap: 1,
-                        opacity: opt.always ? 0.7 : 1,
-                        cursor: opt.always ? "default" : "pointer",
                       }}
                     >
                       <Iconify
@@ -1688,11 +1692,11 @@ const ModelSelector = ({
                             ? "primary.main"
                             : (theme) =>
                                 theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
+                                  ? "rgba(255,255,255,0.25)"
                                   : "rgba(0,0,0,0.12)",
                           transition: "all 0.2s",
                           flexShrink: 0,
-                          cursor: opt.always ? "default" : "pointer",
+                          cursor: "pointer",
                         }}
                       >
                         <Box
@@ -1700,7 +1704,12 @@ const ModelSelector = ({
                             width: 12,
                             height: 12,
                             borderRadius: "50%",
-                            backgroundColor: "#fff",
+                            backgroundColor: isActive
+                              ? "#fff"
+                              : (theme) =>
+                                  theme.palette.mode === "dark"
+                                    ? "rgba(255,255,255,0.7)"
+                                    : "#fff",
                             position: "absolute",
                             top: 2,
                             left: isActive ? 18 : 2,

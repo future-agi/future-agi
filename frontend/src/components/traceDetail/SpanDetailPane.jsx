@@ -2344,7 +2344,11 @@ const AttrNestedRow = ({ path, value }) => {
           px: 0.25,
           py: 0.1,
         }}
-        onClick={() => isComplex && setOpen(!open)}
+        onClick={(e) => {
+          if (!isComplex) return;
+          e.stopPropagation();
+          setOpen(!open);
+        }}
       >
         <Typography
           variant="caption"

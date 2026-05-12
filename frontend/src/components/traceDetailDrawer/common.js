@@ -117,6 +117,8 @@ export const defaultSpanFields = [
   "start_time",
   "end_time",
   "child_spans",
+  "eval_metrics",
+  "annotation_metrics",
 ];
 
 export function extractStringValues(data) {

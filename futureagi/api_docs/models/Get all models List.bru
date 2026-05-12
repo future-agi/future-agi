@@ -1,0 +1,21 @@
+meta {
+  name: Get all models List
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}:{{port}}/model-hub/ai-models/list/?page=1&limit=5
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 5
+  ~search_query: test
+}
+
+auth:bearer {
+  token: {{access_token}}
+}

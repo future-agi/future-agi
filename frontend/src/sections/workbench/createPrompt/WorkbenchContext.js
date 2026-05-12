@@ -68,6 +68,8 @@ export const PromptWorkbenchContext = React.createContext({
   setPlaceholders: (value) => {},
   submitPlaceholders: () => {},
   setModelConfig: (_val) => {},
+  templateFormat: "mustache",
+  setTemplateFormat: (_val) => {},
 });
 
 export const usePromptWorkbenchContext = () => {

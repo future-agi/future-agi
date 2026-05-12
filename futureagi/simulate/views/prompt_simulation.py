@@ -17,10 +17,8 @@ from accounts.utils import get_request_organization
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import RunTest, Scenarios, SimulateEvalConfig
-from simulate.serializers.run_test import (
-    CreatePromptSimulationSerializer,
-    RunTestSerializer,
-)
+from simulate.serializers.requests.run_test import CreatePromptSimulationSerializer
+from simulate.serializers.run_test import RunTestSerializer
 from simulate.services.test_executor import TestExecutor
 from tfc.utils.general_methods import GeneralMethods
 

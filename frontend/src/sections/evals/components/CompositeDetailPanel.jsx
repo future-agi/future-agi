@@ -62,12 +62,19 @@ const CompositeDetailPanel = ({
   // overrides without exposing the full composite edit surface
   // (add/remove children, switch axis, rename, etc.).
   weightEditable = false,
-  // Forward dataset context to the inner child picker so the EvalPicker
+  // Forward source context to the inner child picker so the EvalPicker
   // can show its mapping screen for each child. When omitted (e.g. when
-  // editing a composite from /evals/create with no dataset bound), the
+  // editing a composite from /evals/create with no source bound), the
   // child picker falls back to the original direct-add behaviour.
+  // pickerSource carries the parent's source type ("dataset", "task",
+  // "tracing", ...) so children re-use the same test mode instead of
+  // getting forced into DatasetTestMode.
+  pickerSource = "",
   pickerSourceId = "",
+  pickerSourceRowType = null,
   pickerSourceColumns = [],
+  pickerSourceFilters = null,
+  pickerOnFiltersChange = null,
   onNameChange,
   onDescriptionChange,
   onAggregationEnabledChange,
@@ -186,7 +193,10 @@ const CompositeDetailPanel = ({
       {editable ? (
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-            Name*
+            Name
+            <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+              *
+            </Box>
           </Typography>
           <TextField
             fullWidth
@@ -460,9 +470,12 @@ const CompositeDetailPanel = ({
           // skipConfig=true bypassed all of that and added the child
           // straight to the list with template defaults.
           skipConfig={false}
-          source={pickerSourceId ? "dataset" : "composite"}
+          source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
+          sourceRowType={pickerSourceRowType}
           sourceColumns={pickerSourceColumns || []}
+          sourceFilters={pickerSourceFilters}
+          onFiltersChange={pickerOnFiltersChange}
           lockedFilters={axisToLockedFilters(compositeChildAxis)}
         />
       )}
@@ -517,8 +530,12 @@ CompositeDetailPanel.propTypes = {
   editable: PropTypes.bool,
   disabled: PropTypes.bool,
   weightEditable: PropTypes.bool,
+  pickerSource: PropTypes.string,
   pickerSourceId: PropTypes.string,
+  pickerSourceRowType: PropTypes.string,
   pickerSourceColumns: PropTypes.array,
+  pickerSourceFilters: PropTypes.array,
+  pickerOnFiltersChange: PropTypes.func,
   onNameChange: PropTypes.func,
   onDescriptionChange: PropTypes.func,
   onAggregationEnabledChange: PropTypes.func,

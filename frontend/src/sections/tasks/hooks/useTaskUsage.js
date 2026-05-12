@@ -28,7 +28,10 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
           ...buildParams({ evalTaskId, period, evalId }),
-          page: 0,
+          // The chart hook ignores the paginated `logs` block; we still
+          // need to send valid pagination params or the BE serializer
+          // 400s. page is 1-indexed (DRF PageNumberPagination).
+          page: 1,
           page_size: 1,
         },
       });
@@ -71,7 +74,7 @@ export function useTaskUsageLogs(
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
           ...buildParams({ evalTaskId, period, evalId }),
-          page,
+          page: page + 1,
           page_size: pageSize,
         },
       });

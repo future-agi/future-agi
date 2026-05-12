@@ -153,6 +153,34 @@ class ModelConfigs:
         max_tokens=150,
     )
 
+    PROTECT_TOXICITY: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PROTECT.value,
+        model_name="protect_toxicity",
+        temperature=0.0,
+        max_tokens=150,
+    )
+
+    PROTECT_BIAS: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PROTECT.value,
+        model_name="protect_bias",
+        temperature=0.0,
+        max_tokens=150,
+    )
+
+    PROTECT_PRIVACY: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PROTECT.value,
+        model_name="protect_privacy",
+        temperature=0.0,
+        max_tokens=150,
+    )
+
+    PROTECT_PROMPT_INJECTION: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PROTECT.value,
+        model_name="protect_prompt_injection",
+        temperature=0.0,
+        max_tokens=150,
+    )
+
     OPUS_4_5_BEDROCK_ARN: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.AWS_BEDROCK_ANTHROPIC.value,
         model_name=os.environ.get("BEDROCK_OPUS_ARN", ""),
@@ -224,6 +252,16 @@ class ModelConfigs:
         """Check if the model is a turing model."""
         cfg = cls.get_config(model_name)
         return bool(cfg and cfg.provider == LiteLlmProvider.TURING.value)
+
+    @classmethod
+    def is_protect(cls, model_name: str) -> bool:
+        """Check if the model is a protect or protect_flash model."""
+        cfg = cls.get_config(model_name)
+        return bool(
+            cfg
+            and cfg.provider
+            in (LiteLlmProvider.PROTECT.value, LiteLlmProvider.PROTECT_FLASH.value)
+        )
 
     @classmethod
     def supports_audio(cls, model_name: str) -> bool:

@@ -1,0 +1,53 @@
+meta {
+  name: Get Model Voices
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/model-hub/api/model_voices/?model=openai/tts-1
+  body: none
+  auth: inherit
+}
+
+params:query {
+  model: openai/tts-1
+}
+
+docs {
+  # Get Model Voices
+
+  Retrieves the available voices and audio formats for a specific TTS model.
+
+  ## Query Parameters
+  - `model` (required): The model name (e.g., `openai/tts-1`, `gemini/gemini-2.5-flash-preview-tts`)
+
+  ## Response
+  ```json
+  {
+    "model_name": "openai/tts-1",
+    "provider": "openai",
+    "supported_voices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+    "supported_formats": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
+    "default_voice": "alloy",
+    "default_format": "mp3"
+  }
+  ```
+
+  ## Examples
+
+  ### OpenAI TTS
+  ```
+  GET /model-hub/api/model_voices/?model=openai/tts-1
+  ```
+
+  ### Gemini TTS
+  ```
+  GET /model-hub/api/model_voices/?model=gemini/gemini-2.5-flash-preview-tts
+  ```
+
+  ### GPT-4o Audio
+  ```
+  GET /model-hub/api/model_voices/?model=gpt-4o-audio-preview
+  ```
+}

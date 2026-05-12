@@ -47,6 +47,7 @@ class RunDatasetEvalsTool(BaseTool):
         )
         from model_hub.models.develop_dataset import Cell, Column
         from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 
         dataset, unresolved = resolve_dataset_for_tool(
             params.dataset_id,
@@ -120,17 +121,7 @@ class RunDatasetEvalsTool(BaseTool):
             column = existing_columns.get(source_id)
 
             if not column:
-                output_type = "boolean"
-                if em.template and em.template.config:
-                    output_map = {
-                        "reason": "text",
-                        "score": "float",
-                        "choices": "array",
-                        "Pass/Fail": "boolean",
-                    }
-                    output_type = output_map.get(
-                        em.template.config.get("output", ""), "boolean"
-                    )
+                output_type = infer_eval_result_column_data_type(em.template)
 
                 column = Column.objects.create(
                     source_id=source_id,

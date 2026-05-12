@@ -39,6 +39,7 @@ import {
 } from "../hooks/useEvalVersions";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import VersionBadge from "./VersionBadge";
 import {
   useExecuteCompositeEval,
@@ -856,11 +857,15 @@ const TestPlayground = React.forwardRef(
             mapping[k] = v == null ? "" : String(v);
           });
 
+          const compositeConfig = buildCompositeRuntimeConfig({
+            codeParams: evalType === "code" ? codeParamsRef.current : {},
+          });
+
           const compositeResult = compositeAdhocConfig
             ? await executeCompositeAdhoc.mutateAsync({
                 ...compositeAdhocConfig,
                 mapping,
-                config: { params: {} },
+                config: compositeConfig,
                 error_localizer: errorLocalizerEnabled,
                 input_data_types: {},
               })
@@ -868,7 +873,7 @@ const TestPlayground = React.forwardRef(
                 templateId: tid,
                 payload: {
                   mapping,
-                  config: { params: {} },
+                  config: compositeConfig,
                   error_localizer: errorLocalizerEnabled,
                   input_data_types: {},
                 },
@@ -1341,6 +1346,8 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleDatasetReady}
+                  isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
                 />
               )}
 
@@ -1356,6 +1363,9 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleTracingReady}
+                  isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
+                  hostsFilter
                 />
               )}
 
@@ -1371,6 +1381,8 @@ const TestPlayground = React.forwardRef(
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleSimulationReady}
+                  isComposite={isComposite}
+                  compositeAdhocConfig={compositeAdhocConfig}
                 />
               )}
 

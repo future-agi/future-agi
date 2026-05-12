@@ -308,7 +308,10 @@ const DevelopView = () => {
           try {
             return (
               <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
-                {formatDistanceToNow(new Date(val), { addSuffix: true })}
+                {formatDistanceToNow(
+                  new Date(/[Z+-]/.test(val.slice(-6)) ? val : val + "Z"),
+                  { addSuffix: true },
+                )}
               </Typography>
             );
           } catch {

@@ -1,5 +1,6 @@
 import _ from "lodash";
 import { getReasoningFormValues } from "src/sections/develop-detail/RunPrompt/common";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
 
 // Helper function to normalize for comparison only
 export const normalizeForComparison = (variable) => {
@@ -9,7 +10,7 @@ export const normalizeForComparison = (variable) => {
     .trim(); // Remove leading/trailing spaces
 };
 
-export const extractVariables = (content) => {
+export const extractVariables = (content, templateFormat) => {
   if (!Array.isArray(content) || content?.length === 0) {
     return [];
   }
@@ -19,20 +20,30 @@ export const extractVariables = (content) => {
 
   for (const item of content) {
     if (item.type === "text") {
-      const match = item.text.match(/{{(.*?)}}/g);
-      if (match) {
-        match
-          .map((v) => v.replace(/{{|}}/g, "").trim())
-          .filter((v) => v.length > 0)
-          .forEach((v) => {
-            const normalized = normalizeForComparison(v);
-            if (normalized.length > 0) {
-              // Store original value, but use normalized as key to avoid duplicates
-              if (!variableMap.has(normalized)) {
-                variableMap.set(normalized, v); // Store the first occurrence (original formatting)
+      if (templateFormat === "jinja") {
+        // Jinja2 AST-based extraction (excludes loop/set scoped vars)
+        extractJinjaVariables(item.text).forEach((v) => {
+          const normalized = normalizeForComparison(v);
+          if (normalized.length > 0 && !variableMap.has(normalized)) {
+            variableMap.set(normalized, v);
+          }
+        });
+      } else {
+        const match = item.text.match(/{{(.*?)}}/g);
+        if (match) {
+          match
+            .map((v) => v.replace(/{{|}}/g, "").trim())
+            .filter((v) => v.length > 0)
+            .forEach((v) => {
+              const normalized = normalizeForComparison(v);
+              if (normalized.length > 0) {
+                // Store original value, but use normalized as key to avoid duplicates
+                if (!variableMap.has(normalized)) {
+                  variableMap.set(normalized, v); // Store the first occurrence (original formatting)
+                }
               }
-            }
-          });
+            });
+        }
       }
     }
   }

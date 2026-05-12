@@ -99,7 +99,8 @@ class LLMPromptRunner(BaseNodeRunner):
             raise ValueError("PromptVersion configuration missing 'model'")
 
         messages = prompt_config.get("messages", [])
-        rendered_messages = self._render_messages(messages, inputs, model)
+        template_format = configuration.get("template_format")
+        rendered_messages = self._render_messages(messages, inputs, model, template_format)
 
         # Extract tool configs
         tools = configuration.get("tools", [])
@@ -136,6 +137,7 @@ class LLMPromptRunner(BaseNodeRunner):
         messages: list[dict[str, Any]],
         inputs: dict[str, Any],
         model: str,
+        template_format: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Render messages by replacing {{variable}} placeholders and processing media.
@@ -147,6 +149,7 @@ class LLMPromptRunner(BaseNodeRunner):
             messages: Messages from prompt_config_snapshot
             inputs: Input port values for variable resolution
             model: Model name (needed for media capability checks)
+            template_format: "jinja" for Jinja2 rendering, otherwise regex replacement
 
         Returns:
             List of rendered messages ready for RunPrompt
@@ -168,7 +171,7 @@ class LLMPromptRunner(BaseNodeRunner):
 
                     if item["type"] == "text":
                         text = item.get("text", "")
-                        text = self._replace_placeholders(text, inputs)
+                        text = self._replace_placeholders(text, inputs, template_format)
                         processed_content.append({"type": "text", "text": text})
                     else:
                         # Non-text items (image_url, audio_url, pdf_url)
@@ -179,7 +182,7 @@ class LLMPromptRunner(BaseNodeRunner):
                             processed_content.append(item)
 
             elif isinstance(content, str):
-                text = self._replace_placeholders(content, inputs)
+                text = self._replace_placeholders(content, inputs, template_format)
                 processed_content.append({"type": "text", "text": text})
 
             rendered.append({"role": message["role"], "content": processed_content})
@@ -190,12 +193,17 @@ class LLMPromptRunner(BaseNodeRunner):
         self,
         text: str,
         inputs: dict[str, Any],
+        template_format: str | None = None,
     ) -> str:
         """Replace {{variable}} placeholders in text using resolve_variable.
 
+        For Jinja2 mode, resolves all variables first then renders through
+        the Jinja2 engine so {% if %}, {% for %}, filters, etc. work.
+
         Args:
-            text: Text containing {{variable}} placeholders
+            text: Text containing {{variable}} or Jinja2 placeholders
             inputs: Input port values for variable resolution
+            template_format: "jinja" for Jinja2 rendering, otherwise regex replacement
 
         Returns:
             Text with all resolvable placeholders replaced
@@ -203,6 +211,33 @@ class LLMPromptRunner(BaseNodeRunner):
         if not text:
             return text
 
+        if template_format in ("jinja", "jinja2"):
+            # Resolve all input variables, then render through Jinja2
+            from model_hub.views.run_prompt import render_template, TEMPLATE_FORMAT_JINJA2
+
+            # Build context by resolving each input variable.
+            # Dot-notation keys (e.g. "Node1.response") must be nested into
+            # dicts so Jinja2 attribute lookup ({{ Node1.response }}) works.
+            context = {}
+            for key, value in inputs.items():
+                resolved = value
+                if isinstance(resolved, str):
+                    try:
+                        parsed = json.loads(resolved)
+                        if isinstance(parsed, (list, dict)):
+                            resolved = parsed
+                    except (ValueError, TypeError):
+                        pass
+                # Nest dot-notation keys: "Node1.response" -> context["Node1"]["response"]
+                parts = key.split(".")
+                target = context
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = resolved
+
+            return render_template(text, context, TEMPLATE_FORMAT_JINJA2)
+
+        # Default: regex-based placeholder replacement
         def replacer(match: re.Match) -> str:
             variable_str = match.group("placeholder").strip()
             try:

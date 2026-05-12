@@ -26,8 +26,12 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
+import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
 import {
   useEvalDetail,
   useUpdateEval,
@@ -44,6 +48,7 @@ import OutputTypeConfig from "src/sections/evals/components/OutputTypeConfig";
 import FewShotExamples from "src/sections/evals/components/FewShotExamples";
 import CompositeDetailPanel from "src/sections/evals/components/CompositeDetailPanel";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
+import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
@@ -65,6 +70,9 @@ import { canonicalEntries } from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
+  buildCompositeSourceModeProps,
+  contextOptionsForRowType,
+  getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
@@ -100,6 +108,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     sourcePreviewData,
     isEditMode,
     requiredColumnId,
+    onFiltersChange,
+    filterForm: localFilterForm,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -152,6 +162,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [sourceMapping, setSourceMapping] = useState({});
   const sourceRef = useRef(null);
 
+  const localFormFilters = useWatch({
+    control: localFilterForm.control,
+    name: "filters",
+  });
+  const localApiFilters = useMemo(
+    () => buildApiFilterArray(localFormFilters),
+    [localFormFilters],
+  );
+
   const handleSourceReadyChange = useCallback((ready, mapping) => {
     setSourceReady(ready);
     if (mapping) setSourceMapping(mapping);
@@ -187,6 +206,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
   const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
+  const compositeUnionKeys = useCompositeChildrenUnionKeys(
+    compositeDetail?.children || [],
+  );
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
@@ -222,8 +244,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   //      these on `CompositeDetailResponse.children[].required_keys`).
   //   2. required_keys on the template (authoritative for system evals)
   //   3. `{{var}}` patterns in the user-edited instructions
-  // Note: code eval stdvars (input, output, expected) are always available
-  // as positional args — they don't need explicit column mapping.
   const variables = useMemo(() => {
     if (isComposite) {
       const union = new Set();
@@ -237,32 +257,36 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       getEvalRequiredKeys(normalizedEvalData) ||
       [];
 
-    // When required_keys exist, use them as the authoritative variable list.
-    // This is critical for Jinja2 evals where extractJinjaVariables() only
-    // returns root names (e.g. "file") instead of the full expressions the
-    // backend expects (e.g. "file.code", "language | lower").
-    if (requiredKeys.length > 0) {
+    if (evalType === "code") {
+      const savedMapping = normalizedEvalData?.mapping || {};
+      const savedStdvars = ["input", "output", "expected"].filter(
+        (v) => v in savedMapping,
+      );
+      return [...new Set([...savedStdvars, ...requiredKeys])];
+    }
+
+    // System evals + Jinja mode: use static required_keys.
+    // Jinja's extractJinjaVariables() only returns root names (e.g. "file")
+    // not full paths (e.g. "file.code"), so requiredKeys is authoritative.
+    if ((isSystemEval || templateFormat === "jinja") && requiredKeys.length > 0) {
       return [...new Set(requiredKeys)];
     }
 
-    if (evalType === "code") {
-      return [];
-    }
-    let templateVars;
-    if (templateFormat === "jinja") {
-      templateVars = extractJinjaVariables(instructions || "");
-    } else {
-      const matches =
-        (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-      templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
-    }
-    return [...new Set(templateVars)];
+    // User evals (mustache): prefer live extraction so mapping updates as user types.
+    const matches =
+      (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
+    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    if (templateVars.length > 0) return [...new Set(templateVars)];
+    // Fallback: stored required_keys (before instructions hydrate)
+    if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
+    return [];
   }, [
     instructions,
     normalizedFullEval,
     normalizedEvalData,
     evalType,
     isComposite,
+    isSystemEval,
     compositeDetail,
     templateFormat,
   ]);
@@ -274,6 +298,27 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       ([key]) => !variableSet.has(key),
     );
   }, [functionParamsSchema, variables]);
+
+  const compositeSourceModeProps = useMemo(
+    () =>
+      buildCompositeSourceModeProps({
+        isComposite,
+        fullEval,
+        compositeDetail,
+        compositeChildWeights,
+      }),
+    [isComposite, fullEval, compositeDetail, compositeChildWeights],
+  );
+
+  const sourceModeVariables = useMemo(
+    () =>
+      getSourceModeVariables({
+        isComposite,
+        variables,
+        compositeUnionKeys,
+      }),
+    [isComposite, variables, compositeUnionKeys],
+  );
 
   const hasValidPromptMessages = useMemo(
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
@@ -290,20 +335,53 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Merge template config with any saved runtime overrides from the
       // user eval (run_config). Edit mode: evalData.run_config holds the
       // previously saved model, agentMode, passThreshold, etc.
-      const rawRunConfig = evalData?.run_config || evalData?.runConfig || {};
-      const normalizedRunConfig = {
+      const rawRunConfig =
+        evalData?.run_config ||
+        evalData?.runConfig ||
+        evalData?.config?.run_config ||
+        evalData?.config?.runConfig ||
+        {};
+        
+     const normalizedRunConfig = {
         ...rawRunConfig,
-        agent_mode: rawRunConfig.agent_mode ?? rawRunConfig.agentMode,
+        agent_mode:
+          rawRunConfig.agent_mode ??
+          rawRunConfig.agentMode ??
+          evalData?.agent_mode ??
+          evalData?.agentMode,
         check_internet:
-          rawRunConfig.check_internet ?? rawRunConfig.checkInternet,
+          rawRunConfig.check_internet ??
+          rawRunConfig.checkInternet ??
+          evalData?.check_internet ??
+          evalData?.checkInternet,
         knowledge_bases:
-          rawRunConfig.knowledge_bases ?? rawRunConfig.knowledgeBases,
+          rawRunConfig.knowledge_bases ??
+          rawRunConfig.knowledgeBases ??
+          evalData?.knowledge_bases ??
+          evalData?.knowledgeBases,
         data_injection:
-          rawRunConfig.data_injection ?? rawRunConfig.dataInjection,
+          rawRunConfig.data_injection ??
+          rawRunConfig.dataInjection ??
+          evalData?.data_injection ??
+          evalData?.dataInjection,
         template_format:
           rawRunConfig.template_format ?? rawRunConfig.templateFormat,
         few_shot_examples:
           rawRunConfig.few_shot_examples ?? rawRunConfig.fewShotExamples,
+        summary: rawRunConfig.summary ?? evalData?.summary,
+        tools: rawRunConfig.tools ?? evalData?.tools,
+        pass_threshold:
+          rawRunConfig.pass_threshold ??
+          rawRunConfig.passThreshold ??
+          evalData?.pass_threshold ??
+          evalData?.passThreshold,
+        choice_scores:
+          rawRunConfig.choice_scores ??
+          rawRunConfig.choiceScores ??
+          evalData?.choice_scores ??
+          evalData?.choiceScores,
+        params: rawRunConfig.params ?? evalData?.params,
+        messages: rawRunConfig.messages ?? evalData?.messages,
       };
       const config = {
         ...(fullEval.config || {}),
@@ -391,8 +469,23 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       if (Array.isArray(config.knowledge_bases)) {
         setKnowledgeBaseIds(config.knowledge_bases);
       }
-      const di = config.data_injection;
-      if (di?.full_row || di?.fullRow) setContextOptions(["full_row"]);
+      const di = config.data_injection || config.run_config?.data_injection;
+      if (di && typeof di === "object") {
+        const opts = [];
+        if (di.full_row || di.fullRow) opts.push("dataset_row");
+        if (di.span_context || di.spanContext) opts.push("span_context");
+        if (di.trace_context || di.traceContext) opts.push("trace_context");
+        if (di.session_context || di.sessionContext) opts.push("session_context");
+        if (di.call_context || di.callContext) opts.push("call_context");
+        if (opts.length > 0) {
+          setContextOptions(opts);
+        } else if (di.variables_only || di.variablesOnly) {
+          setContextOptions(["variables_only"]);
+        }
+      } else if (source === "task") {
+      const seeded = contextOptionsForRowType(sourceRowType);
+        if (seeded) setContextOptions(seeded);
+      }
       setErrorLocalizerEnabled(
         config.error_localizer_enabled ??
           fullEval.error_localizer_enabled ??
@@ -696,13 +789,27 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }
 
-    // Build a data_injection config from context options. "variables_only"
-    // means only use template variables; any other option enables full_row.
-    const dataInjection =
-      contextOptions.length === 0 ||
-      (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-        ? { variables_only: true }
-        : { full_row: true };
+    if (source === "task" && onFiltersChange) {
+      onFiltersChange(localFilterForm.getValues("filters") || []);
+    }
+
+    // Build a data_injection config from context options.
+    const dataInjection = (() => {
+      if (
+        contextOptions.length === 0 ||
+        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
+      ) {
+        return { variables_only: true };
+      }
+      const flags = {};
+      if (contextOptions.includes("dataset_row")) flags.full_row = true;
+      if (contextOptions.includes("span_context")) flags.span_context = true;
+      if (contextOptions.includes("trace_context")) flags.trace_context = true;
+      if (contextOptions.includes("session_context")) flags.session_context = true;
+      if (contextOptions.includes("call_context")) flags.call_context = true;
+      if (contextOptions.includes("full_row")) flags.full_row = true;
+      return Object.keys(flags).length > 0 ? flags : { full_row: true };
+    })();
     const tools = build_tools_payload(connectorIds);
 
     const templateType =
@@ -827,6 +934,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onSave,
     requiredColumnId,
     sourceColumns,
+    source,
+    onFiltersChange,
+    localFilterForm,
   ]);
 
   if (isLoading) {
@@ -1202,6 +1312,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   onTemplateFormatChange={setTemplateFormat}
                   datasetColumns={datasetColumns}
                   datasetJsonSchemas={datasetJsonSchemas}
+                  mappedVariables={sourceMapping}
                   disabled={isInstructionsReadOnly}
                   modelSelectorDisabled={false}
                   mode={agentMode}
@@ -1385,6 +1496,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   sx={{ alignItems: "flex-start" }}
                 />
               )}
+
             </Box>
           }
           rightPanel={
@@ -1398,18 +1510,60 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 flexDirection: "column",
               }}
             >
-              {/* Source label */}
-              <Typography
-                variant="body2"
-                fontWeight={600}
-                sx={{ mb: 1.5, fontSize: "13px" }}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  mb: 1.5,
+                }}
               >
-                {source === "composite"
-                  ? "Test Playground"
-                  : `${SOURCE_LABELS[source] || "Preview"} — Variable Mapping`}
-              </Typography>
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ fontSize: "13px" }}
+                >
+                  {source === "composite"
+                    ? "Test Playground"
+                    : `${SOURCE_LABELS[source] || "Preview"} — Variable Mapping`}
+                </Typography>
+                {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
+                  <Chip
+                    label={ROW_TYPE_LABELS[sourceRowType]}
+                    size="small"
+                    sx={{
+                      height: 18,
+                      fontSize: "10px",
+                      bgcolor: "background.neutral",
+                      color: "text.secondary",
+                      "& .MuiChip-label": { px: 0.75 },
+                    }}
+                  />
+                )}
+              </Box>
 
-              {/* Render the source-specific component directly (no tabs) */}
+              {source === "task" && sourceId && (
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
+                  >
+                    Narrow down which{" "}
+                    {(ROW_TYPE_LABELS[sourceRowType] || "rows").toLowerCase()}{" "}
+                    this task runs on
+                  </Typography>
+                  <TaskFilterBar
+                    control={localFilterForm.control}
+                    setValue={localFilterForm.setValue}
+                    projectId={sourceId}
+                    isSimulator={String(sourceRowType || "")
+                      .toLowerCase()
+                      .startsWith("voice")}
+                  />
+                </Box>
+              )}
+
               <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
@@ -1430,7 +1584,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                     sourceColumns={
                       source === "workbench" ? sourceColumns : null
                     }
@@ -1441,20 +1595,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    initialMapping={evalData?.mapping}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {(source === "simulation" || source === "test") && (
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1463,6 +1619,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "create-simulate" && (
@@ -1480,7 +1637,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    variables={variables}
+                    variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
@@ -1490,6 +1647,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
+                    localFilters={localApiFilters}
+                    pickerSourceColumns={sourceColumns}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "custom" && (
@@ -1506,7 +1666,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
                     errorLocalizerEnabled={errorLocalizerEnabled}
-                    isComposite={isComposite}
+                    {...compositeSourceModeProps}
                   />
                 )}
                 {source === "composite" && (

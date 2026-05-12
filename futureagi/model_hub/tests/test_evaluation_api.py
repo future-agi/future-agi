@@ -14,6 +14,7 @@ Run with: pytest model_hub/tests/test_evaluation_api.py -v
 """
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -474,6 +475,35 @@ class TestGetEvalsListView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_get_evals_list_excludes_draft_templates(
+        self, auth_client, dataset, organization, workspace
+    ):
+        """Draft templates are stored as visible_ui=False and stay out of the drawer."""
+        visible_template = EvalTemplate.objects.create(
+            name="visible-user-eval",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=True,
+        )
+        draft_template = EvalTemplate.objects.create(
+            name="draft-hidden-eval",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=False,
+        )
+
+        response = auth_client.get(f"/model-hub/develops/{dataset.id}/get_evals_list/")
+
+        assert response.status_code == status.HTTP_200_OK
+        names = {
+            item["name"]
+            for item in response.data["result"]["evals"]
+            if item["id"] in {str(visible_template.id), str(draft_template.id)}
+        }
+        assert names == {"visible-user-eval"}
+
     def test_get_evals_list_invalid_dataset(self, auth_client):
         """Test that invalid dataset_id returns error."""
         fake_dataset_id = uuid.uuid4()
@@ -921,6 +951,79 @@ class TestSingleRowEvaluationView:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_dataset_eval_rerun_checks_usage_and_sets_usage_source(
+        self, user_eval_metric, row
+    ):
+        """Dataset eval reruns should use the same AI-credit path metadata as initial runs."""
+        from model_hub.views.develop_dataset import run_evaluation_task
+
+        usage_check = SimpleNamespace(allowed=True)
+
+        with patch(
+            "ee.usage.services.metering.check_usage", return_value=usage_check
+        ) as mock_check_usage, patch(
+            "model_hub.views.develop_dataset.get_mixpanel_properties",
+            return_value={},
+        ), patch(
+            "model_hub.views.develop_dataset.track_mixpanel_event"
+        ), patch(
+            "model_hub.views.develop_dataset.EvaluationRunner"
+        ) as mock_runner_class:
+            mock_runner = MagicMock()
+            mock_runner_class.return_value = mock_runner
+
+            run_evaluation_task._original_func(
+                {
+                    "metric_ids": [str(user_eval_metric.id)],
+                    "row_ids": [str(row.id)],
+                }
+            )
+
+        mock_check_usage.assert_called_once()
+        mock_runner_class.assert_called_once()
+        _, kwargs = mock_runner_class.call_args
+        assert kwargs["source"] == "dataset_evaluation"
+        assert kwargs["source_id"] == user_eval_metric.template.id
+        assert kwargs["source_configs"]["dataset_id"] == str(user_eval_metric.dataset_id)
+        assert kwargs["source_configs"]["source"] == "dataset"
+        mock_runner.run_evaluation_for_row.assert_called_once_with(str(row.id))
+
+    def test_dataset_eval_rerun_stops_when_usage_limit_exceeded(
+        self, user_eval_metric, row
+    ):
+        """If AI credits are exhausted, reruns should not execute evaluator calls."""
+        from model_hub.models.choices import StatusType
+        from model_hub.views.develop_dataset import run_evaluation_task
+
+        usage_check = SimpleNamespace(
+            allowed=False,
+            reason="Usage limit exceeded",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="ai_credits",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+
+        with patch(
+            "ee.usage.services.metering.check_usage", return_value=usage_check
+        ), patch(
+            "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
+        ) as mock_mark_limit, patch(
+            "model_hub.views.develop_dataset.EvaluationRunner"
+        ) as mock_runner_class:
+            run_evaluation_task._original_func(
+                {
+                    "metric_ids": [str(user_eval_metric.id)],
+                    "row_ids": [str(row.id)],
+                }
+            )
+
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.status == StatusType.FAILED.value
+        mock_mark_limit.assert_called_once()
+        mock_runner_class.assert_not_called()
 
 
 # ==================== Organization Isolation Tests ====================

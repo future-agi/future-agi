@@ -18,6 +18,7 @@ import { identifyPostHogUser, resetPostHogUser } from "src/utils/PostHog";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
+import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 
 // Session storage key for per-tab user tracking
 const SESSION_USER_ID_KEY = "currentUserId";
@@ -308,6 +309,7 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem("2fa_challenge");
       sessionStorage.removeItem(SESSION_USER_ID_KEY);
       localStorage.removeItem("initial-render"); // Clear flag so next login triggers redirect logic
+      useFalconStore.getState().resetAll();
       dispatch({
         type: "LOGOUT",
       });

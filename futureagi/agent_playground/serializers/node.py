@@ -95,6 +95,7 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "tools": cfg.get("tools", snapshot.get("tools")),
             "tool_choice": cfg.get("tool_choice", snapshot.get("tool_choice")),
             "model_detail": cfg.get("model_detail", snapshot.get("model_detail")),
+            "template_format": cfg.get("template_format", "mustache"),
             "variable_names": pv.variable_names,
             "metadata": pv.metadata,
             "is_draft": pv.is_draft,
@@ -345,6 +346,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
     metadata = serializers.DictField(required=False, allow_null=True, default=None)
     commit_message = serializers.CharField(
         required=False, allow_null=True, allow_blank=True, default=None
+    )
+    template_format = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True, default=None,
+        help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)
 

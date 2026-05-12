@@ -11,6 +11,7 @@ import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import CompositeResultView from "./CompositeResultView";
+import { canonicalEntries } from "src/utils/utils";
 
 /**
  * Shared eval result display component.
@@ -386,7 +387,18 @@ function normalizeLocalizerEntries(val) {
  * Handles three states: running (spinner), completed (ErrorLocalizeCard), or absent (nothing).
  */
 const ErrorLocalizationSection = ({ result }) => {
-  const errorDetails = result?.error_details || result?.error_analysis;
+  const rawErrorDetails = result?.error_details || result?.error_analysis;
+  const detailsEnvelope =
+    rawErrorDetails &&
+    !Array.isArray(rawErrorDetails) &&
+    typeof rawErrorDetails === "object" &&
+    (rawErrorDetails.error_analysis || rawErrorDetails.errorAnalysis)
+      ? rawErrorDetails
+      : null;
+  const errorDetails =
+    detailsEnvelope?.error_analysis ||
+    detailsEnvelope?.errorAnalysis ||
+    rawErrorDetails;
   const errorLocalizerStatus = result?.error_localizer_status;
   const errorLocalizerMessage = result?.error_localizer_message;
 
@@ -488,16 +500,28 @@ const ErrorLocalizationSection = ({ result }) => {
   const entriesMap =
     !Array.isArray(errorDetails) && typeof errorDetails === "object"
       ? Object.fromEntries(
-          Object.entries(errorDetails).map(([k, v]) => [
+          canonicalEntries(errorDetails).map(([k, v]) => [
             k,
             normalizeLocalizerEntries(v),
           ]),
         )
       : null;
 
-  const selectedInputKey = result?.selected_input_key;
-  const inputData = result?.input_data;
-  const inputTypes = result?.input_types;
+  const selectedInputKey =
+    result?.selected_input_key ||
+    result?.selectedInputKey ||
+    detailsEnvelope?.selected_input_key ||
+    detailsEnvelope?.selectedInputKey;
+  const inputData =
+    result?.input_data ||
+    result?.inputData ||
+    detailsEnvelope?.input_data ||
+    detailsEnvelope?.inputData;
+  const inputTypes =
+    result?.input_types ||
+    result?.inputTypes ||
+    detailsEnvelope?.input_types ||
+    detailsEnvelope?.inputTypes;
 
   // ErrorLocalizeCard reads a mix of camelCase (`datapoint.selectedInputKey`)
   // and snake_case (`datapoint.input_data[datapoint.selected_input_key]`).

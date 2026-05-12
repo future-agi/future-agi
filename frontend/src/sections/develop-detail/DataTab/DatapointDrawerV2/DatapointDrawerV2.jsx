@@ -48,6 +48,8 @@ import AnnotationSidebarContent from "src/components/traceDetailDrawer/Annotatio
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
+import { canonicalEntries } from "src/utils/utils";
 
 const SkeletonLoader = () => (
   <Box
@@ -61,6 +63,9 @@ const SkeletonLoader = () => (
     <Skeleton sx={{ width: "100%", height: "10px" }} variant="rounded" />
   </Box>
 );
+
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
 
 const ViewDetailsCellRenderer = (props) => {
   const { data = {}, node, setRunEval, disabled } = props;
@@ -761,8 +766,7 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      evalOpen?.cellValue &&
-                      evalOpen?.cellValue !== "" && (
+                      hasRenderableCellValue(evalOpen?.cellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
@@ -855,10 +859,41 @@ const DatapointDrawerChild = () => {
                       borderRadius: "4px",
                     }}
                   >
-                    {evalOpen?.valueInfos?.reason?.trim() ? (
+                    {Array.isArray(evalOpen?.valueInfos?.children) &&
+                    evalOpen.valueInfos.children.length > 0 ? (
+                      (() => {
+                        /** @type {any[]} */
+                        const compositeChildren =
+                          evalOpen.valueInfos.children || [];
+                        return (
+                          <CompositeResultView
+                            compositeResult={{
+                              ...evalOpen.valueInfos,
+                              total_children:
+                                evalOpen.valueInfos.total_children ??
+                                compositeChildren.length,
+                              completed_children:
+                                evalOpen.valueInfos.completed_children ??
+                                compositeChildren.filter(
+                                  (child) => child.status === "completed",
+                                ).length,
+                              failed_children:
+                                evalOpen.valueInfos.failed_children ??
+                                compositeChildren.filter(
+                                  (child) => child.status === "failed",
+                                ).length,
+                            }}
+                          />
+                        );
+                      })()
+                    ) : evalOpen?.valueInfos?.reason?.trim() ||
+                      evalOpen?.valueInfos?.summary ? (
                       <CellMarkdown
                         spacing={0}
-                        text={evalOpen?.valueInfos?.reason}
+                        text={
+                          evalOpen?.valueInfos?.reason ||
+                          evalOpen?.valueInfos?.summary
+                        }
                       />
                     ) : (
                       "Unable to fetch Explanation"
@@ -1331,19 +1366,9 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   const renderAnalysis =
     inlineAnalysis ||
     (pollData?.status === "completed" ? pollData?.error_analysis : null);
-  const renderAnalysisEntries = Object.entries(renderAnalysis || {})
-    .filter(([key]) => {
-      // Keep canonical snake_case keys and drop alias-only keys like
-      // `input1` when `input_1` exists.
-      if (key.includes("_")) return true;
-      if (/[A-Z]/.test(key)) return false;
-      const snakeWithNumericBoundary = key.replace(
-        /([a-zA-Z])([0-9])/g,
-        "$1_$2",
-      );
-      return !renderAnalysis?.[snakeWithNumericBoundary];
-    })
-    .filter(([_, value]) => Array.isArray(value) && value.length > 0);
+  const renderAnalysisEntries = canonicalEntries(renderAnalysis || {}).filter(
+    ([_, value]) => Array.isArray(value) && value.length > 0,
+  );
   const hasRenderAnalysis = renderAnalysisEntries.length > 0;
   const renderAnalysisForDisplay = Object.fromEntries(renderAnalysisEntries);
   const renderSelectedInputKey =
@@ -1398,14 +1423,14 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
               );
             }
             return renderAnalysisEntries.map(([key, value]) => (
-                <ErrorLocalizeCard
-                  key={key}
-                  value={value}
-                  column={renderSelectedInputKey}
-                  tabValue="raw"
-                  datapoint={renderValueInfos}
-                />
-              ));
+              <ErrorLocalizeCard
+                key={key}
+                value={value}
+                column={renderSelectedInputKey}
+                tabValue="raw"
+                datapoint={renderValueInfos}
+              />
+            ));
           })()}
         </Box>
       </Box>

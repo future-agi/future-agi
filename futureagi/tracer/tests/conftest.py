@@ -3,6 +3,7 @@ Conftest for tracer app tests.
 Provides fixtures specific to tracer models and test data.
 """
 
+import json
 import uuid
 from datetime import datetime, timedelta
 
@@ -298,3 +299,215 @@ def multiple_spans(db, project, trace):
         )
         spans.append(span)
     return spans
+
+
+# ── PR1 fixtures: stubs for eval-task runtime tests ──
+#
+# These let tests drive `process_eval_task` end-to-end against real Postgres
+# without hitting the eval engine, the billing/cost layer, or Temporal.
+# Each one is opt-in (no autouse) — pull only the ones a given test needs.
+
+
+@pytest.fixture
+def stub_run_eval(monkeypatch):
+    """Stub `evaluations.engine.run_eval` to a deterministic ``EvalResult``.
+
+    Returns a callable ``set_result(value=..., reason=..., failure=...)`` so
+    tests can flip pass/fail or simulate engine-side failures without
+    re-patching. Default outcome is a passing eval.
+
+    Patched at the package re-export (``evaluations.engine.run_eval``) AND at
+    the underlying definition (``evaluations.engine.runner.run_eval``) because
+    callers import both paths in different code locations.
+    """
+    from evaluations.engine.runner import EvalResult
+
+    state = {"value": True, "reason": "stubbed pass", "failure": None}
+
+    def _make_result():
+        return EvalResult(
+            value=state["value"],
+            data={"stub": True},
+            reason=state["reason"],
+            failure=state["failure"],
+            runtime=0.001,
+            model_used="stub-model",
+            metrics=None,
+            metadata={"stub": True},
+            output_type="Pass/Fail",
+            start_time=0.0,
+            end_time=0.001,
+            duration=0.001,
+            cost={"total_cost": 0.0},
+            token_usage={"prompt_tokens": 0, "completion_tokens": 0},
+        )
+
+    def _stub(_request):
+        return _make_result()
+
+    monkeypatch.setattr("evaluations.engine.run_eval", _stub, raising=False)
+    monkeypatch.setattr("evaluations.engine.runner.run_eval", _stub, raising=False)
+
+    def set_result(*, value=True, reason="stubbed pass", failure=None):
+        state["value"] = value
+        state["reason"] = reason
+        state["failure"] = failure
+
+    return set_result
+
+
+@pytest.fixture
+def stub_cost_log(monkeypatch):
+    """Stub ``log_and_deduct_cost_for_api_request`` so tests skip billing.
+
+    Returns a stub object that satisfies the contract ``_execute_evaluation``
+    expects: ``.status``, mutable ``.config``, ``.log_id``, and ``.save()``.
+    """
+    try:
+        from ee.usage.models.usage import APICallStatusChoices
+        processing_status = APICallStatusChoices.PROCESSING.value
+    except ImportError:
+        processing_status = "processing"
+
+    class _StubCostLog:
+        def __init__(self, config):
+            self.status = processing_status
+            self.config = json.dumps(config) if not isinstance(config, str) else config
+            self.log_id = uuid.uuid4()
+
+        def save(self):
+            pass
+
+    def _stub(*, organization, api_call_type, source, source_id, config, workspace, **kwargs):
+        return _StubCostLog(config)
+
+    monkeypatch.setattr(
+        "tracer.utils.eval.log_and_deduct_cost_for_api_request",
+        _stub,
+    )
+    return _stub
+
+
+@pytest.fixture
+def inline_temporal(monkeypatch):
+    """Replace ``.delay`` with the raw underlying function on eval activities so
+    the dispatcher executes them inline (no Temporal worker needed).
+
+    We use ``._original_func`` rather than ``.run_sync`` because ``run_sync``
+    wraps the call in ``close_old_connections()`` (the temporal_activity
+    decorator's DB-lifecycle hook), which closes pytest-django's TestCase
+    transaction connection mid-test and surfaces as ``OperationalError: the
+    connection is closed``. ``._original_func`` is the raw Python function
+    -- no DB lifecycle management, plays nicely with the test transaction.
+
+    Forward-compatible: each patch is gated by ``hasattr`` so activities
+    introduced in later PRs (PR4 adds ``evaluate_trace_observe`` and
+    ``evaluate_trace_session_observe``) are auto-patched once they exist.
+    Today only ``evaluate_observation_span_observe`` gets patched.
+    """
+    import tracer.utils.eval as eval_module
+
+    activity_names = (
+        "evaluate_observation_span_observe",
+        "evaluate_trace_observe",
+        "evaluate_trace_session_observe",
+    )
+    for name in activity_names:
+        if hasattr(eval_module, name):
+            activity = getattr(eval_module, name)
+            monkeypatch.setattr(activity, "delay", activity._original_func)
+
+
+@pytest.fixture
+def track_eval_dispatch(monkeypatch):
+    """Spy on ``.delay`` calls without executing the activity.
+
+    Returns a list that the test inspects after running the dispatcher to
+    assert which (entity_id, eval_config_id, eval_task_id) tuples were
+    fanned out. Use this when you want to test dispatcher behaviour without
+    incurring the cost of running each activity inline.
+    """
+    import tracer.utils.eval as eval_module
+
+    calls = []
+
+    def _make_recorder(activity_name):
+        def _record(*args, **kwargs):
+            calls.append((activity_name, args, kwargs))
+
+        return _record
+
+    activity_names = (
+        "evaluate_observation_span_observe",
+        "evaluate_trace_observe",
+        "evaluate_trace_session_observe",
+    )
+    for name in activity_names:
+        if hasattr(eval_module, name):
+            activity = getattr(eval_module, name)
+            monkeypatch.setattr(activity, "delay", _make_recorder(name))
+
+    return calls
+
+
+@pytest.fixture
+def populated_observe_project(db, observe_project):
+    """Build a small, realistic graph for end-to-end task tests.
+
+    2 sessions × 2 traces × 3 spans. Each trace's first span (sp_idx=0) is
+    its root (``parent_span_id IS NULL``); the others have it as parent.
+    Span types alternate between ``llm`` and ``tool``. Returns a dict so
+    tests can grab specific entities without re-querying.
+    """
+    sessions = []
+    traces = []
+    spans = []
+
+    for s_idx in range(2):
+        session = TraceSession.objects.create(
+            project=observe_project,
+            name=f"Session {s_idx}",
+            bookmarked=False,
+        )
+        sessions.append(session)
+
+        for t_idx in range(2):
+            trace = Trace.objects.create(
+                project=observe_project,
+                session=session,
+                name=f"Trace s{s_idx}t{t_idx}",
+                input={"prompt": f"input s{s_idx}t{t_idx}"},
+                output={"response": f"output s{s_idx}t{t_idx}"},
+                metadata={"session_idx": s_idx, "trace_idx": t_idx},
+            )
+            traces.append(trace)
+
+            root_span_id = f"span_s{s_idx}t{t_idx}_0"
+            for sp_idx in range(3):
+                span_id = f"span_s{s_idx}t{t_idx}_{sp_idx}"
+                ObservationSpan.objects.create(
+                    id=span_id,
+                    project=observe_project,
+                    trace=trace,
+                    parent_span_id=None if sp_idx == 0 else root_span_id,
+                    name=f"Span s{s_idx}t{t_idx}_{sp_idx}",
+                    observation_type="llm" if sp_idx % 2 == 0 else "tool",
+                    start_time=timezone.now() - timedelta(seconds=10 - sp_idx),
+                    end_time=timezone.now() - timedelta(seconds=9 - sp_idx),
+                    input={"messages": [{"role": "user", "content": f"hi s{s_idx}t{t_idx}_{sp_idx}"}]},
+                    output={"choices": [{"message": {"content": f"reply s{s_idx}t{t_idx}_{sp_idx}"}}]},
+                    span_attributes={
+                        "input": {"value": f"hi s{s_idx}t{t_idx}_{sp_idx}"},
+                        "output": {"value": f"reply s{s_idx}t{t_idx}_{sp_idx}"},
+                    },
+                    model="gpt-4",
+                    status="OK",
+                )
+            spans.extend(list(trace.observation_spans.order_by("start_time")))
+
+    return {
+        "project": observe_project,
+        "sessions": sessions,
+        "traces": traces,
+        "spans": spans,
+    }

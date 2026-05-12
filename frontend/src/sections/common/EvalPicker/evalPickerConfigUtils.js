@@ -4,6 +4,16 @@ const OUTPUT_TYPE_CONFIG_MAP = {
   deterministic: "choices",
 };
 
+const ROW_TYPE_CONTEXT_OPTIONS = {
+  spans: ["span_context"],
+  traces: ["trace_context"],
+  sessions: ["session_context", "trace_context"],
+  voiceCalls: ["call_context"],
+};
+
+export const contextOptionsForRowType = (rowType) =>
+  ROW_TYPE_CONTEXT_OPTIONS[rowType] || null;
+
 export const hasNonEmptyPromptMessage = (messages = []) =>
   messages.some((message) => {
     if (!["system", "user"].includes(message?.role)) return false;
@@ -60,3 +70,59 @@ export const buildEvalTemplateConfig = ({
 
   return nextConfig;
 };
+
+export const buildCompositeSourceModeProps = ({
+  isComposite,
+  fullEval,
+  compositeDetail,
+  compositeChildWeights = {},
+}) => {
+  if (!isComposite) {
+    return { isComposite: false };
+  }
+
+  const children = Array.isArray(compositeDetail?.children)
+    ? compositeDetail.children
+    : [];
+
+  if (children.length === 0) {
+    return { isComposite: true };
+  }
+
+  const baseWeights = children.reduce((acc, child) => {
+    if (child?.child_id) {
+      acc[child.child_id] = child.weight ?? 1;
+    }
+    return acc;
+  }, {});
+
+  const mergedWeights = {
+    ...baseWeights,
+    ...(compositeChildWeights || {}),
+  };
+
+  return {
+    isComposite: true,
+    compositeAdhocConfig: {
+      child_template_ids: children.map((child) => child.child_id),
+      aggregation_enabled:
+        compositeDetail?.aggregation_enabled ?? fullEval?.aggregation_enabled ?? true,
+      aggregation_function:
+        compositeDetail?.aggregation_function
+        || fullEval?.aggregation_function
+        || "weighted_avg",
+      composite_child_axis:
+        compositeDetail?.composite_child_axis || fullEval?.composite_child_axis || "",
+      child_weights:
+        Object.keys(mergedWeights).length > 0 ? mergedWeights : null,
+      pass_threshold:
+        compositeDetail?.pass_threshold ?? fullEval?.pass_threshold ?? 0.5,
+    },
+  };
+};
+
+export const getSourceModeVariables = ({
+  isComposite,
+  variables = [],
+  compositeUnionKeys = [],
+}) => (isComposite ? compositeUnionKeys : variables);

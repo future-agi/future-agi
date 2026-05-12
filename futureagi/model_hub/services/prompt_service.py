@@ -114,21 +114,43 @@ def _normalize_prompt_config(prompt_config):
 
 
 def _extract_variables(prompt_config):
-    """Extract {{variable}} names from prompt config messages."""
+    """Extract {{variable}} names from prompt config messages.
+
+    When template_format is "jinja", delegates to the Jinja2 AST-based extractor
+    so that loop-scoped / set-scoped variables are correctly excluded.
+    """
     variables = set()
     if not prompt_config or not isinstance(prompt_config, list):
         return list(variables)
+
+    # Determine template_format from the first config entry
+    template_format = None
+    if prompt_config:
+        template_format = (
+            prompt_config[0].get("configuration", {}).get("template_format")
+        )
+
+    use_jinja = template_format in ("jinja", "jinja2")
+
     for cfg in prompt_config:
         messages = cfg.get("messages", [])
         for msg in messages:
             content = msg.get("content", "")
+            texts = []
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
-                        content_text = part.get("text", "")
-                        variables.update(re.findall(r"\{\{(\w+)\}\}", content_text))
+                        texts.append(part.get("text", ""))
             elif isinstance(content, str):
-                variables.update(re.findall(r"\{\{(\w+)\}\}", content))
+                texts.append(content)
+
+            if use_jinja:
+                from model_hub.utils.jinja_variables import extract_jinja_variables
+            for text in texts:
+                if use_jinja:
+                    variables.update(extract_jinja_variables(text))
+                else:
+                    variables.update(re.findall(r"\{\{(\w+)\}\}", text))
     return sorted(variables)
 
 

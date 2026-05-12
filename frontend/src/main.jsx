@@ -49,6 +49,8 @@ import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
 import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
+import { initTwitter } from "./utils/twitterAds";
+import { initTwitter } from "./utils/twitterAds";
 
 Sentry.init({
   dsn: SENTRY_DSN,
@@ -74,6 +76,9 @@ initGoogleAds();
 
 // Initialize Reddit pixel (no-op if env vars are unset)
 initReddit();
+
+// Initialize Twitter (X) pixel (no-op if env vars are unset)
+initTwitter();
 
 const shouldStartMockServer =
   CURRENT_ENVIRONMENT === "local" && import.meta.env.VITE_ENABLE_MSW !== "false";

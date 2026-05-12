@@ -96,23 +96,19 @@ class GetEvalPlaygroundTool(BaseTool):
         optional_keys = (
             config.get("optional_keys", []) if isinstance(config, dict) else []
         )
-        template_type = (
-            config.get("template_type", "—") if isinstance(config, dict) else "—"
-        )
-        eval_type_id = (
-            config.get("eval_type_id", "—") if isinstance(config, dict) else "—"
-        )
+        eval_type_labels = {"llm": "LLM", "code": "Code", "agent": "Agent"}
+        eval_type = eval_type_labels.get(template.eval_type or "", template.eval_type or "—")
+        template_type = template.template_type or "single"
 
         info = key_value_block(
             [
                 ("ID", f"`{template.id}`"),
                 ("Name", template.name),
                 ("Owner", template.owner or "—"),
+                ("Eval Type", eval_type),
                 ("Template Type", template_type),
-                ("Eval Type ID", eval_type_id),
                 ("Output Type", output_type),
                 ("Model", template.model or "—"),
-                ("Multi-Choice", "Yes" if template.multi_choice else "No"),
             ]
         )
 

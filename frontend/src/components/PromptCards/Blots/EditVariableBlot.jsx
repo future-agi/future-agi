@@ -9,13 +9,18 @@ class EditVariableBolt extends BlockEmbed {
   static create(value) {
     const node = super.create();
     node.setAttribute("contenteditable", false);
-    //node should take width of content not parent
-    //   node.style.width = "fit-content";
-    //   node.setAttribute("data-type", `generatePrompt-${value.id}`);
+    if (value.fromBlock) {
+      node.setAttribute("data-from-block", "true");
+    }
     // Render React component
     const root = createRoot(node);
 
-    root.render(<EditVariable openVariableEditor={value.openVariableEditor} />);
+    root.render(
+      <EditVariable
+        openVariableEditor={value.openVariableEditor}
+        fromBlock={!!value.fromBlock}
+      />,
+    );
 
     return node;
   }
@@ -24,6 +29,7 @@ class EditVariableBolt extends BlockEmbed {
   static value(node) {
     return {
       id: node.getAttribute("id"),
+      fromBlock: node.getAttribute("data-from-block") === "true",
     };
   }
 }

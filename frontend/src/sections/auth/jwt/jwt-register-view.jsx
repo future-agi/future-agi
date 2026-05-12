@@ -18,6 +18,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
+import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
@@ -28,14 +29,14 @@ import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
+import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
+import { isValidUtm } from "src/utils/utmUtils";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
   const { executeRecaptcha } = useGoogleReCaptcha();
   const [errorMsg, setErrorMsg] = useState("");
-  const [editEmail, setEditEmail] = useState(false);
-  const [oldEmail, setOldEmail] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   const password = useBoolean();
   const navigate = useNavigate();
@@ -50,9 +51,8 @@ export default function JwtRegisterView() {
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
       .email("Email must be a valid email address"),
-    password: Yup.string().when(["$registerSuccess", "$editEmail"], {
-      is: (registerSuccess, editEmail) =>
-        registerSuccess === true && editEmail === false,
+    password: Yup.string().when("$registerSuccess", {
+      is: true,
       then: (schema) => schema.required("Password is required"),
       otherwise: (schema) => schema.notRequired(),
     }),
@@ -65,7 +65,7 @@ export default function JwtRegisterView() {
 
     utmKeys.forEach((key) => {
       const val = params.get(key);
-      if (val) utmParams.set(key, val);
+      if (isValidUtm(val)) utmParams.set(key, val);
     });
 
     const returnTo = params.get("returnTo");
@@ -76,7 +76,7 @@ export default function JwtRegisterView() {
 
       utmKeys.forEach((key) => {
         const val = innerParams.get(key);
-        if (val) utmParams.set(key, val);
+        if (isValidUtm(val)) utmParams.set(key, val);
       });
     }
 
@@ -103,14 +103,14 @@ export default function JwtRegisterView() {
   const methods = useForm({
     resolver: yupResolver(RegisterSchema),
     defaultValues,
-    context: { registerSuccess, editEmail },
+    context: { registerSuccess },
   });
 
   const { handleSubmit, watch } = methods;
   const email = watch("email");
 
   const handleSignup = async (data) => {
-    const token = await executeRecaptcha("signup");
+    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
     try {
       setLoading(true);
@@ -119,7 +119,6 @@ export default function JwtRegisterView() {
         full_name: data?.fullName,
         company_name: "",
         "recaptcha-response": token,
-        ...(!!oldEmail && { old_email: oldEmail, update_true: true }),
         allow_email: true,
       };
       let response;
@@ -139,8 +138,6 @@ export default function JwtRegisterView() {
             "Thanks for registering! Please check your email.",
           autoHideDuration: 3000,
         });
-        setOldEmail(data?.email);
-        setEditEmail(false);
         setRegisterSuccess(true);
         trackEvent(Events.newUserSignUp, {
           [PropertyName.method]: "email",
@@ -157,10 +154,14 @@ export default function JwtRegisterView() {
         if (typeof window.rdt === "function") {
           trackRedditSignup({
             email: data.email,
-            method: "email",
             userId: response?.result?.user_id,
           });
         }
+        trackTwitterSignup({
+          email: data.email,
+          method: "email",
+          userId: response?.result?.user_id,
+        });
 
         // Always navigate to login after registration
         // navigate(paths.auth.jwt.login);
@@ -180,7 +181,7 @@ export default function JwtRegisterView() {
   };
 
   const handleLogin = async (data) => {
-    const token = await executeRecaptcha("login");
+    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -225,16 +226,14 @@ export default function JwtRegisterView() {
   };
 
   const onSubmit = handleSubmit(async (data) => {
-    if (!executeRecaptcha) {
+    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",
       });
       return;
     }
-    (await (registerSuccess && !editEmail))
-      ? handleLogin(data)
-      : handleSignup(data);
+    (await registerSuccess) ? handleLogin(data) : handleSignup(data);
   });
 
   const handleServiceProvider = async (provider) => {
@@ -349,7 +348,7 @@ export default function JwtRegisterView() {
       >
         By clicking continue, you agree to our
         <Link
-          href="https://futureagi.com/terms-and-conditions"
+          href="https://futureagi.com/terms"
           target="_blank"
           sx={{ cursor: "pointer" }}
         >
@@ -358,7 +357,7 @@ export default function JwtRegisterView() {
         </Link>{" "}
         and
         <Link
-          href="https://futureagi.com/privacy-policy"
+          href="https://futureagi.com/privacy"
           target="_blank"
           sx={{ cursor: "pointer" }}
         >
@@ -395,7 +394,7 @@ export default function JwtRegisterView() {
             Continue with Google
           </Typography>
         </Button>
-        {/* 
+        {/*
       <Button
         sx={{
           border: "1px solid",
@@ -521,7 +520,6 @@ export default function JwtRegisterView() {
             {registerSuccess ? (
               <PasswordSentView
                 email={email}
-                editEmail={editEmail}
                 isSubmitting={loading}
                 errorMsg={errorMsg}
                 password={password}

@@ -1,17 +1,45 @@
 # ============================================================================
 # Future AGI — self-hosted OSS stack
 #
+# Project name is pinned to `futureagi` so volumes / containers are stable
+# regardless of the directory you cloned into and don't collide with other
+# `future-agi` worktrees on the same host.
+#
+# Two modes, gated by COMPOSE_PROFILES (set in .env):
+#
+#   • light (default, COMPOSE_PROFILES unset)
+#       Everything you need to run the app: frontend, backend, worker,
+#       agentcc-gateway, serving, code-executor, postgres, clickhouse, redis,
+#       minio, temporal. ~12 containers. Analytics views (Observe / Trace
+#       drilldowns) will show empty data — they're fed by PeerDB, which is
+#       only on in `full` mode.
+#
+#   • full (COMPOSE_PROFILES=full)
+#       Adds the PeerDB CDC stack (10 containers) so transactional Postgres
+#       data streams into ClickHouse and analytics views populate. ~22
+#       containers. Use this for a real self-host.
+#
 # Quick start:
-#   cp .env.example .env
-#   docker compose up
+#   cp .env.example .env       # optional — empty .env works fine
+#   docker compose up                                    # light
+#   COMPOSE_PROFILES=full docker compose up              # full
 #
 # Open http://localhost:3000 once the frontend logs "ready".
-# First boot builds the backend image (~10 min). Subsequent boots are instant.
+# First boot pulls images from Docker Hub (~30s). No source builds.
 #
-# For hot-reload development (volume mounts, per-queue workers, exposed DB
-# ports, Temporal UI), layer the dev overlay:
+# Each image is independently versioned. Defaults to `:latest`. Pin per
+# service in .env for production: FUTURE_AGI_VERSION (backend + worker),
+# FRONTEND_VERSION, AGENTCC_GATEWAY_VERSION, SERVING_VERSION,
+# CODE_EXECUTOR_VERSION.
+#
+# For hot-reload development (build from source, volume mounts, per-queue
+# workers, exposed DB ports, Temporal UI), layer the dev overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# For production deployments, see ./deploy/README.md.
 # ============================================================================
+
+name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
 x-peerdb-catalog: &peerdb-catalog
@@ -33,14 +61,19 @@ x-peerdb-minio-env: &peerdb-minio-env
   PEERDB_CLICKHOUSE_AWS_S3_BUCKET_NAME: peerdbbucket
 
 x-backend-env: &backend-env
-  SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-change-me}
+  # Local-only defaults. deploy/docker-compose.production.yml re-binds these
+  # with ${VAR:?error} guards so prod refuses to boot on the dev values.
+  SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
   ENV_TYPE: ${ENV_TYPE:-development}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
 
   # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: http://gateway:8090
-  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
   MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
@@ -78,8 +111,19 @@ x-backend-env: &backend-env
   REDIS_LOCK_URL: redis://redis:6379/2
   REDIS_STATE_URL: redis://redis:6379/2
 
+  # RabbitMQ for Django Channels / Celery compatibility
+  CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-user}:${RABBITMQ_PASSWORD:-password}@rabbitmq:5672//
+
   # Object storage (MinIO)
+  # STORAGE_BACKEND drives URL routing: "minio" for the OSS local stack,
+  # "s3" for AWS S3, "gcs" for GCS S3-interop.
+  # S3_ENDPOINT_URL is the internal hostname the backend uses to reach
+  # MinIO. MINIO_URL is what gets baked into URLs returned to the
+  # browser — must be reachable from the user's machine. Override
+  # MINIO_URL when accessing the host from outside localhost.
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
   S3_ENDPOINT_URL: http://minio:9000
+  MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
   S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
   S3_BUCKET: futureagi
@@ -96,7 +140,7 @@ x-backend-env: &backend-env
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   AWS_REGION: ${AWS_REGION:-us-east-1}
 
-  # Future AGI Cloud API (optional, EE-tier only)
+  # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
 
@@ -107,25 +151,25 @@ services:
   # ==========================================================================
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
-        VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
-        VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+    image: futureagi/frontend:${FRONTEND_VERSION:-latest}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      # Empty -> SPA falls back through src/config-global.js: import.meta.env
+      # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
+      # deployment (e.g. https://api.example.com for split-domain).
+      VITE_HOST_API: ${VITE_HOST_API:-}
     depends_on:
       - backend
     restart: unless-stopped
 
   backend:
-    build:
-      context: ./futureagi
-      dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
     ports:
       - "${BACKEND_PORT:-8000}:80"
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
       SERVICE_TYPE: backend
@@ -140,17 +184,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       temporal:
         condition: service_healthy
-      gateway:
+      agentcc-gateway:
         condition: service_started
     restart: unless-stopped
 
   worker:
-    build:
-      context: ./futureagi
-      dockerfile: Dockerfile.oss
-    image: futureagi/backend:local
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
@@ -164,57 +210,48 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # LLM gateway (Prism / agentcc) — proxies provider APIs used by the backend.
-  # Ships with config.example.yaml as the default. Copy to
-  # futureagi/agentcc-gateway/config.yaml and edit to enable more providers.
-  # --------------------------------------------------------------------------
-
-  gateway:
-    build:
-      context: ./futureagi/agentcc-gateway
+  # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
+  # the shipped example via AGENTCC_CONFIG_PATH).
+  agentcc-gateway:
+    image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:-latest}
     ports:
-      - "${GATEWAY_PORT:-8090}:8080"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
+    env_file:
+      - path: .env
+        required: false
     environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
-      # Default to the shipped example config. Override by creating
-      # `futureagi/agentcc-gateway/config.yaml`.
-      - ./futureagi/agentcc-gateway/config.example.yaml:/app/config.yaml:ro
+      - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # Embedding / model-serving service
-  # --------------------------------------------------------------------------
-
   serving:
-    build:
-      context: ./futureagi/model_serving
-      dockerfile: Dockerfile.oss
+    image: futureagi/serving:${SERVING_VERSION:-latest}
     ports:
       - "${SERVING_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *backend-env
     depends_on:
       - backend
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------
-  # Sandboxed code executor for eval code. Requires `privileged: true` for
-  # nsjail namespace creation — won't run on Fargate / managed container
-  # platforms that disallow privileged containers.
-  # --------------------------------------------------------------------------
-
+  # Requires privileged: true for nsjail namespaces — won't run on Fargate /
+  # managed platforms that disallow privileged containers.
   code-executor:
-    build:
-      context: ./futureagi/code-executor
+    image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     ports:
       - "${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true
@@ -285,6 +322,20 @@ services:
       retries: 5
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   minio:
     image: minio/minio:RELEASE.2025-02-07T23-21-09Z
     command: server /data --console-address ":9001"
@@ -327,8 +378,11 @@ services:
       test: ["CMD-SHELL", "pgrep -x temporal-server"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      # First-boot schema setup against postgres can take 60-90s on slow
+      # disks. start_period=90s + 15 retries × 10s = up to ~240s before
+      # marked unhealthy.
+      retries: 15
+      start_period: 90s
     restart: unless-stopped
 
   # ==========================================================================
@@ -342,6 +396,7 @@ services:
 
   peerdb-catalog:
     image: postgres:16-alpine
+    profiles: ["full"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -357,6 +412,7 @@ services:
 
   peerdb-temporal:
     image: temporalio/auto-setup:1.29
+    profiles: ["full"]
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -379,6 +435,7 @@ services:
 
   peerdb-minio:
     image: minio/minio:latest
+    profiles: ["full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
@@ -396,6 +453,7 @@ services:
 
   peerdb-flow-api:
     image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
       PEERDB_ALLOWED_TARGETS:
@@ -406,6 +464,7 @@ services:
 
   peerdb-flow-worker:
     image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -415,6 +474,7 @@ services:
 
   peerdb-flow-snapshot-worker:
     image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -424,6 +484,7 @@ services:
 
   peerdb-server:
     image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
+    profiles: ["full"]
     stop_signal: SIGINT
     environment:
       <<: *peerdb-catalog
@@ -439,6 +500,7 @@ services:
 
   peerdb-ui:
     image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
+    profiles: ["full"]
     environment:
       <<: *peerdb-catalog
       PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
@@ -454,6 +516,7 @@ services:
 
   peerdb-temporal-init:
     image: temporalio/admin-tools
+    profiles: ["full"]
     restart: "no"
     environment:
       TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
@@ -472,6 +535,7 @@ services:
 
   peerdb-init:
     image: postgres:16-alpine
+    profiles: ["full"]
     restart: "no"
     environment:
       SRC_PG_HOST: postgres
@@ -506,11 +570,12 @@ volumes:
   postgres-data:
   clickhouse-data:
   redis-data:
+  rabbitmq-data:
   minio-data:
   peerdb-catalog-data:
   peerdb-minio-data:
 
 
-networks:
-  default:
-    name: futureagi
+# Compose auto-names the default network ${PROJECT_NAME}_default
+# (i.e. `futureagi_default`). Don't pin a custom name — it collides
+# with networks left over from older project-name configurations.

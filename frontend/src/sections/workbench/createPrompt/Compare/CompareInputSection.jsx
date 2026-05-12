@@ -69,6 +69,7 @@ const CompareInputSection = ({
     setStreamingIdForVersion,
     pushStoppedIds,
     closeSocketByIndex,
+    templateFormat,
   } = usePromptWorkbenchContext();
 
   const timeoutRef = useRef(null);
@@ -144,6 +145,7 @@ const CompareInputSection = ({
   const isVariablesDefined = useIsVariablesDefined(
     currentPrompts,
     variableData,
+    templateFormat,
   );
 
   let buttonTooltip = null;

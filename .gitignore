@@ -95,14 +95,16 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# ML model weights & caches (never commit — these are multi-GB artifacts)
+# ML model weights & caches (never commit — these are multi-GB artifacts).
+# The weight *files* are caught by extension below; we deliberately do NOT
+# ignore any directory literally named `models/`, because Django apps, Go
+# packages, and frontend pages in this repo use that name for source code.
 *.safetensors
 *.bin
 *.pt
 *.pth
 *.gguf
 *.onnx
-models/
 model_cache/
 embedding_cache/
 checkpoints/
@@ -163,6 +165,8 @@ dumps/
 *.log
 logs/
 **/logs/
+!frontend/src/**/logs/
+!frontend/src/**/logs/**
 **celerybeat-schedule**
 staticfiles/
 media/
@@ -211,3 +215,6 @@ plan/
 planning/
 scratch/
 ee/
+# bin/install timestamped logs
+install-*.log
+uninstall-*.log
