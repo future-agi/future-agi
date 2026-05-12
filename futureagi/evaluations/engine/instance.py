@@ -14,12 +14,16 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 logger = structlog.get_logger(__name__)
 
 
-# Per-evaluator allow-list for per-binding ``run_config`` overrides. Only
-# keys the evaluator's ``__init__`` consumes — unknown kwargs would raise
-# ``TypeError``. ``model`` is intentionally excluded from CustomPromptEvaluator
-# (its kwarg path derives api_key/provider upstream; overwriting later would
-# leave stale auth). ``error_localizer_enabled`` lives on the surface-runner
-# layer, not on the evaluator instance.
+# Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
+# the runtime-tunable surface — both evaluators accept ``**kwargs`` so
+# unknown keys would silently pass through rather than raise. ``model`` is
+# excluded from CustomPromptEvaluator: ``prepare_eval_config`` derives
+# api_key / provider from the resolved model upstream (see line ~301-320),
+# and overwriting ``config["model"]`` after that derivation would leave
+# stale auth on the config dict. ``error_localizer_enabled`` is handled at
+# the surface-runner layer (Temporal activities, inline-eval polling,
+# dataset runner), not on the evaluator instance — kept out of both
+# allow-lists.
 _RUNTIME_ALLOWED_KEYS = {
     "AgentEvaluator": {
         "model",
