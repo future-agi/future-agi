@@ -513,7 +513,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         Array.isArray(saved.customColumns) &&
         saved.customColumns.length > 0
       ) {
-        pendingCustomColumnsRef.current = saved.customColumns;
+        // Shallow-clone each col so the pending ref (and `sessionColumns`
+        // it drains into) doesn't share object identity with the parsed
+        // localStorage payload. Mirrors the clone in the saved-view apply
+        // branch — keeps the invariant uniform.
+        pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
+          ...c,
+        }));
       }
     } catch {
       /* ignore corrupted localStorage */
@@ -651,7 +657,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             Array.isArray(saved.customColumns) &&
             saved.customColumns.length > 0
           ) {
-            pendingCustomColumnsRef.current = saved.customColumns;
+            // Clone each col — see mount-hydrate comment.
+            pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
+              ...c,
+            }));
             sessionGridApiRef.current?.api?.refreshServerSide?.({
               purge: true,
             });
@@ -713,9 +722,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // Queue the saved view's custom cols for the Session-grid merge to
     // drain into sessionColumns on its next fetch. Defer (don't push
     // directly) so the grid doesn't render with only-custom-col headers
-    // before the standard backend cols land.
+    // before the standard backend cols land. Shallow-clone each col so
+    // the pending ref (and `sessionColumns` after the drain) doesn't
+    // share object identity with `activeViewConfig.display.customColumns`
+    // — any later mutation (visibility toggle, save-as-new) would
+    // otherwise write through into the saved-views cache and corrupt
+    // this view's on-screen state until the next refetch.
     const savedCustomCols = Array.isArray(display.customColumns)
-      ? display.customColumns
+      ? display.customColumns.map((c) => ({ ...c }))
       : [];
     pendingCustomColumnsRef.current = savedCustomCols;
     // Force a Session-grid re-fetch so its merge logic drains the queued

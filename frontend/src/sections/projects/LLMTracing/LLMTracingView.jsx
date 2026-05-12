@@ -1745,27 +1745,34 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           // Legacy array shape: customs apply to whatever tab is active.
           // New object shape: customs are pre-split by tab type — hydrate
           // both refs for each tab so a compare-mode toggle later picks
-          // up the right set without another localStorage read.
+          // up the right set without another localStorage read. Each
+          // ref gets its own shallow clone so neither pending refs nor
+          // the columns state they drain into share identity with the
+          // parsed localStorage payload (the parsed object is rooted
+          // somewhere only via the immediate `saved` binding here, but
+          // matching the saved-view branch's clone pattern keeps the
+          // invariant uniform across the file).
+          const cloneEach = (arr) => arr.map((c) => ({ ...c }));
           if (Array.isArray(saved.customColumns)) {
             if (saved.customColumns.length > 0) {
               if (selectedTab === "trace") {
-                primaryTracePendingRef.current = saved.customColumns;
-                compareTracePendingRef.current = saved.customColumns;
+                primaryTracePendingRef.current = cloneEach(saved.customColumns);
+                compareTracePendingRef.current = cloneEach(saved.customColumns);
               } else {
-                primarySpansPendingRef.current = saved.customColumns;
-                compareSpansPendingRef.current = saved.customColumns;
+                primarySpansPendingRef.current = cloneEach(saved.customColumns);
+                compareSpansPendingRef.current = cloneEach(saved.customColumns);
               }
             }
           } else {
             const traceCols = saved.customColumns.trace || [];
             const spansCols = saved.customColumns.spans || [];
             if (traceCols.length > 0) {
-              primaryTracePendingRef.current = traceCols;
-              compareTracePendingRef.current = traceCols;
+              primaryTracePendingRef.current = cloneEach(traceCols);
+              compareTracePendingRef.current = cloneEach(traceCols);
             }
             if (spansCols.length > 0) {
-              primarySpansPendingRef.current = spansCols;
-              compareSpansPendingRef.current = spansCols;
+              primarySpansPendingRef.current = cloneEach(spansCols);
+              compareSpansPendingRef.current = cloneEach(spansCols);
             }
           }
         }
@@ -1835,14 +1842,29 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     });
 
     // Populate both primary and compare refs for the active tab type so a
-    // later toggle into compare mode also hydrates correctly.
+    // later toggle into compare mode also hydrates correctly. Each ref
+    // gets its OWN shallow clone of each col — without that, the pending
+    // refs (and eventually `columns[ck]` they drain into) share object
+    // identity with the saved-views query cache. Any later mutation —
+    // adding a new custom, saving as a new view, toggling visibility —
+    // would write through into the cached saved view config and corrupt
+    // its on-screen state until the next refetch. The map-of-map also
+    // isolates primary from compare.
     if (display.customColumns?.length > 0) {
       if (selectedTab === "trace") {
-        primaryTracePendingRef.current = display.customColumns;
-        compareTracePendingRef.current = display.customColumns;
+        primaryTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
       } else {
-        primarySpansPendingRef.current = display.customColumns;
-        compareSpansPendingRef.current = display.customColumns;
+        primarySpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareSpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
       }
     }
 
@@ -1856,13 +1878,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       projectSource === PROJECT_SOURCE.SIMULATOR &&
       display.customColumns?.length > 0
     ) {
+      // Clone each col per slot so primary-trace and compare-trace each
+      // own independent objects, and neither shares identity with the
+      // saved-views cache. Mirrors the clone in the trace/spans branch
+      // above — without it, downstream mutations would write through
+      // into the cached view config.
       setColumns((prev) => {
         const merge = (key) => {
           const existing = prev[key] || [];
           const stripped = existing.filter(
             (c) => c.groupBy !== "Custom Columns",
           );
-          return [...stripped, ...display.customColumns];
+          const fresh = display.customColumns.map((c) => ({ ...c }));
+          return [...stripped, ...fresh];
         };
         return {
           ...prev,
@@ -2049,28 +2077,33 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       // Accept both the new object shape ({trace: [], spans: []}) and the
       // legacy flat array (treated as customs for the current tab only,
       // for forward-compat with localStorage entries written before the
-      // per-tab split).
+      // per-tab split). Each pending ref gets its own shallow clone so
+      // primary/compare don't share object identity and the columns
+      // state they drain into doesn't share identity with anything held
+      // by the saved-views cache (same isolation invariant as the
+      // saved-view apply branch above).
       if (saved.customColumns) {
+        const cloneEach = (arr) => arr.map((c) => ({ ...c }));
         if (Array.isArray(saved.customColumns)) {
           if (saved.customColumns.length > 0) {
             if (selectedTab === "trace") {
-              primaryTracePendingRef.current = saved.customColumns;
-              compareTracePendingRef.current = saved.customColumns;
+              primaryTracePendingRef.current = cloneEach(saved.customColumns);
+              compareTracePendingRef.current = cloneEach(saved.customColumns);
             } else {
-              primarySpansPendingRef.current = saved.customColumns;
-              compareSpansPendingRef.current = saved.customColumns;
+              primarySpansPendingRef.current = cloneEach(saved.customColumns);
+              compareSpansPendingRef.current = cloneEach(saved.customColumns);
             }
           }
         } else {
           const traceCols = saved.customColumns.trace || [];
           const spansCols = saved.customColumns.spans || [];
           if (traceCols.length > 0) {
-            primaryTracePendingRef.current = traceCols;
-            compareTracePendingRef.current = traceCols;
+            primaryTracePendingRef.current = cloneEach(traceCols);
+            compareTracePendingRef.current = cloneEach(traceCols);
           }
           if (spansCols.length > 0) {
-            primarySpansPendingRef.current = spansCols;
-            compareSpansPendingRef.current = spansCols;
+            primarySpansPendingRef.current = cloneEach(spansCols);
+            compareSpansPendingRef.current = cloneEach(spansCols);
           }
         }
       }
