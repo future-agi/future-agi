@@ -358,13 +358,8 @@ const EditTaskDrawerV2Content = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch (err) {
-        enqueueSnackbar(
-          err?.response?.data?.result ||
-            err?.message ||
-            "Failed to save evaluation",
-          { variant: "error" },
-        );
+      } catch {
+        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
       }
     },
     [project, formValues, observeId, addEval],

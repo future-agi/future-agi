@@ -2075,20 +2075,19 @@ def _create_error_eval_cells_sync(
                     reason_column = runner._create_reason_column(
                         dataset, reason_column_name, parent_column=eval_column
                     )
-                    if reason_column is not None:
-                        reason_cells = [
-                            Cell(
-                                dataset=dataset,
-                                column=reason_column,
-                                row=row,
-                                value=error_message,
-                                status=CellStatus.ERROR.value,
-                                value_infos=json.dumps({"reason": error_message}),
-                            )
-                            for row in row_map.values()
-                        ]
-                        if reason_cells:
-                            Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
+                    reason_cells = [
+                        Cell(
+                            dataset=dataset,
+                            column=reason_column,
+                            row=row,
+                            value=error_message,
+                            status=CellStatus.ERROR.value,
+                            value_infos=json.dumps({"reason": error_message}),
+                        )
+                        for row in row_map.values()
+                    ]
+                    if reason_cells:
+                        Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
 
             except Exception as e:
                 activity.logger.exception(

@@ -12,6 +12,7 @@ import {
   CircularProgress,
   Collapse,
   Stack,
+  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -492,10 +493,6 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
     enabled: !useClientSide && !!(module === "simulate" ? callLogId : vapiId),
     initialPageParam: 1,
     staleTime: 30_000,
-    refetchInterval: (query) => {
-      const pages = query.state.data?.pages || [];
-      return pages.some((p) => p?.results?.ingestion_pending) ? 2000 : false;
-    },
     meta: { errorHandled: true },
   });
 
@@ -575,9 +572,6 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
   const totalCount = useClientSide
     ? callLogs?.length || 0
     : serverQuery.data?.pages?.[0]?.count || 0;
-  const ingestionPending =
-    !useClientSide &&
-    (serverQuery.data?.pages || []).some((p) => p?.results?.ingestion_pending);
 
   const handleToggle = (id) => {
     setExpanded((prev) => {
@@ -758,26 +752,6 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             }}
           >
             <CircularProgress size={18} thickness={5} />
-          </Box>
-        ) : ingestionPending && allRows.length === 0 ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: 160,
-              p: 2,
-              gap: 0.75,
-            }}
-          >
-            <CircularProgress size={18} thickness={5} />
-            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-              Collecting logs from provider
-            </Typography>
-            <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
-              This usually takes a few seconds
-            </Typography>
           </Box>
         ) : allRows.length === 0 ? (
           <Box

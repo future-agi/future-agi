@@ -97,7 +97,7 @@ class TestIsOss:
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present — only meaningful with ee/ installed")
 
-        DeploymentMode = pytest.importorskip("ee.usage.deployment").DeploymentMode
+        from ee.usage.deployment import DeploymentMode
 
         # Force DeploymentMode.is_oss() to return True; is_oss() should too.
         with patch.object(DeploymentMode, "is_oss", return_value=True):
@@ -223,7 +223,7 @@ class TestEEFeatureMirror:
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present")
 
-        EE_FEATURES_SOURCE = pytest.importorskip("ee.usage.deployment").EE_FEATURES
+        from ee.usage.deployment import EE_FEATURES as EE_FEATURES_SOURCE
 
         assert EE_FEATURES_OSS == EE_FEATURES_SOURCE, (
             "tfc.ee_gating.EEFeature has drifted from ee.usage.deployment."

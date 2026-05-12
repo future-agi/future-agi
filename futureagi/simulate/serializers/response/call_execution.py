@@ -19,7 +19,6 @@ class CallExecutionLogsResponseSerializer(serializers.Serializer):
 
     results = CallLogEntryResponseSerializer(many=True, read_only=True)
     source = serializers.CharField(read_only=True)
-    ingestion_pending = serializers.BooleanField(read_only=True)
 
 
 class CallExecutionDeleteResponseSerializer(serializers.Serializer):

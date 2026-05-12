@@ -134,13 +134,9 @@ class StandaloneEvalView(APIView):
             if not unprocessed_inputs:
                 return self._gm.bad_request("inputs is required and cannot be empty.")
 
-            first_input = unprocessed_inputs[0]
-            input_text = first_input.get("input", "")
+            input_text = unprocessed_inputs[0].get("input", "")
 
             inputs = {"input": input_text}
-            # Forward max_tokens from guardrail config if present
-            if "max_tokens" in first_input:
-                inputs["max_tokens"] = first_input["max_tokens"]
             config = request.data.get("config", {})
             protect_flash = request.data.get("protect_flash", False)
 

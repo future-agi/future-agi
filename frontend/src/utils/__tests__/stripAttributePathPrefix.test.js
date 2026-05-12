@@ -40,12 +40,7 @@ describe("stripAttributePathPrefix", () => {
     expect(stripAttributePathPrefix("")).toBe("");
   });
 
-  it("strips a span_attributes segment anywhere in the path, not only as a prefix", () => {
-    // The `span_attributes.` strip is intentionally unanchored — see the
-    // implementation comment at src/utils/utils.js. The FE walker over a
-    // fetched span detail hits `span_attributes.` mid-path; collapsing both
-    // forms keeps fieldSet and flatValueMap lookups aligned with the saved
-    // mapping (which uses bare attribute paths).
+  it("strips span_attributes wherever it appears (unanchored regex)", () => {
     expect(stripAttributePathPrefix("metadata.span_attributes.input")).toBe(
       "metadata.input",
     );

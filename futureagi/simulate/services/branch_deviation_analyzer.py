@@ -696,13 +696,11 @@ class BranchDeviationAnalyzer:
 
             else:
 
-                from simulate.utils.stored_transcript_roles import (
-                    get_conversational_transcript_roles,
-                )
+                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
 
                 transcripts = CallTranscript.objects.filter(
                     call_execution=call_execution,
-                    speaker_role__in=get_conversational_transcript_roles(),
+                    speaker_role__in=SpeakerRoleResolver.get_conversational_roles(),
                 ).order_by("start_time_ms")
 
                 logger.info(

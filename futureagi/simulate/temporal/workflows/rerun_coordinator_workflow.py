@@ -334,14 +334,9 @@ class RerunCoordinatorWorkflow:
             input: Coordinator input with org_id, workspace_id, etc.
             calls: List of (call_id, eval_only) tuples
         """
-        try:
-            from ee.voice.temporal.workflows.call_execution_workflow import (
-                CallExecutionWorkflow,
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "Voice call execution workflow is unavailable without Enterprise Edition."
-            ) from exc
+        from ee.voice.temporal.workflows.call_execution_workflow import (
+            CallExecutionWorkflow,
+        )
 
         for call_id, eval_only in calls:
             # Unique workflow ID includes rerun_id to allow multiple reruns

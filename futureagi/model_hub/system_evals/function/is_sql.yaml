@@ -21,56 +21,17 @@ config:
     text: The text to validate as SQL
   code: |
     def evaluate(input, output, expected, context, **kwargs):
-        import re
         text = str(kwargs.get("text", output or "")).strip()
         if not text:
             return {"score": 0.0, "reason": "Empty text is not valid SQL"}
-
-        no_block = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
-        no_comments = re.sub(r"--[^\n]*", "", no_block)
-
-        sql_upper = no_comments.upper().strip().rstrip(";").strip()
-        if not sql_upper:
-            return {"score": 0.0, "reason": "Text contains only comments"}
-
-        starters = {
-            "SELECT": ["FROM"],
-            "INSERT": ["INTO"],
-            "UPDATE": [" SET "],
-            "DELETE": ["FROM"],
-            "CREATE": ["TABLE", "VIEW", "INDEX", "DATABASE", "SCHEMA", "TYPE", "FUNCTION", "PROCEDURE", "TRIGGER", "SEQUENCE"],
-            "ALTER":  ["TABLE", "VIEW", "INDEX", "DATABASE", "SCHEMA"],
-            "DROP":   ["TABLE", "VIEW", "INDEX", "DATABASE", "SCHEMA", "TYPE", "FUNCTION", "PROCEDURE", "TRIGGER", "SEQUENCE"],
-            "WITH":   ["AS", "SELECT"],
-            "EXPLAIN": ["SELECT", "INSERT", "UPDATE", "DELETE", "ANALYZE"],
-            "MERGE": ["INTO"],
-            "REPLACE": ["INTO"],
-            "TRUNCATE": ["TABLE"],
-            "GRANT": [" ON ", " TO "],
-            "REVOKE": [" ON ", " FROM "],
-            "BEGIN": [""],
-            "COMMIT": [""],
-            "ROLLBACK": [""],
-            "SET": [" = ", " TO "],
-            "SHOW": [""],
-            "DESCRIBE": [""],
-            "USE": [""],
-        }
-        matched_starter = None
-        for kw in starters:
-            if sql_upper.startswith(kw + " ") or sql_upper == kw:
-                matched_starter = kw
-                break
-        if matched_starter is None:
+        sql_upper = text.upper().strip().rstrip(";").strip()
+        starters = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP",
+                     "WITH", "EXPLAIN", "MERGE", "REPLACE", "TRUNCATE", "GRANT", "REVOKE",
+                     "BEGIN", "COMMIT", "ROLLBACK", "SET", "SHOW", "DESCRIBE", "USE"]
+        if not any(sql_upper.startswith(kw) for kw in starters):
             return {"score": 0.0, "reason": "Text does not start with a recognized SQL keyword"}
-
-        required = starters[matched_starter]
-        if required and required != [""]:
-            if not any(tok in sql_upper for tok in required):
-                return {"score": 0.0, "reason": f"{matched_starter} requires one of: {required}"}
-
         depth = 0
-        for ch in no_comments:
+        for ch in text:
             if ch == "(":
                 depth += 1
             elif ch == ")":
@@ -80,7 +41,7 @@ config:
         if depth != 0:
             return {"score": 0.0, "reason": "Unbalanced parentheses (unclosed)"}
         for qc in ["'", '"']:
-            count = no_comments.count(qc) - no_comments.count("\\" + qc)
+            count = text.count(qc) - text.count("\\" + qc)
             if count % 2 != 0:
                 return {"score": 0.0, "reason": f"Unbalanced {qc} quotes in SQL"}
         return {"score": 1.0, "reason": "Text appears to be valid SQL"}

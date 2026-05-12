@@ -27,10 +27,6 @@ from simulate.models.simulator_agent import SimulatorAgent
 # ============================================================================
 
 
-def _ee_voice_mapper():
-    return pytest.importorskip("ee.voice.constants.voice_mapper")
-
-
 @pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
@@ -456,7 +452,7 @@ class TestGetPersonasByLanguage:
 
     def test_get_english_personas_default(self):
         """English should be the default language for personas."""
-        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
+        from ee.voice.constants.voice_mapper import get_personas_by_language
 
         personas = get_personas_by_language("en")
         assert isinstance(personas, list)
@@ -464,14 +460,14 @@ class TestGetPersonasByLanguage:
 
     def test_get_english_personas_for_none(self):
         """None language should return English personas."""
-        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
+        from ee.voice.constants.voice_mapper import get_personas_by_language
 
         personas = get_personas_by_language(None)
         assert isinstance(personas, list)
 
     def test_get_hindi_personas(self):
         """Hindi language code should return Hindi personas."""
-        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
+        from ee.voice.constants.voice_mapper import get_personas_by_language
 
         personas = get_personas_by_language("hi")
         assert isinstance(personas, list)
@@ -482,7 +478,7 @@ class TestGetPersonasByLanguage:
 
     def test_get_personas_unknown_language_returns_english(self):
         """Unknown language should default to English personas."""
-        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
+        from ee.voice.constants.voice_mapper import get_personas_by_language
 
         personas = get_personas_by_language("xx")  # Unknown language code
         assert isinstance(personas, list)

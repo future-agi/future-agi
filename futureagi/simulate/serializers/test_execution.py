@@ -324,31 +324,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return vsm.get_recording_urls(provider_payload) or {}
 
     def get_provider(self, obj):
-        """Return the provider that produced this call's stored provider payload.
-
-        The agent definition can be Vapi while the executed call payload is
-        stored under another provider key (for example LiveKit web/SIP flows).
-        The drawer uses this value for both the chip and provider-specific
-        metrics rendering, so prefer the actual payload key when available.
-        """
-        provider_data = getattr(obj, "provider_call_data", None)
-        if isinstance(provider_data, dict):
-            for provider in (
-                ProviderChoices.VAPI.value,
-                ProviderChoices.RETELL.value,
-                ProviderChoices.LIVEKIT.value,
-                ProviderChoices.ELEVEN_LABS.value,
-                ProviderChoices.OTHERS.value,
-            ):
-                if isinstance(provider_data.get(provider), dict) and provider_data.get(
-                    provider
-                ):
-                    return provider
-
-            for provider, payload in provider_data.items():
-                if isinstance(payload, dict) and payload:
-                    return provider
-
+        """Return the voice provider for this call (e.g. vapi, retell, livekit_bridge)."""
         try:
             return obj.test_execution.agent_definition.provider
         except (AttributeError, Exception):
@@ -615,9 +591,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             columns_by_dataset = ctx.get("columns_by_dataset")
             cells_by_row = ctx.get("cells_by_row")
 
-            if rows_map is not None:
-                if row_id_str not in rows_map:
-                    return {}
+            if rows_map is not None and row_id_str in rows_map:
                 # Fast path: use prefetched data
                 row = rows_map[row_id_str]
                 ds_id = str(row.dataset.id) if row.dataset else None
@@ -625,10 +599,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 row_cells = cells_by_row.get(row_id_str, {})
             else:
                 # Fallback: individual queries (for grouped results or missing context)
-                try:
-                    row = Row.all_objects.get(id=row_id)
-                except Row.DoesNotExist:
-                    return {}
+                row = Row.all_objects.get(id=row_id)
                 dataset_columns = Column.all_objects.filter(
                     id__in=row.dataset.column_order
                 )

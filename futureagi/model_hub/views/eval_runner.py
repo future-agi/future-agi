@@ -949,13 +949,6 @@ class EvaluationRunner:
         scope) or we look it up by the experiment eval column's
         deterministic source_id.
         """
-        # Guard: if the eval was stopped or deleted while we were running,
-        # don't create a new reason column — it would be orphaned.
-        from model_hub.services.experiment_utils import is_user_eval_stopped
-
-        if is_user_eval_stopped(self.user_eval_metric_id):
-            return None
-
         source = SourceChoices.EVALUATION_REASON.value
         source_id = f"{self.replace_column_id}-sourceid-{self.user_eval_metric_id}"
         if self.experiment_dataset:
@@ -1041,15 +1034,14 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                if reason_column is not None:
-                    self._create_reason_cell(
-                        self.dataset,
-                        reason_column,
-                        row,
-                        response,
-                        response.get("reason"),
-                        CellStatus.PASS.value,
-                    )
+                self._create_reason_cell(
+                    self.dataset,
+                    reason_column,
+                    row,
+                    response,
+                    response.get("reason"),
+                    CellStatus.PASS.value,
+                )
             value = self.format_output(response, row)
 
             config_dict = json.loads(api_call_log_row.config)
@@ -1220,15 +1212,14 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                if reason_column is not None:
-                    self._create_reason_cell(
-                        self.dataset,
-                        reason_column,
-                        row,
-                        {"reason": "No reasoning available. Please rerun the evaluation."},
-                        "No reasoning available. Please rerun the evaluation.",
-                        CellStatus.ERROR.value,
-                    )
+                self._create_reason_cell(
+                    self.dataset,
+                    reason_column,
+                    row,
+                    {"reason": "No reasoning available. Please rerun the evaluation."},
+                    "No reasoning available. Please rerun the evaluation.",
+                    CellStatus.ERROR.value,
+                )
 
         return response, status, value
 
@@ -2834,17 +2825,16 @@ class EvaluationRunner:
                             reason_column = self._create_reason_column(
                                 dataset, reason_column_name
                             )
-                            if reason_column is not None:
-                                self._create_reason_cell(
-                                    dataset,
-                                    reason_column,
-                                    row,
-                                    {
-                                        "reason": "No reasoning available. Please rerun the evaluation."
-                                    },
-                                    "No reasoning available. Please rerun the evaluation.",
-                                    CellStatus.ERROR.value,
-                                )
+                            self._create_reason_cell(
+                                dataset,
+                                reason_column,
+                                row,
+                                {
+                                    "reason": "No reasoning available. Please rerun the evaluation."
+                                },
+                                "No reasoning available. Please rerun the evaluation.",
+                                CellStatus.ERROR.value,
+                            )
                     except Exception as cell_error:
                         logger.error(f"Failed to update cell to ERROR: {cell_error}")
 

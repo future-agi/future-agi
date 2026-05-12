@@ -22,7 +22,6 @@ import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
-import { ROW_TYPE_LABELS } from "src/utils/constants";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -50,8 +49,7 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
-// eslint-disable-next-line react-refresh/only-export-components
-export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
+function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   const userFilters = (oldFormatFilters || [])
     .filter((f) => f?.propertyId || f?.property)
     .map((f) => {
@@ -176,6 +174,13 @@ function flattenSpanTree(
   return result;
 }
 
+const ROW_TYPE_LABEL = {
+  spans: "Spans",
+  traces: "Traces",
+  sessions: "Sessions",
+  voiceCalls: "Voice Calls",
+};
+
 // ───────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────
@@ -218,13 +223,14 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     queryFn: async () => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
 
+      // Voice calls use a dedicated list_voice_calls endpoint with a
+      // different request/response shape (no filter array).
       if (rowType === "voiceCalls") {
         const resp = await axios.get(endpoints.project.getCallLogs, {
           params: {
             project_id: projectId,
             page: 1,
             page_size: 50,
-            filters: JSON.stringify(apiFilters),
           },
         });
         const result = resp.data?.result || resp.data || {};
@@ -675,7 +681,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             </Typography>
             {projectId && (
               <Chip
-                label={ROW_TYPE_LABELS[rowType] || rowType}
+                label={ROW_TYPE_LABEL[rowType] || rowType}
                 size="small"
                 sx={{
                   height: 18,

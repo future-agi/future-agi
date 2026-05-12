@@ -61,19 +61,10 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      # Hashed assets (Vite content-hashed filenames in /assets/) — safe
-      # to cache forever.
-      - name: Upload hashed assets with long-lived immutable cache
+      # Upload dist/ to GCS
+      - name: Sync dist/ to GCS
         run: |
-          gsutil -m -h "Cache-Control:public, max-age=31536000, immutable" \
-            rsync -R -d dist/assets/ gs://${{ secrets.GCP_BUCKET_NAME }}/assets/
-
-      # Non-hashed root files (index.html, config.js, favicons) must NOT
-      # be cached. -x "^assets/" excludes hashed assets from this pass.
-      - name: Upload root files with no-cache
-        run: |
-          gsutil -m -h "Cache-Control:no-cache, must-revalidate" \
-            rsync -R -d -x "^assets/" dist/ gs://${{ secrets.GCP_BUCKET_NAME }}
+          gsutil -m rsync -R dist/ gs://${{ secrets.GCP_BUCKET_NAME }}
 
       # Invalidate Cloud CDN cache
       - name: Invalidate Cloud CDN cache

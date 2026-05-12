@@ -1365,7 +1365,6 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleTracingReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
-                  hostsFilter
                 />
               )}
 

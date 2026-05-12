@@ -2006,7 +2006,7 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
+    def call_llm(self, prompt: Messages, provider: str) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -2015,8 +2015,6 @@ class LLM:
 
         Args:
             prompt: List of message dictionaries.
-            provider: Provider name.
-            response_format: Optional response format spec (e.g. {"type": "json_object"}).
 
         Returns:
             The LLM response text.
@@ -2043,15 +2041,12 @@ class LLM:
                 gateway = get_gateway_client()
                 if gateway is not None:
                     logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
-                    gateway_kwargs = {
-                        "model": self.model_name,
-                        "messages": prompt,
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens,
-                    }
-                    if response_format:
-                        gateway_kwargs["response_format"] = response_format
-                    response = gateway.chat.completions.create(**gateway_kwargs)
+                    response = gateway.chat.completions.create(
+                        model=self.model_name,
+                        messages=prompt,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                    )
                     self._update_token_usage(response)
                     self._update_cost(response)
                     content = response.choices[0].message.content
@@ -2079,8 +2074,6 @@ class LLM:
             }
             if not getattr(self, "api_key", None):
                 payload["max_tokens"] = self.max_tokens
-            if response_format:
-                payload["response_format"] = response_format
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
@@ -2116,7 +2109,6 @@ class LLM:
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
-                    drop_params=True,
                 )
             else:
                 response = litellm.completion(
@@ -2124,7 +2116,6 @@ class LLM:
                     api_key=self.api_key,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
-                    drop_params=True,
                 )
 
             self._update_token_usage(response)

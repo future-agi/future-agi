@@ -3,7 +3,6 @@ import os
 import time
 
 from django.conf import settings
-import jinja2
 from jinja2 import Environment
 
 from agentic_eval.core.llm.llm import LLM
@@ -99,36 +98,6 @@ class CustomPromptEvaluator(LLM):
             kwargs['chat_history'] = json.dumps(kwargs['chat_history'], indent=2)
         # Use rule_prompt as the template
         return self.rule_prompt
-
-    def _build_response_format(self) -> dict:
-        """Build a json_schema response_format based on the eval output type.
-
-        Uses json_schema (not json_object) so the gateway can translate it
-        to provider-native structured output for all backends (Bedrock,
-        Anthropic, Gemini, OpenAI, etc.).
-        """
-        if self._output_type in ("score", "numeric"):
-            result_schema = {"type": "number"}
-        elif self._output_type == "Pass/Fail":
-            result_schema = {"type": "string", "enum": ["Pass", "Fail"]}
-        elif self._output_type == "choices" and getattr(self, "_choices", None):
-            result_schema = {"type": "string", "enum": self._choices}
-        else:
-            result_schema = {"type": "string"}
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "eval_result",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "result": result_schema,
-                        "explanation": {"type": "string"},
-                    },
-                    "required": ["result", "explanation"],
-                },
-            },
-        }
 
     def _system_message(self) -> str:
         judge_preamble = (
@@ -232,18 +201,14 @@ class CustomPromptEvaluator(LLM):
             raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", prompt_to_render)
             for var_name in raw_vars:
                 stripped = var_name.strip()
-                if " " in stripped:
-                    if stripped in safe_context:
-                        replacement = str(safe_context.pop(stripped))
-                    else:
-                        # Variable has a space but isn't mapped — substitute it
-                        # as literal text so Jinja2 doesn't crash trying to parse it.
-                        replacement = str(kwargs.get(stripped, "{{" + stripped + "}}"))
+                if " " in stripped and stripped in safe_context:
+                    # Replace the spaced variable with its value directly
                     prompt_to_render = prompt_to_render.replace(
-                        "{{" + var_name + "}}", replacement
+                        "{{" + var_name + "}}", str(safe_context.pop(stripped))
                     )
+                    # Also try with extra whitespace variants
                     prompt_to_render = prompt_to_render.replace(
-                        "{{ " + stripped + " }}", replacement
+                        "{{ " + stripped + " }}", str(template_context.get(stripped, ""))
                     )
 
             # In Jinja mode, parse JSON strings to native objects right
@@ -260,16 +225,8 @@ class CustomPromptEvaluator(LLM):
                             except (ValueError, json.JSONDecodeError):
                                 pass
 
-            try:
-                template = self.env.from_string(prompt_to_render)
-                rendered_prompt = template.render(**safe_context)
-            except jinja2.TemplateSyntaxError:
-                # Fallback: simple string replacement when Jinja2 can't parse
-                # the template (e.g. variable names with spaces).
-                rendered_prompt = prompt_to_render
-                for key, value in safe_context.items():
-                    rendered_prompt = rendered_prompt.replace("{{" + key + "}}", str(value))
-                    rendered_prompt = rendered_prompt.replace("{{ " + key + " }}", str(value))
+            template = self.env.from_string(prompt_to_render)
+            rendered_prompt = template.render(**safe_context)
 
             # Append data section with XML-tagged values for clarity
             if template_context:
@@ -427,7 +384,6 @@ class CustomPromptEvaluator(LLM):
                     messages=messages,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
-                    response_format=self._build_response_format(),
                     knowledge_base_id=self.knowledge_base_id,
                     check_internet=self.check_internet,
                     detected_media_types=detected_media_types,
@@ -436,8 +392,7 @@ class CustomPromptEvaluator(LLM):
                 self.cost.update(turing_client.cost)
             else:
                 chat_completion_response = self.call_llm(
-                    prompt=messages, provider=self.provider,
-                    response_format=self._build_response_format(),
+                    prompt=messages, provider=self.provider
                 )
 
             logger.info(

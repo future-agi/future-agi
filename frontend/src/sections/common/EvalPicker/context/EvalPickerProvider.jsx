@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
-import { useForm } from "react-hook-form";
 import { EvalPickerContext } from "./EvalPickerContext";
 import { normalizeEvalPickerEval } from "../evalPickerValue";
 
@@ -37,8 +36,6 @@ const EvalPickerProvider = ({
   // close the drawer — used by dataset adds where the picker is also a
   // multi-eval entry surface.
   keepOpenAfterSave = false,
-  sourceFilters = null,
-  onFiltersChange = null,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -71,10 +68,6 @@ const EvalPickerProvider = ({
     onClose?.();
   }, [handleReset, onClose]);
 
-  const filterForm = useForm({
-    defaultValues: { filters: sourceFilters || [] },
-  });
-
   return (
     <EvalPickerContext.Provider
       value={{
@@ -97,9 +90,6 @@ const EvalPickerProvider = ({
         isEditMode,
         requiredColumnId,
         keepOpenAfterSave,
-        sourceFilters,
-        onFiltersChange,
-        filterForm,
       }}
     >
       {children}
@@ -123,8 +113,6 @@ EvalPickerProvider.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
-  sourceFilters: PropTypes.array,
-  onFiltersChange: PropTypes.func,
 };
 
 export default EvalPickerProvider;

@@ -101,14 +101,10 @@ services:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
     volumes:
       - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
-      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
     env_file:
       - .env
     environment:
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
-      # Gateway WORKDIR is /, so credentials_file resolution needs an absolute
-      # path. Override the relative value from .env.
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/Vertex_AI_Creds.json
       # Provider creds for the gateway live in agentcc-gateway/config.yaml,
       # which interpolates ${ENV_VAR}s from .env at start. Anything in .env is
       # already passed through via env_file above — no per-provider entries

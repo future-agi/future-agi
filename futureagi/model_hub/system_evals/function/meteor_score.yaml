@@ -24,8 +24,52 @@ config:
     hypothesis: The generated/output text
   code: |
     def evaluate(input, output, expected, context, **kwargs):
-        score = kwargs.get("_meteor_precomputed_score")
-        if score is None:
-            reason = kwargs.get("_meteor_error") or "METEOR requires preprocessing. Enable preprocessing in eval config or use the Agent evaluator."
-            return {"score": 0.0, "reason": reason}
-        return {"score": float(score), "reason": f"METEOR: {float(score):.4f}"}
+        import re
+        reference = kwargs.get("reference", expected or "")
+        hypothesis = kwargs.get("hypothesis", output or "")
+        if not reference or not hypothesis:
+            return {"score": 0.0, "reason": "Missing reference or hypothesis"}
+        def _stem(word):
+            for sfx in ["ingly", "edly", "tion", "sion", "ment", "ness", "able", "ible",
+                         "ing", "ous", "ful", "ive", "ize", "ise", "ent", "ant",
+                         "ly", "ed", "er", "es", "al", "en", "s"]:
+                if len(word) > len(sfx) + 2 and word.endswith(sfx):
+                    return word[:-len(sfx)]
+            return word
+        ref_tokens = str(reference).lower().split()
+        hyp_tokens = str(hypothesis).lower().split()
+        if not ref_tokens or not hyp_tokens:
+            return {"score": 0.0, "reason": "Empty tokens"}
+        ref_matched = [False] * len(ref_tokens)
+        hyp_matched = [False] * len(hyp_tokens)
+        for i, ht in enumerate(hyp_tokens):
+            for j, rt in enumerate(ref_tokens):
+                if not ref_matched[j] and ht == rt:
+                    hyp_matched[i] = True
+                    ref_matched[j] = True
+                    break
+        ref_stems = [_stem(t) for t in ref_tokens]
+        hyp_stems = [_stem(t) for t in hyp_tokens]
+        for i, hs in enumerate(hyp_stems):
+            if hyp_matched[i]:
+                continue
+            for j, rs in enumerate(ref_stems):
+                if not ref_matched[j] and hs == rs:
+                    hyp_matched[i] = True
+                    ref_matched[j] = True
+                    break
+        matches = sum(hyp_matched)
+        if matches == 0:
+            return {"score": 0.0, "reason": "METEOR: 0.0 (no matches)"}
+        precision = matches / len(hyp_tokens)
+        recall = matches / len(ref_tokens)
+        f_mean = (precision * recall) / (0.9 * precision + 0.1 * recall)
+        chunks = 0
+        prev = False
+        for m in hyp_matched:
+            if m and not prev:
+                chunks += 1
+            prev = m
+        penalty = 0.5 * (chunks / matches) ** 3
+        score = max(0.0, min(1.0, f_mean * (1 - penalty)))
+        return {"score": float(score), "reason": f"METEOR: {score:.4f} (P={precision:.3f}, R={recall:.3f}, chunks={chunks})"}

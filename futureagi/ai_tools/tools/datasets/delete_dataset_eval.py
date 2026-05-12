@@ -60,85 +60,68 @@ class DeleteDatasetEvalTool(BaseTool):
         columns_deleted = 0
 
         if params.delete_column:
-            # Stop any in-flight eval runner before deleting columns
-            from model_hub.models.choices import StatusType
+            # Find and delete result column + reason columns
+            result_cols = Column.objects.filter(
+                dataset=dataset,
+                source_id=str(user_eval.id),
+                deleted=False,
+            )
 
-            if user_eval.status in (
-                StatusType.RUNNING.value,
-                StatusType.NOT_STARTED.value,
-                StatusType.EXPERIMENT_EVALUATION.value,
-            ):
-                try:
-                    from tfc.utils.distributed_state import evaluation_tracker
+            for col in result_cols:
+                # Delete cells
+                cells_deleted += Cell.objects.filter(
+                    column=col, dataset=dataset, deleted=False
+                ).update(deleted=True)
 
-                    evaluation_tracker.request_cancel(
-                        user_eval.id, reason="eval_deleted"
-                    )
-                except Exception:
-                    pass
-                from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
-
-                mark_eval_cells_stopped(
-                    user_eval, reason="Evaluation deleted by user"
-                )
-
-            # Find eval columns + all dependent reason columns
-            from django.db.models import Q
-
-            all_cols = list(
-                Column.objects.filter(
-                    Q(source_id=str(user_eval.id))
-                    | Q(source_id__endswith=f"-sourceid-{user_eval.id}"),
+                # Delete reason columns (source_id contains column ID)
+                reason_cols = Column.objects.filter(
                     dataset=dataset,
+                    source_id__startswith=f"{col.id}-sourceid-",
                     deleted=False,
                 )
-            )
-            col_ids = [c.id for c in all_cols]
-            col_id_strs = {str(c) for c in col_ids}
+                deleted_rcs = set()
+                for rc in reason_cols:
+                    cells_deleted += Cell.objects.filter(
+                        column=rc, dataset=dataset, deleted=False
+                    ).update(deleted=True)
+                    deleted_rcs.add(str(rc.id))
+                    rc.deleted = True
+                    rc.save(update_fields=["deleted"])
+                    columns_deleted += 1
 
-            if col_ids:
-                # Bulk delete cells
-                cells_deleted = Cell.objects.filter(
-                    column_id__in=col_ids, deleted=False
-                ).update(deleted=True)
+                # Remove from column order
+                col_id_str = str(col.id)
+                if dataset.column_order and col_id_str in dataset.column_order:
+                    dataset.column_order = [
+                        c
+                        for c in dataset.column_order
+                        if c != col_id_str and c not in deleted_rcs
+                    ]
+                    dataset.save(update_fields=["column_order"])
 
-                # Update dependent metrics BEFORE deleting columns —
-                # get_metrics_using_column scopes by dataset via the
-                # Column row, which must still be visible (deleted=False).
-                eval_col_ids = [
-                    str(c.id) for c in all_cols
-                    if c.source_id == str(user_eval.id)
-                ]
-                for ecid in eval_col_ids:
-                    metrics = UserEvalMetric.get_metrics_using_column(
-                        str(dataset.organization.id), ecid,
-                    )
-                    if metrics:
-                        UserEvalMetric.objects.filter(
-                            id__in=[m.id for m in metrics]
-                        ).update(column_deleted=True)
-
-                # Now safe to delete columns
-                columns_deleted = Column.objects.filter(
-                    id__in=col_ids
-                ).update(deleted=True)
-
-                # Update column_order and column_config
-                new_order = [
-                    c for c in (dataset.column_order or [])
-                    if c not in col_id_strs
-                ]
-                new_config = {
+                # Remove from column config
+                dataset.column_config = {
                     k: v
-                    for k, v in (dataset.column_config or {}).items()
-                    if k not in col_id_strs
+                    for k, v in dataset.column_config.items()
+                    if k not in deleted_rcs and k != col_id_str
                 }
-                Dataset.objects.filter(id=dataset.id).update(
-                    column_order=new_order, column_config=new_config
-                )
+                dataset.save(update_fields=["column_config"])
+
+                col.deleted = True
+                col.save(update_fields=["deleted"])
+                columns_deleted += 1
 
             user_eval.deleted = True
             user_eval.save(update_fields=["deleted"])
+
+            # Update metrics for all affected columns
+            metrics = UserEvalMetric.get_metrics_using_column(
+                str(dataset.organization.id),
+                str(col.id),
+            )
+            for metric in metrics:
+                metric.column_deleted = True
+                metric.save()
         else:
             user_eval.show_in_sidebar = False
             user_eval.save(update_fields=["show_in_sidebar"])

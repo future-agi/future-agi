@@ -20,26 +20,17 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        def _parse(val):
-            if val is None:
-                return []
-            if isinstance(val, list):
-                return [str(v).strip().lower() for v in val]
-            if isinstance(val, str):
+        def _p(v):
+            if isinstance(v, list): return [str(x).lower() for x in v]
+            if isinstance(v, str):
                 try:
-                    p = json.loads(val)
-                    if isinstance(p, list):
-                        return [str(v).strip().lower() for v in p]
-                except (json.JSONDecodeError, ValueError):
-                    pass
-                return [val.strip().lower()]
-            return [str(val).strip().lower()]
-        preds = _parse(kwargs.get("output", output))
-        labels = _parse(kwargs.get("expected", expected))
-        if not preds and not labels:
-            return {"score": 1.0, "reason": "Both empty"}
-        if len(preds) != len(labels):
-            return {"score": 0.0, "reason": f"Length mismatch: {len(preds)} vs {len(labels)}"}
+                    p = json.loads(v)
+                    if isinstance(p, list): return [str(x).lower() for x in p]
+                except: pass
+                return [v.strip().lower()]
+            return [str(v).lower()]
+        preds, labels = _p(kwargs.get("output", output)), _p(kwargs.get("expected", expected))
+        if len(preds) != len(labels) or not labels: return {"score": 0.0, "reason": "Invalid input"}
         beta = float(kwargs.get("beta", 1.0))
         positive_label = kwargs.get("positive_label")
         if positive_label is None:

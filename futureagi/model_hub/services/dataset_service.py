@@ -7,7 +7,7 @@ from typing import Optional
 import structlog
 from django.db.models import Q
 
-from model_hub.models.choices import SourceChoices, StatusType
+from model_hub.models.choices import SourceChoices
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
@@ -316,30 +316,7 @@ def delete_column(*, dataset_id, column_id, organization=None):
                     f"Failed to cleanup derived variables for column {column.name}: {cleanup_error}"
                 )
         if column.source == SourceChoices.EVALUATION.value:
-            eval_metric = UserEvalMetric.objects.filter(
-                id=column.source_id
-            ).first()
-            if eval_metric and eval_metric.status in (
-                StatusType.RUNNING.value,
-                StatusType.NOT_STARTED.value,
-                StatusType.EXPERIMENT_EVALUATION.value,
-            ):
-                try:
-                    from tfc.utils.distributed_state import evaluation_tracker
-
-                    evaluation_tracker.request_cancel(
-                        eval_metric.id, reason="eval_column_deleted"
-                    )
-                except Exception:
-                    pass
-                from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
-
-                mark_eval_cells_stopped(
-                    eval_metric, reason="Evaluation column deleted by user"
-                )
-            if eval_metric:
-                eval_metric.deleted = True
-                eval_metric.save(update_fields=["deleted"])
+            UserEvalMetric.objects.filter(id=column.source_id).update(deleted=True)
         if column.source == SourceChoices.ANNOTATION_LABEL.value:
             source_parts = column.source_id.split("-sourceid-")
 
@@ -386,6 +363,15 @@ def delete_column(*, dataset_id, column_id, organization=None):
         Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
     ).values_list("id", flat=True)
 
+    # Delete the columns (this will cascade delete related cells)
+    Column.objects.filter(
+        Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+    ).update(deleted=True)
+
+    column.deleted = True
+    column.deleted_at = now
+    column.save(update_fields=["deleted", "deleted_at"])
+
     # Clean up column_order and column_config
     columns_to_delete_strs = set(str(c) for c in columns_to_delete)
     if dataset.column_order:
@@ -400,28 +386,20 @@ def delete_column(*, dataset_id, column_id, organization=None):
         }
     dataset.save(update_fields=["column_order", "column_config"])
 
-    # Mark dependent eval metrics BEFORE deleting columns —
-    # get_metrics_using_column scopes by dataset via the Column row,
-    # which must still be visible (deleted=False).
+    # Mark dependent eval metrics as column_deleted
     try:
         metrics = UserEvalMetric.get_metrics_using_column(
             str(dataset.organization_id), col_id_str
         )
-        if metrics:
-            UserEvalMetric.objects.filter(
-                id__in=[m.id for m in metrics]
-            ).update(column_deleted=True)
+        for metric in metrics:
+            metric.column_deleted = True
+            metric.save(update_fields=["column_deleted"])
     except Exception:
         logger.warning(
             "failed_to_mark_dependent_metrics",
             column_id=col_id_str,
             dataset_id=str(dataset.id),
         )
-
-    # Now safe to delete columns
-    Column.objects.filter(
-        Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-    ).update(deleted=True)
 
     return {
         "dataset_id": str(dataset.id),

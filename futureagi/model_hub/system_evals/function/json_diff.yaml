@@ -34,8 +34,6 @@ config:
                 return 0, 1
             if isinstance(a, dict):
                 keys = set(list(a.keys()) + list(b.keys()))
-                if not keys:
-                    return 1, 1
                 m, t = 0, 0
                 for k in keys:
                     t += 1
@@ -46,8 +44,6 @@ config:
                 return m, max(t, 1)
             elif isinstance(a, list):
                 ml = max(len(a), len(b))
-                if ml == 0:
-                    return 1, 1
                 m, t = 0, 0
                 for i in range(ml):
                     t += 1

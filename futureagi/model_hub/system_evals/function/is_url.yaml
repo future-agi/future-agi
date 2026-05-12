@@ -24,29 +24,11 @@ config:
         text = str(kwargs.get("text", output or "")).strip()
         if not text:
             return {"score": 0.0, "reason": "Empty text is not a valid URL"}
-        if any(ch.isspace() for ch in text):
-            return {"score": 0.0, "reason": "URL contains whitespace"}
         try:
             parsed = urlparse(text)
+            if parsed.scheme and parsed.netloc:
+                return {"score": 1.0, "reason": f"Valid URL with scheme={parsed.scheme}"}
+            else:
+                return {"score": 0.0, "reason": "URL missing scheme or netloc"}
         except Exception as e:
             return {"score": 0.0, "reason": f"Not a valid URL: {e}"}
-
-        scheme = (parsed.scheme or "").lower()
-        if not scheme:
-            return {"score": 0.0, "reason": "URL missing scheme"}
-
-        no_netloc_schemes = {"mailto", "file", "tel", "sms", "data", "urn"}
-        if scheme in no_netloc_schemes:
-            if not parsed.path:
-                return {"score": 0.0, "reason": f"{scheme}: URL missing body"}
-            return {"score": 1.0, "reason": f"Valid URL with scheme={scheme}"}
-
-        netloc = parsed.netloc
-        if not netloc:
-            return {"score": 0.0, "reason": "URL missing netloc"}
-        host = parsed.hostname or ""
-        if not host or "." not in host or host.startswith(".") or host.endswith("."):
-            return {"score": 0.0, "reason": "URL has malformed host"}
-        if any(label.startswith("-") or label.endswith("-") for label in host.split(".") if label):
-            return {"score": 0.0, "reason": "URL has malformed host label"}
-        return {"score": 1.0, "reason": f"Valid URL with scheme={scheme}"}

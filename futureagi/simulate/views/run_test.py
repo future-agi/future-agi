@@ -5,7 +5,6 @@ import math
 import os
 import re
 import traceback
-from datetime import timedelta
 from urllib.parse import urlencode
 
 import structlog
@@ -32,18 +31,6 @@ from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
 
 logger = structlog.get_logger(__name__)
-
-
-def _empty_call_log_summary(reason: str) -> dict:
-    return {
-        "total_entries": 0,
-        "level_counts": {},
-        "category_counts": {},
-        "last_logged_at": None,
-        "skipped_reason": reason,
-    }
-
-
 from drf_yasg.utils import swagger_auto_schema
 
 from model_hub.models.api_key import ApiKey
@@ -3402,14 +3389,9 @@ class CallExecutionLogsView(APIView):
             customer_call_id = request.query_params.get(
                 "customer_call_id"
             ) or request.query_params.get("vapi_call_id")
-            call_execution_filters = {
-                "test_execution__run_test__organization": user_organization,
-                "test_execution__run_test__deleted": False,
-            }
             if customer_call_id:
                 call_execution = CallExecution.objects.filter(
-                    customer_call_id=customer_call_id,
-                    **call_execution_filters,
+                    customer_call_id=customer_call_id
                 ).first()
                 if not call_execution:
                     return self.gm.bad_request("Call execution not found.")
@@ -3417,15 +3399,15 @@ class CallExecutionLogsView(APIView):
                 call_execution = get_object_or_404(
                     CallExecution,
                     id=call_execution_id,
-                    **call_execution_filters,
+                    test_execution__run_test__organization=user_organization,
+                    test_execution__run_test__deleted=False,
                 )
 
             source = CallLogEntry.LogSource.CUSTOMER
 
-            base_queryset = CallLogEntry.objects.filter(
+            queryset = CallLogEntry.objects.filter(
                 call_execution=call_execution, source=source
             )
-            queryset = base_queryset
 
             severity_text = request.query_params.get("severity_text")
             if severity_text is not None:
@@ -3447,90 +3429,28 @@ class CallExecutionLogsView(APIView):
             # Lazy backfill: observability-off simulate calls never had their
             # artifact log file downloaded at ingest time, but the URL is
             # sitting on `provider_call_data.vapi.artifact.logUrl`. First
-            # Logs-tab open triggers the existing ingest task; the response
-            # marks ingestion as pending so the frontend can poll until rows
-            # exist or the task records an empty summary.
-            has_stored_logs = base_queryset.exists()
-            pcd = call_execution.provider_call_data or {}
-            vapi = pcd.get("vapi") or {}
-            provider_log_url = (vapi.get("artifact") or {}).get("logUrl")
-            log_url = call_execution.customer_log_url or provider_log_url
-            has_ingestion_summary = bool(call_execution.customer_logs_summary)
-            should_start_ingestion = (
-                not has_stored_logs
-                and bool(log_url)
-                and not has_ingestion_summary
-                and call_execution.logs_ingested_at is None
-            )
-
-            if should_start_ingestion:
-                dispatch_started_at = timezone.now()
-                update_kwargs = {"logs_ingested_at": dispatch_started_at}
-                if not call_execution.customer_log_url and provider_log_url:
-                    update_kwargs["customer_log_url"] = provider_log_url
-
-                claimed_ingestion = CallExecution.objects.filter(
-                    id=call_execution.id,
-                    logs_ingested_at__isnull=True,
-                ).update(**update_kwargs)
-
-                if claimed_ingestion:
-                    call_execution.logs_ingested_at = dispatch_started_at
-                    if "customer_log_url" in update_kwargs:
-                        call_execution.customer_log_url = provider_log_url
-
-                    try:
-                        from ee.voice.tasks.call_log_tasks import ingest_call_logs_task
-                    except ImportError:
-                        empty_summary = _empty_call_log_summary(
-                            "ee_voice_not_available"
-                        )
-                        CallExecution.objects.filter(
-                            id=call_execution.id,
-                            logs_ingested_at=dispatch_started_at,
-                        ).update(customer_logs_summary=empty_summary)
-                        call_execution.customer_logs_summary = empty_summary
-                        logger.info(
-                            "call_log_ingestion_task_unavailable",
-                            call_execution_id=str(call_execution.id),
-                        )
-                    else:
-                        try:
-                            ingest_call_logs_task.apply_async(
-                                args=(str(call_execution.id), log_url),
-                                kwargs={
-                                    "verify_ssl": False,
-                                    "source": CallLogEntry.LogSource.CUSTOMER,
-                                },
-                            )
-                        except Exception:
-                            CallExecution.objects.filter(
-                                id=call_execution.id,
-                                logs_ingested_at=dispatch_started_at,
-                            ).update(logs_ingested_at=None)
-                            call_execution.logs_ingested_at = None
-                            raise
-                else:
-                    call_execution.refresh_from_db(
-                        fields=[
-                            "customer_log_url",
-                            "customer_logs_summary",
-                            "logs_ingested_at",
-                        ]
+            # Logs-tab open triggers the existing ingest task; subsequent
+            # opens serve the persisted CallLogEntry rows. `customer_log_url`
+            # doubles as the dispatched-flag so we don't re-fire on every
+            # poll while the task runs.
+            if not queryset.exists() and not call_execution.customer_log_url:
+                pcd = call_execution.provider_call_data or {}
+                vapi = pcd.get("vapi") or {}
+                log_url = (vapi.get("artifact") or {}).get("logUrl")
+                if log_url:
+                    call_execution.customer_log_url = log_url
+                    call_execution.save(update_fields=["customer_log_url"])
+                    from simulate.tasks.call_log_tasks import (
+                        ingest_call_logs_task,
                     )
 
-            has_ingestion_summary = bool(call_execution.customer_logs_summary)
-            ingest_attempt_at = call_execution.logs_ingested_at
-            recently_started_ingest = (
-                ingest_attempt_at is None
-                or timezone.now() - ingest_attempt_at < timedelta(minutes=5)
-            )
-            ingestion_pending = (
-                not has_stored_logs
-                and bool(log_url)
-                and not has_ingestion_summary
-                and recently_started_ingest
-            )
+                    ingest_call_logs_task.apply_async(
+                        args=(str(call_execution.id), log_url),
+                        kwargs={
+                            "verify_ssl": False,
+                            "source": CallLogEntry.LogSource.CUSTOMER,
+                        },
+                    )
 
             # Intentionally return a 200 with an empty page when no rows
             # match — the frontend Logs tab distinguishes "no logs yet /
@@ -3555,11 +3475,7 @@ class CallExecutionLogsView(APIView):
             ]
 
             logs_serializer = CallExecutionLogsResponseSerializer(
-                {
-                    "results": results,
-                    "source": source,
-                    "ingestion_pending": ingestion_pending,
-                }
+                {"results": results, "source": source}
             )
             return paginator.get_paginated_response(logs_serializer.data)
 

@@ -1,7 +1,6 @@
 import {
   Box,
   Button,
-  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -20,12 +19,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
-import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
-import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
-import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -87,8 +82,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     sourceColumns,
     setSelectedEval,
     setStep,
-    onFiltersChange,
-    filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
@@ -114,15 +107,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [templateFormat, setTemplateFormat] = useState("mustache");
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
-
-  const localFormFilters = useWatch({
-    control: localFilterForm.control,
-    name: "filters",
-  });
-  const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
-  );
 
   // Composite eval state (only used when evalType === "composite")
   const [selectedChildren, setSelectedChildren] = useState([]);
@@ -438,9 +422,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         tags,
         publish: true,
       });
-      if (source === "task" && onFiltersChange) {
-        onFiltersChange(localFilterForm.getValues("filters") || []);
-      }
       // Now add to the current context
       onSave({
         templateId: draftId,
@@ -473,9 +454,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     instructions,
     enqueueSnackbar,
     isOSS,
-    source,
-    onFiltersChange,
-    localFilterForm,
   ]);
 
   // Save & Add — composite branch. Composite templates are created via
@@ -756,10 +734,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   pickerSourceId={sourceId}
                   pickerSourceRowType={sourceRowType}
                   pickerSourceColumns={sourceColumns}
-                  pickerSourceFilters={localFormFilters}
-                  pickerOnFiltersChange={(f) =>
-                    localFilterForm.setValue("filters", f || [])
-                  }
                   onNameChange={setName}
                   onDescriptionChange={setDescription}
                   onAggregationEnabledChange={setAggregationEnabled}
@@ -978,7 +952,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -990,57 +963,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 flexDirection: "column",
               }}
             >
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.75,
-                  mb: 1.5,
-                }}
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                sx={{ mb: 1.5, fontSize: "13px" }}
               >
-                <Typography
-                  variant="body2"
-                  fontWeight={600}
-                  sx={{ fontSize: "13px" }}
-                >
-                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
-                </Typography>
-                {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
-                  <Chip
-                    label={ROW_TYPE_LABELS[sourceRowType]}
-                    size="small"
-                    sx={{
-                      height: 18,
-                      fontSize: "10px",
-                      bgcolor: "background.neutral",
-                      color: "text.secondary",
-                      "& .MuiChip-label": { px: 0.75 },
-                    }}
-                  />
-                )}
-              </Box>
-
-              {source === "task" && sourceId && (
-                <Box sx={{ mb: 1.5 }}>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
-                  >
-                    Narrow down which{" "}
-                    {(ROW_TYPE_LABELS[sourceRowType] || "rows").toLowerCase()}{" "}
-                    this task runs on
-                  </Typography>
-                  <TaskFilterBar
-                    control={localFilterForm.control}
-                    setValue={localFilterForm.setValue}
-                    projectId={sourceId}
-                    isSimulator={String(sourceRowType || "")
-                      .toLowerCase()
-                      .startsWith("voice")}
-                  />
-                </Box>
-              )}
+                {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+              </Typography>
               <Box sx={{ flex: 1, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
@@ -1075,7 +1004,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     initialRowType={sourceRowType}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
-                    localFilters={localApiFilters}
                   />
                 )}
                 {source === "tracing" && (

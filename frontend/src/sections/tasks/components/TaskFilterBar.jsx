@@ -188,7 +188,7 @@ FilterChip.propTypes = {
 };
 
 // ── Main ──
-const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) => {
+const TaskFilterBar = ({ control, setValue, projectId }) => {
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
   const [panelFilters, setPanelFilters] = useState(() =>
@@ -208,15 +208,6 @@ const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) =>
 
   const [anchorEl, setAnchorEl] = useState(null);
   const addBtnRef = useRef(null);
-
-  // Re-anchor when chips swap the trigger DOM node, so an open popover
-  // doesn't end up attached to a detached element.
-  const hasFiltersForEffect = panelFilters.length > 0;
-  useEffect(() => {
-    if (anchorEl && addBtnRef.current && anchorEl !== addBtnRef.current) {
-      setAnchorEl(addBtnRef.current);
-    }
-  }, [hasFiltersForEffect, anchorEl]);
 
   const applyPanelFilters = useCallback(
     (next) => {
@@ -350,7 +341,6 @@ const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) =>
         onClose={() => setAnchorEl(null)}
         currentFilters={panelFilters}
         projectId={projectId}
-        isSimulator={isSimulator}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>
@@ -361,7 +351,6 @@ TaskFilterBar.propTypes = {
   control: PropTypes.object.isRequired,
   setValue: PropTypes.func.isRequired,
   projectId: PropTypes.string,
-  isSimulator: PropTypes.bool,
 };
 
 export default TaskFilterBar;

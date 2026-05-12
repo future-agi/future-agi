@@ -194,11 +194,6 @@ const ObserveToolbar = ({
     const opReverseMap = {
       equals: "is",
       not_equals: "is_not",
-      // Multi-value picks become `in`/`not_in` on the apply path; reverse
-      // them back to `is`/`is_not` so the Basic-tab operator dropdown still
-      // matches a known option (otherwise MUI Select renders blank).
-      in: "is",
-      not_in: "is_not",
       contains: "contains",
       not_contains: "not_contains",
       starts_with: "starts_with",

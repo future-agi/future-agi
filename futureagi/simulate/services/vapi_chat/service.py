@@ -25,12 +25,10 @@ from simulate.services.types.chat import (
     SendMessageInput,
     SendMessageResult,
 )
-from tfc.ee_stub import _ee_stub
-
 try:
     from ee.voice.services.vapi_service import VapiService
 except ImportError:
-    VapiService = _ee_stub("VapiService")
+    VapiService = None
 
 logger = structlog.get_logger(__name__)
 
