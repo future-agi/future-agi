@@ -149,6 +149,7 @@ export const replaceColumnIdWithName = (text, allColumns) => {
 export const replaceColumnNameWithId = (text, allColumns) => {
   let newText = text;
   allColumns.forEach(({ headerName, field }) => {
+    // Note: column names containing dots are not supported (dot is treated as a path separator)
     const pattern = new RegExp(`{{${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)}}`, "g");
     if (newText && newText.length) {
       newText = newText.replace(pattern, `{{${field}$1}}`);

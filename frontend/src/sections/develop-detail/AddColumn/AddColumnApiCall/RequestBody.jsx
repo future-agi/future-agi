@@ -122,7 +122,7 @@ const RequestBody = ({
       jsonSchemas?.[column?.field]?.keys?.forEach((path) => {
         const fullPath = `${name}.${path}`;
         if (fullPath.toLowerCase().startsWith(lower)) {
-          options.push({ label: fullPath, value: `{{${fullPath}}}` });
+          options.push({ label: fullPath, value: `{{${fullPath}}}`, isJsonPath: true });
         }
       });
     });
