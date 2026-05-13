@@ -159,6 +159,22 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT
                 )
+                if failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    block_key = f"user_blocked_{email}"
+                    block_data = {
+                        "blocked": True,
+                        "expiry": datetime.now().timestamp()
+                        + settings.FAILED_ATTEMPTS_TIMEOUT,
+                    }
+                    cache.set(block_key, block_data, settings.FAILED_ATTEMPTS_TIMEOUT)
+                    return self._gm.bad_request(
+                        {
+                            "error": "Too many failed login attempts. Account blocked for 1 hour.",
+                            "error_code": "LOGIN_TOO_MANY_ATTEMPTS",
+                            "blocked": True,
+                            "block_time": settings.FAILED_ATTEMPTS_TIMEOUT,
+                        }
+                    )
                 remaining_attempts = settings.MAX_LOGIN_ATTEMPTS - failed_attempts
                 return self._gm.bad_request(
                     {
@@ -195,6 +211,22 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT
                 )
+                if failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    block_key = f"user_blocked_{email}"
+                    block_data = {
+                        "blocked": True,
+                        "expiry": datetime.now().timestamp()
+                        + settings.FAILED_ATTEMPTS_TIMEOUT,
+                    }
+                    cache.set(block_key, block_data, settings.FAILED_ATTEMPTS_TIMEOUT)
+                    return self._gm.bad_request(
+                        {
+                            "error": "Too many failed login attempts. Account blocked for 1 hour.",
+                            "error_code": "LOGIN_TOO_MANY_ATTEMPTS",
+                            "blocked": True,
+                            "block_time": settings.FAILED_ATTEMPTS_TIMEOUT,
+                        }
+                    )
                 remaining_attempts = settings.MAX_LOGIN_ATTEMPTS - failed_attempts
                 return self._gm.bad_request(
                     {
