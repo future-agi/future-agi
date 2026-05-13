@@ -341,6 +341,12 @@ export const useAgentPlaygroundStore = create(
                 prompt_template_id: config?.prompt_template_id ?? null,
                 prompt_version_id: null,
               }
+            : type === NODE_TYPES.EVAL
+              ? {
+                  evaluators: config?.evaluators || [],
+                  threshold: config?.threshold ?? 0.5,
+                  failAction: config?.failAction || "continue",
+                }
             : {};
 
         // Caller-provided config is transient — only for form population, not persisted
@@ -348,8 +354,60 @@ export const useAgentPlaygroundStore = create(
           config && Object.keys(config).length > 0 ? config : null;
 
         const isAgent = type === NODE_TYPES.AGENT;
+        const isEvaluation = type === NODE_TYPES.EVAL;
         const ports = isAgent
           ? undefined
+          : isEvaluation
+            ? [
+                {
+                  id: crypto.randomUUID(),
+                  key: PORT_KEYS.INPUT,
+                  display_name: "input",
+                  direction: PORT_DIRECTION.INPUT,
+                  data_schema: {},
+                  required: true,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  key: "reference",
+                  display_name: "reference",
+                  direction: PORT_DIRECTION.INPUT,
+                  data_schema: {},
+                  required: false,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  key: "context",
+                  display_name: "context",
+                  direction: PORT_DIRECTION.INPUT,
+                  data_schema: {},
+                  required: false,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  key: "evaluation_result",
+                  display_name: "evaluation_result",
+                  direction: PORT_DIRECTION.OUTPUT,
+                  data_schema: { type: "object" },
+                  required: true,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  key: "passthrough",
+                  display_name: generateOutputLabel(nodes),
+                  direction: PORT_DIRECTION.OUTPUT,
+                  data_schema: {},
+                  required: false,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  key: "fallback",
+                  display_name: "fallback",
+                  direction: PORT_DIRECTION.OUTPUT,
+                  data_schema: {},
+                  required: false,
+                },
+              ]
           : [
               {
                 id: crypto.randomUUID(),

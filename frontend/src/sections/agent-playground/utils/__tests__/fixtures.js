@@ -107,6 +107,44 @@ export function createAgentNode(id, overrides = {}) {
   };
 }
 
+export function createEvalNode(id, overrides = {}) {
+  const ports = overrides.ports || [
+    {
+      temp_id: `${id}-in`,
+      key: "input",
+      display_name: "input",
+      direction: "input",
+      data_schema: {},
+      required: true,
+    },
+    {
+      temp_id: `${id}-out`,
+      key: "evaluation_result",
+      display_name: "evaluation_result",
+      direction: "output",
+      data_schema: { type: "object" },
+      required: true,
+    },
+  ];
+
+  return {
+    id,
+    type: NODE_TYPES.EVAL,
+    position: { x: 0, y: 0 },
+    data: {
+      label: overrides.label || `Evaluation ${id}`,
+      node_template_id: overrides.node_template_id || "tpl-eval",
+      ports,
+      evaluators: overrides.evaluators || [{ templateId: "eval-template-1" }],
+      config: {
+        evaluators: overrides.evaluators || [{ templateId: "eval-template-1" }],
+        threshold: overrides.threshold ?? 0.8,
+        failAction: overrides.failAction || "route_fallback",
+      },
+    },
+  };
+}
+
 /** Node with empty/no config — will fail validation */
 export function createUnconfiguredNode(id) {
   return {

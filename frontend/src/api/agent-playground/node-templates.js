@@ -19,7 +19,7 @@ export const useGetReferenceableGraphs = (graphId, options = {}) =>
   });
 
 /**
- * Hook for fetching node templates. Filters to llm_prompt only for now.
+ * Hook for fetching node templates.
  * Maps API shape to NodeCard shape: { id, node_template_id, title, description, iconSrc, color }
  * @param {object} options - Additional react-query options
  */
@@ -29,14 +29,17 @@ export const useGetNodeTemplates = (options = {}) =>
     queryFn: () => axios.get(endpoints.agentPlayground.nodeTemplates),
     select: (res) =>
       (res.data?.result?.node_templates ?? [])
-        .filter((t) => t.name === NODE_TYPES.LLM_PROMPT)
+        .filter((t) => [NODE_TYPES.LLM_PROMPT, NODE_TYPES.EVAL].includes(t.name))
         .map((t) => ({
           id: t.name,
           node_template_id: t.id,
           title: t.display_name,
           description: t.description,
-          iconSrc: "/assets/icons/ic_chat_single.svg",
-          color: "orange.500",
+          iconSrc:
+            t.name === NODE_TYPES.EVAL
+              ? "/assets/icons/ic_check.svg"
+              : "/assets/icons/ic_chat_single.svg",
+          color: t.name === NODE_TYPES.EVAL ? "green.500" : "orange.500",
         })),
     staleTime: 5 * 60 * 1000,
     ...options,

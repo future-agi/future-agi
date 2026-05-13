@@ -28,6 +28,7 @@ def register_template(definition: TemplateDefinition) -> None:
 def get_all_templates() -> dict[str, TemplateDefinition]:
     """Import all template modules and return a copy of the registry."""
     # Import template modules to trigger registration
+    import agent_playground.templates.evaluation  # noqa: F401
     import agent_playground.templates.llm_prompt  # noqa: F401
 
     return dict(_TEMPLATE_REGISTRY)

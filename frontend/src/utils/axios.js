@@ -46,7 +46,13 @@ function snakeToCamelKey(key) {
 // phantom aliases like `numOfWords` for a template variable the user named
 // `num_of_words`. The outer field itself still gets a camelCase alias — only
 // the inner keys of that object are left alone (TH-4375).
-const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders", "params", "headers"]);
+const USER_KEYED_MAP_FIELDS = new Set([
+  "variable_names",
+  "mapping",
+  "placeholders",
+  "params",
+  "headers",
+]);
 
 // Build a camelCase→snake_case lookup table for each object we alias.
 function buildAliasTable(obj) {
@@ -1021,13 +1027,13 @@ export const endpoints = {
       getExperimentDerivedVariables: (expId) =>
         `/model-hub/experiments/v2/${expId}/derived-variables/`,
       feedback: {
-        getTemplate: ( experimentId) =>
+        getTemplate: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/get-template/`,
-        create: ( experimentId) =>
+        create: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/`,
-        getDetails: ( experimentId) =>
+        getDetails: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/get-feedback-details/`,
-        submit: ( experimentId) =>
+        submit: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/submit-feedback/`,
       },
     },
@@ -1420,7 +1426,8 @@ export const endpoints = {
     mcpTools: (id) => `/agentcc/gateways/${id}/mcp-tools/`,
     updateMcpServer: (id) => `/agentcc/gateways/${id}/update-mcp-server/`,
     removeMcpServer: (id) => `/agentcc/gateways/${id}/remove-mcp-server/`,
-    updateMcpGuardrails: (id) => `/agentcc/gateways/${id}/update-mcp-guardrails/`,
+    updateMcpGuardrails: (id) =>
+      `/agentcc/gateways/${id}/update-mcp-guardrails/`,
     testMcpTool: (id) => `/agentcc/gateways/${id}/test-mcp-tool/`,
     mcpResources: (id) => `/agentcc/gateways/${id}/mcp-resources/`,
     mcpPrompts: (id) => `/agentcc/gateways/${id}/mcp-prompts/`,
@@ -1561,6 +1568,8 @@ export const endpoints = {
       `/agent-playground/graphs/${graphId}/dataset/execute/`,
     executionDetail: (graphId, executionId) =>
       `/agent-playground/graphs/${graphId}/executions/${executionId}/`,
+    evaluateExecution: (graphId, executionId) =>
+      `/agent-playground/graphs/${graphId}/executions/${executionId}/evaluate/`,
     nodeExecutionDetail: (executionId, nodeExecutionId) =>
       `/agent-playground/executions/${executionId}/nodes/${nodeExecutionId}/`,
     graphExecutions: (graphId) =>

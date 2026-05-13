@@ -64,6 +64,7 @@ function transformConfigFromApi(apiConfig) {
 export function buildVersionPayload(nodes = [], edges = [], options = {}) {
   const apiNodes = nodes.map((node) => {
     const isSubgraph = node.type === NODE_TYPES.AGENT;
+    const isEvaluation = node.type === NODE_TYPES.EVAL;
 
     const apiNode = {
       id: node.id,
@@ -96,18 +97,22 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
       }
     } else {
       apiNode.node_template_id = node.data?.node_template_id || null;
-      // Merge transient _initialConfig (imported prompt data) over saved config
-      // so the full prompt content is included in the API payload.
-      const effectiveConfig = node.data?._initialConfig
-        ? { ...node.data?.config, ...node.data._initialConfig }
-        : node.data?.config;
-      apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
+      if (isEvaluation) {
+        apiNode.config = buildEvaluationConfigForApi(node.data);
+      } else {
+        // Merge transient _initialConfig (imported prompt data) over saved config
+        // so the full prompt content is included in the API payload.
+        const effectiveConfig = node.data?._initialConfig
+          ? { ...node.data?.config, ...node.data._initialConfig }
+          : node.data?.config;
+        apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
+      }
 
-      const atomicOutputPorts = (node.data?.ports || []).filter(
-        (p) => p.direction === "output",
-      );
-      if (atomicOutputPorts.length > 0) {
-        apiNode.ports = atomicOutputPorts.map((port) => ({
+      const atomicPorts = isEvaluation
+        ? node.data?.ports || []
+        : (node.data?.ports || []).filter((p) => p.direction === "output");
+      if (atomicPorts.length > 0) {
+        apiNode.ports = atomicPorts.map((port) => ({
           id: port.id || port.temp_id,
           key: port.key,
           display_name: port.display_name,
@@ -132,6 +137,16 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
     ...(options.commitMessage && { commit_message: options.commitMessage }),
     nodes: apiNodes,
     node_connections: apiNodeConnections,
+  };
+}
+
+function buildEvaluationConfigForApi(nodeData = {}) {
+  const config = nodeData.config || {};
+  return {
+    evaluators: nodeData.evaluators || config.evaluators || [],
+    threshold: config.threshold ?? nodeData.threshold ?? 0.5,
+    fail_action:
+      config.fail_action || config.failAction || nodeData.failAction || "continue",
   };
 }
 
@@ -239,6 +254,7 @@ export function parseVersionResponse(apiData) {
   const xyNodes = apiData.nodes.map((node) => {
     const nodeType = mapApiTypeToNodeType(node);
     const isSubgraph = nodeType === NODE_TYPES.AGENT;
+    const isEvaluation = nodeType === NODE_TYPES.EVAL;
 
     // For atomic nodes, read LLM config from promptTemplate (not config)
     const formConfig =
@@ -288,23 +304,31 @@ export function parseVersionResponse(apiData) {
               node_template_id: node.nodeTemplateId || null,
               prompt_template_id: node.promptTemplate?.promptTemplateId || null,
               prompt_version_id: node.promptTemplate?.promptVersionId || null,
-              config: {
-                ...formConfig,
-                prompt_template_id:
-                  node.promptTemplate?.promptTemplateId || null,
-                prompt_version_id: node.promptTemplate?.promptVersionId || null,
-                payload: {
-                  ...formConfig?.payload,
-                  promptConfig: [
-                    {
-                      configuration: {
-                        ...(node.promptTemplate || {}),
-                        responseFormat: node.prompt_template?.response_format,
-                      },
+              config: isEvaluation
+                ? {
+                    ...(node.config || {}),
+                    failAction: node.config?.fail_action || node.config?.failAction,
+                  }
+                : {
+                    ...formConfig,
+                    prompt_template_id:
+                      node.promptTemplate?.promptTemplateId || null,
+                    prompt_version_id: node.promptTemplate?.promptVersionId || null,
+                    payload: {
+                      ...formConfig?.payload,
+                      promptConfig: [
+                        {
+                          configuration: {
+                            ...(node.promptTemplate || {}),
+                            responseFormat: node.prompt_template?.response_format,
+                          },
+                        },
+                      ],
                     },
-                  ],
-                },
-              },
+                  },
+              ...(isEvaluation && {
+                evaluators: node.config?.evaluators || [],
+              }),
             }),
       },
     };
@@ -332,6 +356,8 @@ export function parseVersionResponse(apiData) {
  */
 function mapApiTypeToNodeType(apiNode) {
   if (apiNode.type === API_NODE_TYPES.ATOMIC) {
+    const templateName = apiNode.nodeTemplateName || apiNode.node_template_name;
+    if (templateName === NODE_TYPES.EVAL) return NODE_TYPES.EVAL;
     return NODE_TYPES.LLM_PROMPT;
   }
   if (apiNode.type === API_NODE_TYPES.SUBGRAPH) {

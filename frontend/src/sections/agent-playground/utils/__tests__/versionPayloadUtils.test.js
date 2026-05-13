@@ -3,7 +3,12 @@ import {
   buildVersionPayload,
   parseVersionResponse,
 } from "../versionPayloadUtils";
-import { createPromptNode, createAgentNode, createEdge } from "./fixtures";
+import {
+  createPromptNode,
+  createAgentNode,
+  createEvalNode,
+  createEdge,
+} from "./fixtures";
 import { API_NODE_TYPES, VERSION_STATUS } from "../constants";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +27,23 @@ describe("buildVersionPayload", () => {
     const result = buildVersionPayload(nodes, []);
     expect(result.nodes[0].type).toBe(API_NODE_TYPES.SUBGRAPH);
     expect(result.nodes[0].ref_graph_version_id).toBe("v-42");
+  });
+
+  it("maps evaluation nodes to atomic nodes with executable config and ports", () => {
+    const nodes = [createEvalNode("e1")];
+    const result = buildVersionPayload(nodes, []);
+    expect(result.nodes[0].type).toBe(API_NODE_TYPES.ATOMIC);
+    expect(result.nodes[0].node_template_id).toBe("tpl-eval");
+    expect(result.nodes[0].config).toEqual({
+      evaluators: [{ templateId: "eval-template-1" }],
+      threshold: 0.8,
+      fail_action: "route_fallback",
+    });
+    expect(result.nodes[0].ports.map((port) => port.key)).toEqual([
+      "input",
+      "evaluation_result",
+    ]);
+    expect(result.nodes[0]).not.toHaveProperty("prompt_template");
   });
 
   it("uses default DRAFT status", () => {
@@ -158,6 +180,33 @@ describe("parseVersionResponse", () => {
     expect(result.nodes[0].type).toBe("llm_prompt");
     expect(result.nodes[0].data.label).toBe("My Prompt");
     expect(result.nodes[0].position).toEqual({ x: 100, y: 200 });
+  });
+
+  it("maps evaluation template atomic nodes to evaluation frontend nodes", () => {
+    const apiData = {
+      nodes: [
+        {
+          id: "e1",
+          type: "atomic",
+          name: "quality_gate",
+          nodeTemplateId: "tpl-eval",
+          nodeTemplateName: "evaluation",
+          config: {
+            evaluators: [{ templateId: "eval-template-1" }],
+            threshold: 0.9,
+            fail_action: "stop",
+          },
+          ports: [],
+        },
+      ],
+      nodeConnections: [],
+    };
+    const result = parseVersionResponse(apiData);
+    expect(result.nodes[0].type).toBe("evaluation");
+    expect(result.nodes[0].data.config.threshold).toBe(0.9);
+    expect(result.nodes[0].data.evaluators).toEqual([
+      { templateId: "eval-template-1" },
+    ]);
   });
 
   it("maps subgraph API type to AGENT node type", () => {

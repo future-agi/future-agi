@@ -71,6 +71,20 @@ export const useExecuteDataset = (options = {}) =>
   });
 
 /**
+ * Hook for evaluating a completed graph execution.
+ * @param {object} options - useMutation options
+ */
+export const useEvaluateExecution = (options = {}) =>
+  useMutation({
+    mutationFn: ({ graphId, executionId, payload }) =>
+      axios.post(
+        endpoints.agentPlayground.evaluateExecution(graphId, executionId),
+        payload,
+      ),
+    ...options,
+  });
+
+/**
  * Hook for fetching a single node's execution detail (inputs, outputs, usage).
  * @param {string} executionId
  * @param {string} nodeExecutionId

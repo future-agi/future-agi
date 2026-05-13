@@ -156,10 +156,12 @@ export function getDefaultValues(nodeData) {
     };
   }
 
-  if (nodeData?.type === "eval") {
+  if (nodeData?.type === NODE_TYPES.EVAL) {
     return {
       ...baseValues,
       evaluators: mergedConfig?.evaluators || [],
+      threshold: mergedConfig?.threshold ?? 0.5,
+      failAction: mergedConfig?.failAction || mergedConfig?.fail_action || "continue",
     };
   }
 
@@ -295,6 +297,24 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
               ? apiNode.inputMappings
               : existingNode?.data?.config?.payload?.inputMappings || [],
           },
+        },
+      },
+    };
+  }
+
+  if (nodeType === NODE_TYPES.EVAL) {
+    return {
+      ...existingNode,
+      data: {
+        ...existingNode?.data,
+        label: apiNode.name || existingNode?.data?.label,
+        ports: apiNode.ports || existingNode?.data?.ports || [],
+        evaluators: apiNode.config?.evaluators || [],
+        config: {
+          ...existingNode?.data?.config,
+          ...apiNode.config,
+          threshold: apiNode.config?.threshold ?? 0.5,
+          failAction: apiNode.config?.failAction || apiNode.config?.fail_action || "continue",
         },
       },
     };

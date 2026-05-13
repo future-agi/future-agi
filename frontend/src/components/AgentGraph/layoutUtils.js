@@ -26,6 +26,14 @@ const API_TYPE_MAP = {
   subgraph: "agent",
 };
 
+function getFrontendNodeType(node) {
+  const templateName = node.nodeTemplateName || node.node_template_name;
+  if (node.type === "atomic" && templateName === "evaluation") {
+    return "evaluation";
+  }
+  return API_TYPE_MAP[node.type] || "llm_prompt";
+}
+
 const GREEN_COLOR = "var(--green-500, #22c55e)";
 
 const defaultEdgeStyle = {
@@ -177,8 +185,9 @@ function layoutSubgraph(subGraphData, parentNodeId) {
         label: node.name,
         originalId: node.id,
         apiNodeType: node.type,
-        frontendNodeType: API_TYPE_MAP[node.type] || "llm_prompt",
+        frontendNodeType: getFrontendNodeType(node),
         nodeExecution: exec,
+        ports: node.ports || [],
         hasSubGraph: !!node.subGraph || !!node.sub_graph,
       },
     };
@@ -291,7 +300,7 @@ function assembleRFGraph(executionData, g, allMainEdges, subgraphLayouts) {
         data: {
           label: node.name,
           apiNodeType: node.type,
-          frontendNodeType: API_TYPE_MAP[node.type] || "agent",
+          frontendNodeType: getFrontendNodeType(node),
           nodeExecution: exec,
         },
         style: { width: groupWidth, height: groupHeight },
@@ -307,8 +316,9 @@ function assembleRFGraph(executionData, g, allMainEdges, subgraphLayouts) {
         data: {
           label: node.name,
           apiNodeType: node.type,
-          frontendNodeType: API_TYPE_MAP[node.type] || "llm_prompt",
+          frontendNodeType: getFrontendNodeType(node),
           nodeExecution: exec,
+          ports: node.ports || [],
           hasSubGraph: false,
         },
       });

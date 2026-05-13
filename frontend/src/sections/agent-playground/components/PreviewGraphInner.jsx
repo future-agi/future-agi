@@ -17,8 +17,8 @@ import { NODE_TYPES } from "../utils/constants";
 // Reuse existing node types
 const nodeTypes = {
   [NODE_TYPES.LLM_PROMPT]: PromptNode,
-  agent: AgentNode,
-  eval: EvalNode,
+  [NODE_TYPES.AGENT]: AgentNode,
+  [NODE_TYPES.EVAL]: EvalNode,
 };
 
 // Wrapper component for preview container styling

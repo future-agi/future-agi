@@ -12,6 +12,7 @@ import {
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import { format } from "date-fns";
+import { getEvaluatorId } from "../utils/evaluationUtils";
 
 export default function EvalListItem({ evalItem, onEdit, onRemove }) {
   const theme = useTheme();
@@ -141,7 +142,7 @@ export default function EvalListItem({ evalItem, onEdit, onRemove }) {
         </IconButton>
         <IconButton
           size="small"
-          onClick={() => onRemove(evalItem.eval_id || evalItem.id)}
+          onClick={() => onRemove(getEvaluatorId(evalItem))}
           sx={{
             ml: 1,
             border: "1px solid",
@@ -167,6 +168,9 @@ EvalListItem.propTypes = {
   evalItem: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     evalId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    eval_id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    templateId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    template_id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     name: PropTypes.string,
     groupName: PropTypes.string,
     evalRequiredKeys: PropTypes.oneOfType([

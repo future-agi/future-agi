@@ -5,6 +5,7 @@ This package contains implementations of BaseNodeRunner for different node templ
 Runners self-register on module import.
 
 Current runners:
+    - evaluation: Platform eval execution using the unified eval engine
     - llm_prompt: LLM completion using LiteLLM
 
 Adding a new runner:
@@ -16,4 +17,5 @@ Adding a new runner:
 
 # Import runner modules to trigger self-registration.
 # Add new runners here as they are created.
+import agent_playground.services.engine.runners.evaluation  # noqa: F401
 import agent_playground.services.engine.runners.llm_prompt  # noqa: F401
