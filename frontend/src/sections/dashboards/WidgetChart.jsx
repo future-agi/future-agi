@@ -153,9 +153,20 @@ export default function WidgetChart({ widget, globalDateRange }) {
     setVisibleSeries(topIndices);
   }, [series]);
 
+  // Null y-values are replaced with 0 so the chart renders continuous lines;
+  // the original series retains nulls for correct average and table display.
   const chartSeries = useMemo(() => {
-    if (visibleSeries === null) return series;
-    return series.filter((_, i) => visibleSeries.has(i));
+    const filtered =
+      visibleSeries === null
+        ? series
+        : series.filter((_, i) => visibleSeries.has(i));
+    return filtered.map((s) => ({
+      ...s,
+      data: s.data.map((point) => ({
+        ...point,
+        y: point.y ?? 0,
+      })),
+    }));
   }, [series, visibleSeries]);
 
   const pieValues = useMemo(
