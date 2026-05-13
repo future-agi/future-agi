@@ -62,6 +62,10 @@ services:
       # - PGBOUNCER_READ_HOST=pgbouncer
       # - PGBOUNCER_READ_PORT=6432
     depends_on:
+      pgbouncer:
+        condition: service_started
+      temporal:
+        condition: service_healthy
       db:
         condition: service_healthy
       clickhouse:
@@ -321,8 +325,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          cpus: '4.0'
+          memory: 10G
+    mem_limit: 10g
+    memswap_limit: 10g
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s

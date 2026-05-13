@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
+import { LoadingButton } from "@mui/lab";
 import {
   Box,
   Button,
@@ -96,6 +97,8 @@ export default function QueueDetailView() {
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [bulkAssignUserIds, setBulkAssignUserIds] = useState(new Set());
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [itemOrdering, setItemOrdering] = useState("-created_at");
+  const gridRef = useRef(null);
 
   const { data: queue } = useAnnotationQueueDetail(queueId);
   const {
@@ -104,10 +107,16 @@ export default function QueueDetailView() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useQueueItems(queueId, { ...filters, limit: 25 });
+  } = useQueueItems(queueId, {
+    ...filters,
+    ordering: itemOrdering,
+    limit: 25,
+  });
   const { mutate: removeItem } = useRemoveQueueItem();
-  const { mutate: bulkRemove } = useBulkRemoveQueueItems();
-  const { mutate: assignItems } = useAssignQueueItems();
+  const { mutate: bulkRemove, isPending: isBulkRemoving } =
+    useBulkRemoveQueueItems();
+  const { mutate: assignItems, isPending: isAssigningItems } =
+    useAssignQueueItems();
   const { mutate: downloadExport, isPending: isDownloadingExport } =
     useDownloadAnnotationQueueExport();
   const { mutate: updateStatus, isPending: isUpdatingStatus } =
@@ -187,12 +196,18 @@ export default function QueueDetailView() {
     [queueId, removeItem],
   );
 
+  const clearSelectedItems = useCallback(() => {
+    gridRef.current?.api?.deselectAll();
+    setSelectedIds(new Set());
+  }, []);
+
   const handleBulkRemove = useCallback(() => {
+    if (selectedIds.size === 0 || isBulkRemoving) return;
     bulkRemove(
       { queueId, itemIds: Array.from(selectedIds) },
-      { onSuccess: () => setSelectedIds(new Set()) },
+      { onSuccess: clearSelectedItems },
     );
-  }, [queueId, selectedIds, bulkRemove]);
+  }, [queueId, selectedIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
 
   const handleAssign = useCallback(
     ({ itemIds, userId, userIds, action }) => {
@@ -206,6 +221,10 @@ export default function QueueDetailView() {
     setBulkAssignOpen(true);
   }, []);
 
+  const handleAddedSortChange = useCallback((direction) => {
+    setItemOrdering(direction === "asc" ? "created_at" : "-created_at");
+  }, []);
+
   const handleDownloadExport = useCallback(() => {
     setExportMenuAnchor(null);
     downloadExport({ queueId });
@@ -217,6 +236,14 @@ export default function QueueDetailView() {
   }, []);
 
   const handleApplyBulkAssign = useCallback(() => {
+    if (
+      selectedIds.size === 0 ||
+      queueAnnotators.length === 0 ||
+      isAssigningItems
+    ) {
+      return;
+    }
+
     assignItems(
       {
         queueId,
@@ -227,12 +254,20 @@ export default function QueueDetailView() {
       {
         onSuccess: () => {
           setBulkAssignOpen(false);
-          setSelectedIds(new Set());
           setBulkAssignUserIds(new Set());
+          clearSelectedItems();
         },
       },
     );
-  }, [assignItems, queueId, selectedIds, bulkAssignUserIds]);
+  }, [
+    assignItems,
+    queueId,
+    selectedIds,
+    bulkAssignUserIds,
+    queueAnnotators.length,
+    isAssigningItems,
+    clearSelectedItems,
+  ]);
 
   const isEmpty =
     !isLoading &&
@@ -522,18 +557,21 @@ export default function QueueDetailView() {
                         variant="outlined"
                         size="medium"
                         onClick={handleOpenBulkAssign}
+                        disabled={isAssigningItems || isBulkRemoving}
                       >
                         Assign Selected ({selectedIds.size})
                       </Button>
                     )}
-                    <Button
+                    <LoadingButton
                       color="error"
                       variant="outlined"
                       size="medium"
                       onClick={handleBulkRemove}
+                      loading={isBulkRemoving}
+                      disabled={isAssigningItems}
                     >
                       Remove Selected ({selectedIds.size})
-                    </Button>
+                    </LoadingButton>
                   </>
                 )}
                 {isManager && (
@@ -568,6 +606,7 @@ export default function QueueDetailView() {
             </Box>
           ) : (
             <QueueItemsTable
+              gridRef={gridRef}
               data={items}
               loading={isLoading}
               totalCount={totalCount}
@@ -600,6 +639,10 @@ export default function QueueDetailView() {
               onAssign={isManager ? handleAssign : undefined}
               autoAssign={queue?.auto_assign ?? false}
               canManageItems={isManager}
+              addedSortDirection={
+                itemOrdering === "created_at" ? "asc" : "desc"
+              }
+              onAddedSortChange={handleAddedSortChange}
             />
           )}
         </Box>
@@ -619,7 +662,9 @@ export default function QueueDetailView() {
 
       <Dialog
         open={bulkAssignOpen}
-        onClose={() => setBulkAssignOpen(false)}
+        onClose={() => {
+          if (!isAssigningItems) setBulkAssignOpen(false);
+        }}
         maxWidth="xs"
         fullWidth
       >
@@ -634,6 +679,7 @@ export default function QueueDetailView() {
                   control={
                     <Checkbox
                       checked={bulkAssignUserIds.has(uid)}
+                      disabled={isAssigningItems}
                       onChange={(event) => {
                         setBulkAssignUserIds((prev) => {
                           const next = new Set(prev);
@@ -656,14 +702,20 @@ export default function QueueDetailView() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBulkAssignOpen(false)}>Cancel</Button>
           <Button
+            onClick={() => setBulkAssignOpen(false)}
+            disabled={isAssigningItems}
+          >
+            Cancel
+          </Button>
+          <LoadingButton
             variant="contained"
             onClick={handleApplyBulkAssign}
-            disabled={queueAnnotators.length === 0}
+            loading={isAssigningItems}
+            disabled={queueAnnotators.length === 0 || selectedIds.size === 0}
           >
-            Apply
-          </Button>
+            Assign
+          </LoadingButton>
         </DialogActions>
       </Dialog>
     </Box>

@@ -74,13 +74,6 @@ function getPreviewText(preview) {
   }
 }
 
-function formatMetric(value, suffix = "ms") {
-  if (value === null || value === undefined || value === "") return "—";
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return String(value);
-  return `${numeric}${suffix}`;
-}
-
 // ---------------------------------------------------------------------------
 // Cell renderers
 // ---------------------------------------------------------------------------
@@ -138,24 +131,6 @@ function StatusCellRenderer({ data }) {
 
 StatusCellRenderer.propTypes = {
   data: PropTypes.object,
-};
-
-function MetricCellRenderer({ data, valueGetter, suffix }) {
-  if (!data) return null;
-  const value = valueGetter?.(data.source_preview || {});
-  return (
-    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Typography variant="body2" color="text.secondary">
-        {formatMetric(value, suffix)}
-      </Typography>
-    </Box>
-  );
-}
-
-MetricCellRenderer.propTypes = {
-  data: PropTypes.object,
-  valueGetter: PropTypes.func,
-  suffix: PropTypes.string,
 };
 
 function AssignedCellRenderer({ data, context }) {
@@ -502,6 +477,8 @@ export default function QueueItemsTable({
   autoAssign = false,
   gridRef = null,
   canManageItems = true,
+  addedSortDirection = "desc",
+  onAddedSortChange,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
 
@@ -532,53 +509,6 @@ export default function QueueItemsTable({
           cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
         },
         {
-          field: "latency",
-          headerName: "Latency",
-          flex: 0.8,
-          minWidth: 110,
-          cellRenderer: loading
-            ? SkeletonCell
-            : (params) => (
-                <MetricCellRenderer
-                  {...params}
-                  valueGetter={(preview) =>
-                    preview.latency_ms ?? preview.avg_agent_latency_ms
-                  }
-                  suffix="ms"
-                />
-              ),
-        },
-        {
-          field: "responseTime",
-          headerName: "Response Time",
-          flex: 0.9,
-          minWidth: 130,
-          cellRenderer: loading
-            ? SkeletonCell
-            : (params) => (
-                <MetricCellRenderer
-                  {...params}
-                  valueGetter={(preview) => preview.response_time_ms}
-                  suffix="ms"
-                />
-              ),
-        },
-        {
-          field: "duration",
-          headerName: "Duration",
-          flex: 0.8,
-          minWidth: 110,
-          cellRenderer: loading
-            ? SkeletonCell
-            : (params) => (
-                <MetricCellRenderer
-                  {...params}
-                  valueGetter={(preview) => preview.duration_seconds}
-                  suffix="s"
-                />
-              ),
-        },
-        {
           field: "assignedTo",
           headerName: "Assigned To",
           flex: 1,
@@ -601,6 +531,9 @@ export default function QueueItemsTable({
           headerName: "Added",
           flex: 1,
           minWidth: 140,
+          sortable: true,
+          sort: addedSortDirection,
+          sortingOrder: ["desc", "asc"],
           cellRenderer: loading ? SkeletonCell : AddedCellRenderer,
         },
         {
@@ -613,7 +546,7 @@ export default function QueueItemsTable({
           resizable: false,
         },
       ].filter((column) => canManageItems || column.field !== "actions"),
-    [loading, canManageItems],
+    [loading, canManageItems, addedSortDirection],
   );
 
   const defaultColDef = useMemo(
@@ -692,6 +625,16 @@ export default function QueueItemsTable({
     [data, selectedIds, onSelectAll, onSelectToggle],
   );
 
+  const onSortChanged = useCallback(
+    (event) => {
+      const addedColumn = event.api
+        .getColumnState()
+        .find((column) => column.colId === "created_at");
+      onAddedSortChange?.(addedColumn?.sort === "asc" ? "asc" : "desc");
+    },
+    [onAddedSortChange],
+  );
+
   const getRowId = useCallback((params) => params.data?.id, []);
 
   const CustomNoRowsOverlay = useCallback(
@@ -747,6 +690,7 @@ export default function QueueItemsTable({
             rowStyle={{ cursor: onItemClick ? "pointer" : "default" }}
             onCellClicked={onCellClicked}
             onSelectionChanged={canManageItems ? onSelectionChanged : undefined}
+            onSortChanged={onSortChanged}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
             onBodyScroll={(e) => {
@@ -830,4 +774,6 @@ QueueItemsTable.propTypes = {
   autoAssign: PropTypes.bool,
   gridRef: PropTypes.object,
   canManageItems: PropTypes.bool,
+  addedSortDirection: PropTypes.oneOf(["asc", "desc"]),
+  onAddedSortChange: PropTypes.func,
 };

@@ -190,7 +190,28 @@ def _get_source_organization(obj):
     if test_execution is not None:
         run_test = getattr(test_execution, "run_test", None)
         if run_test is not None:
-            return getattr(run_test, "organization", None)
+            org = getattr(run_test, "organization", None)
+            if org is not None:
+                return org
+
+        for relation_name in (
+            "agent_definition",
+            "agent_version",
+            "simulator_agent",
+        ):
+            related = getattr(test_execution, relation_name, None)
+            org = (
+                getattr(related, "organization", None)
+                if related is not None
+                else None
+            )
+            if org is not None:
+                return org
+
+    # Via scenario (CallExecution)
+    scenario = getattr(obj, "scenario", None)
+    if scenario is not None:
+        return getattr(scenario, "organization", None)
 
     return None
 
@@ -217,7 +238,28 @@ def _get_source_workspace(obj):
     if test_execution is not None:
         run_test = getattr(test_execution, "run_test", None)
         if run_test is not None:
-            return getattr(run_test, "workspace", None)
+            ws = getattr(run_test, "workspace", None)
+            if ws is not None:
+                return ws
+
+        for relation_name in (
+            "agent_definition",
+            "agent_version",
+            "simulator_agent",
+        ):
+            related = getattr(test_execution, relation_name, None)
+            ws = (
+                getattr(related, "workspace", None)
+                if related is not None
+                else None
+            )
+            if ws is not None:
+                return ws
+
+    # Via scenario (CallExecution)
+    scenario = getattr(obj, "scenario", None)
+    if scenario is not None:
+        return getattr(scenario, "workspace", None)
 
     return None
 

@@ -3448,7 +3448,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if review_status:
             queryset = queryset.filter(review_status=review_status)
 
-        return queryset.order_by("order", "-created_at")
+        ordering = self.request.query_params.get("ordering") or "-created_at"
+        queue_item_ordering = {
+            "created_at": ("created_at", "id"),
+            "-created_at": ("-created_at", "-id"),
+        }
+        return queryset.order_by(
+            *queue_item_ordering.get(ordering, queue_item_ordering["-created_at"])
+        )
 
     def perform_create(self, serializer):
         queue_id = self.kwargs.get("queue_id")

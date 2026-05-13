@@ -966,7 +966,13 @@ function buildReadOnlyColumnDefs(columnConfig) {
 // ---------------------------------------------------------------------------
 // Server-side datasource for dataset grid (read-only, with filters)
 // ---------------------------------------------------------------------------
-function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
+function createDataSource(
+  queryClient,
+  datasetId,
+  filtersRef,
+  searchRef,
+  setGridLoading,
+) {
   return {
     getRows: async (params) => {
       const { request } = params;
@@ -982,6 +988,7 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
       const search = searchRef.current || "";
 
       try {
+        setGridLoading?.(true);
         const queryOptions = getDatasetQueryOptions(
           datasetId,
           pageNumber,
@@ -1004,6 +1011,8 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
         });
       } catch {
         params.fail();
+      } finally {
+        setGridLoading?.(false);
       }
     },
   };
@@ -1045,6 +1054,118 @@ StatusBar.propTypes = {
   api: PropTypes.object,
 };
 
+function FieldLoadingAdornment({ loading }) {
+  if (!loading) return null;
+  return (
+    <InputAdornment position="end" sx={{ mr: 2 }}>
+      <CircularProgress size={16} thickness={4} />
+    </InputAdornment>
+  );
+}
+
+FieldLoadingAdornment.propTypes = {
+  loading: PropTypes.bool,
+};
+
+function SelectorEmptyState({
+  loading,
+  title,
+  description,
+  requiredLabel,
+  loadingLabel,
+}) {
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        color: "text.secondary",
+        px: 2,
+      }}
+    >
+      {loading ? (
+        <CircularProgress size={28} sx={{ mb: 2 }} />
+      ) : (
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            mb: 1.5,
+            color: "text.secondary",
+          }}
+        >
+          <Typography component="span" color="error.main" fontWeight={700}>
+            *
+          </Typography>
+        </Box>
+      )}
+      <Typography variant="h6" color="text.primary" sx={{ mb: 0.75 }}>
+        {loading ? loadingLabel || title : title}
+      </Typography>
+      <Typography variant="body2" sx={{ maxWidth: 420 }}>
+        {description}
+      </Typography>
+      {!loading && requiredLabel && (
+        <Typography variant="caption" sx={{ mt: 1.25 }}>
+          Please select{" "}
+          <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
+            {requiredLabel}
+          </Box>{" "}
+          to move forward.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+SelectorEmptyState.propTypes = {
+  loading: PropTypes.bool,
+  title: PropTypes.string.isRequired,
+  description: PropTypes.string.isRequired,
+  requiredLabel: PropTypes.string,
+  loadingLabel: PropTypes.string,
+};
+
+function GridLoadingOverlay({ open, label = "Loading rows..." }) {
+  if (!open) return null;
+  return (
+    <Box
+      sx={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 2,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: (theme) => alpha(theme.palette.background.paper, 0.72),
+        backdropFilter: "blur(1px)",
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <CircularProgress size={18} />
+        <Typography variant="body2" color="text.secondary">
+          {label}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+GridLoadingOverlay.propTypes = {
+  open: PropTypes.bool,
+  label: PropTypes.string,
+};
+
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
@@ -1056,13 +1177,18 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [filters, setFiltersState] = useState([
     { ...DefaultFilter, id: getRandomId() },
   ]);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(DATASET_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
   const filtersRef = useRef([]);
   const searchRef = useRef("");
 
-  const { data: datasets } = useQuery({
+  const {
+    data: datasets,
+    isLoading: isDatasetsLoading,
+    isFetching: isDatasetsFetching,
+  } = useQuery({
     queryKey: ["datasets-list-simple"],
     queryFn: () => axios.get("/model-hub/develops/get-datasets-names/"),
     select: (d) => d.data?.result?.datasets || [],
@@ -1070,7 +1196,11 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   });
 
   // Get column config from page 0
-  const { data: tableData } = useQuery(
+  const {
+    data: tableData,
+    isLoading: isTableLoading,
+    isFetching: isTableFetching,
+  } = useQuery(
     getDatasetQueryOptions(datasetId, 0, [], [], "", {
       enabled: !!datasetId,
       staleTime: Infinity,
@@ -1117,6 +1247,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           datasetId,
           filtersRef,
           searchRef,
+          setIsGridLoading,
         );
         params.api.setGridOption("serverSideDatasource", ds);
       }
@@ -1132,6 +1263,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
+        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1147,6 +1279,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           datasetId,
           filtersRef,
           searchRef,
+          setIsGridLoading,
         );
         gridApi.setGridOption("serverSideDatasource", ds);
       }
@@ -1194,6 +1327,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
+        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1248,6 +1382,12 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     setFilterOpen(false);
   };
 
+  const isDatasetListLoading =
+    isDatasetsLoading || (isDatasetsFetching && !datasets);
+  const isDatasetSchemaLoading =
+    !!datasetId &&
+    (isTableLoading || (isTableFetching && columnDefs.length === 0));
+
   return (
     <Box
       sx={{
@@ -1282,10 +1422,24 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               },
             },
           }}
+          InputProps={{
+            endAdornment: (
+              <FieldLoadingAdornment loading={isDatasetListLoading} />
+            ),
+          }}
+          helperText={
+            !datasetId ? "Required. Select a dataset to continue." : " "
+          }
         >
           <MenuItem value="" disabled>
-            Choose a dataset
+            {isDatasetListLoading ? "Loading datasets..." : "Choose a dataset"}
           </MenuItem>
+          {isDatasetListLoading && (
+            <MenuItem disabled>
+              <CircularProgress size={14} sx={{ mr: 1 }} />
+              Loading datasets...
+            </MenuItem>
+          )}
           {(datasets || []).map((ds) => (
             <MenuItem key={ds.datasetId || ds.id} value={ds.datasetId || ds.id}>
               {ds.name}
@@ -1391,22 +1545,22 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
       {/* Empty state */}
       {!datasetId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Start by Selecting a Dataset
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick a dataset from the dropdown above to load its datapoints.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isDatasetListLoading}
+          loadingLabel="Loading datasets..."
+          title="Select a dataset"
+          description="Choose a dataset from the dropdown above to load its datapoints."
+          requiredLabel="Dataset"
+        />
+      )}
+
+      {datasetId && isDatasetSchemaLoading && (
+        <SelectorEmptyState
+          loading
+          title="Loading dataset"
+          description="Loading dataset columns and datapoints."
+          loadingLabel="Loading dataset..."
+        />
       )}
 
       {/* AG Grid – same as dataset view */}
@@ -1420,7 +1574,8 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               flexDirection: "column",
             }}
           >
-            <Box sx={{ flex: 1 }}>
+            <Box sx={{ flex: 1, position: "relative" }}>
+              <GridLoadingOverlay open={isGridLoading} />
               <AgGridReact
                 ref={gridRef}
                 rowHeight={100}
@@ -1485,6 +1640,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -1498,7 +1654,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     pageLimit: 25,
   });
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-traces"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -1514,7 +1674,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   // Simulator / voice projects render CallLogsGrid (voice-specific
   // columns: Duration / Avg Latency / Turn Count / Talk Ratio / Cost).
   // Matches the main LLM Tracing page for simulator projects.
-  const { data: projectDetails } = useGetProjectDetails(projectId, !!projectId);
+  const {
+    data: projectDetails,
+    isLoading: isProjectDetailsLoading,
+    isFetching: isProjectDetailsFetching,
+  } = useGetProjectDetails(projectId, !!projectId);
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
 
   // Surface voice/simulator state to the parent so handleSubmit knows to
@@ -1524,7 +1688,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   }, [isVoiceProject, onVoiceProjectChange]);
 
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-traces", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -1592,6 +1760,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getTracesForObserveProject(),
             { params: apiParams },
@@ -1619,6 +1788,8 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -1761,6 +1932,13 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
+  const isResolvingProjectKind =
+    !!projectId &&
+    (isProjectDetailsLoading || (isProjectDetailsFetching && !projectDetails));
 
   return (
     <Box
@@ -1784,6 +1962,8 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -1811,6 +1991,20 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
@@ -1826,6 +2020,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             onChange={handleVersionChange}
             sx={{ minWidth: 220 }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -1833,8 +2033,16 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -1939,24 +2147,28 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its traces."
-              : "Pick a version from the dropdown above to load traces."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its traces."
+              : "Choose a version from the dropdown above to load traces."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
+      )}
+
+      {canShowGrid && isResolvingProjectKind && (
+        <SelectorEmptyState
+          loading
+          title="Loading project"
+          description="Checking project type before loading rows."
+          loadingLabel="Loading project..."
+        />
       )}
 
       {/* Voice / simulator projects: use the same CallLogsGrid the main
@@ -1968,7 +2180,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           (~25 rows). The SelectAllBanner below surfaces the
           cross-page total so the user can opt into filter-mode bulk
           add (same as LLMTracingView's simulator branch). */}
-      {canShowGrid && isVoiceProject && (
+      {canShowGrid && !isResolvingProjectKind && isVoiceProject && (
         <Box
           sx={{
             flex: 1,
@@ -2014,7 +2226,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
       )}
 
       {/* Standard trace AG Grid — non-voice projects */}
-      {canShowGrid && !isVoiceProject && (
+      {canShowGrid && !isResolvingProjectKind && !isVoiceProject && (
         <Box
           sx={{
             flex: 1,
@@ -2041,7 +2253,8 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             noun="trace"
             onSelectAll={commitFilterModeSelectAll}
           />
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2094,12 +2307,17 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-spans"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -2113,7 +2331,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const isPrototype = selectedProject?.trace_type === "experiment";
 
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-spans", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -2176,6 +2398,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             apiParams.project_version_id = versionId;
           }
 
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getSpansForObserveProject(),
             { params: apiParams },
@@ -2203,6 +2426,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -2333,6 +2558,10 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
 
   return (
     <Box
@@ -2356,6 +2585,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -2383,6 +2614,20 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
@@ -2398,6 +2643,12 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             onChange={handleVersionChange}
             sx={{ minWidth: 220 }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -2405,8 +2656,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -2504,24 +2763,19 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its spans."
-              : "Pick a version from the dropdown above to load spans."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its spans."
+              : "Choose a version from the dropdown above to load spans."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
       )}
 
       {/* AG Grid – same as span view */}
@@ -2552,7 +2806,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             noun="span"
             onSelectAll={commitFilterModeSelectAll}
           />
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2601,11 +2856,16 @@ function SessionSelector({ onSetSelection }) {
   ]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-sessions"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -2619,7 +2879,11 @@ function SessionSelector({ onSetSelection }) {
   const isPrototype = selectedProject?.trace_type === "experiment";
 
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-sessions", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -2648,6 +2912,7 @@ function SessionSelector({ onSetSelection }) {
           const { request } = params;
           const pageNumber = Math.floor(request.startRow / 10);
 
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.projectSessionList(),
             {
@@ -2688,6 +2953,8 @@ function SessionSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -2797,6 +3064,10 @@ function SessionSelector({ onSetSelection }) {
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
 
   return (
     <Box
@@ -2820,6 +3091,8 @@ function SessionSelector({ onSetSelection }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -2847,6 +3120,20 @@ function SessionSelector({ onSetSelection }) {
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
@@ -2862,6 +3149,12 @@ function SessionSelector({ onSetSelection }) {
             onChange={handleVersionChange}
             sx={{ minWidth: 220 }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -2869,8 +3162,16 @@ function SessionSelector({ onSetSelection }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -2936,24 +3237,19 @@ function SessionSelector({ onSetSelection }) {
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its sessions."
-              : "Pick a version from the dropdown above to load sessions."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its sessions."
+              : "Choose a version from the dropdown above to load sessions."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
       )}
 
       {/* AG Grid – same as sessions view */}
@@ -2966,7 +3262,8 @@ function SessionSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -3005,9 +3302,114 @@ SessionSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SIMULATION_ROWS_LIMIT = 20;
 
+function getNestedValue(source, key) {
+  if (!source || !key) return undefined;
+  if (!key.includes(".")) return source[key];
+  return key.split(".").reduce((current, part) => current?.[part], source);
+}
+
+function getCallValue(data, keys) {
+  const sources = [data, data?.call_details, data?.call_metadata].filter(
+    Boolean,
+  );
+
+  for (const key of keys) {
+    for (const source of sources) {
+      const value = getNestedValue(source, key);
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+  }
+  return null;
+}
+
+function formatNumber(value, options = {}) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: options.maximumFractionDigits ?? 2,
+    minimumFractionDigits: options.minimumFractionDigits ?? 0,
+  }).format(numeric);
+}
+
+function formatSeconds(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  if (numeric >= 60) {
+    const totalSeconds = Math.round(numeric);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${formatNumber(numeric, { maximumFractionDigits: 2 })}s`;
+}
+
+function formatMilliseconds(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  if (numeric >= 1000) {
+    return `${formatNumber(numeric / 1000, { maximumFractionDigits: 2 })}s`;
+  }
+  return `${Math.round(numeric)}ms`;
+}
+
+function formatCurrencyCents(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return `$${formatNumber(numeric / 100, {
+    minimumFractionDigits: numeric ? 2 : 0,
+    maximumFractionDigits: 4,
+  })}`;
+}
+
+function formatGenericSimulationValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value))
+    return value.map(formatGenericSimulationValue).join(", ");
+  if (typeof value === "object") {
+    if ("value" in value) return formatGenericSimulationValue(value.value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function formatResponseTime(data) {
+  const seconds = getCallValue(data, [
+    "response_time",
+    "response_time_seconds",
+  ]);
+  if (seconds !== null) return formatSeconds(seconds);
+
+  const milliseconds = getCallValue(data, ["response_time_ms"]);
+  return milliseconds !== null ? formatMilliseconds(milliseconds) : "-";
+}
+
+function SimulationTextCellRenderer({ value, valueFormatted }) {
+  const displayValue = valueFormatted ?? value;
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Typography variant="body2" noWrap title={String(displayValue ?? "")}>
+        {formatGenericSimulationValue(displayValue)}
+      </Typography>
+    </Box>
+  );
+}
+
+SimulationTextCellRenderer.propTypes = {
+  value: PropTypes.any,
+  valueFormatted: PropTypes.any,
+};
+
 function CallStatusCellRenderer({ data }) {
   if (!data) return null;
-  const details = data.callDetails || data;
+  const details = data.call_details || data;
   const status = details?.status || data.status;
   if (!status) return null;
   const colorMap = {
@@ -3039,11 +3441,20 @@ CallStatusCellRenderer.propTypes = {
 
 function CallDetailSimpleCellRenderer({ data }) {
   if (!data) return null;
-  const details = data.call_details || {};
-  const name = details.customer_name || details.scenario || "";
+  const details = data.call_details || data;
+  const name =
+    details.customer_name ||
+    details.scenario ||
+    details.call_summary ||
+    details.phone_number ||
+    "";
   const type =
     details.simulation_call_type || details.call_type || data.call_type || "";
-  const startTime = details.start_time || data.timestamp;
+  const startTime =
+    details.start_time ||
+    details.started_at ||
+    data.timestamp ||
+    data.started_at;
   const timeStr = startTime
     ? new Date(startTime).toLocaleString("en-US", {
         month: "2-digit",
@@ -3066,9 +3477,9 @@ function CallDetailSimpleCellRenderer({ data }) {
       <Typography variant="body2" noWrap fontWeight={500}>
         {name || type || "Call"}
       </Typography>
-      {timeStr && (
+      {(timeStr || type) && (
         <Typography variant="caption" color="text.secondary">
-          {timeStr}
+          {[type, timeStr].filter(Boolean).join(" - ")}
         </Typography>
       )}
     </Box>
@@ -3081,7 +3492,7 @@ CallDetailSimpleCellRenderer.propTypes = {
 
 function formatExecutionRunLabel(run) {
   const scenario = run.scenarios || "No scenarios";
-  const startedAt = run.start_time ?? run.startTime;
+  const startedAt = run.start_time;
   const time = startedAt
     ? new Date(startedAt).toLocaleString("en-US", {
         month: "2-digit",
@@ -3095,10 +3506,238 @@ function formatExecutionRunLabel(run) {
   return `${scenario}${time ? ` - ${time}` : ""}${status ? ` (${status})` : ""}`;
 }
 
+const SIMULATION_STATIC_COLUMNS = [
+  {
+    id: "call_details",
+    headerName: "Call Details",
+    flex: 2,
+    minWidth: 260,
+    cellRenderer: CallDetailSimpleCellRenderer,
+  },
+  {
+    id: "status",
+    headerName: "Status",
+    flex: 0.8,
+    minWidth: 120,
+    valueGetter: (params) => getCallValue(params.data, ["status"]),
+    cellRenderer: CallStatusCellRenderer,
+  },
+  {
+    id: "timestamp",
+    headerName: "Timestamp",
+    flex: 1,
+    minWidth: 170,
+    valueGetter: (params) =>
+      getCallValue(params.data, ["timestamp", "started_at", "start_time"]),
+    valueFormatter: (params) => {
+      if (!params.value) return "-";
+      try {
+        return new Date(params.value).toLocaleString("en-US", {
+          month: "2-digit",
+          day: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      } catch {
+        return "-";
+      }
+    },
+  },
+  {
+    id: "duration",
+    headerName: "Duration",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) =>
+      formatSeconds(
+        getCallValue(params.data, ["duration", "duration_seconds"]),
+      ),
+  },
+  {
+    id: "response_time",
+    headerName: "Response Time",
+    flex: 0.8,
+    minWidth: 135,
+    valueGetter: (params) => formatResponseTime(params.data),
+  },
+  {
+    id: "latency",
+    headerName: "Latency",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) =>
+      formatMilliseconds(
+        getCallValue(params.data, [
+          "avg_agent_latency",
+          "avg_agent_latency_ms",
+          "latency",
+          "latency_ms",
+        ]),
+      ),
+  },
+  {
+    id: "turn_count",
+    headerName: "Turn Count",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["turn_count"])),
+  },
+  {
+    id: "agent_talk_percentage",
+    headerName: "Agent Talk (%)",
+    flex: 0.8,
+    minWidth: 135,
+    valueGetter: (params) => {
+      const value = getCallValue(params.data, ["agent_talk_percentage"]);
+      return value == null
+        ? "-"
+        : `${formatNumber(value, { maximumFractionDigits: 1 })}%`;
+    },
+  },
+  {
+    id: "cost_cents",
+    headerName: "Cost",
+    flex: 0.7,
+    minWidth: 105,
+    valueGetter: (params) =>
+      formatCurrencyCents(
+        getCallValue(params.data, ["cost_cents", "customer_cost_cents"]),
+      ),
+  },
+  {
+    id: "ended_reason",
+    headerName: "Ended Reason",
+    flex: 1,
+    minWidth: 150,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["ended_reason"])),
+  },
+  {
+    id: "call_type",
+    headerName: "Type",
+    flex: 0.7,
+    minWidth: 105,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["call_type"])),
+  },
+  {
+    id: "overall_score",
+    headerName: "Overall Score",
+    flex: 0.8,
+    minWidth: 130,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(
+        getCallValue(params.data, ["overall_score"]),
+      ),
+  },
+];
+
+function createDynamicSimulationColumn(col) {
+  const columnId = col.id;
+  const headerName = col.column_name || columnId;
+
+  if (col.type === "scenario_dataset_column") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(params.data?.scenario_columns?.[columnId]),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  if (col.type === "evaluation") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(params.data?.eval_metrics?.[columnId]),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  if (col.type === "tool_evaluation") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(
+          params.data?.tool_outputs?.[col.column_name],
+        ),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  return {
+    headerName,
+    field: columnId,
+    colId: columnId,
+    flex: 1,
+    minWidth: 140,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, [columnId])),
+    cellRenderer: SimulationTextCellRenderer,
+  };
+}
+
+function buildSimulationSelectorColumnDefs(columnOrder = []) {
+  const staticById = new Map(
+    SIMULATION_STATIC_COLUMNS.map((column) => [column.id, column]),
+  );
+  const seen = new Set();
+  const columns = [];
+
+  const addColumn = (column) => {
+    const columnId = column.colId || column.field || column.id;
+    if (!columnId || seen.has(columnId)) return;
+    seen.add(columnId);
+    columns.push({
+      cellRenderer: SimulationTextCellRenderer,
+      ...column,
+      field: column.field || column.id,
+      colId: columnId,
+    });
+  };
+
+  SIMULATION_STATIC_COLUMNS.forEach(addColumn);
+
+  columnOrder.forEach((col) => {
+    if (!col?.id) return;
+    const columnId = col.id;
+    if (seen.has(columnId)) return;
+    const staticColumn = staticById.get(columnId);
+    addColumn(
+      staticColumn
+        ? {
+            ...staticColumn,
+            headerName: col.column_name || staticColumn.headerName,
+          }
+        : createDynamicSimulationColumn({ ...col, id: columnId }),
+    );
+  });
+
+  return columns;
+}
+
 function SimulationSelector({ onSetSelection }) {
   const [testId, setTestId] = useState("");
   const [executionRunId, setExecutionRunId] = useState("");
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
+  const [simulationColumnOrder, setSimulationColumnOrder] = useState([]);
+  const columnOrderSignatureRef = useRef("");
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
@@ -3108,6 +3747,7 @@ function SimulationSelector({ onSetSelection }) {
     testsList: tests,
     fetchNextPage: fetchNextTestsPage,
     isFetchingNextPage: isFetchingNextTestsPage,
+    isFetching: isFetchingTests,
   } = useTestRunsList();
 
   const handleTestsMenuScroll = useCallback(
@@ -3124,7 +3764,11 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   // 2. Fetch execution runs for selected test
-  const { data: executionRuns } = useQuery({
+  const {
+    data: executionRuns,
+    isLoading: isExecutionRunsLoading,
+    isFetching: isExecutionRunsFetching,
+  } = useQuery({
     queryKey: ["sim-execution-runs-dropdown", testId],
     queryFn: () =>
       axios.get(endpoints.runTests.detailExecutions(testId), {
@@ -3144,6 +3788,7 @@ function SimulationSelector({ onSetSelection }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
+          setIsGridLoading(true);
           const { data } = await queryClient.fetchQuery({
             queryKey: [
               "sim-call-executions",
@@ -3159,6 +3804,18 @@ function SimulationSelector({ onSetSelection }) {
 
           const rows = data?.results ?? [];
           const totalRows = data?.count ?? rows.length;
+          const nextColumnOrder = data?.column_order ?? [];
+          const nextSignature = JSON.stringify(
+            nextColumnOrder.map((col) => [
+              col?.id,
+              col?.column_name,
+              col?.type,
+            ]),
+          );
+          if (nextSignature !== columnOrderSignatureRef.current) {
+            columnOrderSignatureRef.current = nextSignature;
+            setSimulationColumnOrder(nextColumnOrder);
+          }
 
           params.success({
             rowData: rows,
@@ -3172,6 +3829,8 @@ function SimulationSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -3179,65 +3838,15 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   const columnDefs = useMemo(
-    () => [
-      {
-        headerName: "Call Details",
-        field: "callDetails",
-        flex: 2,
-        minWidth: 220,
-        cellRenderer: CallDetailSimpleCellRenderer,
-      },
-      {
-        headerName: "Status",
-        field: "status",
-        flex: 0.8,
-        minWidth: 120,
-        cellRenderer: CallStatusCellRenderer,
-      },
-      {
-        headerName: "Timestamp",
-        field: "timestamp",
-        flex: 1,
-        minWidth: 160,
-        valueFormatter: (p) => {
-          if (!p.value) return "-";
-          try {
-            return new Date(p.value).toLocaleString("en-US", {
-              month: "2-digit",
-              day: "2-digit",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            });
-          } catch {
-            return "-";
-          }
-        },
-      },
-      {
-        headerName: "Response Time",
-        field: "responseTime",
-        flex: 0.7,
-        minWidth: 120,
-        valueFormatter: (p) => (p.value != null ? `${p.value}s` : "-"),
-      },
-      {
-        headerName: "Latency",
-        field: "avgAgentLatency",
-        flex: 0.7,
-        minWidth: 110,
-        valueFormatter: (p) => (p.value != null ? `${p.value}ms` : "-"),
-      },
-    ],
-    [],
+    () => buildSimulationSelectorColumnDefs(simulationColumnOrder),
+    [simulationColumnOrder],
   );
 
   const defaultColDef = useMemo(
     () => ({
       lockVisible: true,
       filter: false,
-      resizable: false,
+      resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
       sortable: false,
@@ -3278,13 +3887,21 @@ function SimulationSelector({ onSetSelection }) {
   const handleTestChange = (e) => {
     setTestId(e.target.value);
     setExecutionRunId("");
+    columnOrderSignatureRef.current = "";
+    setSimulationColumnOrder([]);
     onSetSelection([]);
   };
 
   const handleExecutionRunChange = (e) => {
     setExecutionRunId(e.target.value);
+    columnOrderSignatureRef.current = "";
+    setSimulationColumnOrder([]);
     onSetSelection([]);
   };
+
+  const isTestsLoading = isFetchingTests && tests.length === 0;
+  const isExecutionListLoading =
+    isExecutionRunsLoading || (isExecutionRunsFetching && !executionRuns);
 
   return (
     <Box
@@ -3309,9 +3926,16 @@ function SimulationSelector({ onSetSelection }) {
         <TextField
           select
           size="small"
+          label="Test"
           value={testId}
           onChange={handleTestChange}
           sx={{ minWidth: 300 }}
+          required
+          InputLabelProps={{ shrink: true }}
+          InputProps={{
+            endAdornment: <FieldLoadingAdornment loading={isTestsLoading} />,
+          }}
+          helperText={!testId ? "Required. Select a test to continue." : " "}
           SelectProps={{
             displayEmpty: true,
             renderValue: (v) => {
@@ -3328,8 +3952,14 @@ function SimulationSelector({ onSetSelection }) {
           }}
         >
           <MenuItem value="" disabled>
-            Choose a test
+            {isTestsLoading ? "Loading tests..." : "Choose a test"}
           </MenuItem>
+          {isTestsLoading && (
+            <MenuItem disabled>
+              <CircularProgress size={14} sx={{ mr: 1 }} />
+              Loading tests...
+            </MenuItem>
+          )}
           {tests.map((t) => (
             <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 300 }}>
               <CustomTooltip
@@ -3365,9 +3995,22 @@ function SimulationSelector({ onSetSelection }) {
           <TextField
             select
             size="small"
+            label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
             sx={{ minWidth: 340 }}
+            required
+            InputLabelProps={{ shrink: true }}
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isExecutionListLoading} />
+              ),
+            }}
+            helperText={
+              !executionRunId
+                ? "Required. Select an execution run to continue."
+                : " "
+            }
             SelectProps={{
               displayEmpty: true,
               renderValue: (v) => {
@@ -3381,8 +4024,16 @@ function SimulationSelector({ onSetSelection }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose an execution run
+              {isExecutionListLoading
+                ? "Loading execution runs..."
+                : "Choose an execution run"}
             </MenuItem>
+            {isExecutionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading execution runs...
+              </MenuItem>
+            )}
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
@@ -3416,41 +4067,23 @@ function SimulationSelector({ onSetSelection }) {
 
       {/* Empty state */}
       {!testId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Start by Selecting a Test
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick a test from the dropdown above, then select an execution run.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isTestsLoading}
+          loadingLabel="Loading tests..."
+          title="Select a test"
+          description="Choose a test from the dropdown above, then select an execution run."
+          requiredLabel="Test"
+        />
       )}
 
       {testId && !executionRunId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Select an Execution Run
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick an execution run to view its calls and chats.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isExecutionListLoading}
+          loadingLabel="Loading execution runs..."
+          title="Select an execution run"
+          description="Choose an execution run to view its calls and chats."
+          requiredLabel="Execution run"
+        />
       )}
 
       {/* AG Grid – call executions within selected run */}
@@ -3463,7 +4096,8 @@ function SimulationSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"

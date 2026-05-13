@@ -9,8 +9,10 @@ Tests cover:
 """
 
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
@@ -155,6 +157,62 @@ class TestAddItems:
 
         assert resp.status_code == status.HTTP_403_FORBIDDEN
 
+    def test_add_call_execution_with_agent_workspace_fallback(
+        self, auth_client, queue, organization, workspace
+    ):
+        """Simulation calls can be added when only the agent carries workspace."""
+        from simulate.models.agent_definition import AgentDefinition
+        from simulate.models.run_test import RunTest
+        from simulate.models.scenarios import Scenarios
+        from simulate.models.test_execution import CallExecution, TestExecution
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Workspace Agent",
+            agent_type="voice",
+            inbound=False,
+            description="Agent with workspace ownership",
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test = RunTest.objects.create(
+            name="Run without workspace",
+            agent_definition=agent,
+            organization=organization,
+            workspace=None,
+        )
+        scenario = Scenarios.objects.create(
+            name="Workspace Scenario",
+            source="hello",
+            agent_definition=agent,
+            organization=organization,
+            workspace=None,
+        )
+        execution = TestExecution.objects.create(
+            run_test=run_test,
+            agent_definition=agent,
+        )
+        call = CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+        )
+
+        resp = auth_client.post(
+            add_items_url(queue),
+            {"items": [{"source_type": "call_execution", "source_id": str(call.id)}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["added"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue_id=queue,
+            source_type="call_execution",
+            call_execution=call,
+            deleted=False,
+        ).exists()
+
 
 # ---------------------------------------------------------------------------
 # 2A.2 – List Items
@@ -244,6 +302,30 @@ class TestListItems:
         resp = auth_client.get(items_url(queue), {"source_type": "dataset_row"})
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3
+
+    def test_order_items_by_added_at(self, auth_client, queue, dataset_with_rows):
+        """Queue item list supports whole-queue sorting by Added."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+
+        created_items = list(QueueItem.objects.filter(queue_id=queue).order_by("order"))
+        base_time = timezone.now()
+        for index, item in enumerate(created_items):
+            QueueItem.objects.filter(id=item.id).update(
+                created_at=base_time + timedelta(minutes=index)
+            )
+
+        desc_resp = auth_client.get(items_url(queue), {"ordering": "-created_at"})
+        assert desc_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in desc_resp.data["results"]] == [
+            str(item.id) for item in reversed(created_items)
+        ]
+
+        asc_resp = auth_client.get(items_url(queue), {"ordering": "created_at"})
+        assert asc_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in asc_resp.data["results"]] == [
+            str(item.id) for item in created_items
+        ]
 
 
 # ---------------------------------------------------------------------------

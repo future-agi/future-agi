@@ -200,8 +200,6 @@ const MOCK_ITEMS = [
     source_preview: {
       type: "trace",
       name: "Hello trace",
-      latency_ms: 120,
-      response_time_ms: 240,
     },
     status: "completed",
     assigned_to_name: "Alice",
@@ -231,10 +229,11 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("Source")).toBeInTheDocument();
     expect(screen.getByText("Preview")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Latency")).toBeInTheDocument();
-    expect(screen.getByText("Response Time")).toBeInTheDocument();
     expect(screen.getByText("Assigned To")).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.queryByText("Latency")).not.toBeInTheDocument();
+    expect(screen.queryByText("Response Time")).not.toBeInTheDocument();
+    expect(screen.queryByText("Duration")).not.toBeInTheDocument();
   });
 
   it("renders item rows with source badges and previews", () => {
@@ -285,10 +284,10 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("A")).toBeInTheDocument();
   });
 
-  it("shows source metrics when provided", () => {
+  it("does not show source metrics in the queue item list", () => {
     render(<QueueItemsTable {...tableProps} />);
-    expect(screen.getByText("120ms")).toBeInTheDocument();
-    expect(screen.getByText("240ms")).toBeInTheDocument();
+    expect(screen.queryByText("120ms")).not.toBeInTheDocument();
+    expect(screen.queryByText("240ms")).not.toBeInTheDocument();
   });
 
   it("shows all annotators in auto-assign mode", () => {

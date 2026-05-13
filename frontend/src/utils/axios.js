@@ -20,180 +20,6 @@ import { RESPONSE_CODES } from "./constants";
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
 
-// ----------------------------------------------------------------------
-// Compatibility bridge: add camelCase aliases alongside snake_case keys in
-// API responses. The backend previously used djangorestframework-camel-case
-// which converted all snake_case keys to camelCase before sending responses.
-// That package was removed for performance reasons, but removing it in a
-// single atomic change across ~500 frontend files is impractical. This
-// interceptor walks response bodies and for every snake_case key adds a
-// camelCase alias pointing to the same value, so both `data.total_rows` and
-// `data.totalRows` resolve to the same number. Existing call sites keep
-// working while per-file cleanup continues. Remove this once every consumer
-// has been migrated to snake_case.
-//
-// Performance: O(n) on response size, non-recursive for primitives, uses
-// `Object.defineProperty` to avoid enumerable duplicates so the bridge does
-// not leak into request payloads built from response objects.
-// ----------------------------------------------------------------------
-const SNAKE_TO_CAMEL_RE = /_([a-z0-9])/g;
-function snakeToCamelKey(key) {
-  return key.replace(SNAKE_TO_CAMEL_RE, (_, c) => c.toUpperCase());
-}
-
-// Fields whose VALUES are user-authored maps (keys are user input, not backend
-// schema names). Skip recursion into these so the bridge doesn't synthesize
-// phantom aliases like `numOfWords` for a template variable the user named
-// `num_of_words`. The outer field itself still gets a camelCase alias — only
-// the inner keys of that object are left alone (TH-4375).
-const USER_KEYED_MAP_FIELDS = new Set(["variable_names", "mapping", "placeholders", "params", "headers", "choice_scores"]);
-
-// Build a camelCase→snake_case lookup table for each object we alias.
-function buildAliasTable(obj) {
-  const table = {};
-  const keys = Object.keys(obj);
-  for (let i = 0; i < keys.length; i += 1) {
-    const key = keys[i];
-    if (key.includes("_")) {
-      const camel = snakeToCamelKey(key);
-      if (camel !== key && !(camel in obj)) {
-        table[camel] = key;
-      }
-    }
-  }
-  return table;
-}
-
-// Add camelCase aliases as NON-ENUMERABLE properties. This means:
-//   - Direct property access still works: `data.totalRows` reads the same
-//     underlying value as `data.total_rows`.
-//   - Key iteration (`Object.keys`, `Object.entries`, `Object.values`,
-//     `Object.fromEntries`, `JSON.stringify`, `for...in`) sees ONLY the
-//     canonical snake_case keys — no duplicate entries, no double renders,
-//     no dynamic-column maps doubling in size.
-//   - Spreading response data (`{...res.data}`) does NOT copy the camelCase
-//     aliases, so request payloads built from response objects do not leak
-//     extra keys to the backend.
-//
-// Getter/setter is used so that writing to the camelCase alias writes
-// through to the snake_case key (keeping both views consistent if the
-// consumer mutates either side).
-function addCamelAliases(obj, seen) {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== "object") return obj;
-  if (seen.has(obj)) return obj;
-  seen.add(obj);
-
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < obj.length; i += 1) {
-      addCamelAliases(obj[i], seen);
-    }
-    return obj;
-  }
-
-  // Skip special object types — don't alias keys on these
-  if (obj instanceof Date) return obj;
-  if (obj instanceof RegExp) return obj;
-  if (typeof FormData !== "undefined" && obj instanceof FormData) return obj;
-  if (typeof Blob !== "undefined" && obj instanceof Blob) return obj;
-  if (typeof File !== "undefined" && obj instanceof File) return obj;
-
-  // Snapshot keys BEFORE aliasing so we don't iterate our own additions.
-  const originalKeys = Object.keys(obj);
-  for (let i = 0; i < originalKeys.length; i += 1) {
-    const key = originalKeys[i];
-    if (USER_KEYED_MAP_FIELDS.has(key)) continue;
-    const value = obj[key];
-    // Recurse into nested structures so child aliases are set too.
-    if (value !== null && typeof value === "object") {
-      addCamelAliases(value, seen);
-    }
-  }
-
-  // Now add ENUMERABLE camelCase aliases. We chose enumerable over
-  // non-enumerable because the codebase has many call sites that spread
-  // API data into new objects (e.g. `{ ...col, newField: X }`), and
-  // non-enumerable aliases silently disappear from those spreads,
-  // breaking downstream camelCase reads. With enumerable aliases, spreads
-  // preserve both keys at the cost of Object.keys iterations seeing both
-  // snake_case and camelCase. Use `canonicalKeys` / `canonicalEntries`
-  // from src/utils/utils.js when iterating API data to de-duplicate.
-  const aliases = buildAliasTable(obj);
-  const aliasKeys = Object.keys(aliases);
-  if (aliasKeys.length > 0) {
-    for (let i = 0; i < aliasKeys.length; i += 1) {
-      const camel = aliasKeys[i];
-      const snake = aliases[camel];
-      try {
-        obj[camel] = obj[snake];
-      } catch {
-        // ignore read-only / frozen objects
-      }
-    }
-  }
-  return obj;
-}
-
-// const axiosInstance = axios.create({
-//   baseURL: HOST_API,
-//   headers: {
-//     "ngrok-skip-browser-warning": "32434",
-//   },
-// });
-
-// Strip camelCase aliases from a request body before sending. With
-// ENUMERABLE aliases in responses, spreads and clones preserve both
-// snake_case and camelCase versions of each key. Without this strip, the
-// backend would receive duplicate fields (e.g. both `created_at` and
-// `createdAt`) — harmless for most DRF views but ambiguous and wasteful.
-// We delete any camelCase key whose snake_case twin exists with the
-// same reference value (i.e. the alias installed by the response
-// interceptor, not a legitimate frontend-authored camelCase key).
-function stripCamelAliases(obj, seen) {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== "object") return obj;
-  if (seen.has(obj)) return obj;
-  seen.add(obj);
-
-  if (obj instanceof Date) return obj;
-  if (obj instanceof RegExp) return obj;
-  if (typeof FormData !== "undefined" && obj instanceof FormData) return obj;
-  if (typeof Blob !== "undefined" && obj instanceof Blob) return obj;
-  if (typeof File !== "undefined" && obj instanceof File) return obj;
-
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < obj.length; i += 1) {
-      stripCamelAliases(obj[i], seen);
-    }
-    return obj;
-  }
-
-  const keys = Object.keys(obj);
-  for (let i = 0; i < keys.length; i += 1) {
-    const key = keys[i];
-    const value = obj[key];
-    if (value !== null && typeof value === "object") {
-      stripCamelAliases(value, seen);
-    }
-    // Detect camelCase key (no underscore, has uppercase letter).
-    if (/[A-Z]/.test(key) && !key.includes("_")) {
-      const snakeKey = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-      if (
-        snakeKey !== key &&
-        Object.prototype.hasOwnProperty.call(obj, snakeKey) &&
-        obj[snakeKey] === obj[key]
-      ) {
-        try {
-          delete obj[key];
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }
-  return obj;
-}
-
 const avoidRedirect = [
   "/auth/jwt/register",
   "/auth/jwt/login",
@@ -206,50 +32,8 @@ const avoidRedirect = [
   "/auth/jwt/org-removed",
 ];
 
-// Request interceptor: strip camelCase aliases from request bodies so the
-// backend only ever sees canonical snake_case keys, even when a response
-// object (with enumerable aliases added by the response interceptor) is
-// spread into a mutation payload. Operates on a deep clone so the caller's
-// data stays intact for re-use in React Query cache, form state, etc.
-axiosInstance.interceptors.request.use((config) => {
-  try {
-    if (
-      config &&
-      config.data &&
-      typeof config.data === "object" &&
-      !(typeof FormData !== "undefined" && config.data instanceof FormData) &&
-      !(typeof Blob !== "undefined" && config.data instanceof Blob)
-    ) {
-      try {
-        config.data = structuredClone(config.data);
-      } catch {
-        try {
-          config.data = JSON.parse(JSON.stringify(config.data));
-        } catch {
-          return config;
-        }
-      }
-      stripCamelAliases(config.data, new WeakSet());
-    }
-  } catch {
-    // never break a request because of the bridge
-  }
-  return config;
-});
-
 axiosInstance.interceptors.response.use(
-  (res) => {
-    // Attach camelCase aliases to response data so existing UI code that
-    // still reads `data.createdAt` keeps working alongside `data.created_at`.
-    try {
-      if (res && res.data) {
-        addCamelAliases(res.data, new WeakSet());
-      }
-    } catch {
-      // never break a successful response because of the bridge
-    }
-    return res;
-  },
+  (res) => res,
   async (error) => {
     const currentPath = window.location.href;
     const avoid = avoidRedirect.some((item) => currentPath.includes(item));
@@ -407,16 +191,6 @@ axiosInstance.interceptors.response.use(
       ...errData,
       statusCode: error.response?.status,
     };
-
-    // Mirror success-response behaviour: attach camelCase aliases so error
-    // handlers can read both snake_case and camelCase keys (e.g. `error_code`
-    // vs `errorCode`, `upgrade_cta` vs `upgradeCta`). Keeps error handling
-    // code consistent with success-path conventions without a big refactor.
-    try {
-      addCamelAliases(customError, new WeakSet());
-    } catch {
-      // never swallow the original error because of the bridge
-    }
 
     return Promise.reject(customError);
   },
@@ -1021,13 +795,13 @@ export const endpoints = {
       getExperimentDerivedVariables: (expId) =>
         `/model-hub/experiments/v2/${expId}/derived-variables/`,
       feedback: {
-        getTemplate: ( experimentId) =>
+        getTemplate: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/get-template/`,
-        create: ( experimentId) =>
+        create: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/`,
-        getDetails: ( experimentId) =>
+        getDetails: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/get-feedback-details/`,
-        submit: ( experimentId) =>
+        submit: (experimentId) =>
           `/model-hub/experiments/v2/${experimentId}/feedback/submit-feedback/`,
       },
     },
@@ -1420,7 +1194,8 @@ export const endpoints = {
     mcpTools: (id) => `/agentcc/gateways/${id}/mcp-tools/`,
     updateMcpServer: (id) => `/agentcc/gateways/${id}/update-mcp-server/`,
     removeMcpServer: (id) => `/agentcc/gateways/${id}/remove-mcp-server/`,
-    updateMcpGuardrails: (id) => `/agentcc/gateways/${id}/update-mcp-guardrails/`,
+    updateMcpGuardrails: (id) =>
+      `/agentcc/gateways/${id}/update-mcp-guardrails/`,
     testMcpTool: (id) => `/agentcc/gateways/${id}/test-mcp-tool/`,
     mcpResources: (id) => `/agentcc/gateways/${id}/mcp-resources/`,
     mcpPrompts: (id) => `/agentcc/gateways/${id}/mcp-prompts/`,
