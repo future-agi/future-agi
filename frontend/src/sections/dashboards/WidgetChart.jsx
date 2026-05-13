@@ -1,6 +1,12 @@
 /* eslint-disable react/prop-types */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, CircularProgress, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  CircularProgress,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -68,9 +74,13 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const apexType = getApexType(chartType);
   const isStacked = chartType.startsWith("stacked_");
   const isHorizontal = chartType === "bar" || chartType === "stacked_bar";
+  const isStackedBar = chartType === "stacked_bar";
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+
+  const queryBreakdowns = queryConfig?.breakdowns || [];
+  const hasBreakdowns = queryBreakdowns.length > 0;
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
@@ -158,6 +168,90 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  // Build structured data for bar/stacked_bar when breakdowns are present
+  const BREAKDOWN_DELIM = " / ";
+  const structuredBarData = useMemo(() => {
+    if (!isHorizontal || !hasBreakdowns || !result?.metrics) return null;
+    const numBreakdowns = queryBreakdowns.length;
+    const breakdownDisplayNames = queryBreakdowns.map(
+      (b) => b.display_name || b.displayName || b.name || "Breakdown",
+    );
+
+    // Collect all unique stacking segment names (for legend colors)
+    const segmentNameSet = new Set();
+    const rows = [];
+
+    for (const metric of result.metrics) {
+      const metricLabel = `${metric.name} (${metric.aggregation})`;
+      const nonTotalSeries = (metric.series || []).filter(
+        (s) => s.name !== "total",
+      );
+
+      if (isStackedBar && numBreakdowns === 1) {
+        // Stacked bar, 1 breakdown: one row per metric, segments = breakdown values
+        const segments = nonTotalSeries.map((s) => {
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          segmentNameSet.add(s.name);
+          return { name: s.name, value: avg };
+        });
+        const totalValue = segments.reduce((s, seg) => s + seg.value, 0);
+        rows.push({ metricLabel, breakdownColumns: [], segments, totalValue });
+      } else if (isStackedBar && numBreakdowns >= 2) {
+        // Stacked bar, 2+ breakdowns: first breakdown = column, rest = stacking
+        const grouped = {};
+        for (const s of nonTotalSeries) {
+          const parts = s.name.split(BREAKDOWN_DELIM);
+          const colValue = parts[0] || s.name;
+          const stackName = parts.slice(1).join(BREAKDOWN_DELIM) || s.name;
+          if (!grouped[colValue]) grouped[colValue] = [];
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          segmentNameSet.add(stackName);
+          grouped[colValue].push({ name: stackName, value: avg });
+        }
+        for (const [colValue, segments] of Object.entries(grouped)) {
+          const totalValue = segments.reduce((s, seg) => s + seg.value, 0);
+          rows.push({
+            metricLabel,
+            breakdownColumns: [colValue],
+            segments,
+            totalValue,
+          });
+        }
+      } else {
+        // Regular bar with breakdowns: one row per metric×breakdown combination
+        for (const s of nonTotalSeries) {
+          const parts =
+            numBreakdowns >= 2 ? s.name.split(BREAKDOWN_DELIM) : [s.name];
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          rows.push({
+            metricLabel,
+            breakdownColumns: parts,
+            segments: [{ name: s.name, value: avg }],
+            totalValue: avg,
+          });
+        }
+      }
+    }
+
+    return {
+      segmentNames: [...segmentNameSet],
+      breakdownDisplayNames,
+      rows,
+    };
+  }, [isHorizontal, hasBreakdowns, isStackedBar, result, queryBreakdowns]);
+
   const pieValues = useMemo(
     () =>
       isPie
@@ -170,7 +264,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
 
   // Compute Y-axis precision once from the data range so all ticks use the
   // same number of decimals (avoids "0.0 / 0.0 / 0.02" inconsistency).
-  const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
+  const autoDecimals = useMemo(
+    () => getAutoDecimals(chartSeries),
+    [chartSeries],
+  );
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
@@ -322,9 +419,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                 variant="h3"
                 sx={{ color: COLORS[i % COLORS.length] }}
               >
-                {avg == null
-                  ? "—"
-                  : formatVal(avg)}
+                {avg == null ? "—" : formatVal(avg)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {s.name}
@@ -644,6 +739,282 @@ export default function WidgetChart({ widget, globalDateRange }) {
 
   // Bar chart — horizontal bar table
   if (isHorizontal) {
+    // When breakdowns are present, use structuredBarData for differentiated rendering
+    if (hasBreakdowns && structuredBarData) {
+      const { segmentNames, breakdownDisplayNames, rows } = structuredBarData;
+      const maxVal = Math.max(...rows.map((r) => Math.abs(r.totalValue)), 1);
+      const colWidth = 100;
+
+      // For stacked bar: legend shows segment (breakdown) names
+      // For regular bar: legend shows metric names (same as no-breakdown)
+      const legendItems = isStackedBar
+        ? segmentNames.map((name, i) => ({
+            name,
+            color: COLORS[i % COLORS.length],
+          }))
+        : [...new Set(rows.map((r) => r.metricLabel))].map((name, i) => ({
+            name,
+            color: COLORS[i % COLORS.length],
+          }));
+      const metricColorMap = {};
+      [...new Set(rows.map((r) => r.metricLabel))].forEach((m, i) => {
+        metricColorMap[m] = COLORS[i % COLORS.length];
+      });
+
+      // Breakdown column headers (for bar: all breakdowns; for stacked_bar with 2+: first breakdown)
+      const bdColHeaders = isStackedBar
+        ? breakdownDisplayNames.slice(0, -1)
+        : breakdownDisplayNames;
+
+      return (
+        <Box
+          ref={containerRef}
+          sx={{
+            width: "100%",
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          {/* Legend */}
+          <Stack
+            direction="row"
+            gap={2}
+            flexWrap="wrap"
+            justifyContent="center"
+            sx={{ px: 2, pt: 1.5, pb: 1 }}
+          >
+            {legendItems.map((item, i) => (
+              <Stack key={i} direction="row" alignItems="center" gap={0.5}>
+                <Box
+                  sx={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "2px",
+                    bgcolor: item.color,
+                    flexShrink: 0,
+                  }}
+                />
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    fontWeight: 500,
+                    fontSize: "12px",
+                  }}
+                >
+                  {item.name}
+                </Typography>
+              </Stack>
+            ))}
+          </Stack>
+          {/* Column headers */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              px: 2,
+              py: 0.5,
+              borderBottom: `1px solid ${theme.palette.divider}`,
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                width: colWidth,
+                minWidth: colWidth,
+                flexShrink: 0,
+                fontWeight: 600,
+                color: "text.secondary",
+                fontSize: "11px",
+              }}
+            >
+              Metric
+            </Typography>
+            {bdColHeaders.map((hdr, hi) => (
+              <Typography
+                key={hi}
+                variant="caption"
+                sx={{
+                  width: colWidth,
+                  minWidth: colWidth,
+                  flexShrink: 0,
+                  fontWeight: 600,
+                  color: "text.secondary",
+                  fontSize: "11px",
+                }}
+              >
+                {hdr}
+              </Typography>
+            ))}
+            <Typography
+              variant="caption"
+              sx={{
+                flex: 1,
+                fontWeight: 600,
+                color: "text.secondary",
+                fontSize: "11px",
+              }}
+            >
+              Value
+            </Typography>
+          </Box>
+          {/* Bar rows */}
+          <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
+            {rows.map((row, i) => {
+              const shortMetric =
+                row.metricLabel.length > 14
+                  ? row.metricLabel.slice(0, 12) + "..."
+                  : row.metricLabel;
+              return (
+                <Box
+                  key={i}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    py: 0.8,
+                    borderBottom: `1px solid ${theme.palette.divider}`,
+                    "&:last-child": { borderBottom: "none" },
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    title={row.metricLabel}
+                    sx={{
+                      width: colWidth,
+                      minWidth: colWidth,
+                      flexShrink: 0,
+                      fontWeight: 500,
+                      fontSize: "12px",
+                      color: "text.primary",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      pr: 1,
+                    }}
+                  >
+                    {shortMetric}
+                  </Typography>
+                  {row.breakdownColumns.map((col, ci) => {
+                    const shortCol =
+                      col.length > 14 ? col.slice(0, 12) + "..." : col;
+                    return (
+                      <Typography
+                        key={ci}
+                        variant="body2"
+                        title={col}
+                        sx={{
+                          width: colWidth,
+                          minWidth: colWidth,
+                          flexShrink: 0,
+                          fontWeight: 500,
+                          fontSize: "12px",
+                          color: "text.primary",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          pr: 1,
+                        }}
+                      >
+                        {shortCol}
+                      </Typography>
+                    );
+                  })}
+                  <Box
+                    sx={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        flex: 1,
+                        height: 18,
+                        bgcolor: isDark
+                          ? "rgba(255,255,255,0.04)"
+                          : "rgba(0,0,0,0.02)",
+                        borderRadius: "3px",
+                        overflow: "hidden",
+                        display: "flex",
+                      }}
+                    >
+                      {isStackedBar
+                        ? row.segments.map((seg, si) => {
+                            const segColor =
+                              COLORS[
+                                segmentNames.indexOf(seg.name) % COLORS.length
+                              ];
+                            const segPct =
+                              row.totalValue > 0
+                                ? (Math.abs(seg.value) / maxVal) * 100
+                                : 0;
+                            return (
+                              <Tooltip
+                                key={si}
+                                title={`${seg.name}: ${formatVal(seg.value)}`}
+                                arrow
+                                placement="top"
+                              >
+                                <Box
+                                  sx={{
+                                    height: "100%",
+                                    width: `${Math.max(segPct, 0.5)}%`,
+                                    bgcolor: segColor,
+                                    transition: "width 0.4s ease",
+                                  }}
+                                />
+                              </Tooltip>
+                            );
+                          })
+                        : (() => {
+                            const pct =
+                              maxVal > 0
+                                ? (Math.abs(row.totalValue) / maxVal) * 100
+                                : 0;
+                            const color =
+                              metricColorMap[row.metricLabel] ||
+                              COLORS[i % COLORS.length];
+                            return (
+                              <Box
+                                sx={{
+                                  height: "100%",
+                                  width: `${Math.max(pct, 1)}%`,
+                                  bgcolor: color,
+                                  borderRadius: "3px",
+                                  transition: "width 0.4s ease",
+                                }}
+                              />
+                            );
+                          })()}
+                    </Box>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        minWidth: 60,
+                        textAlign: "right",
+                        fontWeight: 600,
+                        fontSize: "12px",
+                        color: "text.primary",
+                        fontVariantNumeric: "tabular-nums",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {formatVal(row.totalValue)}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+      );
+    }
+
+    // No breakdowns — identical rendering for bar and stacked_bar
     const barRows = chartSeries.map((s) => {
       const avg = getSeriesAverage(s.data);
       return {
@@ -651,7 +1022,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
         numericValue: avg == null ? 0 : avg,
       };
     });
-    const maxVal = Math.max(...barRows.map((row) => Math.abs(row.numericValue)), 1);
+    const maxVal = Math.max(
+      ...barRows.map((row) => Math.abs(row.numericValue)),
+      1,
+    );
     return (
       <Box
         ref={containerRef}
