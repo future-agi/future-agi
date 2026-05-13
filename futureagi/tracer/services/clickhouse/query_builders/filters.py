@@ -10,6 +10,13 @@ Django ORM querysets.
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from tracer.utils.constants import (
+    LIST_OPS,
+    NO_VALUE_OPS,
+    RANGE_OPS,
+    SPAN_ATTR_ALLOWED_OPS,
+)
+
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 
@@ -34,31 +41,6 @@ _SPAN_ATTR_TYPE_META: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
     "number":  ("span_attr_num",  lambda v: float(v)),
     "boolean": ("span_attr_bool", _coerce_strict_bool),
 }
-
-_SPAN_ATTR_ALLOWED_OPS: Dict[str, set] = {
-    "text": {
-        "equals", "not_equals",
-        "in", "not_in",
-        "contains", "not_contains",
-        "starts_with", "ends_with",
-        "is_null", "is_not_null",
-    },
-    "number": {
-        "equals", "not_equals",
-        "greater_than", "greater_than_or_equal",
-        "less_than", "less_than_or_equal",
-        "between", "not_between",
-        "is_null", "is_not_null",
-    },
-    "boolean": {
-        "equals", "not_equals", "is_null", "is_not_null",
-    },
-}
-
-_LIST_OPS = {"in", "not_in"}
-_RANGE_OPS = {"between", "not_between"}
-_NO_VALUE_OPS = {"is_null", "is_not_null"}
-
 
 class ClickHouseFilterBuilder:
     """Translates frontend filter format to ClickHouse WHERE clauses.
@@ -626,7 +608,7 @@ class ClickHouseFilterBuilder:
         normalized_filter_type: str, filter_op: Optional[str]
     ) -> None:
         """Reject filter_ops not allowed for the resolved filter_type."""
-        allowed_ops = _SPAN_ATTR_ALLOWED_OPS[normalized_filter_type]
+        allowed_ops = SPAN_ATTR_ALLOWED_OPS[normalized_filter_type]
         if filter_op not in allowed_ops:
             raise ValueError(
                 f"filter_op {filter_op!r} not allowed for filter_type "
@@ -640,17 +622,17 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> Any:
         """Validate value shape per op and coerce each scalar."""
-        if filter_op in _NO_VALUE_OPS:
+        if filter_op in NO_VALUE_OPS:
             return None
 
-        if filter_op in _RANGE_OPS:
+        if filter_op in RANGE_OPS:
             if not isinstance(filter_value, list) or len(filter_value) != 2:
                 raise ValueError(
                     f"{filter_op!r} requires a 2-element list, got {filter_value!r}"
                 )
             return [value_coercer(filter_value[0]), value_coercer(filter_value[1])]
 
-        if filter_op in _LIST_OPS:
+        if filter_op in LIST_OPS:
             if not isinstance(filter_value, list) or not filter_value:
                 raise ValueError(
                     f"{filter_op!r} requires a non-empty list, got {filter_value!r}"

@@ -2125,7 +2125,7 @@ class FilterEngine:
             return Q()
 
         # Use span_attributes (canonical) for all filters - eval_attributes is deprecated.
-        # Vocabulary mirrors `_SPAN_ATTR_ALLOWED_OPS` in the CH builder.
+        # Vocabulary mirrors `SPAN_ATTR_ALLOWED_OPS` in `tracer.utils.constants`.
         _null_q = lambda col: (
             ~Q(span_attributes__has_key=col)
             | Q(span_attributes__contains={col: None})

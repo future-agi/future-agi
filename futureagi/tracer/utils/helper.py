@@ -10,6 +10,12 @@ from rest_framework import serializers
 from model_hub.models.choices import AnnotationTypeChoices, DataTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.utils.constants import (
+    LIST_OPS,
+    NO_VALUE_OPS,
+    RANGE_OPS,
+    SPAN_ATTR_ALLOWED_OPS,
+)
 
 
 @dataclass
@@ -316,59 +322,36 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
-# Mirror of `_SPAN_ATTR_ALLOWED_OPS` in the CH filter builder.
-_SPAN_ATTR_ALLOWED_OPS_BY_TYPE = {
-    "text": {
-        "equals", "not_equals", "in", "not_in",
-        "contains", "not_contains", "starts_with", "ends_with",
-        "is_null", "is_not_null",
-    },
-    "number": {
-        "equals", "not_equals",
-        "greater_than", "greater_than_or_equal",
-        "less_than", "less_than_or_equal",
-        "between", "not_between",
-        "is_null", "is_not_null",
-    },
-    "boolean": {
-        "equals", "not_equals", "is_null", "is_not_null",
-    },
-}
-_SPAN_ATTR_LIST_OPS = {"in", "not_in"}
-_SPAN_ATTR_RANGE_OPS = {"between", "not_between"}
-_SPAN_ATTR_NO_VALUE_OPS = {"is_null", "is_not_null"}
-
-
 def _validate_span_attribute_filter(column_id, filter_config):
     """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
     ftype = (filter_config.get("filter_type") or "").lower()
     fop = filter_config.get("filter_op")
     fval = filter_config.get("filter_value")
 
-    if ftype not in _SPAN_ATTR_ALLOWED_OPS_BY_TYPE:
+    if ftype not in SPAN_ATTR_ALLOWED_OPS:
         raise serializers.ValidationError(
             f"Filter {column_id!r}: unsupported filter_type {ftype!r} "
-            f"for SPAN_ATTRIBUTE (expected one of {sorted(_SPAN_ATTR_ALLOWED_OPS_BY_TYPE)})."
+            f"for SPAN_ATTRIBUTE (expected one of {sorted(SPAN_ATTR_ALLOWED_OPS)})."
         )
 
-    allowed = _SPAN_ATTR_ALLOWED_OPS_BY_TYPE[ftype]
+    allowed = SPAN_ATTR_ALLOWED_OPS[ftype]
     if fop not in allowed:
         raise serializers.ValidationError(
             f"Filter {column_id!r}: filter_op {fop!r} is not valid for "
             f"filter_type {ftype!r}. Allowed: {sorted(allowed)}."
         )
 
-    if fop in _SPAN_ATTR_NO_VALUE_OPS:
+    if fop in NO_VALUE_OPS:
         return
 
-    if fop in _SPAN_ATTR_RANGE_OPS:
+    if fop in RANGE_OPS:
         if not isinstance(fval, list) or len(fval) != 2:
             raise serializers.ValidationError(
                 f"Filter {column_id!r}: {fop!r} requires a 2-element list, "
                 f"got {fval!r}."
             )
         values_to_check = fval
-    elif fop in _SPAN_ATTR_LIST_OPS:
+    elif fop in LIST_OPS:
         if not isinstance(fval, list) or not fval:
             raise serializers.ValidationError(
                 f"Filter {column_id!r}: {fop!r} requires a non-empty list, "

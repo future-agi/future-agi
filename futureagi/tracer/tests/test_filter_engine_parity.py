@@ -1,35 +1,14 @@
 """Parity tests: PG FilterEngine speaks the same SPAN_ATTRIBUTE filter
 vocabulary as the CH ClickHouseFilterBuilder.
 
-Mirrors `_SPAN_ATTR_ALLOWED_OPS` from
-`tracer/services/clickhouse/query_builders/filters.py`.
+Sourced from `SPAN_ATTR_ALLOWED_OPS` in `tracer/utils/constants.py`.
 """
 
 import pytest
 from django.db.models import Q
 
+from tracer.utils.constants import SPAN_ATTR_ALLOWED_OPS
 from tracer.utils.filters import ColType, FilterEngine
-
-
-CANONICAL_OPS = {
-    "text": [
-        "equals", "not_equals",
-        "in", "not_in",
-        "contains", "not_contains",
-        "starts_with", "ends_with",
-        "is_null", "is_not_null",
-    ],
-    "number": [
-        "equals", "not_equals",
-        "greater_than", "greater_than_or_equal",
-        "less_than", "less_than_or_equal",
-        "between", "not_between",
-        "is_null", "is_not_null",
-    ],
-    "boolean": [
-        "equals", "not_equals", "is_null", "is_not_null",
-    ],
-}
 
 
 def _sample_value(ftype, op):
@@ -68,7 +47,7 @@ class TestSpanAttrParity:
 
     @pytest.mark.parametrize(
         "ftype,op",
-        [(t, op) for t, ops in CANONICAL_OPS.items() for op in ops],
+        [(t, op) for t, ops in SPAN_ATTR_ALLOWED_OPS.items() for op in ops],
     )
     def test_canonical_op_produces_non_empty_q(self, ftype, op):
         flt = _make_span_attr_filter(ftype, op)
@@ -103,13 +82,13 @@ class TestSpanAttrParity:
         q = FilterEngine.get_filter_conditions_for_span_attributes([flt])
         assert len(q.children) > 0
 
-    @pytest.mark.parametrize("ftype", list(CANONICAL_OPS.keys()))
+    @pytest.mark.parametrize("ftype", list(SPAN_ATTR_ALLOWED_OPS.keys()))
     def test_is_null_produces_has_key_negation(self, ftype):
         flt = _make_span_attr_filter(ftype, "is_null")
         q = FilterEngine.get_filter_conditions_for_span_attributes([flt])
         assert "has_key" in str(q)
 
-    @pytest.mark.parametrize("ftype", list(CANONICAL_OPS.keys()))
+    @pytest.mark.parametrize("ftype", list(SPAN_ATTR_ALLOWED_OPS.keys()))
     def test_is_not_null_produces_has_key(self, ftype):
         flt = _make_span_attr_filter(ftype, "is_not_null")
         q = FilterEngine.get_filter_conditions_for_span_attributes([flt])
