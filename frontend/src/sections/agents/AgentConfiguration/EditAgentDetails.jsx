@@ -151,15 +151,7 @@ const EditAgentDetails = ({
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
-    meta: {
-      errorHandled: true,
-    },
-    onError: () => {
-      enqueueSnackbar({
-        message: `Syncing with ${selectedProvider} failed. Recheck the Assistant ID.`,
-        variant: "error",
-      });
-    },
+    
   });
 
   useEffect(() => {
