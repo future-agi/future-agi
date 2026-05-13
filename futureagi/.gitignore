@@ -24,4 +24,3 @@ wsgi
 
 # Type-check baseline backups
 mypy-baseline.txt.backup
-model_serving/
