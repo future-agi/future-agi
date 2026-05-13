@@ -490,12 +490,21 @@ def _scan_file_missing_await(path: str) -> list[FailureEvidence]:
     except (SyntaxError, OSError):
         return []
 
-    async_funcs: set[str] = {
-        node.name
-        for node in _ast.walk(tree)
-        if isinstance(node, _ast.AsyncFunctionDef)
-    }
-    if not async_funcs:
+    # Collect async function names, partitioned by scope:
+    # - module_async: bare-name calls must be awaited
+    # - method_async: self.name() / cls.name() calls must be awaited
+    module_async: set[str] = set()
+    method_async: set[str] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.AsyncFunctionDef):
+            # Heuristic: if the first argument is self/cls, it's a method
+            args = node.args.args
+            if args and args[0].arg in ("self", "cls"):
+                method_async.add(node.name)
+            else:
+                module_async.add(node.name)
+
+    if not module_async and not method_async:
         return []
 
     evidence = []
@@ -513,11 +522,22 @@ def _scan_file_missing_await(path: str) -> list[FailureEvidence]:
         def visit_Call(self, node):
             if not self._in_await:
                 name = None
+                is_method_call = False
                 if isinstance(node.func, _ast.Name):
                     name = node.func.id
                 elif isinstance(node.func, _ast.Attribute):
                     name = node.func.attr
-                if name and name in async_funcs:
+                    # Only flag method calls when receiver is self/cls to
+                    # avoid false positives on unrelated objects (e.g.
+                    # data.get() when async def get() exists in the same class)
+                    recv = node.func.value
+                    if isinstance(recv, _ast.Name) and recv.id in ("self", "cls"):
+                        is_method_call = True
+                should_flag = (
+                    (name in module_async and not isinstance(node.func, _ast.Attribute)) or
+                    (name in method_async and is_method_call)
+                )
+                if name and should_flag:
                     evidence.append(FailureEvidence(
                         mode_name="missing_await",
                         file=path,

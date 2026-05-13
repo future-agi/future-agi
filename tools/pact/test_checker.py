@@ -357,6 +357,40 @@ def test_sync_function_not_flagged_as_missing_await(tmp_path):
     assert not v, "sync function call should not be flagged as missing await"
 
 
+def test_drf_view_async_get_method_not_flagged(tmp_path):
+    # Regression: async def get(self, request, ...) in a DRF view caused
+    # "get" to land in async_funcs, falsely flagging every data.get() call.
+    _write_src(tmp_path, "views.py", """
+        from rest_framework.views import APIView
+
+        class MyView(APIView):
+            async def get(self, request, pk=None):
+                return None
+
+        def handler(data):
+            name = data.get("name", "default")  # should NOT be flagged
+            value = data.get("value")            # should NOT be flagged
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "missing_await"]
+    assert not v, "dict.get() must not be flagged because async def get(self, ...) exists in same file"
+
+
+def test_module_level_async_func_without_await_still_flagged(tmp_path):
+    # Module-level async function (no self/cls) should still be flagged.
+    _write_src(tmp_path, "tasks.py", """
+        async def send_email(recipient):
+            pass
+
+        def trigger():
+            send_email("user@example.com")  # missing await — module-level
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "missing_await"]
+    assert v, "unawaited module-level async call must still be flagged after scoping fix"
+    assert v[0].call == "send_email"
+
+
 # ---------------------------------------------------------------------------
 # format_arg_mismatch mode
 # ---------------------------------------------------------------------------
