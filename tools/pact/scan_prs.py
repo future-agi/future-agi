@@ -101,8 +101,8 @@ def scan_branch(pr: dict, worktree_base: Path) -> dict:
                 ["git", "worktree", "remove", "--force", str(worktree)],
                 cwd=REPO_ROOT, capture_output=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[warn] worktree cleanup failed for {worktree}: {exc}", flush=True)
 
 
 def main():
