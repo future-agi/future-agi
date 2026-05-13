@@ -968,6 +968,8 @@ const FilterPanel = ({
   // a `projectId` the panel falls back to the legacy build_filters path.
   projectId,
   source = "traces",
+  // Opt-in: emit rows shape with operator; default keeps legacy object shape.
+  emitRowsFormat = false,
 }) => {
   const fieldMap = useMemo(
     () => Object.fromEntries(filterFields.map((f) => [f.value, f])),
@@ -1048,6 +1050,21 @@ const FilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
+      if (emitRowsFormat) {
+        const tokens = [];
+        for (const row of rows) {
+          const val = row.value;
+          const isEmpty = !val || (Array.isArray(val) && val.length === 0);
+          if (isEmpty) continue;
+          tokens.push({
+            field: row.field,
+            operator: row.operator,
+            value: Array.isArray(val) ? val : [val],
+          });
+        }
+        onApply(tokens.length > 0 ? tokens : null);
+        return;
+      }
       const result = {};
       for (const row of rows) {
         const val = row.value;
@@ -1320,6 +1337,7 @@ FilterPanel.propTypes = {
   width: PropTypes.number,
   projectId: PropTypes.string,
   source: PropTypes.string,
+  emitRowsFormat: PropTypes.bool,
 };
 
 export { QueryInput };
