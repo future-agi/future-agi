@@ -16,14 +16,17 @@ import {
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
-import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
+import { enqueueSnackbar } from "src/components/snackbar";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -389,74 +392,68 @@ const TaskConfigPanel = ({
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
-     
       const tplId = evalConfig.templateId || evalConfig.template_id;
-      let finalEval = { ...evalConfig, template_id: tplId };
 
       // When editing, configuredEvals[editingIndex].id is always the CustomEvalConfig id
       // (set from POST response on first add, or from the API on task load)
       const customEvalConfigId =
         editingIndex !== null ? configuredEvals[editingIndex]?.id : undefined;
 
+      const serialized = serializeEvalConfig(evalConfig);
+
+
+      const corePayload = {
+        eval_template: tplId,
+        name: evalConfig.name,
+        model: evalConfig.model || null,
+        mapping: evalConfig.mapping || {},
+        config: {
+          ...serialized.config,
+          mapping: evalConfig.mapping || {},
+        },
+        error_localizer: !!evalConfig.errorLocalizerEnabled,
+      };
+
+      let finalEval = { ...evalConfig, template_id: tplId };
       try {
         if (customEvalConfigId) {
           const { data: resp } = await axios.patch(
             endpoints.project.updateEvalTaskConfig(customEvalConfigId),
-            {
-              eval_template: tplId,
-              name: evalConfig.name,
-              model: evalConfig.model || null,
-              mapping: evalConfig.mapping,
-              config: {
-                ...(evalConfig.config || {}),
-                mapping: evalConfig.mapping,
-                ...(evalConfig.data_injection
-                  ? { run_config: { data_injection: evalConfig.data_injection } }
-                  : {}),
-              },
-              error_localizer: evalConfig.errorLocalizerEnabled || false,
-            },
+            corePayload,
           );
           finalEval = {
             ...evalConfig,
             id: resp?.result?.id ?? customEvalConfigId,
             template_id: tplId,
             templateId: tplId,
+            config: {
+              ...(evalConfig.config || {}),
+              ...corePayload.config,
+            },
+            mapping: evalConfig.mapping || {},
           };
         } else {
           const { data: resp } = await axios.post(
             endpoints.project.createEvalTaskConfig(),
-            {
-              project: project,
-              eval_template: tplId,
-              name: evalConfig.name,
-              model: evalConfig.model || null,
-              mapping: evalConfig.mapping,
-              config: {
-                ...(evalConfig.config || {}),
-                mapping: evalConfig.mapping,
-                ...(evalConfig.data_injection
-                  ? { run_config: { data_injection: evalConfig.data_injection } }
-                  : {}),
-              },
-              error_localizer: evalConfig.errorLocalizerEnabled || false,
-            },
+            { project, ...corePayload },
           );
-          // Store the custom_eval_config id separately — keep template_id intact
-          // so the eval card and test runner can still look up the template.
           finalEval = {
             ...evalConfig,
             id: resp?.result?.id,
             template_id: tplId,
             templateId: tplId,
+            config: {
+              ...(evalConfig.config || {}),
+              ...corePayload.config,
+            },
+            mapping: evalConfig.mapping || {},
           };
         }
       } catch (error) {
-       
         enqueueSnackbar(
           error?.response?.data?.result ||
-            error?.response?.data?.error ||
-            "Failed to save evaluation",
+          error?.response?.data?.error ||
+          "Failed to save evaluation",
           { variant: "error" },
         );
         throw error;
@@ -503,7 +500,7 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId =  stored.templateId || stored.template_id || stored.eval_template;
+    const tplId = stored.templateId || stored.template_id || stored.eval_template;
 
     const savedErrorLocalizer =
       stored.error_localizer_enabled ?? stored.error_localizer;
@@ -654,16 +651,16 @@ const TaskConfigPanel = ({
                         bgcolor:
                           rowType === t.value
                             ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
+                              theme.palette.mode === "dark"
+                                ? "rgba(255,255,255,0.12)"
+                                : "background.paper"
                             : "transparent",
                         boxShadow:
                           rowType === t.value
                             ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
+                              theme.palette.mode === "dark"
+                                ? "none"
+                                : "0 1px 3px rgba(0,0,0,0.08)"
                             : "none",
                         borderRadius: "6px",
                         fontWeight: rowType === t.value ? 600 : 400,

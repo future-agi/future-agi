@@ -6,7 +6,10 @@ import { useParams } from "react-router";
 
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
 import { chatEvalColumns } from "src/components/run-tests/common";
 
 import SimulationEvaluationPage from "./SimulationEvaluationPage";
@@ -76,26 +79,11 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
     refetchSimulation?.();
   }, [queryClient, promptTemplateId, simulationId, refetchSimulation]);
 
-  // Bridge — the new drawer returns a camelCase config; the backend expects
-  // snake_case. When `editingEvalItem` is set we route to the update endpoint
-  // and keep the existing SimulateEvalConfig row; otherwise we create a new
-  // config via the add endpoint.
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       if (!simulationId) return;
       const editing = editingEvalItem;
-      const payload = {
-        template_id: evalConfig.templateId,
-        name: evalConfig.name,
-        model: evalConfig.model,
-        mapping: evalConfig.mapping || {},
-        // Backend merges with the stored template config via
-        // normalize_eval_runtime_config, so passing the full template config
-        // (or an empty object) both work.
-        config: evalConfig.config || {},
-        error_localizer: false,
-        filters: {},
-      };
+      const payload = serializeEvalConfig(evalConfig);
       try {
         if (editing?.id) {
           await updateEvalAsync({

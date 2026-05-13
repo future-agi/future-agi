@@ -1634,16 +1634,16 @@ const ModelSelector = ({
                       onClick={() => {
                         setActiveContextOptions((prev) => {
                           if (opt.isDefault) {
-                            // Clicking "variables_only" deselects everything else
+                            // Clicking "variables_only" clears any active context.
                             return ["variables_only"];
                           }
-                          // Toggle the clicked option
-                          let next = prev.includes(opt.value)
-                            ? prev.filter((x) => x !== opt.value)
-                            : [...prev.filter((x) => x !== "variables_only"), opt.value];
-                          // If nothing left, revert to variables_only
-                          if (next.length === 0) next = ["variables_only"];
-                          return next;
+                          // Single-select: clicking a non-default option replaces
+                          // whatever was active. Clicking the already-active one
+                          // toggles it off and reverts to variables_only.
+                          if (prev.includes(opt.value)) {
+                            return ["variables_only"];
+                          }
+                          return [opt.value];
                         });
                       }}
                       sx={{
