@@ -1743,6 +1743,8 @@ const EvalDetailPage = () => {
                           : instructions
                     }
                     evalType={evalType}
+                    code={code}
+                    codeLanguage={codeLanguage}
                     requiredKeys={variables}
                     showVersions={!(isSystemEval && evalType === "code")}
                     errorLocalizerEnabled={errorLocalizerEnabled}

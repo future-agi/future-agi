@@ -72,6 +72,7 @@ import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
   contextOptionsForRowType,
+  extractCodeEvaluateParams,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
@@ -96,6 +97,7 @@ const SOURCE_LABELS = {
 
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
+
 
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const { isOSS } = useDeploymentMode();
@@ -258,6 +260,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
+      // Live-parse the user's `def evaluate(...)` signature so adding /
+      // renaming a parameter immediately surfaces a new mapping row.
+      // Fall back to the saved mapping + template required_keys when the
+      // code can't be parsed (non-python language, no `def evaluate`).
+      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+      if (liveParams.length > 0) {
+        return [...new Set([...liveParams, ...requiredKeys])];
+      }
       const savedMapping = normalizedEvalData?.mapping || {};
       const savedStdvars = ["input", "output", "expected"].filter(
         (v) => v in savedMapping,
@@ -289,6 +299,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     isSystemEval,
     compositeDetail,
     templateFormat,
+    code,
+    codeLanguage,
   ]);
 
   const visibleCodeParamEntries = useMemo(() => {

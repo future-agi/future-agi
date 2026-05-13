@@ -1205,6 +1205,8 @@ const EvalCreatePage = () => {
                         : instructions
                   }
                   evalType={mode === "composite" ? "llm" : evalType}
+                  code={code}
+                  codeLanguage={codeLanguage}
                   requiredKeys={
                     mode === "composite" ? compositeUnionKeys : undefined
                   }

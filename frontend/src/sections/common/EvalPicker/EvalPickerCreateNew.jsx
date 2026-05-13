@@ -47,6 +47,7 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import { extractCodeEvaluateParams } from "./evalPickerConfigUtils";
 
 const PYTHON_CODE_TEMPLATE = `from typing import Any
 
@@ -560,9 +561,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Variables from instructions
   const variables = useMemo(() => {
-    const codeStdVars =
-      evalType === "code" ? ["input", "output", "expected"] : [];
-    if (!instructions && evalType !== "code") return [];
+    if (evalType === "code") {
+      // Live-parse the user's `def evaluate(...)` signature so adding /
+      // renaming a parameter immediately surfaces a new mapping row.
+      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+      if (liveParams.length > 0) return [...new Set(liveParams)];
+      return ["input", "output", "expected"];
+    }
+    if (!instructions) return [];
     let vars;
     if (templateFormat === "jinja") {
       vars = extractJinjaVariables(instructions || "");
@@ -571,8 +577,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
       vars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
     }
-    return [...new Set([...codeStdVars, ...vars])];
-  }, [instructions, evalType, templateFormat]);
+    return [...new Set(vars)];
+  }, [instructions, evalType, templateFormat, code, codeLanguage]);
 
   return (
     <Box
