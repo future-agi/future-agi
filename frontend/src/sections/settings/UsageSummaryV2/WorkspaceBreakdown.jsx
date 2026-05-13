@@ -32,18 +32,24 @@ function formatUsageCompact(value, _unit) {
 WorkspaceBreakdown.propTypes = {
   dimension: PropTypes.string.isRequired,
   period: PropTypes.string,
+  periodEnd: PropTypes.string,
   displayUnit: PropTypes.string,
 };
 
-export default function WorkspaceBreakdown({ dimension, period, displayUnit }) {
+export default function WorkspaceBreakdown({
+  dimension,
+  period,
+  periodEnd,
+  displayUnit,
+}) {
   const [orderBy, setOrderBy] = useState("usage");
   const [order, setOrder] = useState("desc");
 
   const { data: workspaces, isLoading } = useQuery({
-    queryKey: ["v2-workspace-breakdown", dimension, period],
+    queryKey: ["v2-workspace-breakdown", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageWorkspaceBreakdown, {
-        params: { dimension, period },
+        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
       }),
     select: (res) => res.data?.result?.workspaces || [],
     enabled: !!dimension,
