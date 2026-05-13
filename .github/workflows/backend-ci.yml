@@ -63,10 +63,11 @@ jobs:
           - 19005:9000
           - 19006:9001
         options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-cmd "wget -q --spider http://localhost:9000/minio/health/live || exit 1"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+        command: server /data --console-address ":9001"
 
     steps:
       - uses: actions/checkout@v4

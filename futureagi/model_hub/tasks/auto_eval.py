@@ -211,9 +211,40 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
 
     Rows whose cells cannot be mapped are skipped with a warning (jitokim Q3:
     permissive with per-row failure logging rather than strict validation).
+
+    Idempotency guard: rows that already have a PENDING/PROCESSING Evaluation
+    from a previous (partial) run of this config are skipped to prevent
+    duplicate evaluation records (TLA+ NoDuplicateEval).
     """
     from model_hub.models.develop_dataset import Cell, Row
     from model_hub.models.evaluation import Evaluation, StatusChoices
+
+    # Guard against duplicates when flush_auto_eval_batch is re-invoked for
+    # rows whose Evaluation records survived a prior partial failure (e.g. the
+    # process died after bulk_create but before the workflow-fail cleanup ran).
+    already_created_row_ids = set(
+        str(v)
+        for v in Evaluation.objects.filter(
+            eval_template=config.eval_template,
+            organization=config.organization,
+            status__in=[StatusChoices.PENDING, StatusChoices.PROCESSING],
+            metadata__source="auto_eval",
+            metadata__source_config_id=str(config.id),
+        )
+        .values_list("metadata__row_id", flat=True)
+        .exclude(metadata__row_id=None)
+    )
+    if already_created_row_ids:
+        skipped = [r for r in row_ids if str(r) in already_created_row_ids]
+        if skipped:
+            logger.info(
+                "auto_eval_skip_already_created",
+                extra={
+                    "config_id": str(config.id),
+                    "skipped_count": len(skipped),
+                },
+            )
+        row_ids = [r for r in row_ids if str(r) not in already_created_row_ids]
 
     rows = list(
         Row.objects.filter(id__in=row_ids, deleted=False).prefetch_related(
