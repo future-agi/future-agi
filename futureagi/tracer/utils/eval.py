@@ -75,12 +75,33 @@ _MISSING = object()
 
 
 def _resolve_attr(span_attrs: dict, candidate: str):
-    """Literal lookup, then dotted-path walk. Returns ``_MISSING`` on miss."""
+    """Literal lookup → dotted walk → JSON-parsed parent walk on miss.
+
+    Last step matches the dataset-eval resolver so the trace-eval path
+    can resolve picker paths inside JSON-stringified ``input.value`` /
+    ``output.value`` flat keys.
+    """
     if candidate in span_attrs:
         return span_attrs[candidate]
     walked = _walk_dotted_path(span_attrs, candidate)
     if walked is not None:
         return walked
+
+    from model_hub.utils.json_path_resolver import parse_json_safely
+
+    parts = candidate.split(".")
+    for split_idx in range(len(parts) - 1, 0, -1):
+        prefix = ".".join(parts[:split_idx])
+        remainder = ".".join(parts[split_idx:])
+        for key in (f"{prefix}.value", prefix):
+            if key not in span_attrs:
+                continue
+            parsed, ok = parse_json_safely(span_attrs[key])
+            if not ok:
+                continue
+            walked = _walk_dotted_path(parsed, remainder)
+            if walked is not None:
+                return walked
     return _MISSING
 
 
@@ -1742,8 +1763,9 @@ def _resolve_span_path(span: ObservationSpan, path: str):
         span_attrs = get_span_attributes(span)
         if not rest:
             return span_attrs
-        walked = _walk_dotted_path(span_attrs, rest)
-        return walked if walked is not None else _MISSING
+        # Legacy ``span_attributes.<x>`` paths share resolver semantics
+        # with bare paths.
+        return _resolve_attr(span_attrs, rest)
 
     span_attrs = get_span_attributes(span)
     return _resolve_attr(span_attrs, path)
