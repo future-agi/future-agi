@@ -4471,6 +4471,7 @@ class EvalUsageStatsView(APIView):
                 "error_localizer",
                 "kb_id",
                 "row_context",
+                "result",
             }
 
             for log in logs_page:

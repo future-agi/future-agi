@@ -176,15 +176,22 @@ const useColumns = () =>
         header: "Input",
         meta: { flex: 2 },
         minSize: 200,
-        cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
-            sx={{ fontSize: "12px", color: "text.secondary" }}
-          >
-            {getValue() || "—"}
-          </Typography>
-        ),
+        cell: ({ getValue }) => {
+          const v = getValue();
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                fontSize: "12px",
+                color: v ? "text.secondary" : "text.disabled",
+                fontStyle: v ? "normal" : "italic",
+              }}
+            >
+              {v || "No input"}
+            </Typography>
+          );
+        },
       },
       {
         id: "reason",
