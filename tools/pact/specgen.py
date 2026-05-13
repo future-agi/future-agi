@@ -143,12 +143,18 @@ class _SpecVisitor(ast.NodeVisitor):
         f = _Field(name=fname, django_type=django_type, nullable=nullable, required=required)
         self._current_model.fields.append(f)
 
+    _TASK_DECORATOR_NAMES = frozenset({
+        "shared_task", "task",           # Celery
+        "temporal_activity",             # Temporal
+        "activity_method",               # Temporal SDK variants
+    })
+
     def visit_FunctionDef(self, node: ast.FunctionDef):
         is_task = any(
-            (isinstance(d, ast.Attribute) and d.attr in ("shared_task", "task")) or
-            (isinstance(d, ast.Name) and d.id in ("shared_task", "task")) or
-            (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in ("shared_task", "task")) or
-            (isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id in ("shared_task", "task"))
+            (isinstance(d, ast.Attribute) and d.attr in self._TASK_DECORATOR_NAMES) or
+            (isinstance(d, ast.Name) and d.id in self._TASK_DECORATOR_NAMES) or
+            (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in self._TASK_DECORATOR_NAMES) or
+            (isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id in self._TASK_DECORATOR_NAMES)
             for d in node.decorator_list
         )
         if is_task:
@@ -369,7 +375,8 @@ def _render(models: list[_Model], tasks: list[_Task], module_name: str) -> str:
 
     # Next (only when tasks present; without tasks the spec is pure model typing)
     if not tasks:
-        lines.append("\\* No @shared_task found -- define actions manually or point at a tasks.py file.")
+        lines.append("\\* No task functions found (expected @shared_task, @temporal_activity, etc.)")
+        lines.append("\\* Define actions manually or point at a tasks.py / activities.py file.")
         lines.append("Next == FALSE  \\* placeholder")
         lines.append("")
 
