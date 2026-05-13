@@ -14,6 +14,8 @@ const ROW_TYPE_CONTEXT_OPTIONS = {
 export const contextOptionsForRowType = (rowType) =>
   ROW_TYPE_CONTEXT_OPTIONS[rowType] || null;
 
+export { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
+
 export const hasNonEmptyPromptMessage = (messages = []) =>
   messages.some((message) => {
     if (!["system", "user"].includes(message?.role)) return false;
