@@ -289,14 +289,20 @@ const getDataSource = (
           }
         }
       } catch (e) {
-        // React Query throws `CancelledError` when a new query supersedes
-        // an in-flight one (common during bulk stop-eval / invalidations).
-        // It's expected flow control, not a real failure — don't log or
-        // flip the grid into failed state for it.
+        // Flow-control errors from request cancellation are not real failures:
+        //   • React Query throws CancelledError when a new query supersedes an
+        //     in-flight one (common during bulk stop-eval / invalidations).
+        //   • Axios throws CanceledError (one L) / code ERR_CANCELED when the
+        //     underlying request is aborted before React Query wraps it.
+        //   • Fetch / AbortController surfaces AbortError.
+        // Don't log or flip the grid into failed state for any of these.
         const err = /** @type {any} */ (e);
+        const name = err?.name || err?.constructor?.name;
         const isCancelled =
-          err?.name === "CancelledError" ||
-          err?.constructor?.name === "CancelledError";
+          name === "CancelledError" ||
+          name === "CanceledError" ||
+          name === "AbortError" ||
+          err?.code === "ERR_CANCELED";
         if (isCancelled) return;
         logger.error("[getRows] failed", {
           message: e instanceof Error ? e.message : String(e),

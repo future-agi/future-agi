@@ -25,6 +25,7 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
+import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
@@ -628,6 +629,8 @@ const TestPlayground = React.forwardRef(
       templateFormat = "mustache",
       functionParamsSchema = null,
       configParamsDesc = null,
+      code = "",
+      codeLanguage = "python",
       onReadyChange,
     },
     ref,
@@ -741,14 +744,20 @@ const TestPlayground = React.forwardRef(
         return Array.isArray(requiredKeys) ? [...new Set(requiredKeys)] : [];
       }
 
-      // For code evals: use explicit requiredKeys if provided (e.g. system evals define these),
-      // otherwise fall back to the standard input/output/expected trio.
+      // For code evals: live-parse the user's `def evaluate(...)` / JS
+      // destructuring signature so new params surface in the mapping panel
+      // as soon as they're typed. Fall back to explicit requiredKeys
+      // (system evals define these) and finally to the standard trio.
       let codeStdVars = [];
       if (evalType === "code") {
-        codeStdVars =
-          Array.isArray(requiredKeys) && requiredKeys.length > 0
-            ? requiredKeys
-            : ["input", "output", "expected"];
+        const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+        if (liveParams.length > 0) {
+          codeStdVars = liveParams;
+        } else if (Array.isArray(requiredKeys) && requiredKeys.length > 0) {
+          codeStdVars = requiredKeys;
+        } else {
+          codeStdVars = ["input", "output", "expected"];
+        }
       }
 
       if (!instructions && evalType !== "code") return [...codeStdVars];
@@ -762,7 +771,15 @@ const TestPlayground = React.forwardRef(
         vars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
       }
       return [...new Set([...codeStdVars, ...vars])];
-    }, [instructions, evalType, requiredKeys, isComposite, templateFormat]);
+    }, [
+      instructions,
+      evalType,
+      requiredKeys,
+      isComposite,
+      templateFormat,
+      code,
+      codeLanguage,
+    ]);
 
     // Custom input values
     const [inputValues, setInputValues] = useState({});
@@ -1839,6 +1856,8 @@ TestPlayground.propTypes = {
   model: PropTypes.string,
   functionParamsSchema: PropTypes.object,
   configParamsDesc: PropTypes.object,
+  code: PropTypes.string,
+  codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
 };
 
