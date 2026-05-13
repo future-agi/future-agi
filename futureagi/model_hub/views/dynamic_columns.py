@@ -955,7 +955,7 @@ class AddApiColumnView(APIView):
                         if "{{" in raw_val:
                             processed_params[param_name] = self._replace_variables(raw_val, cell.row)
                         else:
-                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row)
+                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row) or ""
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
