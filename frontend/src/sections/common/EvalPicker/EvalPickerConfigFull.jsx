@@ -1560,6 +1560,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     isSimulator={String(sourceRowType || "")
                       .toLowerCase()
                       .startsWith("voice")}
+                    rowType={sourceRowType}
                   />
                 </Box>
               )}
