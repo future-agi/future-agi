@@ -951,9 +951,11 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif param_config["type"] == "Variable":
                     try:
-                        processed_params[param_name] = self._replace_variables(
-                            param_config["value"], cell.row
-                        )
+                        raw_val = param_config["value"]
+                        if "{{" in raw_val:
+                            processed_params[param_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row)
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
@@ -969,9 +971,11 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif header_config["type"] == "Variable":
                     try:
-                        processed_headers[header_name] = self._replace_variables(
-                            header_config["value"], cell.row
-                        )
+                        raw_val = header_config["value"]
+                        if "{{" in raw_val:
+                            processed_headers[header_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_headers[header_name] = self._resolve_cell_value(raw_val, cell.row)
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
