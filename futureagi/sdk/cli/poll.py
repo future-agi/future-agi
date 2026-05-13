@@ -236,8 +236,8 @@ class SimulatePoller:
         state.summary = data if isinstance(data, list) else []
         if state.summary:
             scores = [
-                item.get("pass_rate") if item.get("pass_rate") is not None
-                else (item.get("score") or 0)  # or-0 handles explicit None values
+                item.get("total_pass_rate") if item.get("total_pass_rate") is not None
+                else (item.get("total_avg") or 0)  # or-0 handles explicit None values
                 for item in state.summary
                 if isinstance(item, dict)
             ]
@@ -367,7 +367,7 @@ def resolve_name(suites: list[dict], query: str) -> str:
             f"no suites match {query!r} — run `fi-simulate list` to browse available suites"
         )
     if len(matches) > 1:
-        names = ", ".join(repr(s["name"]) for s in matches)
+        names = ", ".join(repr(s.get("name", "?")) for s in matches)
         raise ValueError(
             f"ambiguous: {len(matches)} suites match {query!r}: {names}\n"
             "Use a more specific query or the UUID directly."
@@ -397,6 +397,6 @@ def format_failures(metrics: list[dict], threshold: float) -> list[dict]:
     """
     return [
         m for m in metrics
-        if isinstance(m, dict) and m.get("pass_rate") is not None
-        and m["pass_rate"] < threshold
+        if isinstance(m, dict) and m.get("total_pass_rate") is not None
+        and m["total_pass_rate"] < threshold
     ]

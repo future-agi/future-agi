@@ -227,8 +227,8 @@ def _run_headed(poller: SimulatePoller, run_test_id: str, threshold: int) -> Pol
         for item in state.summary:
             if isinstance(item, dict):
                 name = item.get("name") or item.get("eval_name") or "—"
-                pr = item.get("pass_rate")
-                sc = item.get("score") or item.get("avg_score")
+                pr = item.get("total_pass_rate")
+                sc = item.get("total_avg")
                 table.add_row(
                     str(name),
                     f"{pr:.1f}%" if pr is not None else "—",
@@ -241,7 +241,7 @@ def _run_headed(poller: SimulatePoller, run_test_id: str, threshold: int) -> Pol
             console.print(Text("\nFailing metrics:", style="red bold"))
             for f in failures:
                 name = f.get("name") or f.get("eval_name") or "—"
-                pr = f.get("pass_rate")
+                pr = f.get("total_pass_rate")
                 console.print(f"  • {name}: {pr:.1f}%" if pr is not None else f"  • {name}")
 
     if state:
