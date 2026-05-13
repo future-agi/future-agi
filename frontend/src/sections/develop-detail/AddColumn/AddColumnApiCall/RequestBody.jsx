@@ -142,8 +142,8 @@ const RequestBody = ({
     const rect = el.getBoundingClientRect();
 
     if (!multiline) {
-      // Single-line: just below the input
-      setDropdownPosition({ x: rect.left, y: rect.bottom + 2 });
+      // Single-line: just below the input, store right edge for right-aligned dropdown
+      setDropdownPosition({ x: rect.right, y: rect.bottom + 2 });
       return;
     }
 
@@ -207,6 +207,27 @@ const RequestBody = ({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [setDropDownPos, showDropdown]);
+
+  // Scroll selected item into view when navigating with arrow keys
+  useEffect(() => {
+    if (showDropdown && dropdownRef.current) {
+      const items = dropdownRef.current.querySelectorAll('[role="menuitem"]');
+      if (items[selectedIndex]) {
+        items[selectedIndex].scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [selectedIndex, showDropdown]);
+
+  // Close dropdown when anything outside it scrolls
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handler = (e) => {
+      if (dropdownRef.current?.contains(e.target)) return;
+      onCloseDropdown();
+    };
+    window.addEventListener("scroll", handler, true);
+    return () => window.removeEventListener("scroll", handler, true);
+  }, [showDropdown, onCloseDropdown]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -302,6 +323,7 @@ const RequestBody = ({
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
+        ...(!multiline && { flex: 1, minWidth: 120 }),
       }}
     >
       {label && (
@@ -383,15 +405,20 @@ const RequestBody = ({
         createPortal(
           <Paper
             ref={dropdownRef}
-            elevation={3}
+            elevation={8}
             sx={{
               position: "fixed",
               top: dropdownPosition.y,
-              left: dropdownPosition.x,
+              ...(multiline
+                ? { left: dropdownPosition.x }
+                : { right: `calc(100vw - ${dropdownPosition.x}px)` }),
               zIndex: 9999,
-              p: 0.5,
-              maxHeight: 150,
+              py: 0.5,
+              maxHeight: 220,
               overflow: "auto",
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
             }}
             role="listbox"
           >
@@ -401,10 +428,16 @@ const RequestBody = ({
                 onClick={() => handleVariableSelect(variable)}
                 selected={index === selectedIndex}
                 sx={{
-                  minWidth: 150,
+                  py: 0.75,
+                  px: 1.5,
+                  fontSize: "13px",
+                  fontFamily: "monospace",
+                  borderRadius: "4px",
+                  mx: 0.5,
+                  color: variable.isJsonPath ? "primary.main" : "text.primary",
                   backgroundColor:
                     index === selectedIndex
-                      ? "background.neutral"
+                      ? "action.selected"
                       : "inherit",
                   "&:hover": { backgroundColor: "action.hover" },
                   "&:focus": { outline: "none" },

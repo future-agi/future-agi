@@ -171,14 +171,18 @@ export const transformDynamicColumnConfig = (type, config, allColumns) => {
           params: Object.entries(config?.params || {}).map(([key, value]) => ({
             id: getRandomId(),
             name: key,
-            value: value.value,
+            value: value.type === "Variable"
+              ? replaceColumnIdWithName(value.value, allColumns)
+              : value.value,
             type: value.type,
           })),
           headers: Object.entries(config?.headers || {}).map(
             ([key, value]) => ({
               id: getRandomId(),
               name: key,
-              value: value.value,
+              value: value.type === "Variable"
+                ? replaceColumnIdWithName(value.value, allColumns)
+                : value.value,
               type: value.type,
             }),
           ),
