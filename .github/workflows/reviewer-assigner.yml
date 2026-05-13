@@ -8,6 +8,10 @@ on:
       pr_number:
         description: 'PR number to assign (leave blank to sweep all open PRs)'
         required: false
+      run_pings:
+        description: 'Also run ping (Slack DMs) and summary jobs. Default off — flip this on to test the daily reminder flow manually.'
+        type: boolean
+        default: false
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC — same morning slot as pr-digest.
     - cron: '30 4 * * *'
@@ -34,7 +38,10 @@ jobs:
         run: node .github/scripts/reviewer-assigner.mjs
 
   ping:
-    if: github.repository == 'future-agi/future-agi' && github.event_name == 'schedule'
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_pings))
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -49,12 +56,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          # Off by default. Set the repo secret to the literal string "true" to enable.
-          REVIEWER_PING_ENABLED: ${{ secrets.REVIEWER_PING_ENABLED }}
+          # Cron runs respect the repo secret as the on/off switch.
+          # Manual dispatch with run_pings=true forces the gate open so a tester
+          # doesn't have to flip the secret each time.
+          REVIEWER_PING_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_pings) && 'true' || secrets.REVIEWER_PING_ENABLED }}
         run: node .github/scripts/reviewer-assigner.mjs
 
   summary:
-    if: github.repository == 'future-agi/future-agi' && github.event_name == 'schedule'
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_pings))
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
