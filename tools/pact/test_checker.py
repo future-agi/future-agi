@@ -473,6 +473,86 @@ def test_unvalidated_lookup_chain_with_guard_not_flagged(tmp_path):
     assert not v, "guarded lookup chain should not be flagged"
 
 
+def test_unvalidated_lookup_chain_defaultdict_not_flagged(tmp_path):
+    """defaultdict[key] after .get() — KeyError impossible, must not be flagged."""
+    _write_src(tmp_path, "svc.py", """
+        import collections
+        def aggregate(records):
+            buckets: dict = collections.defaultdict(list)
+            for r in records:
+                key = r.get("type")
+                buckets[key].append(r)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "unvalidated_lookup_chain"]
+    assert not v, "defaultdict subscript must not be flagged as unvalidated_lookup_chain"
+
+
+def test_unvalidated_lookup_chain_annotated_defaultdict_not_flagged(tmp_path):
+    """Annotated defaultdict assignment (x: dict = defaultdict(...)) must not flag."""
+    _write_src(tmp_path, "svc.py", """
+        import collections
+        from typing import Any
+        def aggregate(records):
+            buckets: dict[str, list[Any]] = collections.defaultdict(list)
+            for r in records:
+                key = r.get("type")
+                buckets[key].append(r)
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "unvalidated_lookup_chain"]
+    assert not v, "annotated defaultdict subscript must not be flagged"
+
+
+def test_optional_dereference_get_with_default_not_flagged(tmp_path):
+    """.get(key, default) with a non-None default must not be flagged."""
+    _write_src(tmp_path, "svc.py", """
+        def resolve(mapping, key):
+            value = mapping.get(key, "unknown")
+            return value.upper()
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "optional_dereference"]
+    assert not v, ".get(key, default) with non-None default must not be optional"
+
+
+def test_optional_dereference_rhs_self_use_not_flagged(tmp_path):
+    """Use of var in the RHS of its own .get() assignment must not be flagged."""
+    _write_src(tmp_path, "svc.py", """
+        def normalize(short_to_qual, callee):
+            if callee not in short_to_qual:
+                callee = short_to_qual.get(callee.split('.')[-1], callee)
+            return callee
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "optional_dereference"]
+    assert not v, "callee.split() in the RHS of callee = d.get(callee.split(...)) must not flag"
+
+
+def test_optional_dereference_http_get_not_flagged(tmp_path):
+    """response = client.get('/url/') is an HTTP GET, not dict.get(); must not flag."""
+    _write_src(tmp_path, "test_api.py", """
+        def test_list(client):
+            response = client.get('/api/items/')
+            assert response.status_code == 200
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "optional_dereference"]
+    assert not v, "HTTP client .get('/url/') response must not be flagged as optional"
+
+
+def test_optional_dereference_http_fstring_get_not_flagged(tmp_path):
+    """response = client.get(f'/url/{id}/') with f-string path must not flag."""
+    _write_src(tmp_path, "test_api.py", """
+        def test_detail(client, item_id):
+            response = client.get(f'/api/items/{item_id}/')
+            assert response.status_code == 200
+    """)
+    violations = check_codebase(tmp_path)
+    v = [v for v in violations if v.context == "optional_dereference"]
+    assert not v, "HTTP client .get(f'/url/{id}/') response must not be flagged as optional"
+
+
 def test_bare_except_no_callsite_flagged(tmp_path):
     """bare_except now has file_check — catches files with no outgoing calls."""
     _write_src(tmp_path, "handler.py", """

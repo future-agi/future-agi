@@ -160,14 +160,40 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
             self.guarded: set[str] = set()
 
         def visit_Assign(self, node):
+            # Visit the RHS *before* updating optional_vars so that uses of
+            # the variable inside its own assignment expression (e.g.
+            # `x = d.get(x.split(".")[-1], x)`) are not mis-flagged.
+            self.generic_visit(node)
             if (len(node.targets) == 1 and
                     isinstance(node.targets[0], _ast.Name) and
                     isinstance(node.value, _ast.Call) and
                     isinstance(node.value.func, _ast.Attribute) and
                     node.value.func.attr in _OPTIONAL_RETURNING):
+                call_args = node.value.args
+                if node.value.func.attr == "get":
+                    # .get(key, non-None-default) — return type is str, not Optional
+                    if (len(call_args) >= 2 and
+                            not (isinstance(call_args[1], _ast.Constant) and
+                                 call_args[1].value is None)):
+                        return
+                    # HTTP client .get("/url/...") — first arg is a URL path string
+                    if (len(call_args) >= 1 and
+                            isinstance(call_args[0], _ast.Constant) and
+                            isinstance(call_args[0].value, str) and
+                            call_args[0].value.startswith("/")):
+                        return
+                    # HTTP client .get(f"/url/...") — first arg is an f-string URL
+                    if (len(call_args) >= 1 and
+                            isinstance(call_args[0], _ast.JoinedStr)):
+                        # f-string; skip — likely an HTTP path
+                        first_part = (call_args[0].values[0]
+                                      if call_args[0].values else None)
+                        if (isinstance(first_part, _ast.Constant) and
+                                isinstance(first_part.value, str) and
+                                first_part.value.startswith("/")):
+                            return
                 self.optional_vars[node.targets[0].id] = node.lineno
                 self.guarded.discard(node.targets[0].id)
-            self.generic_visit(node)
 
         def visit_If(self, node):
             # If the test references an optional var, mark it guarded
@@ -762,17 +788,22 @@ def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
             self._get_vars: dict[str, int] = {}
             # var_name → set of collections it was membership-checked against
             self._guarded: dict[str, set[str]] = {}
+            # collection names known to be defaultdicts (KeyError impossible)
+            self._defaultdicts: set[str] = set()
 
         def _visit_scope(self, node: pyast.AST) -> None:
             # Each function/class body is a fresh variable scope — save and restore
             # so that .get() assignments in function A never pollute function B.
             saved_get = dict(self._get_vars)
             saved_guarded = {k: set(v) for k, v in self._guarded.items()}
+            saved_dd = set(self._defaultdicts)
             self._get_vars = {}
             self._guarded = {}
+            self._defaultdicts = set()
             self.generic_visit(node)
             self._get_vars = saved_get
             self._guarded = saved_guarded
+            self._defaultdicts = saved_dd
 
         def visit_FunctionDef(self, node: pyast.FunctionDef) -> None:
             self._visit_scope(node)
@@ -782,16 +813,25 @@ def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
         def visit_ClassDef(self, node: pyast.ClassDef) -> None:
             self._visit_scope(node)
 
+        def _classify_assign(self, target_id: str, value: pyast.expr, line: int) -> None:
+            if not isinstance(value, pyast.Call):
+                return
+            if not isinstance(value.func, pyast.Attribute):
+                return
+            if value.func.attr == "defaultdict":
+                self._defaultdicts.add(target_id)
+            elif value.func.attr == "get":
+                self._get_vars[target_id] = line
+
         def visit_Assign(self, node: pyast.Assign) -> None:
-            # x = something.get(...) or x = d[k] — track .get() assignments
-            if (
-                len(node.targets) == 1
-                and isinstance(node.targets[0], pyast.Name)
-                and isinstance(node.value, pyast.Call)
-                and isinstance(node.value.func, pyast.Attribute)
-                and node.value.func.attr == "get"
-            ):
-                self._get_vars[node.targets[0].id] = node.lineno
+            if len(node.targets) == 1 and isinstance(node.targets[0], pyast.Name):
+                self._classify_assign(node.targets[0].id, node.value, node.lineno)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: pyast.AnnAssign) -> None:
+            # x: SomeType = collections.defaultdict(...) — annotated assignment
+            if isinstance(node.target, pyast.Name) and node.value is not None:
+                self._classify_assign(node.target.id, node.value, node.lineno)
             self.generic_visit(node)
 
         def visit_Compare(self, node: pyast.Compare) -> None:
@@ -821,6 +861,10 @@ def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
                 self.generic_visit(node)
                 return
             collection = node.value.id
+            if collection in self._defaultdicts:
+                # defaultdict never raises KeyError on missing keys
+                self.generic_visit(node)
+                return
             guarded_against = self._guarded.get(var, set())
             if collection not in guarded_against:
                 results.append(FailureEvidence(
