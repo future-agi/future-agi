@@ -31,7 +31,7 @@ class PromptVersionDetailResponseSerializer(serializers.Serializer):
     """Nested serializer for prompt version detail in scenario responses."""
 
     id = serializers.UUIDField(read_only=True)
-    template_version = serializers.IntegerField(read_only=True)
+    template_version = serializers.CharField(read_only=True, allow_null=True)
     is_default = serializers.BooleanField(read_only=True)
     commit_message = serializers.CharField(read_only=True, allow_null=True)
 
@@ -154,7 +154,7 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
         if obj.prompt_version:
             return PromptVersionDetailResponseSerializer(obj.prompt_version).data
         return None
-    
+
     def validate_name(self, value):
         """Validate that name is not empty or just whitespace"""
         if not value.strip():
@@ -202,9 +202,7 @@ class ScenarioDetailResponseSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(read_only=True)
     deleted = serializers.BooleanField(read_only=True)
     deleted_at = serializers.DateTimeField(read_only=True, allow_null=True)
-    status = serializers.ChoiceField(
-        choices=StatusType.get_choices(), read_only=True
-    )
+    status = serializers.ChoiceField(choices=StatusType.get_choices(), read_only=True)
     agent_type = serializers.CharField(read_only=True, allow_null=True)
     graph = serializers.DictField(read_only=True)
     prompts = serializers.ListField(
