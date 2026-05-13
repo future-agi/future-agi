@@ -3,6 +3,20 @@ import numpy as np
 from simulate.models import CallExecution, SimulateEvalConfig
 
 
+# Maps EvalTemplate.output_type_normalized to the runtime output_type string
+# the KPI aggregation pipeline keys off. Errored evals carry this so the SQL
+# still emits a zero row instead of dropping the metric.
+def derive_kpi_output_type(eval_template):
+    mapping = {
+        "pass_fail": "Pass/Fail",
+        "percentage": "score",
+        "deterministic": "choices",
+    }
+    return mapping.get(
+        getattr(eval_template, "output_type_normalized", None), "score"
+    )
+
+
 def _get_eval_config_for_agent_version(agent_version):
     return SimulateEvalConfig.objects.filter(
         run_test__agent_definition=agent_version.agent_definition,

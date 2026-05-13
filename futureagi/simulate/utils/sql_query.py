@@ -279,6 +279,26 @@ def get_kpi_eval_metrics_query(test_execution_id):
         FROM eval_entries
         WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'number'
         GROUP BY metric_id, metric_name
+    ),
+
+    -- Choices metrics where every entry errored (output is null). Without
+    -- this branch the metric drops out of the response entirely and the UI
+    -- renders "No evaluation metrics added"; emitting a zero row lets the
+    -- handler register the metric so a zeroed chart card shows instead.
+    choice_errored_agg AS (
+        SELECT
+            metric_id,
+            metric_name,
+            'choices' AS output_type,
+            NULL::numeric AS avg_value,
+            NULL::text AS choice_value,
+            0 AS choice_count
+        FROM eval_entries
+        WHERE output_type = 'choices'
+        GROUP BY metric_id, metric_name
+        HAVING bool_and(
+            output_raw IS NULL OR jsonb_typeof(output_raw) = 'null'
+        )
     )
 
     SELECT * FROM scalar_agg
@@ -286,6 +306,8 @@ def get_kpi_eval_metrics_query(test_execution_id):
     SELECT * FROM choice_agg
     UNION ALL
     SELECT * FROM choice_numeric_agg
+    UNION ALL
+    SELECT * FROM choice_errored_agg
     """
     params = [str(test_execution_id)]
     return query, params
