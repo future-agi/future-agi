@@ -176,6 +176,11 @@ dev = [
     "types-pyyaml",
 ]
 
+[tool.setuptools.packages.find]
+# Opt into auto-discovery with explicit `where` to suppress the flat-layout
+# "multiple top-level packages" error without omitting any package.
+where = ["."]
+
 [tool.black]
 line-length = 88
 exclude = '''
