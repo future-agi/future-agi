@@ -39,6 +39,8 @@ class CallGraph:
     def call_sites_to(self, func_name: str) -> list[CallSite]:
         if not _HAS_NX or self._g is None:
             return []
+        if func_name not in self._g:
+            return []
         sites = []
         for _, _, data in self._g.in_edges(func_name, data=True):
             site = data.get("call_site")

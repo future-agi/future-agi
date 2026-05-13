@@ -132,7 +132,7 @@ _OPTIONAL_SOURCES = frozenset({
 })
 
 
-_OPTIONAL_RETURNING = frozenset({"first", "last", "get_or_none", "one_or_none"})
+_OPTIONAL_RETURNING = frozenset({"first", "last", "get_or_none", "one_or_none", "get"})
 _SAFE_CHECKS = frozenset({"is None", "is not None", "if not", "if "})
 
 @functools.lru_cache(maxsize=None)
@@ -166,6 +166,7 @@ def _scan_file_optional_deref(path: str) -> list[FailureEvidence]:
                     isinstance(node.value.func, _ast.Attribute) and
                     node.value.func.attr in _OPTIONAL_RETURNING):
                 self.optional_vars[node.targets[0].id] = node.lineno
+                self.guarded.discard(node.targets[0].id)
             self.generic_visit(node)
 
         def visit_If(self, node):

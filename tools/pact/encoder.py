@@ -164,8 +164,9 @@ def check_function_call(call: CallSite, func: FunctionManifest) -> Optional[Viol
     if not required_args:
         return None
 
+    positional_required = [a for a in required_args if not a.kwonly]
     positional_satisfied = {
-        arg.name for i, arg in enumerate(required_args) if i < call.positional_count
+        arg.name for i, arg in enumerate(positional_required) if i < call.positional_count
     }
     effectively_provided = call.provided_kwargs | positional_satisfied
     missing = _z3_check_presence([a.name for a in required_args], effectively_provided)
