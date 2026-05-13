@@ -83,6 +83,13 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 	}
 
+	// resolveProvider may have applied a ModelOverride that strips the provider prefix
+	// (e.g. "openai/text-embedding-3-small" → "text-embedding-3-small"). The provider
+	// receives rc.EmbeddingRequest directly, so keep the two model fields in sync.
+	if rc.Model != req.Model {
+		rc.EmbeddingRequest.Model = rc.Model
+	}
+
 	// Type-assert to EmbeddingProvider.
 	ep, ok := provider.(providers.EmbeddingProvider)
 	if !ok {
