@@ -259,6 +259,159 @@ class AnalyticsQueryService:
         )
         return [{"key": row["key"], "type": row["type"]} for row in cdc_result.data]
 
+    def get_observed_trace_attribute_pairs_ch(
+        self, project_id: str, sample_size: int = 100
+    ) -> List[Tuple[int, str]]:
+        """CH mirror of ``SQL_query_handler.get_observed_trace_attribute_pairs``.
+        Reads from the denormalised ``spans`` table for indexed map-key
+        enumeration. ``NULLS LAST`` is explicit because CH defaults to
+        NULLS FIRST for ASC where PG defaults to NULLS LAST.
+        """
+        query = """
+            WITH sample AS (
+                SELECT toString(id) AS trace_id
+                FROM tracer_trace
+                WHERE project_id = %(project_id)s
+                  AND _peerdb_is_deleted = 0
+                ORDER BY created_at DESC
+                LIMIT %(sample_size)s
+            ),
+            ranked AS (
+                SELECT
+                    trace_id,
+                    span_attr_str,
+                    span_attr_num,
+                    span_attr_bool,
+                    row_number() OVER (
+                        PARTITION BY trace_id
+                        ORDER BY start_time ASC NULLS LAST, id
+                    ) - 1 AS idx
+                FROM spans
+                WHERE trace_id IN (SELECT trace_id FROM sample)
+                  AND _peerdb_is_deleted = 0
+            )
+            SELECT idx, key FROM (
+                SELECT idx, k AS key FROM ranked
+                ARRAY JOIN mapKeys(span_attr_str) AS k
+                UNION ALL
+                SELECT idx, k AS key FROM ranked
+                ARRAY JOIN mapKeys(span_attr_num) AS k
+                UNION ALL
+                SELECT idx, k AS key FROM ranked
+                ARRAY JOIN mapKeys(span_attr_bool) AS k
+            )
+            GROUP BY idx, key
+            ORDER BY idx, key
+            LIMIT 100000
+        """
+        result = self.execute_ch_query(
+            query,
+            {"project_id": project_id, "sample_size": sample_size},
+            timeout_ms=10000,
+        )
+        return [(int(row["idx"]), row["key"]) for row in result.data]
+
+    def get_observed_session_attribute_data_ch(
+        self, project_id: str, sample_size: int = 100
+    ) -> Tuple[set, List[Tuple[int, int, str]]]:
+        """CH mirror of ``SQL_query_handler.get_observed_session_attribute_data``.
+        Trace + span ORDER BY mirrors ``_resolve_session_path``; trace-
+        indices set surfaces zero-span traces so the picker still emits
+        ``traces.<i>.<field>`` for them.
+        """
+        query = """
+            WITH sample AS (
+                SELECT id AS session_id
+                FROM trace_session
+                WHERE project_id = %(project_id)s
+                  AND _peerdb_is_deleted = 0
+                ORDER BY created_at DESC
+                LIMIT %(sample_size)s
+            ),
+            session_traces AS (
+                SELECT id, session_id, created_at
+                FROM tracer_trace
+                WHERE session_id IN (SELECT session_id FROM sample)
+                  AND _peerdb_is_deleted = 0
+            ),
+            root_start AS (
+                SELECT trace_id, min(start_time) AS root_start_time
+                FROM spans
+                WHERE (parent_span_id IS NULL OR parent_span_id = '')
+                  AND _peerdb_is_deleted = 0
+                  AND trace_id IN (
+                      SELECT toString(id) FROM session_traces
+                  )
+                GROUP BY trace_id
+            ),
+            ranked_traces AS (
+                SELECT
+                    t.id AS trace_uuid,
+                    toString(t.id) AS trace_str,
+                    t.session_id,
+                    row_number() OVER (
+                        PARTITION BY t.session_id
+                        ORDER BY coalesce(r.root_start_time, t.created_at)
+                                 ASC NULLS LAST,
+                                 t.id
+                    ) - 1 AS trace_idx
+                FROM session_traces t
+                LEFT JOIN root_start r ON r.trace_id = toString(t.id)
+            ),
+            ranked_spans AS (
+                SELECT
+                    rt.trace_idx,
+                    s.span_attr_str,
+                    s.span_attr_num,
+                    s.span_attr_bool,
+                    row_number() OVER (
+                        PARTITION BY s.trace_id
+                        ORDER BY s.start_time ASC NULLS LAST, s.id
+                    ) - 1 AS span_idx
+                FROM ranked_traces rt
+                JOIN spans s ON s.trace_id = rt.trace_str
+                WHERE s._peerdb_is_deleted = 0
+            ),
+            triples AS (
+                SELECT trace_idx, span_idx, key FROM (
+                    SELECT trace_idx, span_idx, k AS key FROM ranked_spans
+                    ARRAY JOIN mapKeys(span_attr_str) AS k
+                    UNION ALL
+                    SELECT trace_idx, span_idx, k AS key FROM ranked_spans
+                    ARRAY JOIN mapKeys(span_attr_num) AS k
+                    UNION ALL
+                    SELECT trace_idx, span_idx, k AS key FROM ranked_spans
+                    ARRAY JOIN mapKeys(span_attr_bool) AS k
+                )
+                GROUP BY trace_idx, span_idx, key
+            ),
+            indices AS (
+                SELECT DISTINCT trace_idx FROM ranked_traces
+            )
+            SELECT trace_idx, span_idx, key FROM triples
+            UNION ALL
+            SELECT trace_idx, CAST(NULL AS Nullable(Int64)) AS span_idx,
+                   CAST(NULL AS Nullable(String)) AS key
+            FROM indices
+            ORDER BY trace_idx, span_idx, key
+            LIMIT 200000
+        """
+        result = self.execute_ch_query(
+            query,
+            {"project_id": project_id, "sample_size": sample_size},
+            timeout_ms=15000,
+        )
+        trace_indices: set = set()
+        triples: List[Tuple[int, int, str]] = []
+        for row in result.data:
+            t_idx = int(row["trace_idx"])
+            trace_indices.add(t_idx)
+            span_idx = row.get("span_idx")
+            key = row.get("key")
+            if span_idx is not None and key is not None and key != "":
+                triples.append((t_idx, int(span_idx), key))
+        return trace_indices, triples
+
     def get_eval_config_ids_with_data_ch(self, project_id: str) -> List[str]:
         """Get distinct eval config IDs that have data for a project in ClickHouse."""
         query = """

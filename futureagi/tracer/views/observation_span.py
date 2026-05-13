@@ -21,7 +21,6 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
-    Max,
     OuterRef,
     Q,
     Subquery,
@@ -69,7 +68,6 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 from tracer.services.clickhouse.query_service import (
     AnalyticsQueryService,
     QueryType,
@@ -2833,12 +2831,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
         """Distinct span_attributes keys for a project (spans surface).
-
-        Query params:
-            filters: JSON {"project_id": "<uuid>"} (required)
-
-        Returns:
-            List of attribute key strings.
+        Paginated envelope via ``_paginated_response``.
         """
         try:
             filters = self.request.query_params.get("filters", "{}")
@@ -2849,8 +2842,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 return self._gm.bad_request("project_id is required")
 
-            result = self._get_span_attribute_keys(project_id)
-            return self._gm.success_response(result)
+            page_number, page_size, search = self._parse_picker_pagination_params()
+            keys = self._get_span_attribute_keys(project_id)
+            return self._paginated_response(
+                keys, page_number, page_size, search
+            )
 
         except Exception as e:
             logger.exception(f"error fetching span attributes list: {str(e)}")
@@ -2860,22 +2856,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
-        """Attribute paths the EvalPicker exposes per row_type.
-
-        Query params:
-            filters: JSON {"project_id": "<uuid>"} (required)
-            row_type: spans | traces | sessions (default spans;
-                      voiceCalls aliases to spans)
-
-        Returns:
-            spans/voiceCalls: distinct span_attributes keys
-            traces:           trace fields + spans.<n>.<key>
-            sessions:         session fields + traces.<i>.<trace_field>
-                              + traces.<i>.spans.<j>.<key>
-
-        Indexed positions are sized to the project's observed maxes;
-        ordering of ``traces.<i>`` / ``spans.<n>`` slots is decided at
-        resolve time (see ``_resolve_session_path`` / ``_resolve_trace_path``).
+        """Attribute paths the EvalPicker exposes per row_type
+        (spans | traces | sessions; voiceCalls aliases to spans).
+        Only (idx, key) cells realised by at least one trace in the recent
+        sample are emitted — slots line up 1:1 with what the resolver
+        (``_resolve_trace_path`` / ``_resolve_session_path``) looks up.
         """
         try:
             filters = self.request.query_params.get("filters", "{}")
@@ -2887,29 +2872,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("project_id is required")
 
             row_type = self.request.query_params.get("row_type", "spans")
+            page_number, page_size, search = self._parse_picker_pagination_params()
 
             if row_type == "spans" or row_type == "voiceCalls":
                 # voiceCalls share the spans surface for the picker; they
                 # have their own evaluator pipeline upstream of EvalTask.
-                return self.get_span_attributes_list(request, *args, **kwargs)
-
-            span_attribute_keys = self._get_span_attribute_keys(project_id)
-
-            if row_type == "traces":
-                paths = self._build_trace_attribute_paths(
-                    project_id, span_attribute_keys
+                paths = self._get_span_attribute_keys(project_id)
+            elif row_type == "traces":
+                paths = self._build_trace_attribute_paths(project_id)
+            elif row_type == "sessions":
+                paths = self._build_session_attribute_paths(project_id)
+            else:
+                return self._gm.bad_request(
+                    f"Unknown row_type {row_type!r}. Expected one of: "
+                    "spans, traces, sessions, voiceCalls."
                 )
-                return self._gm.success_response(paths)
 
-            if row_type == "sessions":
-                paths = self._build_session_attribute_paths(
-                    project_id, span_attribute_keys
-                )
-                return self._gm.success_response(paths)
-
-            return self._gm.bad_request(
-                f"Unknown row_type {row_type!r}. Expected one of: "
-                "spans, traces, sessions, voiceCalls."
+            return self._paginated_response(
+                paths, page_number, page_size, search
             )
 
         except Exception as e:
@@ -2918,9 +2898,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the eval attributes list {str(e)}"
             )
 
-    # Trace + session model fields the resolver allow-lists; mirrors the
-    # frozensets in tracer.utils.eval. Hand-synced so a model change shows
-    # up in both places at review time.
+    # Mirrors the allow-list frozensets in tracer.utils.eval. Hand-synced
+    # so a Trace/TraceSession schema change surfaces in both places.
     _TRACE_PUBLIC_FIELDS = (
         "input",
         "output",
@@ -2932,22 +2911,62 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     )
     _SESSION_PUBLIC_FIELDS = ("name", "bookmarked")
 
-    # Cap on how many entities to scan when computing observed maxes.
-    # Most projects' traces have a few-to-dozens of spans; bounding the
-    # sample keeps the path enumeration query cheap.
+    # Bounds the alignment aggregate on large projects.
     _OBSERVED_MAX_SAMPLE_SIZE = 100
 
+    _PICKER_DEFAULT_PAGE_SIZE = 50
+    _PICKER_MAX_PAGE_SIZE = 200
+
+    def _parse_picker_pagination_params(self) -> tuple[int, int, str]:
+        try:
+            page_number = int(self.request.query_params.get("page_number", 0))
+        except (TypeError, ValueError):
+            page_number = 0
+        try:
+            page_size = int(
+                self.request.query_params.get(
+                    "page_size", self._PICKER_DEFAULT_PAGE_SIZE
+                )
+            )
+        except (TypeError, ValueError):
+            page_size = self._PICKER_DEFAULT_PAGE_SIZE
+        page_number = max(0, page_number)
+        page_size = max(1, min(page_size, self._PICKER_MAX_PAGE_SIZE))
+        search = self.request.query_params.get("search", "") or ""
+        return page_number, page_size, search.strip()
+
+    def _paginated_response(
+        self,
+        all_paths: list,
+        page_number: int,
+        page_size: int,
+        search: str,
+    ):
+        # Search + pagination run in Python; the candidate set is bounded
+        # by the 100-trace sample × distinct keys, typically a few
+        # thousand entries. Push to SQL if that ever stops holding.
+        if search:
+            needle = search.lower()
+            filtered = [p for p in all_paths if needle in p.lower()]
+        else:
+            filtered = list(all_paths)
+        total_rows = len(filtered)
+        start = page_number * page_size
+        items = filtered[start : start + page_size]
+        return self._gm.success_response(
+            {
+                "items": items,
+                "metadata": {"total_rows": total_rows},
+                "page_number": page_number,
+                "page_size": page_size,
+            }
+        )
+
     def _get_span_attribute_keys(self, project_id: str) -> list:
-        """Project's distinct span_attributes keys. CH-first, PG fallback.
-
-        Single source for both ``get_span_attributes_list`` (which wraps
-        it in a DRF response) and the trace + session path builders.
-
-        CH returns ``[{"key": ..., "type": ...}, ...]`` (spans picker
-        renders type chips); the trace + session path builders need
-        bare strings. The normalization loop below collapses both
-        shapes to ``list[str]`` so callers never see dicts f-stringed
-        into paths like ``traces.0.spans.0.{'key': '...', ...}``.
+        """Project's distinct span_attributes keys, CH-first / PG fallback.
+        CH returns ``[{key, type}]`` (for type chips); the normalisation
+        loop unwraps to ``list[str]`` so no dict gets f-stringed into a
+        path like ``spans.0.{'key': ..., 'type': ...}``.
         """
         raw = None
         analytics = AnalyticsQueryService()
@@ -2976,68 +2995,67 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 keys.append(item)
         return keys
 
-    def _max_spans_per_trace(self, project_id: str) -> int:
-        """Max span count observed across the project's most recent traces.
-
-        Bounds the indexed positions exposed under ``spans.<n>.<...>``.
-        Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
-        keep the aggregate cheap on large projects.
+    def _get_observed_trace_pairs(self, project_id: str) -> list:
+        """``(span_idx, key)`` pairs, CH-first / PG fallback. Empty CH
+        result also falls through (early-adoption window before ``spans``
+        is backfilled; test envs that only seed PG).
         """
-        sample_trace_ids = Trace.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
-        agg = (
-            ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
-            .values("trace_id")
-            .annotate(span_count=Count("id"))
-            .aggregate(max_count=Max("span_count"))
+        analytics = AnalyticsQueryService()
+        if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+            try:
+                pairs = analytics.get_observed_trace_attribute_pairs_ch(
+                    str(project_id), self._OBSERVED_MAX_SAMPLE_SIZE
+                )
+                if pairs:
+                    return pairs
+            except Exception as ch_err:
+                logger.warning(
+                    "CH observed-trace-pairs failed, falling back to PG",
+                    error=str(ch_err),
+                )
+        return SQL_query_handler.get_observed_trace_attribute_pairs(
+            project_id, self._OBSERVED_MAX_SAMPLE_SIZE
         )
-        return agg["max_count"] or 0
 
-    def _max_traces_per_session(self, project_id: str) -> int:
-        """Max trace count observed across the project's most recent sessions."""
-        sample_session_ids = TraceSession.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
-        agg = (
-            Trace.objects.filter(session_id__in=sample_session_ids)
-            .values("session_id")
-            .annotate(trace_count=Count("id"))
-            .aggregate(max_count=Max("trace_count"))
+    def _get_observed_session_data(self, project_id: str):
+        # CH-first / PG fallback; same empty-result-falls-through rule
+        # as ``_get_observed_trace_pairs``.
+        analytics = AnalyticsQueryService()
+        if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+            try:
+                trace_indices, triples = (
+                    analytics.get_observed_session_attribute_data_ch(
+                        str(project_id), self._OBSERVED_MAX_SAMPLE_SIZE
+                    )
+                )
+                if trace_indices or triples:
+                    return trace_indices, triples
+            except Exception as ch_err:
+                logger.warning(
+                    "CH observed-session-data failed, falling back to PG",
+                    error=str(ch_err),
+                )
+        return SQL_query_handler.get_observed_session_attribute_data(
+            project_id, self._OBSERVED_MAX_SAMPLE_SIZE
         )
-        return agg["max_count"] or 0
 
-    def _build_trace_attribute_paths(
-        self, project_id: str, span_attribute_keys: list
-    ) -> list:
-        """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
-        index up to the observed max spans-per-trace."""
+    def _build_trace_attribute_paths(self, project_id: str) -> list:
         paths = list(self._TRACE_PUBLIC_FIELDS)
-        max_spans = self._max_spans_per_trace(project_id)
-        for i in range(max_spans):
-            for key in span_attribute_keys:
-                paths.append(f"spans.{i}.{key}")
+        for idx, key in self._get_observed_trace_pairs(project_id):
+            paths.append(f"spans.{idx}.{key}")
         return paths
 
-    def _build_session_attribute_paths(
-        self, project_id: str, span_attribute_keys: list
-    ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
+    def _build_session_attribute_paths(self, project_id: str) -> list:
         paths = list(self._SESSION_PUBLIC_FIELDS)
-        max_traces = self._max_traces_per_session(project_id)
-        max_spans = self._max_spans_per_trace(project_id)
-        for i in range(max_traces):
+        trace_indices, triples = self._get_observed_session_data(project_id)
+        triples_by_trace: dict[int, list] = {}
+        for t_idx, s_idx, key in triples:
+            triples_by_trace.setdefault(t_idx, []).append((s_idx, key))
+        for t_idx in sorted(trace_indices):
             for trace_field in self._TRACE_PUBLIC_FIELDS:
-                paths.append(f"traces.{i}.{trace_field}")
-            for j in range(max_spans):
-                for key in span_attribute_keys:
-                    paths.append(f"traces.{i}.spans.{j}.{key}")
+                paths.append(f"traces.{t_idx}.{trace_field}")
+            for s_idx, key in triples_by_trace.get(t_idx, []):
+                paths.append(f"traces.{t_idx}.spans.{s_idx}.{key}")
         return paths
 
     @action(detail=False, methods=["get"])
