@@ -368,9 +368,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
     }
-    // Custom columns: compare sorted id lists. Without this, adding or
-    // removing a custom col on a saved view leaves the Save view button
-    // disabled — users have no way to persist the change.
+    // Custom cols: order is captured by columnState, so we only diff the set.
     const currentCustomIds = (sessionColumns || [])
       .filter((c) => c.groupBy === "Custom Columns")
       .map((c) => c.id)
@@ -397,31 +395,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     sessionColumns,
   ]);
 
-  // Defer so the button doesn't flicker during the one-render gap between
-  // filter state updating urgently and activeViewConfig catching up from
-  // startTransition in the apply path.
+  // Deferred so the button doesn't flicker between filter state (urgent)
+  // and activeViewConfig (startTransition) settling.
   const canSaveViewDeferred = useDeferredValue(canSaveView);
 
-  // --- Saved view capture + apply (TH-4578) ---
-  // Build a view-config snapshot that mirrors LLMTracingView's shape. dateFilter
-  // stays inside `display` because the backend's saved-view serializer only
-  // whitelists `display` for arbitrary sub-keys (no top-level `dateFilter`).
-  // Note: in earlier versions this view skipped writing URL-synced state in
-  // the apply effect on the assumption that a click-time seedUrlForView
-  // would populate the URL. That's only true on UserDetailTabBar — the
-  // ObservePage tab-bar path doesn't seed sessionCellHeight / sessionShowCompare /
-  // sessionDateFilter, so display options never made it onto the page when
-  // selecting a sessions saved view from the project's tab bar. Now apply
-  // pushes them into URL state directly (matching UsersView / LLMTracingView).
+  // dateFilter lives inside `display` because the backend serializer only
+  // whitelists `display` for arbitrary sub-keys (no top-level dateFilter).
   const buildViewConfig = useCallback(() => {
     const columnState =
       sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
-    // updateObj is the authoritative {col.id: isVisible} source.
     const hasVisibility = updateObj && Object.keys(updateObj).length > 0;
-    // Persist custom columns separately. Their colIds also appear in
-    // columnState, but columnState alone can't recreate them — AG Grid
-    // silently drops state for unknown colIds, so without this list the
-    // custom cols never come back on restore.
+    // customColumns separately: AG Grid drops columnState for unknown colIds,
+    // so without this list the custom cols can't be reconstructed on restore.
     const customColumns = (sessionColumns || []).filter(
       (c) => c.groupBy === "Custom Columns",
     );
@@ -455,44 +440,45 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetTabType(null);
   }, [registerGetTabType]);
 
-  // Update mutations for the explicit Save view button. Project-scoped on
-  // ObservePage, workspace-scoped (user_detail) on CrossProjectUserDetailPage.
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
-  // Active saved-view id from URL — "tab" key on ObservePage, "userTab" on
-  // CrossProjectUserDetailPage. Re-derived when activeViewConfig flips.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const key = isUserMode ? params.get("userTab") : params.get("tab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isUserMode]);
 
-  // localStorage key for default-tab display state. Project-scoped on the
-  // ObservePage path, user-scoped on CrossProjectUserDetailPage. Mirrors
-  // the LLMTracingView / UsersView shape but with a `-sessions-` segment
-  // so the three views don't collide on payload schema.
-  const displayStorageKey = useMemo(
-    () =>
-      isUserMode
-        ? `user-sessions-display-${userIdForUserMode}`
-        : `observe-sessions-display-${observeId}`,
-    [isUserMode, userIdForUserMode, observeId],
-  );
+  const displayStorageKey = isUserMode
+    ? `user-sessions-display-${userIdForUserMode}`
+    : `observe-sessions-display-${observeId}`;
 
-  // Hydrate default-tab display state from localStorage. Custom cols go
-  // through `pendingCustomColumnsRef` so Session-grid's first-fetch merge
-  // drains them — same path the saved-view apply effect uses. The ref
-  // gate fires the hydrate once per project/user; the `activeViewTabId`
-  // check skips it on saved-view URLs where the view config owns state.
   const hydratedKeyRef = useRef(null);
-  // Set immediately after a hydrate so the save effect skips its first
-  // fire — that first fire would otherwise close over the PRE-hydrate
-  // state (the hydrate's setters are queued, not yet committed to this
-  // render) and persist defaults back to localStorage, clobbering the
-  // values we just loaded.
+  // Skips the save effect's first fire after a hydrate. Without this the
+  // first fire closes over pre-hydrate state and overwrites what we just
+  // loaded.
   const skipNextSaveRef = useRef(false);
+
+  const writeDisplayToStorage = useCallback(() => {
+    const customColumns = (sessionColumns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    const payload = {
+      cellHeight,
+      showCompare,
+      ...(updateObj && Object.keys(updateObj).length > 0
+        ? { visibleColumns: updateObj }
+        : {}),
+      ...(customColumns.length > 0 ? { customColumns } : {}),
+    };
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
+    } catch {
+      /* quota exceeded */
+    }
+  }, [displayStorageKey, cellHeight, showCompare, updateObj, sessionColumns]);
+
   useEffect(() => {
     if (activeViewTabId) return;
     if (hydratedKeyRef.current === displayStorageKey) return;
@@ -513,10 +499,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         Array.isArray(saved.customColumns) &&
         saved.customColumns.length > 0
       ) {
-        // Shallow-clone each col so the pending ref (and `sessionColumns`
-        // it drains into) doesn't share object identity with the parsed
-        // localStorage payload. Mirrors the clone in the saved-view apply
-        // branch — keeps the invariant uniform.
+        // Shallow-clone so the pending ref doesn't share identity with the
+        // parsed localStorage payload.
         pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
           ...c,
         }));
@@ -527,9 +511,6 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayStorageKey]);
 
-  // Persist display state on every change. Skip until the hydrate has
-  // run for this key, otherwise the initial empty state would overwrite
-  // saved customs before the load effect gets a chance to populate them.
   useEffect(() => {
     if (activeViewTabId) return;
     if (hydratedKeyRef.current !== displayStorageKey) return;
@@ -537,30 +518,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       skipNextSaveRef.current = false;
       return;
     }
-    const customColumns = (sessionColumns || []).filter(
-      (c) => c.groupBy === "Custom Columns",
-    );
-    const payload = {
-      cellHeight,
-      showCompare,
-      ...(updateObj && Object.keys(updateObj).length > 0
-        ? { visibleColumns: updateObj }
-        : {}),
-      ...(customColumns.length > 0 ? { customColumns } : {}),
-    };
-    try {
-      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
-    } catch {
-      /* quota exceeded */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    displayStorageKey,
-    cellHeight,
-    showCompare,
-    updateObj,
-    sessionColumns,
-  ]);
+    writeDisplayToStorage();
+  }, [activeViewTabId, displayStorageKey, writeDisplayToStorage]);
 
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
@@ -586,28 +545,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
-  // Pending column state queued before the grid was ready. Drain effect
-  // below applies it once `sessionGridApiRef.current.api` shows up.
+  // Drained in the api-ready effect below once sessionGridApiRef populates.
   const pendingColumnStateRef = useRef(null);
-  // Queued saved-view refresh, set when the saved-view apply effect fires
-  // before the grid has mounted. Drained in `onGridReady` once the api
-  // shows up. Without this, the apply effect's optional-chain refresh
-  // silently no-ops on hard-refresh-into-saved-view, leaving the pending
-  // custom-col ref stranded.
+  // Set when the apply effect fires before the grid mounts (hard refresh
+  // into a saved view). Drained in onGridReady, otherwise the pending
+  // custom-col ref is stranded.
   const pendingRefreshRef = useRef(false);
 
-  // Apply a saved view's config — push display options into URL-synced
-  // state (matches UsersView / LLMTracingView). UserDetailTabBar still
-  // pre-seeds the same URL keys at click time for snappiness; the writes
-  // here are idempotent for that path and are the only source of truth
-  // for the ObservePage tab-bar path, which doesn't pre-seed display.
   useEffect(() => {
     if (!activeViewConfig) {
-      // Transitioning back to a default tab — wipe everything that was
-      // applied by the saved view. URL-synced display state (cellHeight,
-      // showCompare, dateFilter) reverts via useUrlState as the parent's
-      // navigate() drops those URL keys; everything else has to be reset
-      // here because it lives in plain useState or inside AG Grid.
+      // Default tab — reset everything the saved view applied. URL-synced
+      // state reverts via useUrlState; the rest lives in useState / AG Grid
+      // and needs explicit reset.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       viewLoadedUpdateObjRef.current = null;
       setUpdateObj(initialVisibility);
@@ -625,22 +574,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       if (api?.resetColumnState) api.resetColumnState();
       pendingColumnStateRef.current = null;
       pendingCustomColumnsRef.current = [];
-      // Strip saved-view custom cols from sessionColumns so they don't
-      // linger on the default tab. Symmetric with LLMTracingView.
       setSessionColumns((prev) =>
         (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
       );
-      // Re-hydrate default-tab preferences from localStorage. The mount
-      // hydrate effect is keyed on `displayStorageKey` and won't re-fire
-      // on a same-project saved-view → default transition; without this,
-      // going back to default after a saved view would land on factory
-      // defaults instead of the user's preferences. Pending customs go
-      // through the ref and drain on Session-grid's next merge.
+      // Re-hydrate from localStorage — the mount hydrate is keyed on
+      // displayStorageKey and won't re-fire on a same-project saved-view →
+      // default transition.
       try {
         const raw = localStorage.getItem(displayStorageKey);
         if (raw) {
-          // Mirror the mount-hydrate skip-flag so the save effect's next
-          // fire doesn't write the pre-hydrate state back over localStorage.
           skipNextSaveRef.current = true;
           const saved = JSON.parse(raw);
           if (saved.cellHeight) setCellHeight(saved.cellHeight);
@@ -657,7 +599,6 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             Array.isArray(saved.customColumns) &&
             saved.customColumns.length > 0
           ) {
-            // Clone each col — see mount-hydrate comment.
             pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
               ...c,
             }));
@@ -679,11 +620,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.dateFilter) {
       setDateFilter(display.dateFilter);
     }
-    // Apply visibleColumns dict — `updateObj` is the single source of truth
-    // for column visibility (drives the ColumnConfigure popover via
-    // displayColumns and is the authoritative {col.id: bool} dict). Push
-    // visibility into AG Grid directly when the api is available so the
-    // grid display matches without waiting for a re-render. Done before the
+    // Push visibility into AG Grid directly when the api is available so
+    // the display matches without waiting for re-render. Done before the
     // snapshot below so canSaveView's baseline matches the just-applied state.
     if (
       display.visibleColumns &&
@@ -702,47 +640,25 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         if (toHide.length) api.setColumnsVisible(toHide, false);
       }
     }
-    // Capture the visibility state at the moment this saved view is loaded,
-    // so canSaveView can compare any subsequent toggles against this
-    // snapshot — covers older views that didn't persist `visibleColumns`.
-    // Use the just-applied dict if it exists, otherwise current updateObj.
+    // Snapshot visibility so canSaveView can diff later toggles; covers
+    // older views that didn't persist visibleColumns.
     viewLoadedUpdateObjRef.current = display.visibleColumns
       ? { ...display.visibleColumns }
       : updateObj
         ? { ...updateObj }
         : null;
-    // Strip existing customs from sessionColumns before queuing this
-    // view's set — guards against view→view transitions and against
-    // a default-tab→saved-view click where default customs would
-    // otherwise stack on top of the saved view's. Symmetric with the
-    // LLMTracingView apply effect.
     setSessionColumns((prev) =>
       (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
     );
-    // Queue the saved view's custom cols for the Session-grid merge to
-    // drain into sessionColumns on its next fetch. Defer (don't push
-    // directly) so the grid doesn't render with only-custom-col headers
-    // before the standard backend cols land. Shallow-clone each col so
-    // the pending ref (and `sessionColumns` after the drain) doesn't
-    // share object identity with `activeViewConfig.display.customColumns`
-    // — any later mutation (visibility toggle, save-as-new) would
-    // otherwise write through into the saved-views cache and corrupt
-    // this view's on-screen state until the next refetch.
+    // Shallow-clone each col so a later mutation (visibility toggle,
+    // save-as-new) doesn't write through into the saved-views cache.
     const savedCustomCols = Array.isArray(display.customColumns)
       ? display.customColumns.map((c) => ({ ...c }))
       : [];
     pendingCustomColumnsRef.current = savedCustomCols;
-    // Force a Session-grid re-fetch so its merge logic drains the queued
-    // customs. Without this, when the saved view's extraFilters happen to
-    // equal the current state (commonly both empty on a hard refresh),
-    // setExtraFilters returns the same array ref via the optimization
-    // below — finalFilters doesn't recompute, Session-grid's dataSource
-    // memo doesn't recreate, and no fetch fires. The pending ref then
-    // sits there forever and customs never appear.
-    //
-    // On a hard refresh the grid api isn't ready yet, so the optional
-    // chain bails silently. Queue the request via `pendingRefreshRef`;
-    // `onGridReady` (below) drains it once the api shows up.
+    // Force a re-fetch so Session-grid's merge drains the queued customs.
+    // When extraFilters happen to equal current state, setExtraFilters
+    // returns the same ref and the dataSource memo never recreates.
     if (savedCustomCols.length > 0) {
       const api = sessionGridApiRef.current?.api;
       if (api?.refreshServerSide) {
@@ -752,12 +668,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      // Always queue columnState when there are custom cols pending —
-      // applying it immediately would race the Session-grid merge that
-      // adds the customs to sessionColumns. AG Grid silently drops
-      // applyColumnState entries for colIds it doesn't know about, so
-      // widths/order for custom cols would be lost. The sessionColumns
-      // drain effect below applies the queued state once the customs land.
+      // Queue columnState when customs are pending — AG Grid silently drops
+      // applyColumnState entries for unknown colIds, so widths/order for
+      // custom cols would be lost otherwise. Drained when the customs land.
       if (savedCustomCols.length > 0) {
         pendingColumnStateRef.current = display.columnState;
       } else {
@@ -836,10 +749,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     : toggledNodes.length;
 
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  // Opt-in for filter-mode session bulk add. Set to true when
-  // the user clicks the banner's "Select all N matching your filter" link.
-  // Resets when the grid clears select-all, when the project changes, or
-  // when the filter payload changes (the opt-in no longer matches the view).
+  // Opt-in for filter-mode bulk add — set when the SelectAllBanner is
+  // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
     useState(false);
   useEffect(() => {
@@ -872,11 +783,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
         });
       } else if (action === "annotation-queue") {
-        // With filter-mode opt-in (the SelectAllBanner), the popover's
-        // submit posts `{selection: {mode: "filter", ...}}` to the Phase 6
-        // backend endpoint. Without opt-in under select-all we still bail
-        // out — toggledNodes holds the *deselected* rows in that mode and
-        // an enumerated add would be wrong.
+        // Without filter-mode opt-in under select-all, toggledNodes holds
+        // the *deselected* rows — an enumerated add would be wrong.
         if (selectAll && !sessionFilterSelectionMode) {
           enqueueSnackbar(
             "Use the 'Select all matching your filter' banner to add the full set, or deselect 'all' and pick specific rows.",

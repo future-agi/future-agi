@@ -248,10 +248,9 @@ const SessionGrid = React.forwardRef(
                   (c) => !existingIds.has(c.id),
                 );
                 const backendChanged = !_.isEqual(newCols, currentNonCustom);
+                // hasPending ensures same-tab saved-view clicks still drain
+                // queued customs even when backend cols match.
                 const hasPending = dedupedPending.length > 0;
-                // Drain pending even when backend cols are unchanged so a
-                // saved-view click whose tab_type matches the current view
-                // still merges the queued customs into sessionColumns.
                 if (backendChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {

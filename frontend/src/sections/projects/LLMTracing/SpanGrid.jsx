@@ -385,10 +385,8 @@ const SpanGrid = React.forwardRef(
                 const dedupedPending = pending.filter(
                   (c) => !existingIds.has(c.id),
                 );
-                // backendChanged ignores `isVisible` so a saved-view hide map
-                // applied locally (which makes currentNonCustom differ from
-                // newCols on isVisible only) doesn't keep retriggering the
-                // merge and clobbering local hide state on every page fetch.
+                // Strip isVisible from the diff so saved-view hide maps
+                // don't keep retriggering the merge on every fetch.
                 const stripVis = (cols) =>
                   (cols || []).map(({ isVisible, ...rest }) => rest);
                 const backendChanged = !_.isEqual(
@@ -401,9 +399,8 @@ const SpanGrid = React.forwardRef(
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  // On backendChanged, merge newCols with existing isVisible
-                  // so saved-view hide intent (set on col.isVisible by the
-                  // LLMTracingView [columns] drain) survives across fetches.
+                  // Preserve existing isVisible so saved-view hide intent
+                  // survives backend col changes.
                   const finalNonCustom = backendChanged
                     ? newCols.map((nc) => {
                         const existing = currentNonCustom.find(

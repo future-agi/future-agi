@@ -920,15 +920,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const primaryCallLogsGridRef = useRef(null);
   const compareCallLogsGridRef = useRef(null);
   const columnConfigureRef = useRef();
-  // Saved-view columnState queued before the active sub-tab's primary grid
-  // mounted. Drained by onGridReady on the primary grid.
+  // Drained by onGridReady on the primary grid.
   const pendingColumnStateRef = useRef(null);
-  // Saved-view column visibility, parsed from columnState's `hide` flags.
   // applyColumnState alone can't persist hide across columnDefs rebuilds —
-  // getTraceListColumnDefs sets `hide: !col?.isVisible` explicitly, so AG
-  // Grid's columnDef value overrides any applied state on the next merge.
-  // To make hide stick, we update col.isVisible in the columns state so
-  // the next columnDefs render reflects the saved-view intent.
+  // getTraceListColumnDefs sets hide explicitly from col.isVisible, so we
+  // need to update col.isVisible in the columns state for hide to stick.
   const pendingHideMapRef = useRef(null);
 
   const {
@@ -940,10 +936,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   } = useObserveHeader();
 
   const { data: projectDetail } = useGetProjectDetails(observeId, !isUserMode);
-  // In user mode the grid should behave like an OBSERVE project (no project
-  // context, no simulator/prototype quirks). Defaulting to OBSERVE keeps the
-  // many `projectSource === OBSERVE` checks (grid enabled, display logic,
-  // etc.) on the happy path.
+  // User mode: behave like an OBSERVE project so the many projectSource
+  // checks stay on the happy path.
   const projectSource = isUserMode
     ? PROJECT_SOURCE.OBSERVE
     : projectDetail?.source;
@@ -1087,10 +1081,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     getFilterExtraProperties,
   );
 
-  // In user mode every grid is scoped by user_id. Inject a structural
-  // filter (similar to the implicit date filter) that prepends to every
-  // validated filter list. The filter lives in the primary `filters`
-  // array, NOT extraFilters, so it doesn't render as a removable chip.
+  // User mode injects a structural user_id filter into the primary filters
+  // (not extraFilters, so it doesn't render as a removable chip).
   const userScopeFilter = useMemo(
     () =>
       isUserMode && userIdForUserMode
@@ -1116,11 +1108,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [userScopeFilter, primarySpanValidatedFiltersRaw],
   );
 
-  // Drop out of filter-mode selection when the selection state becomes
-  // inconsistent (grid cleared, tab switched, project changed, or the
-  // filter itself changed so the opt-in no longer matches the current
-  // view). The user can always re-opt-in from the banner. Mirrored for
-  // the spans tab via `spanFilterSelectionMode`.
+  // Drop filter-mode opt-in when the selection becomes inconsistent (grid
+  // cleared, tab switched, project changed, filter changed). User can
+  // re-opt-in via the banner. Mirrored for spans below.
   useEffect(() => {
     if (!allTracesSelected) setFilterSelectionMode(false);
   }, [allTracesSelected]);
@@ -1134,9 +1124,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   useEffect(() => {
     setSpanFilterSelectionMode(false);
   }, [primarySpanValidatedFilters]);
-  // Simulator: reset filter-mode when the page-full-selection condition
-  // breaks (user unchecks a row, navigates pages, changes filters, or
-  // switches project).
+  // Simulator: reset filter-mode when page-full-selection breaks.
   useEffect(() => {
     if (!simCallMeta.isAllOnPageSelected) {
       setSimCallFilterSelectionMode(false);
@@ -1225,21 +1213,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [extraFilters, setExtraFilters],
   );
 
-  // Callback to receive column config from CallLogsGrid for simulator projects
   const handleSimulatorConfigLoaded = useCallback(
     (config) => {
       if (projectSource === PROJECT_SOURCE.SIMULATOR && config?.length > 0) {
         setColumns((prev) => {
-          // Preserve existing custom columns AND drain pending custom cols
-          // queued by the localStorage hydrate / saved-view apply effect.
-          // Voice projects render through CallLogsGrid (not TraceGrid), so
-          // there's no per-fetch merge step on the grid side to drain those
-          // refs. The apply effect's voice branches drain on saved-view +
-          // back-to-default transitions; this callback handles the path
-          // where the backend column count changes (initial mount, schema
-          // change). Without these drains, custom cols loaded from
-          // localStorage or a saved view sit in the pending ref forever
-          // and never appear in the grid.
+          // Voice projects use CallLogsGrid (no per-fetch merge to drain
+          // pending custom cols), so this callback is the only path that
+          // drains them on backend column-count changes.
           const drainPending = (key, ref) => {
             const existing = prev[key] || [];
             const customCols = existing.filter(
@@ -1331,10 +1311,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     columns,
   ]);
 
-  // Trace + simulator filter-mode reset on filter change. Watches
-  // primaryCombinedFilters (validated + graph filters) because both POSTs
-  // send that combined payload — watching only the validated subset would
-  // leave stale opt-in state when the user toggles a graph eval selection.
+  // Watch combined filters (validated + graph) — both POSTs send the
+  // combined payload, so the validated subset alone would miss graph toggles.
   useEffect(() => {
     setFilterSelectionMode(false);
   }, [primaryCombinedFilters]);
@@ -1395,9 +1373,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setAttributes(evalAttributes || []);
   }, [evalAttributes]);
 
-  // In user mode surface a "Project" filter so the cross-project user-detail
-  // page can narrow to specific projects. Null in project mode (where the
-  // toolbar already scopes to one project).
+  // User mode only — project mode already scopes to a single project.
   const projectFilterField = useProjectFilterField({ enabled: isUserMode });
   const toolbarFilterFields = useMemo(
     () => (projectFilterField ? [projectFilterField] : undefined),
@@ -1702,27 +1678,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
   }, [selectedTab, primaryTraceDateFilter, primarySpanDateFilter]);
 
-  // Load filters + display settings from saved view config when a custom view tab is selected
-  // Tracked separately so the null-branch reset only fires on a genuine
-  // saved-view → default transition, not on initial mount where
-  // activeViewConfig is null only because hydration hasn't landed yet.
-  // Without this guard, the destructive resets below would clobber state
-  // that the null-branch localStorage rehydrate and the apply-branch
-  // saved-view writes are about to set themselves.
+  // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
+  // default transitions so it doesn't clobber state that the mount hydrate
+  // or apply branch is about to set.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
     if (!activeViewConfig) {
       const wasOnSavedView = wasOnSavedViewRef.current;
       wasOnSavedViewRef.current = false;
-      if (!wasOnSavedView) return; // initial mount / already on default — nothing to clean up
-      // Back to a default tab — clear local extraFilters so chips from a
-      // prior custom view don't linger. URL-synced display state
-      // (cellHeight / showErrors / showNonAnnotated / hasEvalFilter /
-      // showCompare) is wiped via the parent's URL navigation; viewMode
-      // lives in the Zustand store (no URL key) so we reset it explicitly,
-      // and the active grid's columnState (widths/order/sort) is internal
-      // to AG Grid and likewise needs an imperative reset.
+      if (!wasOnSavedView) return;
+      // Back to default tab — viewMode lives in Zustand (no URL key) so
+      // reset explicitly; AG Grid columnState also needs an imperative reset.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
       pendingColumnStateRef.current = null;
@@ -1731,11 +1698,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       compareTracePendingRef.current = [];
       primarySpansPendingRef.current = [];
       compareSpansPendingRef.current = [];
-      // Strip saved-view custom cols from all grid slots so they don't
-      // linger on the default tab. Also reset isVisible to true for the
-      // remaining standard cols — the saved view we're leaving may have
-      // hidden some, and TraceGrid's merge now preserves isVisible across
-      // fetches (so it won't naturally reset to the backend default).
+      // Strip saved-view customs and reset isVisible on the remaining cols —
+      // TraceGrid's merge preserves isVisible across fetches, so leaving a
+      // view that hid columns would otherwise persist the hide state.
       setColumns((prev) => {
         const next = {};
         Object.keys(prev).forEach((ck) => {
@@ -1745,24 +1710,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         return next;
       });
-      // Re-hydrate default-tab custom cols from localStorage. The mount-
-      // time useEffect that normally does this is keyed on
-      // displayStorageKey (project-scoped), so it doesn't re-fire on a
-      // same-project tab toggle.
+      // Re-hydrate from localStorage — the mount hydrate is keyed on
+      // displayStorageKey and won't re-fire on a same-project tab toggle.
       try {
         const raw = localStorage.getItem(displayStorageKey);
         const saved = raw ? JSON.parse(raw) : null;
         if (saved?.customColumns) {
-          // Legacy array shape: customs apply to whatever tab is active.
-          // New object shape: customs are pre-split by tab type — hydrate
-          // both refs for each tab so a compare-mode toggle later picks
-          // up the right set without another localStorage read. Each
-          // ref gets its own shallow clone so neither pending refs nor
-          // the columns state they drain into share identity with the
-          // parsed localStorage payload (the parsed object is rooted
-          // somewhere only via the immediate `saved` binding here, but
-          // matching the saved-view branch's clone pattern keeps the
-          // invariant uniform across the file).
+          // customColumns may be a legacy array or new {trace, spans}
+          // object. Hydrate both primary and compare refs for the tab
+          // type so a later compare-mode toggle works without another
+          // localStorage read.
           const cloneEach = (arr) => arr.map((c) => ({ ...c }));
           if (Array.isArray(saved.customColumns)) {
             if (saved.customColumns.length > 0) {
@@ -1790,11 +1747,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       } catch {
         /* ignore corrupted localStorage */
       }
-      // Voice/simulator: drain the freshly-populated pending refs into
-      // columns state directly. handleSimulatorConfigLoaded fires only on
-      // backend column-count changes, which doesn't happen on a saved-view
-      // → default transition, so without this the localStorage customs
-      // we just queued would never reach the grid.
+      // Voice/simulator: handleSimulatorConfigLoaded only fires on column-
+      // count changes, so saved-view → default transitions need an explicit
+      // drain here.
       if (projectSource === PROJECT_SOURCE.SIMULATOR) {
         const draining = primaryTracePendingRef.current || [];
         if (draining.length > 0) {
@@ -1836,12 +1791,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.hasEvalFilter !== undefined)
       setHasEvalFilter(display.hasEvalFilter);
 
-    // Strip existing custom cols from all grid slots so customs inherited
-    // from a previous tab/view (e.g. default-tab localStorage customs, or
-    // another saved view) don't linger when this saved view's set is
-    // merged in below. Without this, switching from default → saved view
-    // (or view A → view B) ends up showing the union of both sets and
-    // dirty-flags the Save view button.
+    // Strip existing customs so view → view doesn't show the union of both
+    // sets (which would also dirty-flag the Save view button).
     setColumns((prev) => {
       const next = {};
       Object.keys(prev).forEach((ck) => {
@@ -1853,14 +1804,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     });
 
     // Populate both primary and compare refs for the active tab type so a
-    // later toggle into compare mode also hydrates correctly. Each ref
-    // gets its OWN shallow clone of each col — without that, the pending
-    // refs (and eventually `columns[ck]` they drain into) share object
-    // identity with the saved-views query cache. Any later mutation —
-    // adding a new custom, saving as a new view, toggling visibility —
-    // would write through into the cached saved view config and corrupt
-    // its on-screen state until the next refetch. The map-of-map also
-    // isolates primary from compare.
+    // compare-mode toggle later hydrates correctly. Shallow-clone per slot
+    // so mutations don't write through into the saved-views query cache.
     if (display.customColumns?.length > 0) {
       if (selectedTab === "trace") {
         primaryTracePendingRef.current = display.customColumns.map((c) => ({
@@ -1879,21 +1824,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Voice/simulator projects: CallLogsGrid doesn't have a per-fetch merge
-    // step that drains the pending ref (it only emits its config when the
-    // backend column count changes, which doesn't happen on a same-tab-type
-    // saved-view switch). Drain into columns state directly here so customs
-    // from the new view actually appear. The strip block above already
-    // cleared old customs, so just append the new set.
+    // Voice/simulator: same-tab-type saved-view switch doesn't trigger
+    // handleSimulatorConfigLoaded, so drain into columns directly.
     if (
       projectSource === PROJECT_SOURCE.SIMULATOR &&
       display.customColumns?.length > 0
     ) {
-      // Clone each col per slot so primary-trace and compare-trace each
-      // own independent objects, and neither shares identity with the
-      // saved-views cache. Mirrors the clone in the trace/spans branch
-      // above — without it, downstream mutations would write through
-      // into the cached view config.
       setColumns((prev) => {
         const merge = (key) => {
           const existing = prev[key] || [];
@@ -1909,32 +1845,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           "compare-trace": merge("compare-trace"),
         };
       });
-      // Clear the pending refs so handleSimulatorConfigLoaded doesn't try
-      // to drain them a second time on a later config callback.
+      // Clear pending refs so handleSimulatorConfigLoaded doesn't drain
+      // them again on a later config callback.
       primaryTracePendingRef.current = [];
       compareTracePendingRef.current = [];
     }
 
-    // Apply column state (widths/order/sort) to the active sub-tab's primary
-    // grid. If the grid isn't mounted yet, queue for the onGridReady callback.
-    //
-    // Hide flags need a parallel path: applyColumnState's `hide` doesn't
-    // survive the next columnDefs rebuild (getTraceListColumnDefs sets
-    // `hide: !col?.isVisible` explicitly, which wins over applied state).
-    // Build a colId → hide map and stash it; the `[columns]` drain effect
-    // below updates each col's `isVisible` to match, so the next render
-    // produces columnDefs that already reflect the saved-view's hide
-    // intent. applyColumnState still handles widths/order/sort, which
-    // colDefs don't set explicitly and therefore can persist.
+    // Hide needs a parallel path: applyColumnState's hide doesn't survive
+    // the next columnDefs rebuild (getTraceListColumnDefs sets hide from
+    // col.isVisible, which wins over applied state). The [columns] drain
+    // effect below updates col.isVisible from this map.
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
       const hideMap = {};
       display.columnState.forEach((entry) => {
         if (entry && entry.colId) hideMap[entry.colId] = !!entry.hide;
       });
-      // Apply hideMap immediately to all slots so saved-view hide intent
-      // lands in columnDefs even when TraceGrid's merge bails out (e.g.
-      // switching between saved views with identical backend cols, which
-      // makes backendChanged=false → no setColumns call → no drain).
+      // Apply hideMap immediately so view→view switches with identical
+      // backend cols (no merge → no drain) still pick up the hide intent.
       setColumns((prev) => {
         let anyChanged = false;
         const next = {};
@@ -1955,9 +1882,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         return anyChanged ? next : prev;
       });
-      // Also queue for cols that arrive later via TraceGrid's merge (e.g.
-      // first-load before backend has responded). The [columns] drain
-      // effect re-applies hideMap once cols land.
+      // Queue for cols that arrive later via TraceGrid's merge.
       pendingHideMapRef.current = hideMap;
 
       const activeApi =
@@ -1974,8 +1899,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Primary date filter — stored inside display for backend-whitelist compatibility.
-    // Only apply if the saved view has one; old views without it keep the current date.
+    // dateFilter lives inside display because the backend serializer only
+    // whitelists `display` for arbitrary sub-keys.
     if (display.dateFilter) {
       if (selectedTab === "trace") {
         setPrimaryTraceDateFilter(display.dateFilter);
@@ -1984,11 +1909,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Apply filters — replace unconditionally so switching views clears stale filters.
-    // Guard with Array.isArray: UsersView writes `filters` as an object
-    // ({extraFilters, dateFilter}), and that config can briefly leak into this
-    // view's apply effect during cross-tab transitions (the route change is
-    // queued in startTransition while activeViewConfig updates synchronously).
+    // Array.isArray guard: UsersView writes `filters` as an object, which
+    // can briefly leak during cross-tab transitions (route change is queued
+    // in startTransition while activeViewConfig updates synchronously).
     const rawFilters = activeViewConfig.filters;
     const nextFilters = (Array.isArray(rawFilters) ? rawFilters : []).map(
       (f) => ({
@@ -2033,9 +1956,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
 
-  // Drain the queued saved-view columnState once the active sub-tab's primary
-  // grid mounts. TraceGrid is lazy-loaded so the AG Grid api may not exist
-  // when applyConfig runs — retry a handful of times to catch it.
+  // Drains pendingColumnStateRef once the lazy-loaded grid mounts.
   useEffect(() => {
     if (!pendingColumnStateRef.current) return;
     let attempts = 0;
@@ -2066,29 +1987,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     };
   }, [activeViewConfig, selectedTab]);
 
-  // Re-apply queued columnState whenever `columns` updates. The retry effect
-  // above only fires on activeViewConfig/selectedTab change; if it ran
-  // successfully before TraceGrid's merge landed the custom cols, AG Grid
-  // silently dropped state for those colIds (it skips state entries for
-  // unknown cols). This effect catches the case: once customs land in
-  // `columns`, re-apply the queued state so widths/order/sort for custom
-  // colIds finally stick. Mirrors the drain effect in Sessions-view.
-  //
-  // Also drains the queued hide map by writing the saved-view's hide
-  // intent into each col's `isVisible`. The next columnDefs render then
-  // emits the correct `hide` for AG Grid — without this, the colDef's
-  // explicit `hide: !col?.isVisible` (default-true `isVisible`) wins
-  // over any state previously applied via applyColumnState and the
-  // hidden cols become visible on the very next merge.
+  // Re-apply queued columnState + hideMap once `columns` updates. The
+  // retry effect above only fires on activeViewConfig/selectedTab change;
+  // if it ran before custom cols landed, AG Grid dropped their entries.
+  // The hideMap path is necessary because the next columnDefs rebuild
+  // overrides applyColumnState's hide flag from col.isVisible.
   useEffect(() => {
     if (pendingHideMapRef.current) {
       const hideMap = pendingHideMapRef.current;
-      // Did this columns snapshot have ANY col whose id appears in the
-      // hideMap? If not, slots are still empty (or none of the standard
-      // cols have arrived yet) and we MUST NOT clear pendingHideMapRef —
-      // otherwise a cold-load apply effect that queues hideMap, then fires
-      // drain on an empty-slot change, would wipe the queue before
-      // TraceGrid/SpanGrid's first setColumns lands the backend cols.
+      // Only clear pendingHideMapRef if at least one col matched —
+      // otherwise a cold-load drain on empty slots would wipe the queue
+      // before TraceGrid/SpanGrid's first setColumns lands the cols.
       let sawMatch = false;
       setColumns((prev) => {
         let anyChanged = false;
@@ -2139,23 +2048,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     ? `user-filters-${userIdForUserMode}`
     : `observe-filters-${observeId}`;
 
-  // Pending custom columns — loaded from view config / localStorage but
-  // not merged into columns state until the backend returns real columns,
-  // so the grid doesn't render with only-custom-col headers mid-load.
-  // One ref per grid instance: a shared ref races across the 4 mounted
-  // grids (whichever fetches first drains the queue, leaving the others
-  // empty).
+  // Pending custom cols, queued until the backend returns real columns so
+  // the grid doesn't render with only-custom-col headers mid-load. One ref
+  // per grid instance — a shared ref would race across the 4 mounted grids.
   const primaryTracePendingRef = useRef([]);
   const compareTracePendingRef = useRef([]);
   const primarySpansPendingRef = useRef([]);
   const compareSpansPendingRef = useRef([]);
 
-  // Load display settings from localStorage on mount (for default tab).
-  // Saved-view tabs hydrate from the backend view config via the
-  // `useEffect([activeViewConfig])` apply effect above; seeding pending
-  // refs from localStorage here on a hard refresh into a saved-view URL
-  // would drain the wrong custom cols into the grid before the view
-  // config arrives.
+  // Mount hydrate for the default tab. Saved-view tabs hydrate via the
+  // apply effect above; seeding here on a saved-view URL would drain the
+  // wrong customs before the view config arrives.
   useEffect(() => {
     if (activeViewTabId) return;
     try {
@@ -2168,14 +2071,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       if (saved.showNonAnnotated) setShowNonAnnotated(saved.showNonAnnotated);
       if (saved.showCompare) setShowCompare(saved.showCompare);
       if (saved.hasEvalFilter) setHasEvalFilter(saved.hasEvalFilter);
-      // Accept both the new object shape ({trace: [], spans: []}) and the
-      // legacy flat array (treated as customs for the current tab only,
-      // for forward-compat with localStorage entries written before the
-      // per-tab split). Each pending ref gets its own shallow clone so
-      // primary/compare don't share object identity and the columns
-      // state they drain into doesn't share identity with anything held
-      // by the saved-views cache (same isolation invariant as the
-      // saved-view apply branch above).
+      // Accept both new {trace, spans} object shape and legacy flat array
+      // (treated as customs for the current tab only).
       if (saved.customColumns) {
         const cloneEach = (arr) => arr.map((c) => ({ ...c }));
         if (Array.isArray(saved.customColumns)) {
@@ -2264,9 +2161,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return (columns[ck] || []).filter((c) => c.groupBy === "Custom Columns");
   }, [columns, selectedGraph, selectedTab]);
 
-  // Get custom columns for both tab types (used by localStorage save so
-  // adding customs on one tab doesn't wipe the other's customs from the
-  // shared `observe-display-<id>` entry).
+  // Used by the localStorage save so adding customs on one tab doesn't
+  // wipe the other's customs (storage key is project-scoped, not tab-scoped).
   const getCustomColumnsByTab = useCallback(() => {
     const traceKey = `${selectedGraph}-trace`;
     const spansKey = `${selectedGraph}-spans`;
@@ -2282,24 +2178,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
-  // Workspace-scoped update for user_detail mode (CrossProjectUserDetailPage).
-  // Always declared (hooks can't be conditional); only invoked when isUserMode.
+  // Workspace-scoped update for user_detail mode — only invoked when isUserMode.
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
-  // Get active view tab ID from URL. The tab-key URL param differs per
-  // surface: "tab" on ObservePage, "userTab" on CrossProjectUserDetailPage.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = isUserMode ? params.get("userTab") : params.get("tab");
     return tab?.startsWith("view-") ? tab.replace("view-", "") : null;
-  }, [activeViewConfig, isUserMode]); // re-derive when view config changes
+  }, [activeViewConfig, isUserMode]);
 
-  // Build the full saved view config payload
   const buildViewConfig = useCallback(() => {
-    // Capture current grid column state (widths/order/sort/visibility) of the
-    // active sub-tab's primary grid, so saved views restore the user's exact
-    // column layout. Stashed inside `display` because the backend serializer
+    // columnState lives inside `display` because the backend serializer
     // whitelists `display` for arbitrary subkeys.
     const activeGridApi =
       selectedTab === "trace"
@@ -2314,7 +2204,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showCompare,
       hasEvalFilter,
       customColumns: getCustomColumns(),
-      // Stash primary date filter inside display for backend-whitelist compatibility
+      // dateFilter lives inside display for backend-whitelist compatibility.
       dateFilter:
         selectedTab === "trace"
           ? primaryTraceDateFilter
@@ -2331,10 +2221,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       filters: mapFilters(
         selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters,
       ),
-      // extraFilters is independent of compare mode — always persist
       extraFilters: extraFilters || [],
     };
-    // Include compare state when compare mode is on
     if (showCompare) {
       config.compareFilters = mapFilters(
         selectedTab === "trace" ? compareTraceFilters : compareSpansFilters,
@@ -2378,8 +2266,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetTabType(null);
   }, [registerGetTabType, selectedTab]);
 
-  // Explicit "Save view" — overwrite the active saved view's config with the
-  // current live state. Bound to ObserveToolbar's Save view button.
+  // Bound to ObserveToolbar's Save view button.
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
     const config = buildViewConfig();
@@ -2388,7 +2275,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       { id: activeViewTabId, config },
       {
         onSuccess: (response) => {
-          // Refresh the baseline so canSaveView's diff resets to false.
           setActiveViewConfig(response?.data?.result?.config ?? config);
           enqueueSnackbar("View updated", { variant: "success" });
         },
@@ -2405,16 +2291,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
-  // Persist display settings to localStorage on the default tab so personal
-  // preferences (cellHeight, viewMode, …) survive across navigation. The
-  // backend-update branch that used to live here was removed: filter/date
-  // state was never in the dep array, so it silently missed those changes.
-  // Updates to a saved view are now triggered explicitly by handleSaveView
-  // (the Save view button in the toolbar).
+  // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
-    // Default tab only — persist personal display preferences to localStorage
-    // so cellHeight / viewMode / etc. survive across navigation. Saved-view
-    // tabs go through the explicit Save view button (handleSaveView) instead.
     if (activeViewTabId) return;
     const currentDisplay = {
       viewMode,
@@ -2423,9 +2301,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showNonAnnotated,
       showCompare,
       hasEvalFilter,
-      // Object shape keyed by tab type so adding a custom col on spans
-      // doesn't overwrite traces' customs (and vice versa) — the storage
-      // key itself is project-scoped, not tab-scoped.
+      // Keyed by tab type so adding a custom on spans doesn't overwrite
+      // traces' customs (storage key is project-scoped, not tab-scoped).
       customColumns: getCustomColumnsByTab(),
     };
     try {

@@ -224,17 +224,10 @@ const TraceGrid = React.forwardRef(
                 const dedupedPending = pending.filter(
                   (c) => !existingIds.has(c.id),
                 );
-                // Re-merge when backend cols changed OR pending has items.
-                // Without the hasPending clause, switching into a saved view
-                // where the backend returns the same standard cols would
-                // skip the merge — pending custom cols would stay in the
-                // ref forever.
-                //
-                // backendChanged is computed ignoring `isVisible` so that a
-                // saved-view hide-map applied locally (which makes
-                // currentNonCustom diverge from newCols on isVisible only)
-                // doesn't keep retriggering the merge and clobbering the
-                // local hide state on every page fetch.
+                // Strip isVisible from the diff so saved-view hide maps
+                // don't keep retriggering the merge on every fetch. The
+                // hasPending clause ensures a saved-view switch with same
+                // backend cols still drains the pending customs.
                 const stripVis = (cols) =>
                   (cols || []).map(({ isVisible, ...rest }) => rest);
                 const backendChanged = !_.isEqual(
@@ -247,11 +240,9 @@ const TraceGrid = React.forwardRef(
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  // When backendChanged, merge newCols with existing isVisible
-                  // so saved-view hide intent (written to col.isVisible by the
-                  // [columns] drain in LLMTracingView) survives across fetches.
-                  // When only pending fired, reuse currentNonCustom to keep
-                  // AG Grid's column identity stable (avoid reorder churn).
+                  // Preserve existing isVisible so saved-view hide intent
+                  // survives backend col changes. Pending-only path reuses
+                  // currentNonCustom to keep column identity stable.
                   const finalNonCustom = backendChanged
                     ? newCols.map((nc) => {
                         const existing = currentNonCustom.find(

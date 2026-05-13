@@ -40,11 +40,8 @@ import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverl
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
-// Inline cell renderer for custom columns. Standard CallLogs cells wrap
-// content in a Box with `px: 1.5, py: 0.5` (CallLogsCellRenderer.jsx:262-274)
-// — without matching that here the custom-col content rendered flush
-// against the cell's left edge, breaking visual alignment with the rest of
-// the row.
+// Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
+// the rest of the row.
 const CustomColCellRenderer = (params) => {
   const v = params?.value;
   const display = v == null || v === "" ? "-" : v;
@@ -65,8 +62,6 @@ const CustomColCellRenderer = (params) => {
   );
 };
 
-// Loading skeleton — same shape as the standard helper.jsx `LoadingSkeleton`,
-// inlined so the custom-col defs aren't coupled to that internal helper.
 const CustomColLoadingSkeleton = () => (
   <Skeleton
     variant="rectangular"
@@ -85,11 +80,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     onConfigLoaded = () => {},
     enabled = true,
     onSelectionChanged,
-    // Optional richer selection callback — fires alongside onSelectionChanged
-    // with {traceIds, isAllOnPageSelected, currentPageSize, totalPages,
-    // pageLimit}. Used by LLMTracingView's simulator branch to decide when
-    // to show the "select all matching filter" banner (Phase 9 of the
-    // annotation-queue-bulk-select revamp).
+    // Richer selection callback used by LLMTracingView's simulator branch
+    // to decide when to show the "select all matching filter" banner.
     onSelectionMeta,
     cellHeight = "Short",
     columnVisibility,
@@ -117,9 +109,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       reset: state.reset,
     }));
 
-  // Highlight the row whose detail drawer is currently open. Mirrors the
-  // TraceGrid activeTraceId pattern so the experience matches the trace
-  // detail drawer the user referenced.
+  // Highlight the row whose detail drawer is open (mirrors TraceGrid).
   const { testDetailDrawerOpen } = useTestDetailSideDrawerStoreShallow(
     (state) => ({
       testDetailDrawerOpen: state.testDetailDrawerOpen,
@@ -304,48 +294,26 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       .filter((c) => !existingFields.has(c.id))
       .map((c) => ({
         headerName: c.name,
-        // Use colId rather than `field` for custom cols so AG Grid doesn't
-        // try to deep-resolve the dotted path against the row object (which
-        // for voice/list_voice_calls is FLAT — no nested `call` member). We
-        // do the lookup ourselves in valueGetter below.
+        // colId (not field) so AG Grid doesn't deep-resolve the dotted path
+        // — list_voice_calls returns flat rows; the valueGetter below handles
+        // the resolution.
         colId: c.id,
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        // While the first fetch is in-flight, render the same skeleton
-        // bar the standard cols use (helper.jsx:408 LoadingSkeleton). After
-        // load, swap to the styled renderer that gives the custom-col cell
-        // the same px/py padding as the standard CallLogsCellRenderer.
         cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
         valueGetter: (params) => {
           if (!params.data) return null;
-          // 1. Direct lookup (handles attributes whose stored id is the
-          //    literal data key, e.g. "bot_wpm").
           let value = params.data[c.id];
-          // 2. Dot-notation traversal (handles nested response shapes,
-          //    matches TraceGrid/getCustomValueGetter).
           if (value === undefined && c.id.includes(".")) {
             value = c.id
               .split(".")
               .reduce((obj, key) => obj?.[key], params.data);
           }
-          // 3. Voice-specific namespace strip: the /eval-attributes list
-          //    serves Vapi-style attribute paths with explicit namespace
-          //    prefixes (e.g. "call.bot_wpm", "vapi.call_id"), but the
-          //    /list_voice_calls/ response returns those same values as
-          //    top-level flat keys ("bot_wpm", "call_id"). Strip the prefix
-          //    and try direct lookup.
-          //
-          //    Whitelist intentionally — only namespaces where the data is
-          //    proven to live flat in the list response. A generic
-          //    "drop leading segments" fallback would false-positive on
-          //    paths like "phone_number.id" → row.id (the row primary key).
-          //
-          //    Attributes outside this whitelist (conversation.*,
-          //    performance_metrics.*, workflow.*, gen_ai.*, etc.) are
-          //    span-detail paths the list endpoint doesn't include — they
-          //    correctly fall through to "-" until the backend expands the
-          //    list response or removes them from the picker for voice.
+          // /eval-attributes serves Vapi attribute paths with namespace
+          // prefixes (call.*, vapi.*) but /list_voice_calls returns them
+          // as flat keys. Whitelisted — a generic "drop leading segments"
+          // would false-positive on paths like phone_number.id → row.id.
           const VOICE_FLAT_NAMESPACE_PREFIXES = ["call.", "vapi."];
           if (value === undefined) {
             const matchedPrefix = VOICE_FLAT_NAMESPACE_PREFIXES.find((p) =>
@@ -363,10 +331,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         },
       }));
 
-    // Wrap customs under a "Custom Columns" group header so they render as
-    // a grouped section at the end of the grid (parity with TraceGrid /
-    // SpanGrid / SessionGrid). Without this they appeared as flat columns
-    // alongside the standard ones, with no visual separation.
+    // Group under a "Custom Columns" header for parity with the other grids.
     if (newCustomDefs.length > 0) {
       return [
         ...updated,

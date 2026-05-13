@@ -310,25 +310,17 @@ const UsersView = ({
     useUsersStore.setState({ filters: finalFilters });
   }, [finalFilters]);
 
-  // ---------------------------------------------------------------------------
-  // Saved-view api — populates a ref that the parent UsersPageTabBar drives.
-  // Captures display + filter state into config, and restores it on activation.
-  // ---------------------------------------------------------------------------
+  // Saved-view api — populates a ref the parent UsersPageTabBar drives.
   const getConfig = useCallback(() => {
     const visibleColumns = (columns || []).reduce((acc, col) => {
       acc[col.id] = col.isVisible !== false;
       return acc;
     }, {});
-    // Capture full grid column state (widths, order, sort) so saved views
-    // restore the user's exact column layout. Stash inside `display` since
-    // the backend serializer's allowed_keys whitelists `display` for
-    // arbitrary subkeys but does not whitelist a separate `columnState`.
+    // columnState lives inside `display` because the backend serializer
+    // whitelists `display` for arbitrary sub-keys (no top-level columnState).
     const columnState = gridApi?.getColumnState?.() ?? undefined;
-    // Persist custom columns separately. Their colIds also appear in
-    // columnState (for widths/order/sort), but the standard col defs come
-    // from the static UsersView baseConfig — the backend doesn't know
-    // about custom cols, so without this list AG Grid won't recreate them
-    // on restore and applyColumnState would silently drop their entries.
+    // customColumns separately: AG Grid won't recreate them from columnState
+    // alone since the backend doesn't know about custom cols.
     const customColumns = (columns || []).filter(
       (c) => c.groupBy === "Custom Columns",
     );
@@ -358,29 +350,17 @@ const UsersView = ({
     gridApi,
   ]);
 
-  // Pending column state from a saved view that arrived before the grid was
-  // ready. Drained by the effect below when gridApi becomes available.
+  // Drained when gridApi becomes available (saved view arrived before grid mount).
   const pendingColumnStateRef = useRef(null);
 
-  // localStorage key for default-tab display state (per-project). Mirrors
-  // LLMTracingView's `observe-display-<id>` pattern but with a separate
-  // namespace so the two views don't collide on shape (different fields).
-  const displayStorageKey = useMemo(
-    () => `observe-users-display-${observeId}`,
-    [observeId],
-  );
+  const displayStorageKey = `observe-users-display-${observeId}`;
 
-  // Hydrate default-tab display state from localStorage. Runs when columns
-  // is populated (UsersGrid's mount effect runs first and seeds the default
-  // schema via setColumns) — without this gate, addCustomColumns would
-  // race the schema seed and the customs would be wiped. Guard with a
-  // per-key ref so it only fires once per project, and skip entirely on
-  // a saved-view tab (the view config is the source of truth there).
+  // hydratedKeyRef gates the hydrate to once per project. The columns gate
+  // below ensures UsersGrid's schema seed has landed first — without it,
+  // addCustomColumns would race the seed and the customs would be wiped.
   const hydratedKeyRef = useRef(null);
-  // Set immediately after a hydrate so the save effect skips its next
-  // fire — that fire would otherwise close over the PRE-hydrate state
-  // (setters from the hydrate are queued, not committed yet) and write
-  // defaults back over the values we just loaded.
+  // Skips the save effect's next fire after a hydrate so the pre-hydrate
+  // closure can't overwrite what we just loaded.
   const skipNextSaveRef = useRef(false);
   useEffect(() => {
     if (activeViewTabId) return;
@@ -415,10 +395,8 @@ const UsersView = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns, displayStorageKey]);
 
-  // Persist display state to localStorage on every change (default tab
-  // only — saved views own their persistence via the explicit Save view
-  // button). Skip until the initial hydrate has run, otherwise the
-  // empty default state would overwrite saved customs on first paint.
+  // Default tab only — saved views own their persistence via the explicit
+  // Save view button.
   useEffect(() => {
     if (activeViewTabId) return;
     if (hydratedKeyRef.current !== displayStorageKey) return;
@@ -467,17 +445,12 @@ const UsersView = ({
         setHasEvalFilter(false);
         setDateFilter(getDefaultDateRange());
         pendingColumnStateRef.current = null;
-        // Drop any custom cols left by the saved view we're navigating
-        // away from so the default tab doesn't inherit them.
         const currentCustomIds = (columns || [])
           .filter((c) => c.groupBy === "Custom Columns")
           .map((c) => c.id);
         if (currentCustomIds.length > 0) {
           removeCustomColumns(currentCustomIds);
         }
-        // Reset column visibility to the column-config defaults so going back
-        // to All Users from a saved view with limited columns shows everything
-        // again.
         const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
           (acc, col) => {
             acc[col.field] = col.hide === undefined ? true : !col.hide;
@@ -488,18 +461,13 @@ const UsersView = ({
         if (Object.keys(defaultsVisibility).length > 0) {
           updateColumnVisibility(defaultsVisibility);
         }
-        // Reset AG Grid column state (widths/order/sort) to coldef defaults.
         if (gridApi?.resetColumnState) gridApi.resetColumnState();
-        // Re-hydrate default-tab preferences from localStorage. The mount-
-        // time hydrate effect is keyed on `displayStorageKey` and won't
-        // re-fire on a same-project saved-view → default transition.
-        // Setters here run after the resets above, so React's batched
-        // render sees the localStorage values as the final state.
+        // Re-hydrate from localStorage — the mount hydrate is keyed on
+        // displayStorageKey and won't re-fire on a same-project saved-view
+        // → default transition.
         try {
           const raw = localStorage.getItem(displayStorageKey);
           if (raw) {
-            // Mirror the mount-hydrate skip-flag so the save effect's next
-            // fire doesn't write the pre-hydrate state back to localStorage.
             skipNextSaveRef.current = true;
             const saved = JSON.parse(raw);
             if (saved.cellHeight) setCellHeight(saved.cellHeight);
@@ -539,9 +507,8 @@ const UsersView = ({
         setShowNonAnnotated(display.showNonAnnotated);
       if (typeof display.hasEvalFilter === "boolean")
         setHasEvalFilter(display.hasEvalFilter);
-      // Strip any pre-existing custom cols before adding this view's set,
-      // so view → view doesn't stack customs and default → view doesn't
-      // leak default-tab customs into the saved view's column header.
+      // Strip pre-existing customs so view → view doesn't stack, and
+      // default → view doesn't leak default-tab customs into the saved view.
       const existingCustomIds = (columns || [])
         .filter((c) => c.groupBy === "Custom Columns")
         .map((c) => c.id);
@@ -558,12 +525,10 @@ const UsersView = ({
         updateColumnVisibility(display.visibleColumns);
       }
       if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-        // Defer columnState whenever custom cols are being added — they
-        // land in the store synchronously but AG Grid's columnDefs prop
-        // only flips on the next render. Applying state in this tick
-        // would silently drop entries for the custom colIds. The
-        // `columns` drain effect re-applies the queued state once the
-        // store update has propagated.
+        // Defer columnState when custom cols are being added — AG Grid's
+        // columnDefs prop only flips next render, so applying this tick
+        // would drop entries for the custom colIds. Drained by the
+        // `columns` effect once the store update propagates.
         if (savedCustomCols.length > 0) {
           pendingColumnStateRef.current = display.columnState;
         } else if (gridApi?.applyColumnState) {
@@ -598,11 +563,9 @@ const UsersView = ({
     ],
   );
 
-  // Drain any column state queued before the grid was ready, OR queued
-  // because custom cols had to land in the store first. Two triggers:
-  // gridApi flipping from null to ready (initial mount), and `columns`
-  // changing (custom cols just got added → AG Grid columnDefs prop
-  // updated → safe to apply state for the custom colIds).
+  // Drains pendingColumnStateRef on two triggers: gridApi becoming
+  // available, or `columns` changing (custom cols just landed → AG Grid
+  // columnDefs prop updated → safe to apply state for the custom colIds).
   useEffect(() => {
     if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
       gridApi.applyColumnState({
@@ -680,11 +643,7 @@ const UsersView = ({
         }
       }
     }
-    // Custom columns: compare the sorted id list against the baseline so
-    // adding/removing a custom col on a saved view dirty-flags the Save
-    // view button. Sort because the user's intent is "which customs are
-    // selected" not "in what order" — order is captured separately in
-    // columnState.
+    // Custom cols: order is captured by columnState, so we only diff the set.
     const currentCustomIds = (columns || [])
       .filter((c) => c.groupBy === "Custom Columns")
       .map((c) => c.id)
@@ -714,15 +673,10 @@ const UsersView = ({
 
   const canSaveViewDeferred = useDeferredValue(canSaveView);
 
-  // Update mutations for the explicit Save view button. Project-scoped on
-  // ObservePage's Users fixed tab; workspace-scoped (USERS_TAB_TYPE) on the
-  // top-level /dashboard/users page rendered by UserList.
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USERS_TAB_TYPE);
 
-  // Active saved-view id from URL — "tab" key on ObservePage, "usersTab" on
-  // UserList. Re-derived when the active config flips.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const key = isObservePath
@@ -758,9 +712,8 @@ const UsersView = ({
     setActiveViewConfig,
   ]);
 
-  // Register with ObserveHeaderContext so ObserveTabBar's "+" save flow can
-  // snapshot the current Users config when the user is on this fixed tab —
-  // without this, the save POSTs `config: {}` (TH-4578).
+  // ObserveTabBar's "+" save flow needs this — without it the save POSTs
+  // `config: {}` (TH-4578).
   useEffect(() => {
     registerGetViewConfig(getConfig);
     return () => registerGetViewConfig(null);
@@ -771,19 +724,10 @@ const UsersView = ({
     return () => registerGetTabType(null);
   }, [registerGetTabType]);
 
-  // Apply a saved view's config when activeViewConfig changes. Reuses the
-  // existing applyConfig — handles extraFilters, dateFilter, display state,
-  // column visibility, custom columns.
-  // Dep array intentionally only watches `activeViewConfig`. `applyConfig`'s
-  // identity changes whenever `columns` does, and `applyConfig` itself
-  // mutates `columns` via `updateColumnVisibility` / `addCustomColumns` —
-  // keeping it in deps creates an infinite re-apply loop.
-  //
-  // The `wasOnSavedViewRef` gate ensures the null branch of applyConfig
-  // (which strips saved-view-leftover state — custom cols, visibility,
-  // pendingColumnState) only fires on a genuine saved-view → default
-  // transition, not on initial mount where activeViewConfig is null
-  // simply because no view is selected yet.
+  // Deps watch only activeViewConfig — applyConfig's identity changes with
+  // columns, and it mutates columns, so keeping it in deps would loop.
+  // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
+  // default transitions (not initial mount with no view selected).
   const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
     if (!activeViewConfig) {
