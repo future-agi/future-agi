@@ -5,15 +5,31 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 import re
 from datetime import datetime
 
-from django.db import models
+from django.db import connection, models
 
-from agentic_eval.core.llm.llm import LLM
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 
 
 class TestExecutionUtils:
+    @staticmethod
+    def _get_filter_config_value(filter_config, snake_key, camel_key, default=None):
+        """Read filter config without treating False/0 as missing."""
+        if snake_key in filter_config:
+            return filter_config.get(snake_key)
+        if camel_key in filter_config:
+            return filter_config.get(camel_key)
+        return default
+
+    @staticmethod
+    def _pass_fail_aliases(value):
+        normalized = str(value).strip().lower()
+        if normalized in {"passed", "pass", "true", "1"}:
+            return ["Passed", "Pass", True, "true", "1"]
+        if normalized in {"failed", "fail", "false", "0"}:
+            return ["Failed", "Fail", False, "false", "0"]
+        return []
 
     def _apply_filters(
         self,
@@ -24,16 +40,35 @@ class TestExecutionUtils:
         column_order=None,
     ):
         """Apply filters to call executions with support for new response structure"""
-        # Build tool evaluation columns map from column_order
+        # Build dynamic column maps from column_order. Eval configs can be
+        # deleted or absent from the active run config while their historical
+        # columns remain visible for an execution, so column_order is the
+        # source of truth for which eval output IDs can be filtered.
         tool_eval_columns = {}
+        eval_column_ids = set()
+        eval_column_output_types = {}
         if column_order:
             for col in column_order:
+                if not isinstance(col, dict):
+                    continue
+                col_id = col.get("id")
+                if not col_id:
+                    continue
                 if col.get("type") == "tool_evaluation":
-                    tool_eval_columns[col["id"]] = col
+                    tool_eval_columns[str(col_id)] = col
+                elif col.get("type") == "evaluation":
+                    eval_column_ids.add(str(col_id))
+                    eval_config = col.get("eval_config") or {}
+                    if isinstance(eval_config, dict):
+                        eval_column_output_types[str(col_id)] = eval_config.get(
+                            "output"
+                        )
 
         for filter_item in filters:
             try:
                 column_id = filter_item.get("column_id") or filter_item.get("columnId")
+                if column_id is not None:
+                    column_id = str(column_id)
                 filter_config = filter_item.get("filter_config", {}) or filter_item.get(
                     "filterConfig", {}
                 )
@@ -41,14 +76,14 @@ class TestExecutionUtils:
                 if not column_id or not filter_config:
                     continue
 
-                filter_type = filter_config.get("filter_type") or filter_config.get(
-                    "filterType"
+                filter_type = self._get_filter_config_value(
+                    filter_config, "filter_type", "filterType"
                 )
-                filter_op = filter_config.get("filter_op") or filter_config.get(
-                    "filterOp"
+                filter_op = self._get_filter_config_value(
+                    filter_config, "filter_op", "filterOp"
                 )
-                filter_value = filter_config.get("filter_value") or filter_config.get(
-                    "filterValue"
+                filter_value = self._get_filter_config_value(
+                    filter_config, "filter_value", "filterValue"
                 )
 
                 # Handle different column types based on new response structure
@@ -347,7 +382,7 @@ class TestExecutionUtils:
                                     params=[dataset_column_id, filter_value],
                                 )
                         elif filter_type == "boolean":
-                            if filter_value.lower() in ["true", "1", "yes"]:
+                            if str(filter_value).lower() in ["true", "1", "yes"]:
                                 bool_value = "true"
                             else:
                                 bool_value = "false"
@@ -362,7 +397,11 @@ class TestExecutionUtils:
                                     params=[dataset_column_id, bool_value],
                                 )
 
-                elif column_id in eval_configs_map or column_id in tool_eval_columns:
+                elif (
+                    column_id in eval_configs_map
+                    or column_id in eval_column_ids
+                    or column_id in tool_eval_columns
+                ):
                     # Filter by evaluation metric (includes both SimulateEvalConfig and tool evaluations)
                     # eval_outputs structure: {eval_config_id: {"output": value, "reason": "", "output_type": "", "name": ""}}
                     # tool_outputs structure: {tool_eval_id: {"output": value, "reason": "", "output_type": "", "name": ""}}
@@ -372,10 +411,18 @@ class TestExecutionUtils:
                     if column_id in tool_eval_columns:
                         eval_id = column_id
                         output_field = "tool_outputs"
+                        output_type = (
+                            tool_eval_columns[column_id].get("eval_config", {}) or {}
+                        ).get("output")
                     else:
-                        eval_config = eval_configs_map[column_id]
-                        eval_id = str(eval_config.id)
+                        eval_config = eval_configs_map.get(column_id)
+                        eval_id = str(eval_config.id) if eval_config else column_id
                         output_field = "eval_outputs"
+                        output_type = eval_column_output_types.get(column_id)
+                        if not output_type and eval_config:
+                            output_type = (eval_config.eval_template.config or {}).get(
+                                "output"
+                            )
 
                     if filter_type == "number":
                         # Handle between/not_in_between operations
@@ -387,11 +434,14 @@ class TestExecutionUtils:
                                 start_value = float(filter_value[0])
                                 end_value = float(filter_value[1])
 
-                                # Convert percentages to decimals for both values
-                                # Filter values from UI are in percentage format (0-100)
-                                # Convert to decimal format (0-1) for database comparison
-                                db_start_value = start_value / 100.0
-                                db_end_value = end_value / 100.0
+                                # Score evals are displayed as percentages in
+                                # the UI but stored as 0-1 decimals.
+                                if output_type == "score":
+                                    db_start_value = start_value / 100.0
+                                    db_end_value = end_value / 100.0
+                                else:
+                                    db_start_value = start_value
+                                    db_end_value = end_value
 
                                 # Use Cast to ensure proper type comparison for numeric values
                                 if filter_op == "between":
@@ -423,11 +473,13 @@ class TestExecutionUtils:
                             # Handle single value operations
                             filter_value = float(filter_value)
 
-                            # Convert percentage to decimal for score-based evaluations
-                            # UI shows 0-100% but database stores 0-1
-                            # Filter values from UI are in percentage format (0-100)
-                            # Convert to decimal format (0-1) for database comparison
-                            db_filter_value = filter_value / 100.0
+                            # Score evals are displayed as percentages in the
+                            # UI but stored as 0-1 decimals.
+                            db_filter_value = (
+                                filter_value / 100.0
+                                if output_type == "score"
+                                else filter_value
+                            )
 
                             # Filter based on output field (eval_outputs or tool_outputs) - looking at the "output" field
                             if filter_op == "greater_than":
@@ -467,31 +519,67 @@ class TestExecutionUtils:
                                 )
                     elif filter_type == "text":
                         # Text filtering on outputs (eval_outputs or tool_outputs)
+                        output_key = f"{output_field}__{eval_id}__output"
+                        pass_fail_aliases = self._pass_fail_aliases(filter_value)
                         if filter_op == "contains":
                             call_executions = call_executions.filter(
                                 **{f"{output_field}__has_key": eval_id},
                                 **{
-                                    f"{output_field}__{eval_id}__output__icontains": filter_value
+                                    f"{output_key}__icontains": filter_value
                                 },
                             )
                         elif filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                **{f"{output_field}__has_key": eval_id},
-                                **{
-                                    f"{output_field}__{eval_id}__output__iexact": filter_value
-                                },
-                            )
+                            if pass_fail_aliases:
+                                alias_conditions = models.Q()
+                                for alias in pass_fail_aliases:
+                                    if isinstance(alias, str):
+                                        alias_conditions |= models.Q(
+                                            **{f"{output_key}__iexact": alias}
+                                        )
+                                    else:
+                                        alias_conditions |= models.Q(
+                                            **{output_key: alias}
+                                        )
+                                call_executions = call_executions.filter(
+                                    **{f"{output_field}__has_key": eval_id}
+                                ).filter(alias_conditions)
+                            else:
+                                call_executions = call_executions.filter(
+                                    **{f"{output_field}__has_key": eval_id},
+                                    **{f"{output_key}__iexact": filter_value},
+                                )
                         elif filter_op == "not_equals":
+                            base_qs = call_executions.filter(
+                                **{f"{output_field}__has_key": eval_id}
+                            )
+                            if pass_fail_aliases:
+                                alias_conditions = models.Q()
+                                for alias in pass_fail_aliases:
+                                    if isinstance(alias, str):
+                                        alias_conditions |= models.Q(
+                                            **{f"{output_key}__iexact": alias}
+                                        )
+                                    else:
+                                        alias_conditions |= models.Q(
+                                            **{output_key: alias}
+                                        )
+                                call_executions = base_qs.exclude(alias_conditions)
+                            else:
+                                call_executions = base_qs.exclude(
+                                    **{f"{output_key}__iexact": filter_value}
+                                )
+                        elif filter_op == "not_contains":
                             call_executions = call_executions.filter(
                                 **{f"{output_field}__has_key": eval_id}
-                            ).exclude(
-                                **{
-                                    f"{output_field}__{eval_id}__output__iexact": filter_value
-                                }
-                            )
+                            ).exclude(**{f"{output_key}__icontains": filter_value})
                     elif filter_type == "boolean":
                         # Boolean filtering on outputs (eval_outputs or tool_outputs)
-                        if filter_value.lower() in ["true", "1", "yes", "passed"]:
+                        if str(filter_value).lower() in [
+                            "true",
+                            "1",
+                            "yes",
+                            "passed",
+                        ]:
                             bool_value = True
                         else:
                             bool_value = False
@@ -920,8 +1008,6 @@ class TestExecutionUtils:
         )
 
         # Execute raw SQL and return results
-        from django.db import connection
-
         with connection.cursor() as cursor:
             cursor.execute(raw_sql)
             columns = [col[0] for col in cursor.description]

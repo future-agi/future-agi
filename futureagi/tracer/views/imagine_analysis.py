@@ -25,7 +25,7 @@ class WidgetAnalysisSerializer(serializers.Serializer):
 class TriggerAnalysisSerializer(serializers.Serializer):
     saved_view_id = serializers.UUIDField()
     trace_id = serializers.CharField(max_length=255)
-    project_id = serializers.UUIDField()
+    project_id = serializers.UUIDField(required=False, allow_null=True)
     widgets = WidgetAnalysisSerializer(many=True)
 
 
@@ -40,16 +40,38 @@ class ImagineAnalysisView(APIView):
         data = serializer.validated_data
         org = getattr(request, "organization", None) or request.user.organization
 
-        # Validate saved view exists
+        # Validate saved view exists. Some callers (annotation/voice drawers)
+        # are not on /observe/:projectId routes, so project_id may be absent
+        # even though the saved view already carries the project.
         try:
-            saved_view = SavedView.objects.get(
+            saved_view_qs = SavedView.objects.filter(
                 id=data["saved_view_id"],
-                project_id=data["project_id"],
+                deleted=False,
             )
+            if data.get("project_id"):
+                saved_view_qs = saved_view_qs.filter(project_id=data["project_id"])
+
+            request_workspace = getattr(request, "workspace", None)
+            if request_workspace:
+                saved_view_qs = saved_view_qs.filter(workspace=request_workspace)
+            else:
+                saved_view_qs = saved_view_qs.filter(workspace__organization=org)
+
+            saved_view = saved_view_qs.get()
         except SavedView.DoesNotExist:
             return Response(
                 {"status": False, "error": "Saved view not found"},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        project_id = data.get("project_id") or saved_view.project_id
+        if not project_id:
+            return Response(
+                {
+                    "status": False,
+                    "error": "project_id is required for workspace-scoped saved views",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         results = []
@@ -60,7 +82,7 @@ class ImagineAnalysisView(APIView):
                 widget_id=widget["widget_id"],
                 trace_id=data["trace_id"],
                 defaults={
-                    "project_id": data["project_id"],
+                    "project_id": project_id,
                     "organization": org,
                     "prompt": widget["prompt"],
                     "status": "pending",
@@ -109,6 +131,7 @@ class ImagineAnalysisView(APIView):
 
             from tfc.temporal.imagine.client import start_imagine_analysis
 
+            result_error = None
             try:
                 workflow_id = start_imagine_analysis(
                     analysis_id=str(analysis.id),
@@ -130,12 +153,14 @@ class ImagineAnalysisView(APIView):
                     status="failed", error=str(e)[:500]
                 )
                 result_status = "failed"
+                result_error = str(e)[:500]
 
             results.append(
                 {
                     "id": str(analysis.id),
                     "widget_id": widget["widget_id"],
                     "status": result_status,
+                    **({"error": result_error} if result_error else {}),
                 }
             )
 

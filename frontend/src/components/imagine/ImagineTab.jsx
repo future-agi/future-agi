@@ -318,6 +318,7 @@ export default function ImagineTab({
             emptyState={emptyState}
             chatRef={chatRef}
             traceId={traceId}
+            projectId={projectId}
           />
         </Box>
 

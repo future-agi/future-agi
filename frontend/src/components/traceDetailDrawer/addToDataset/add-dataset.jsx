@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Typography,
   Box,
@@ -16,7 +16,6 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import AddExistingDataset from "./AddExistingDataset";
 import AddNewDataset from "./AddNewDataset";
-import _ from "lodash";
 import { defaultSpanFields } from "../common";
 
 const AddDataset = ({
@@ -31,7 +30,6 @@ const AddDataset = ({
 }) => {
   const [selectedOptionDataset, setSelectedOptionDataset] =
     useState("existing");
-  const [getobservationFields, setGetobservationFields] = useState([]);
 
   const theme = useTheme();
 
@@ -61,30 +59,8 @@ const AddDataset = ({
   //   select: (data) => data?.data?.result?.observation_span,
   // });
 
-  useEffect(() => {
-    if (!observationFields) return;
-
-    // Case 1: If observationFields are available, filter based on them
-    // if (observationSpan) {
-    //   const filteredFields = observationFields.filter((field) => {
-    //     const camelCaseKey = _.camelCase(field.name);
-    //     const value = observationSpan?.[camelCaseKey];
-
-    //     if (value === null || value === undefined) return false;
-    //     if (Array.isArray(value) && value.length === 0) return false;
-    //     if (
-    //       typeof value === "object" &&
-    //       !Array.isArray(value) &&
-    //       Object.keys(value).length === 0
-    //     )
-    //       return false;
-    //     if (typeof value === "string" && value.trim() === "") return false;
-
-    //     return true;
-    //   });
-
-    //   setGetobservationFields(filteredFields);
-    // }
+  const getobservationFields = useMemo(() => {
+    if (!observationFields?.length) return [];
 
     const matchedFields = observationFields.filter((field) =>
       defaultSpanFields.includes(field.name),
@@ -97,7 +73,7 @@ const AddDataset = ({
       { name: "annotation_metrics", type: "json" },
     ];
 
-    setGetobservationFields([...matchedFields, ...VIRTUAL_FIELDS]);
+    return [...matchedFields, ...VIRTUAL_FIELDS];
   }, [observationFields]);
 
   return (
