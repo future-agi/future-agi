@@ -8,12 +8,14 @@ from agent_playground.views.node import NodeCrudViewSet
 from agent_playground.views.node_connection import NodeConnectionCrudViewSet
 from agent_playground.views.node_template import NodeTemplateViewSet
 from agent_playground.views.port import PortCrudViewSet
+from agent_playground.views.template import TemplateViewSet
 from agent_playground.views.trace_import import TraceToGraphView
 
 router = DefaultRouter()
 
 router.register(r"graphs", GraphViewSet, basename="graph")
 router.register(r"node-templates", NodeTemplateViewSet, basename="node-template")
+router.register(r"templates", TemplateViewSet, basename="template")
 
 urlpatterns = router.urls
 
