@@ -2235,44 +2235,56 @@ class ManageTeamView(APIView):
                             #     )
                             #     continue
 
-                        # Create new user for this organization
-                        new_member = User.objects.create(
-                            email=member_data["email"],
-                            name=member_data["name"],
-                            organization=organization,
-                            organization_role=org_role,  # None for workspace-level roles
-                            is_active=False,
-                            invited_by=request.user,
-                        )
-                        password = generate_password()
-                        new_member.set_password(password)
-                        new_member.save()
+                        # Create new user and workspace membership atomically.
+                        # Email is sent AFTER the commit so a transient mail
+                        # failure never prevents the user from being added.
+                        with transaction.atomic():
+                            new_member = User.objects.create(
+                                email=member_data["email"],
+                                name=member_data["name"],
+                                organization=organization,
+                                organization_role=org_role,  # None for workspace-level roles
+                                is_active=False,
+                                invited_by=request.user,
+                            )
+                            password = generate_password()
+                            new_member.set_password(password)
+                            new_member.save()
 
-                        # Add user to workspace with determined workspace role
-                        self._add_user_to_workspace(
-                            new_member,
-                            workspace,
-                            workspace_role,
-                            request.user,
-                        )
+                            # Add user to workspace with determined workspace role
+                            self._add_user_to_workspace(
+                                new_member,
+                                workspace,
+                                workspace_role,
+                                request.user,
+                            )
+
+                        created_members.append(UserSerializer(new_member).data)
 
                         token = default_token_generator.make_token(new_member)
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
-                        email_helper(
-                            f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
-                            "member_invite.html",
-                            {
-                                "password": password,
-                                "email": member_data["email"],
-                                "uid": str(uidb64),
-                                "token": token,
-                                "workspace_name": workspace.name,
-                                "app_url": settings.APP_URL,
-                                "ssl": ssl,
-                            },
-                            [member_data["email"]],
-                        )
-                        created_members.append(UserSerializer(new_member).data)
+                        try:
+                            email_helper(
+                                f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
+                                "member_invite.html",
+                                {
+                                    "password": password,
+                                    "email": member_data["email"],
+                                    "uid": str(uidb64),
+                                    "token": token,
+                                    "workspace_name": workspace.name,
+                                    "app_url": settings.APP_URL,
+                                    "ssl": ssl,
+                                },
+                                [member_data["email"]],
+                            )
+                        except Exception as email_exc:
+                            logger.warning(
+                                "invite_email_failed",
+                                user_id=str(new_member.id),
+                                email=member_data["email"],
+                                error=str(email_exc),
+                            )
 
                     except IntegrityError:
                         errors.append(
