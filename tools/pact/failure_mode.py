@@ -751,7 +751,7 @@ def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
         with open(path, encoding="utf-8", errors="ignore") as fh:
             source = fh.read()
         tree = pyast.parse(source, filename=path)
-    except SyntaxError:
+    except (SyntaxError, OSError):
         return []
 
     results: list[FailureEvidence] = []

@@ -68,7 +68,7 @@ runs:
         cache-dependency-path: ${{ github.action_path }}/../../../tools/pact/go/checker/go.sum
 
     - name: Build pact-go binary
-      if: inputs.build-go-checker == 'true' && inputs.go-paths != ''
+      if: inputs.build-go-checker == 'true' && inputs.go-paths != '' && inputs.go-version != ''
       shell: bash
       run: |
         CHECKER_DIR="${{ github.action_path }}/../../../tools/pact/go/checker"

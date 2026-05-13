@@ -455,7 +455,7 @@ def extract_from_file(
     try:
         source = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(source, filename=str(path))
-    except SyntaxError:
+    except (SyntaxError, OSError):
         return [], [], []
 
     module_path = ".".join(path.with_suffix("").parts)
