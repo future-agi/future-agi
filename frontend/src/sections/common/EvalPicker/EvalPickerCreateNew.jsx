@@ -1038,6 +1038,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     isSimulator={String(sourceRowType || "")
                       .toLowerCase()
                       .startsWith("voice")}
+                    rowType={sourceRowType}
                   />
                 </Box>
               )}
