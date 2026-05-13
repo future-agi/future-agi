@@ -281,10 +281,8 @@ def get_kpi_eval_metrics_query(test_execution_id):
         GROUP BY metric_id, metric_name
     ),
 
-    -- Choices metrics where every entry errored (output is null). Without
-    -- this branch the metric drops out of the response entirely and the UI
-    -- renders "No evaluation metrics added"; emitting a zero row lets the
-    -- handler register the metric so a zeroed chart card shows instead.
+    -- Choices metrics where every entry has null output: emit a zero row
+    -- so the handler can register the metric instead of dropping it.
     choice_errored_agg AS (
         SELECT
             metric_id,
