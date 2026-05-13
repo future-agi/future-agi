@@ -342,16 +342,16 @@ class FilterEngine:
                 return v is None or v == ""
             return [obj for obj in objects if _missing(obj) == (filter_op == "is_null")]
 
-        # Set-membership ops (in/not_in): filter_value is a list of needles.
+        # Set-membership ops (in/not_in): filter_value is a list of values.
         # Other ops: filter_value is a single string.
         if filter_op in ("in", "not_in"):
             if isinstance(filter_value, list):
-                needles = [str(v).lower() for v in filter_value]
+                values = [str(v).lower() for v in filter_value]
             else:
-                needles = [v.strip().lower() for v in str(filter_value).split(",") if v.strip()]
+                values = [v.strip().lower() for v in str(filter_value).split(",") if v.strip()]
             text_ops = {
-                "in":     lambda x: x in needles,
-                "not_in": lambda x: x not in needles,
+                "in":     lambda x: x in values,
+                "not_in": lambda x: x not in values,
             }
         else:
             fv = (filter_value if isinstance(filter_value, str) else str(filter_value)).lower()
