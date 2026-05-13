@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import pandas as pd
 from pydantic import BaseModel
@@ -37,6 +37,11 @@ class DatapointFieldAnnotation(TypedDict):
 class EvalResult(TypedDict):
     """
     Represents the LLM evaluation result.
+
+    Callers should use `cost` and `token_usage` for billing data.
+    `metadata` is a legacy JSON string from LLM evaluators (CustomPromptEvaluator)
+    that may contain explanation, response_time, and other fields — do not parse it
+    for cost data.
     """
 
     name: str
@@ -49,6 +54,8 @@ class EvalResult(TypedDict):
     metadata: str | None
     metrics: list[EvalResultMetric]
     datapoint_field_annotations: list[DatapointFieldAnnotation] | None
+    cost: NotRequired[dict | None]
+    token_usage: NotRequired[dict | None]
 
 
 @dataclass
