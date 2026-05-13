@@ -215,7 +215,16 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
     Idempotency guard: rows that already have a PENDING/PROCESSING Evaluation
     from a previous (partial) run of this config are skipped to prevent
     duplicate evaluation records (TLA+ NoDuplicateEval).
+
+    Precondition: config.created_by must not be None — the caller
+    (flush_auto_eval_batch) gates on this and returns early if it is NULL.
+    Passing a NULL user would cause an IntegrityError on bulk_create.
     """
+    if config.created_by is None:
+        raise ValueError(
+            f"_create_evaluations_from_rows: config {config.id} has no created_by; "
+            "flush_auto_eval_batch should have returned early"
+        )
     from model_hub.models.develop_dataset import Cell, Row
     from model_hub.models.evaluation import Evaluation, StatusChoices
 
