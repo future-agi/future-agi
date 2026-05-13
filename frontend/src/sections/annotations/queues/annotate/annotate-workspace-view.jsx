@@ -13,6 +13,8 @@ import {
   Button,
   CircularProgress,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -36,11 +38,16 @@ import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
+import { CollaborationDrawer } from "./discussion-panel";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 
 const MAX_HISTORY = 50;
+const WORKSPACE_MODES = {
+  ANNOTATE: "annotate",
+  REVIEW: "review",
+};
 
 function historyReducer(state, action) {
   switch (action.type) {
@@ -79,10 +86,60 @@ function historyReducer(state, action) {
   }
 }
 
+function normalizeReviewPayload(payload) {
+  if (payload && typeof payload === "object") {
+    return {
+      notes: payload.notes || "",
+      labelComments: payload.labelComments || [],
+    };
+  }
+  return { notes: payload || "", labelComments: [] };
+}
+
+function isDiscussionComment(comment) {
+  return comment?.action === "comment";
+}
+
+function isOpenReviewStatus(status) {
+  return status === "open" || status === "reopened";
+}
+
+function isBlockingReviewFeedback(comment) {
+  return comment?.blocking || comment?.action === "request_changes";
+}
+
+function isOpenBlockingReviewFeedback(comment) {
+  return (
+    isBlockingReviewFeedback(comment) &&
+    (!comment?.thread_status || isOpenReviewStatus(comment.thread_status))
+  );
+}
+
+function shortId(value) {
+  if (!value) return "";
+  const text = String(value);
+  return text.length > 8 ? text.slice(0, 8) : text;
+}
+
+function itemContextLabel(item, itemId) {
+  const sourceType =
+    item?.source_type || item?.sourceType || item?.source || item?.type;
+  const typeLabel = sourceType
+    ? String(sourceType).replaceAll("_", " ").toLowerCase()
+    : "item";
+  return `${typeLabel} ${shortId(item?.id || itemId)}`;
+}
+
+function commentScopeKey(labelId, targetAnnotatorId) {
+  if (labelId && targetAnnotatorId) return `${labelId}:${targetAnnotatorId}`;
+  if (labelId) return `label:${labelId}`;
+  return "item";
+}
+
 export default function AnnotateWorkspaceView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
@@ -94,18 +151,16 @@ export default function AnnotateWorkspaceView() {
     currentItemId: initialItemId || null,
   });
   const { history: itemHistory, index: historyIndex, currentItemId } = navState;
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [focusedCommentScope, setFocusedCommentScope] = useState(null);
+  const focusTimeoutRef = useRef(null);
 
-  // Fetch next item on mount (only if no specific item was requested)
-  const { data: nextItemData, isLoading: nextLoading } = useNextItem(queueId, {
-    enabled: !currentItemId,
-  });
-
-  // Set initial item from next-item query
-  useEffect(() => {
-    if (nextItemData?.id && !currentItemId) {
-      dispatch({ type: "init", id: nextItemData.id });
-    }
-  }, [nextItemData, currentItemId]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(focusTimeoutRef.current);
+    },
+    [],
+  );
 
   const { data: progress } = useQueueProgress(queueId);
   const { data: queueDetail } = useAnnotationQueueDetail(queueId);
@@ -121,9 +176,59 @@ export default function AnnotateWorkspaceView() {
   const canReview =
     hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) ||
     hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canAnnotate =
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) ||
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canDiscuss = canAnnotate || canReview;
+  const requiresReview = queueDetail?.requires_review === true;
+  const requestedMode = searchParams.get("mode");
+  const workspaceMode =
+    requestedMode === WORKSPACE_MODES.REVIEW && canReview && requiresReview
+      ? WORKSPACE_MODES.REVIEW
+      : requestedMode === WORKSPACE_MODES.ANNOTATE && canAnnotate
+        ? WORKSPACE_MODES.ANNOTATE
+        : canReview && requiresReview && !canAnnotate
+          ? WORKSPACE_MODES.REVIEW
+          : WORKSPACE_MODES.ANNOTATE;
+  const isReviewWorkspaceMode = workspaceMode === WORKSPACE_MODES.REVIEW;
+  const nextItemModeFilters = useMemo(
+    () =>
+      isReviewWorkspaceMode
+        ? { reviewStatus: "pending_review" }
+        : requiresReview
+          ? { excludeReviewStatus: "pending_review" }
+          : {},
+    [isReviewWorkspaceMode, requiresReview],
+  );
+  const navigationModeParams = useMemo(
+    () =>
+      isReviewWorkspaceMode
+        ? { review_status: "pending_review" }
+        : requiresReview
+          ? { exclude_review_status: "pending_review" }
+          : {},
+    [isReviewWorkspaceMode, requiresReview],
+  );
+
+  // Fetch next item on mount (only if no specific item was requested).
+  const { data: nextItemData, isLoading: nextLoading } = useNextItem(queueId, {
+    ...nextItemModeFilters,
+    enabled: !currentItemId && !!queueDetail,
+  });
+
+  // Set initial item from next-item query.
+  useEffect(() => {
+    if (nextItemData?.id && !currentItemId) {
+      dispatch({ type: "init", id: nextItemData.id });
+    }
+  }, [nextItemData, currentItemId]);
 
   const queueAnnotators = useMemo(
     () => (queueDetail?.annotators || []).filter(isQueueAnnotatorRole),
+    [queueDetail?.annotators],
+  );
+  const queueMembers = useMemo(
+    () => queueDetail?.annotators || [],
     [queueDetail?.annotators],
   );
 
@@ -131,19 +236,32 @@ export default function AnnotateWorkspaceView() {
 
   useEffect(() => {
     if (!queueDetail) return;
-    if (canReview && currentUserId && !viewingAnnotatorId) {
+    if (
+      isReviewWorkspaceMode &&
+      canReview &&
+      currentUserId &&
+      !viewingAnnotatorId
+    ) {
       setViewingAnnotatorId(ALL_ANNOTATORS);
-    } else if (!canReview && viewingAnnotatorId !== null) {
+    } else if (!isReviewWorkspaceMode && viewingAnnotatorId !== null) {
       setViewingAnnotatorId(null);
     }
-  }, [canReview, currentUserId, queueDetail, viewingAnnotatorId]);
+  }, [
+    isReviewWorkspaceMode,
+    canReview,
+    currentUserId,
+    queueDetail,
+    viewingAnnotatorId,
+  ]);
 
   const isViewingAllAnnotators =
-    canReview && viewingAnnotatorId === ALL_ANNOTATORS;
+    isReviewWorkspaceMode && viewingAnnotatorId === ALL_ANNOTATORS;
   const scopedAnnotatorId =
-    canReview && !isViewingAllAnnotators ? viewingAnnotatorId : undefined;
+    isReviewWorkspaceMode && !isViewingAllAnnotators
+      ? viewingAnnotatorId
+      : undefined;
   const isViewingOtherAnnotator =
-    canReview &&
+    isReviewWorkspaceMode &&
     !!viewingAnnotatorId &&
     !isViewingAllAnnotators &&
     String(viewingAnnotatorId) !== currentUserId;
@@ -151,7 +269,7 @@ export default function AnnotateWorkspaceView() {
     !!queueId &&
     !!currentItemId &&
     !!queueDetail &&
-    (!canReview || !!viewingAnnotatorId);
+    (!isReviewWorkspaceMode || !!viewingAnnotatorId);
 
   // Reviewers/managers default to a comparison view. When a single annotator
   // is selected, request that annotator only so values never merge into one
@@ -216,6 +334,14 @@ export default function AnnotateWorkspaceView() {
   const handleDirtyChange = useCallback((dirty) => {
     isDirtyRef.current = dirty;
   }, []);
+  const confirmDiscardUnsaved = useCallback((message) => {
+    if (!isDirtyRef.current) return true;
+    const canDiscard = window.confirm(
+      message || "You have unsaved changes. Continue anyway?",
+    );
+    if (canDiscard) isDirtyRef.current = false;
+    return canDiscard;
+  }, []);
 
   const { mutate: submitAnnotations, isPending: isSubmitting } =
     useSubmitAnnotations();
@@ -223,9 +349,10 @@ export default function AnnotateWorkspaceView() {
   const { mutate: skipItem, isPending: isSkipping } = useSkipItem();
   const { mutate: reviewItem, isPending: isReviewing } = useReviewItem();
 
-  const requiresReview = queueDetail?.requires_review === true;
   const isPendingReview = detail?.item?.review_status === "pending_review";
-  const isReviewMode = isPendingReview && canReview && requiresReview;
+  const showReviewActions = isReviewWorkspaceMode && isPendingReview;
+  const isAnnotateLockedForReview =
+    !isReviewWorkspaceMode && requiresReview && isPendingReview;
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
@@ -244,21 +371,29 @@ export default function AnnotateWorkspaceView() {
   const cannotAnnotate = hasAssignments && !isAssignedToMe;
   // Reviewers/managers see assigned-to-other items in read-only mode (when
   // not actively reviewing). Other members are fully blocked.
-  const isViewOnlyForReviewer = canReview && cannotAnnotate && !isReviewMode;
-  const isBlockedAssignedToOther = !canReview && cannotAnnotate;
+  const isViewOnlyForReviewer =
+    !isReviewWorkspaceMode && canReview && cannotAnnotate;
+  const isBlockedAssignedToOther =
+    !isReviewWorkspaceMode && !canReview && cannotAnnotate;
   // Backwards-compatible flag passed to header for disabling Skip.
-  const isAssignedToOther = cannotAnnotate && !isReviewMode;
+  const isAssignedToOther = !isReviewWorkspaceMode && cannotAnnotate;
   const labelPanelReadOnly =
+    !canAnnotate ||
     isViewOnlyForReviewer ||
     isViewingOtherAnnotator ||
-    isAnnotatorSwitchPending;
+    isAnnotatorSwitchPending ||
+    isAnnotateLockedForReview;
   const labelPanelReadOnlyReason = isAnnotatorSwitchPending
     ? "Loading selected annotator..."
-    : isViewingOtherAnnotator
-      ? "Viewing another annotator's submissions (read only)"
-      : isViewOnlyForReviewer
-        ? `Assigned to ${assignedToName || "another annotator"} — view only`
-        : null;
+    : isAnnotateLockedForReview
+      ? "This item is waiting for review. It can be edited after a reviewer requests changes."
+      : isViewingOtherAnnotator
+        ? "Viewing another annotator's submissions (read only)"
+        : isViewOnlyForReviewer
+          ? `Assigned to ${assignedToName || "another annotator"} — view only`
+          : !canAnnotate
+            ? "You do not have annotator access for this queue"
+            : null;
 
   const isSubmittingRef = useRef(false);
 
@@ -269,17 +404,33 @@ export default function AnnotateWorkspaceView() {
         return;
       }
       if (
-        !isViewingOtherAnnotator &&
-        isDirtyRef.current &&
-        !window.confirm(
-          "You have unsaved annotations. Switch annotator anyway?",
+        !confirmDiscardUnsaved(
+          "You have unsaved changes. Switch annotator anyway?",
         )
       ) {
         return;
       }
       setViewingAnnotatorId(nextAnnotatorId);
     },
-    [isViewingOtherAnnotator, viewingAnnotatorId],
+    [viewingAnnotatorId, confirmDiscardUnsaved],
+  );
+
+  const handleWorkspaceModeChange = useCallback(
+    (_, nextMode) => {
+      if (!nextMode || nextMode === workspaceMode) return;
+      if (
+        !confirmDiscardUnsaved("You have unsaved changes. Switch mode anyway?")
+      ) {
+        return;
+      }
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("mode", nextMode);
+      nextParams.delete("itemId");
+      setSearchParams(nextParams, { replace: true });
+      isDirtyRef.current = false;
+      dispatch({ type: "clear" });
+    },
+    [workspaceMode, searchParams, setSearchParams, confirmDiscardUnsaved],
   );
 
   const handleSubmitAndNext = useCallback(
@@ -297,6 +448,9 @@ export default function AnnotateWorkspaceView() {
                 queueId,
                 itemId: currentItemId,
                 exclude: itemHistory.join(","),
+                excludeReviewStatus: requiresReview
+                  ? "pending_review"
+                  : undefined,
               },
               {
                 onSuccess: (data) => {
@@ -321,13 +475,25 @@ export default function AnnotateWorkspaceView() {
         },
       );
     },
-    [queueId, currentItemId, itemHistory, submitAnnotations, completeItem],
+    [
+      queueId,
+      currentItemId,
+      itemHistory,
+      submitAnnotations,
+      completeItem,
+      requiresReview,
+    ],
   );
 
   const handleSkip = useCallback(() => {
-    if (!currentItemId) return;
+    if (!currentItemId || isAnnotateLockedForReview) return;
     skipItem(
-      { queueId, itemId: currentItemId, exclude: itemHistory.join(",") },
+      {
+        queueId,
+        itemId: currentItemId,
+        exclude: itemHistory.join(","),
+        excludeReviewStatus: requiresReview ? "pending_review" : undefined,
+      },
       {
         onSuccess: (data) => {
           const result = data?.data?.result || data?.data;
@@ -340,43 +506,78 @@ export default function AnnotateWorkspaceView() {
         },
       },
     );
-  }, [queueId, currentItemId, itemHistory, skipItem]);
+  }, [
+    queueId,
+    currentItemId,
+    itemHistory,
+    skipItem,
+    requiresReview,
+    isAnnotateLockedForReview,
+  ]);
+
+  const handleReviewSuccess = useCallback(
+    (data) => {
+      isDirtyRef.current = false;
+      const result = data?.data?.result || data?.data;
+      const nextItem = result?.nextItem || result?.next_item;
+      if (nextItem?.id) {
+        dispatch({ type: "push", id: nextItem.id });
+      } else {
+        navigate(`/dashboard/annotations/queues/${queueId}`);
+      }
+    },
+    [navigate, queueId],
+  );
 
   const handleApprove = useCallback(
-    (notes) => {
+    (payload) => {
+      const { notes, labelComments } = normalizeReviewPayload(payload);
       reviewItem(
-        { queueId, itemId: currentItemId, action: "approve", notes },
         {
-          onSuccess: () => navigate(`/dashboard/annotations/queues/${queueId}`),
+          queueId,
+          itemId: currentItemId,
+          action: "approve",
+          notes,
+          labelComments,
+        },
+        {
+          onSuccess: handleReviewSuccess,
         },
       );
     },
-    [queueId, currentItemId, reviewItem, navigate],
+    [queueId, currentItemId, reviewItem, handleReviewSuccess],
   );
 
   const handleReject = useCallback(
-    (notes) => {
+    (payload) => {
+      const { notes, labelComments } = normalizeReviewPayload(payload);
       reviewItem(
-        { queueId, itemId: currentItemId, action: "reject", notes },
         {
-          onSuccess: () => navigate(`/dashboard/annotations/queues/${queueId}`),
+          queueId,
+          itemId: currentItemId,
+          action: "request_changes",
+          notes,
+          labelComments,
+        },
+        {
+          onSuccess: handleReviewSuccess,
         },
       );
     },
-    [queueId, currentItemId, reviewItem, navigate],
+    [queueId, currentItemId, reviewItem, handleReviewSuccess],
   );
 
   const handleBack = useCallback(() => {
-    if (isDirtyRef.current) {
-      if (!window.confirm("You have unsaved annotations. Leave anyway?"))
-        return;
-    }
+    if (!confirmDiscardUnsaved("You have unsaved changes. Leave anyway?"))
+      return;
     navigate(`/dashboard/annotations/queues/${queueId}`);
-  }, [navigate, queueId]);
+  }, [navigate, queueId, confirmDiscardUnsaved]);
 
   const [isFetchingPrev, setIsFetchingPrev] = useState(false);
 
   const handlePrev = useCallback(async () => {
+    if (!confirmDiscardUnsaved("You have unsaved changes. Load another item?"))
+      return;
     if (historyIndex > 0) {
       dispatch({ type: "prev" });
       return;
@@ -387,7 +588,7 @@ export default function AnnotateWorkspaceView() {
     try {
       const res = await axios.get(
         `/model-hub/annotation-queues/${queueId}/items/next-item/`,
-        { params: { before: currentItemId } },
+        { params: { before: currentItemId, ...navigationModeParams } },
       );
       const prevItem =
         res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
@@ -408,7 +609,15 @@ export default function AnnotateWorkspaceView() {
     } finally {
       setIsFetchingPrev(false);
     }
-  }, [historyIndex, currentItemId, queueId, isFetchingPrev, enqueueSnackbar]);
+  }, [
+    historyIndex,
+    currentItemId,
+    queueId,
+    isFetchingPrev,
+    enqueueSnackbar,
+    navigationModeParams,
+    confirmDiscardUnsaved,
+  ]);
 
   const [isFetchingNext, setIsFetchingNext] = useState(false);
   const nextAbortRef = useRef(null);
@@ -417,14 +626,17 @@ export default function AnnotateWorkspaceView() {
   useEffect(() => () => nextAbortRef.current?.abort(), []);
 
   const handleNext = useCallback(async () => {
+    if (!confirmDiscardUnsaved("You have unsaved changes. Load another item?"))
+      return;
     // If there are forward items in history, navigate to them
     if (historyIndex < itemHistory.length - 1) {
       dispatch({ type: "next" });
       return;
     }
 
-    // detail.next_item_id is status-agnostic — works for view-only managers.
-    if (detail?.next_item_id) {
+    // Only use the precomputed adjacent item when there is no mode-specific
+    // review filter. Review/annotation queues need the API filter below.
+    if (detail?.next_item_id && !requiresReview) {
       dispatch({ type: "push", id: detail.next_item_id });
       return;
     }
@@ -438,7 +650,7 @@ export default function AnnotateWorkspaceView() {
       const res = await axios.get(
         `/model-hub/annotation-queues/${queueId}/items/next-item/`,
         {
-          params: { exclude: itemHistory.join(",") },
+          params: { exclude: itemHistory.join(","), ...navigationModeParams },
           signal: controller.signal,
         },
       );
@@ -473,6 +685,9 @@ export default function AnnotateWorkspaceView() {
     isFetchingNext,
     enqueueSnackbar,
     detail,
+    requiresReview,
+    navigationModeParams,
+    confirmDiscardUnsaved,
   ]);
 
   const handleKeyboardSubmit = useCallback(() => {
@@ -481,7 +696,8 @@ export default function AnnotateWorkspaceView() {
       isBlockedAssignedToOther ||
       isViewingAllAnnotators ||
       isViewingOtherAnnotator ||
-      isAnnotatorSwitchPending
+      isAnnotatorSwitchPending ||
+      isAnnotateLockedForReview
     )
       return;
     labelPanelRef.current?.submit();
@@ -491,6 +707,7 @@ export default function AnnotateWorkspaceView() {
     isViewingAllAnnotators,
     isViewingOtherAnnotator,
     isAnnotatorSwitchPending,
+    isAnnotateLockedForReview,
   ]);
 
   useKeyboardShortcuts({
@@ -504,7 +721,67 @@ export default function AnnotateWorkspaceView() {
   const isInitialDetailLoading =
     detailEnabled && !detail && (detailLoading || detailFetching);
   const isWaitingForAnnotatorSelection =
-    !!queueDetail && canReview && !viewingAnnotatorId;
+    !!queueDetail && isReviewWorkspaceMode && !viewingAnnotatorId;
+  const reviewComments = detail?.review_comments || [];
+  const reviewThreads = detail?.review_threads || [];
+  const decisionReviewComments = reviewComments.filter(
+    (comment) => !isDiscussionComment(comment),
+  );
+  const activeDiscussionCount =
+    reviewThreads.filter(
+      (thread) => thread?.action === "comment" && thread?.status !== "resolved",
+    ).length ||
+    reviewComments.filter(
+      (comment) =>
+        isDiscussionComment(comment) &&
+        (!comment?.thread_status || comment.thread_status !== "resolved"),
+    ).length;
+  const openBlockingFeedbackCount = decisionReviewComments.filter(
+    isOpenBlockingReviewFeedback,
+  ).length;
+  const addressedFeedbackCount = decisionReviewComments.filter(
+    (comment) =>
+      isBlockingReviewFeedback(comment) &&
+      comment?.thread_status === "addressed",
+  ).length;
+  const resolvedFeedbackCount = decisionReviewComments.filter(
+    (comment) =>
+      isBlockingReviewFeedback(comment) &&
+      comment?.thread_status === "resolved",
+  ).length;
+  const commentBadgeCount = activeDiscussionCount + openBlockingFeedbackCount;
+
+  const handleFocusCommentScope = useCallback(
+    ({ labelId, targetAnnotatorId } = {}) => {
+      const nextScope = commentScopeKey(labelId, targetAnnotatorId);
+      setFocusedCommentScope(nextScope);
+
+      const selector = targetAnnotatorId
+        ? `[data-review-score-key="${labelId}:${targetAnnotatorId}"]`
+        : labelId
+          ? `[data-review-label-id="${labelId}"]`
+          : '[data-review-item-summary="true"]';
+
+      const scrollToScope = () => {
+        const target = document.querySelector(selector);
+        if (typeof target?.scrollIntoView === "function") {
+          target.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      };
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(scrollToScope);
+      } else {
+        window.setTimeout(scrollToScope, 0);
+      }
+
+      window.clearTimeout(focusTimeoutRef.current);
+      focusTimeoutRef.current = window.setTimeout(
+        () => setFocusedCommentScope(null),
+        2400,
+      );
+    },
+    [],
+  );
 
   // Loading state
   if (
@@ -621,9 +898,13 @@ export default function AnnotateWorkspaceView() {
         />
         <Typography variant="h5">All Done!</Typography>
         <Typography color="text.secondary">
-          {completedCount > 0 &&
-            `${completedCount} of ${totalCount} items completed.`}
-          {completedCount === 0 && "No more pending items in this queue."}
+          {isReviewWorkspaceMode
+            ? "No items are waiting for review."
+            : completedCount > 0 &&
+              `${completedCount} of ${totalCount} items completed.`}
+          {!isReviewWorkspaceMode &&
+            completedCount === 0 &&
+            "No more pending items in this queue."}
         </Typography>
 
         {skippedCount > 0 && (
@@ -655,8 +936,16 @@ export default function AnnotateWorkspaceView() {
         onBack={handleBack}
         onSkip={handleSkip}
         isSkipping={isSkipping}
-        isReviewMode={isReviewMode}
+        isReviewMode={isReviewWorkspaceMode}
         isAssignedToOther={isAssignedToOther}
+        isSkipDisabled={isAnnotateLockedForReview}
+        onOpenComments={() => setCommentsOpen(true)}
+        commentsDisabled={!currentItemId || !detail || !canDiscuss}
+        commentBadgeCount={commentBadgeCount}
+        activeCommentCount={activeDiscussionCount}
+        openFeedbackCount={openBlockingFeedbackCount}
+        addressedFeedbackCount={addressedFeedbackCount}
+        resolvedFeedbackCount={resolvedFeedbackCount}
       />
 
       <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -673,25 +962,77 @@ export default function AnnotateWorkspaceView() {
         </Box>
 
         {/* Right: Labels or Review */}
-        <Box sx={{ width: 400, minWidth: 360, overflow: "auto" }}>
-          {isReviewMode ? (
-            <AnnotationComparisonPanel
-              annotations={detail?.annotations || []}
-              labels={detail?.labels || []}
-              spanNotes={detail?.span_notes || []}
-              annotators={queueAnnotators}
-              currentUserId={currentUserId}
-              viewingAnnotatorId={viewingAnnotatorId}
-              onViewingAnnotatorChange={handleViewingAnnotatorChange}
-              onApprove={handleApprove}
-              onReject={handleReject}
-              isPending={isReviewing}
-              reviewStatus={detail?.item?.review_status}
-              reviewNotes={detail?.item?.review_notes || ""}
-              queueId={queueId}
-              itemId={currentItemId}
-              showReviewActions
-            />
+        <Box
+          sx={{
+            flex: isReviewWorkspaceMode
+              ? "0 0 clamp(560px, 52vw, 820px)"
+              : "0 0 400px",
+            width: isReviewWorkspaceMode ? "clamp(560px, 52vw, 820px)" : 400,
+            minWidth: isReviewWorkspaceMode ? 560 : 360,
+            maxWidth: isReviewWorkspaceMode ? 820 : 440,
+            overflow: "auto",
+            bgcolor: isReviewWorkspaceMode
+              ? "background.default"
+              : "background.paper",
+          }}
+        >
+          {requiresReview && canReview && canAnnotate && (
+            <Box sx={{ p: 1.5, pb: 0 }}>
+              <Typography
+                variant="caption"
+                fontWeight={700}
+                color="text.secondary"
+                sx={{ display: "block", mb: 0.75 }}
+              >
+                Workspace action
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                fullWidth
+                size="small"
+                value={workspaceMode}
+                onChange={handleWorkspaceModeChange}
+                aria-label="annotation workspace mode"
+              >
+                <ToggleButton value={WORKSPACE_MODES.ANNOTATE}>
+                  Annotate my answers
+                </ToggleButton>
+                <ToggleButton value={WORKSPACE_MODES.REVIEW}>
+                  Review submissions
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+          )}
+          {isReviewWorkspaceMode ? (
+            <>
+              {!isPendingReview && (
+                <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
+                  This item is not waiting for review. Review actions appear on
+                  items submitted for review.
+                </Alert>
+              )}
+              <AnnotationComparisonPanel
+                item={detail?.item}
+                annotations={detail?.annotations || []}
+                labels={detail?.labels || []}
+                spanNotes={detail?.span_notes || []}
+                annotators={queueAnnotators}
+                currentUserId={currentUserId}
+                viewingAnnotatorId={viewingAnnotatorId}
+                onViewingAnnotatorChange={handleViewingAnnotatorChange}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onDirtyChange={handleDirtyChange}
+                isPending={isReviewing}
+                reviewStatus={detail?.item?.review_status}
+                reviewNotes={detail?.item?.review_notes || ""}
+                reviewComments={reviewComments}
+                queueId={queueId}
+                itemId={currentItemId}
+                showReviewActions={showReviewActions}
+                focusedCommentScope={focusedCommentScope}
+              />
+            </>
           ) : isBlockedAssignedToOther ? (
             <Stack
               alignItems="center"
@@ -722,6 +1063,7 @@ export default function AnnotateWorkspaceView() {
             </Stack>
           ) : isViewingAllAnnotators ? (
             <AnnotationComparisonPanel
+              item={detail?.item}
               labels={detail?.labels || []}
               annotations={detail?.annotations || []}
               spanNotes={detail?.span_notes || []}
@@ -729,10 +1071,13 @@ export default function AnnotateWorkspaceView() {
               currentUserId={currentUserId}
               viewingAnnotatorId={viewingAnnotatorId}
               onViewingAnnotatorChange={handleViewingAnnotatorChange}
+              onDirtyChange={handleDirtyChange}
               reviewStatus={detail?.item?.review_status}
               reviewNotes={detail?.item?.review_notes || ""}
+              reviewComments={reviewComments}
               queueId={queueId}
               itemId={currentItemId}
+              focusedCommentScope={focusedCommentScope}
             />
           ) : (
             <LabelPanel
@@ -741,6 +1086,7 @@ export default function AnnotateWorkspaceView() {
               annotations={detail?.annotations || []}
               initialItemNotes={detail?.existing_notes || ""}
               reviewFeedback={detail?.item?.review_notes || ""}
+              reviewComments={detail?.review_comments || []}
               instructions={detail?.queue?.instructions}
               onSubmit={handleSubmitAndNext}
               isPending={isSubmitting || isCompleting}
@@ -749,17 +1095,21 @@ export default function AnnotateWorkspaceView() {
               onDirtyChange={handleDirtyChange}
               readOnly={labelPanelReadOnly}
               readOnlyReason={labelPanelReadOnlyReason}
-              annotators={canReview ? queueAnnotators : null}
+              annotators={null}
               viewingAnnotatorId={viewingAnnotatorId}
               currentUserId={currentUserId}
               isAnnotatorSwitchPending={isAnnotatorSwitchPending}
               onViewingAnnotatorChange={handleViewingAnnotatorChange}
+              focusedCommentScope={focusedCommentScope}
+              submitLabel={
+                requiresReview ? "Submit for Review" : "Submit & Next"
+              }
             />
           )}
         </Box>
       </Box>
 
-      {!isReviewMode && (
+      {!isReviewWorkspaceMode && (
         <AnnotateFooter
           currentPosition={
             detail?.progress?.currentPosition ||
@@ -784,6 +1134,21 @@ export default function AnnotateWorkspaceView() {
           isLoadingNext={isFetchingNext}
         />
       )}
+
+      <CollaborationDrawer
+        open={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        queueId={queueId}
+        itemId={currentItemId}
+        itemLabel={itemContextLabel(detail?.item, currentItemId)}
+        labels={detail?.labels || []}
+        members={queueMembers}
+        comments={reviewComments}
+        threads={reviewThreads}
+        canTargetMembers={canReview}
+        canComment={canDiscuss}
+        onFocusScope={handleFocusCommentScope}
+      />
     </Box>
   );
 }

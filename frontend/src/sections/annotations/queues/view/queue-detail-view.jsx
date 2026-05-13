@@ -54,6 +54,9 @@ const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
   { value: "pending", label: "Pending" },
   { value: "in_progress", label: "In Progress" },
+  { value: "in_review", label: "In Review" },
+  { value: "needs_changes", label: "Needs Changes" },
+  { value: "resubmitted", label: "Resubmitted" },
   { value: "completed", label: "Completed" },
   { value: "skipped", label: "Skipped" },
 ];
@@ -114,13 +117,19 @@ export default function QueueDetailView() {
   const items = useMemo(() => itemsData?.results || [], [itemsData?.results]);
   const totalCount = itemsData?.count || 0;
 
-  const isManager = useMemo(() => {
-    if (!queue || !user) return false;
-    const currentUserId = String(user.id || user.pk || user.user_id || "");
+  const currentUserId = String(user?.id || user?.pk || user?.user_id || "");
+  const myQueueMembership = useMemo(() => {
+    if (!queue || !user) return null;
     const annotators = queue.annotators || [];
-    const me = annotators.find((a) => String(a.user_id) === currentUserId);
-    return hasQueueRole(me, QUEUE_ROLES.MANAGER);
-  }, [queue, user]);
+    return annotators.find((a) => String(a.user_id) === currentUserId) || null;
+  }, [queue, user, currentUserId]);
+
+  const isManager = hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canAnnotateQueue =
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) || isManager;
+  const canReviewQueue =
+    queue?.requires_review &&
+    (hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) || isManager);
 
   const queueAnnotators = useMemo(
     () =>
@@ -130,8 +139,9 @@ export default function QueueDetailView() {
     [queue?.annotators],
   );
 
-  const canStartAnnotating =
-    totalCount > 0 &&
+  const queueItemCount = progress?.total ?? totalCount;
+  const canStartWork =
+    queueItemCount > 0 &&
     (queue?.status === "active" ||
       (queue?.status === "completed" && (progress?.skipped || 0) > 0));
 
@@ -291,13 +301,29 @@ export default function QueueDetailView() {
             Export to Dataset
           </MenuItem>
         </Menu>
-        {canStartAnnotating && (
+        {canStartWork && canReviewQueue && (
+          <Button
+            variant={canAnnotateQueue ? "outlined" : "contained"}
+            color="primary"
+            startIcon={<Iconify icon="solar:checklist-bold" />}
+            onClick={() =>
+              navigate(
+                `${paths.dashboard.annotations.annotate(queueId)}?mode=review`,
+              )
+            }
+          >
+            Review Items
+          </Button>
+        )}
+        {canStartWork && canAnnotateQueue && (
           <Button
             variant="contained"
             color="primary"
             startIcon={<Iconify icon="eva:edit-2-fill" />}
             onClick={() =>
-              navigate(paths.dashboard.annotations.annotate(queueId))
+              navigate(
+                `${paths.dashboard.annotations.annotate(queueId)}?mode=annotate`,
+              )
             }
           >
             {queue?.status === "completed"
@@ -344,6 +370,8 @@ export default function QueueDetailView() {
               {progress.pending > 0 && ` \u00b7 ${progress.pending} pending`}
               {progress.in_progress > 0 &&
                 ` \u00b7 ${progress.in_progress} in progress`}
+              {progress.in_review > 0 &&
+                ` \u00b7 ${progress.in_review} in review`}
               {progress.skipped > 0 && ` \u00b7 ${progress.skipped} skipped`}
             </Typography>
             <Typography variant="body2" fontWeight={600}>
@@ -487,7 +515,7 @@ export default function QueueDetailView() {
               </Stack>
 
               <Stack direction="row" spacing={1}>
-                {selectedIds.size > 0 && (
+                {isManager && selectedIds.size > 0 && (
                   <>
                     {isManager && !queue?.auto_assign && (
                       <Button
@@ -508,14 +536,16 @@ export default function QueueDetailView() {
                     </Button>
                   </>
                 )}
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<Iconify icon="mingcute:add-line" />}
-                  onClick={() => setAddDialogOpen(true)}
-                >
-                  Add Items
-                </Button>
+                {isManager && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<Iconify icon="mingcute:add-line" />}
+                    onClick={() => setAddDialogOpen(true)}
+                  >
+                    Add Items
+                  </Button>
+                )}
               </Stack>
             </Stack>
           )}
@@ -530,7 +560,11 @@ export default function QueueDetailView() {
                 flex: 1,
               }}
             >
-              <QueueItemsEmpty onAddClick={() => setAddDialogOpen(true)} />
+              <QueueItemsEmpty
+                onAddClick={
+                  isManager ? () => setAddDialogOpen(true) : undefined
+                }
+              />
             </Box>
           ) : (
             <QueueItemsTable
@@ -543,11 +577,17 @@ export default function QueueDetailView() {
               selectedIds={selectedIds}
               onSelectToggle={handleSelectToggle}
               onSelectAll={handleSelectAll}
-              onRemove={handleRemove}
+              onRemove={isManager ? handleRemove : undefined}
               onItemClick={(item) => {
                 if (queue?.status === "active") {
+                  const mode =
+                    item.review_status === "pending_review" && canReviewQueue
+                      ? "review"
+                      : canAnnotateQueue
+                        ? "annotate"
+                        : "review";
                   navigate(
-                    `${paths.dashboard.annotations.annotate(queueId)}?itemId=${item.id}`,
+                    `${paths.dashboard.annotations.annotate(queueId)}?itemId=${item.id}&mode=${mode}`,
                   );
                 } else {
                   enqueueSnackbar(
@@ -559,6 +599,7 @@ export default function QueueDetailView() {
               annotators={queueAnnotators}
               onAssign={isManager ? handleAssign : undefined}
               autoAssign={queue?.auto_assign ?? false}
+              canManageItems={isManager}
             />
           )}
         </Box>

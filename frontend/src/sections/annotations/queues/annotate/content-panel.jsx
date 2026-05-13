@@ -21,6 +21,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
@@ -86,6 +87,21 @@ const SOURCE_LABELS = {
   trace_session: "Session",
 };
 
+function neutralChipSx(theme, height = 22) {
+  return {
+    height,
+    fontSize: height <= 18 ? 10 : 11,
+    fontWeight: 700,
+    borderColor: alpha(theme.palette.text.primary, 0.12),
+    bgcolor: alpha(
+      theme.palette.text.primary,
+      theme.palette.mode === "dark" ? 0.04 : 0.025,
+    ),
+    color: "text.secondary",
+    "& .MuiChip-label": { px: 0.75 },
+  };
+}
+
 export default function ContentPanel({ item }) {
   if (!item) return null;
 
@@ -141,9 +157,8 @@ export default function ContentPanel({ item }) {
       <Chip
         label={SOURCE_LABELS[sourceType] || sourceType}
         size="small"
-        color="primary"
         variant="outlined"
-        sx={{ mb: 2 }}
+        sx={(theme) => ({ ...neutralChipSx(theme), mb: 2 })}
       />
 
       {sourceType === "dataset_row" && <DatasetRowContent content={content} />}
@@ -1003,8 +1018,7 @@ function ContentSection({ title, children, dataType, copyValue }) {
             label={dataType}
             size="small"
             variant="outlined"
-            color="primary"
-            sx={{ height: 18, fontSize: 10 }}
+            sx={(theme) => neutralChipSx(theme, 18)}
           />
         )}
         <Box sx={{ flex: 1 }} />

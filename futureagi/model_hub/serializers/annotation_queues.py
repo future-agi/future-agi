@@ -10,6 +10,8 @@ from model_hub.models.annotation_queues import (
     AutomationRule,
     ItemAnnotation,
     QueueItem,
+    QueueItemReviewComment,
+    QueueItemReviewThread,
     normalize_annotator_roles,
     primary_annotator_role,
 )
@@ -212,7 +214,10 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             new_roles = roles.get(str(annotator.user_id))
             if new_roles:
                 primary_role = primary_annotator_role(new_roles)
-                if annotator.role != primary_role or annotator.normalized_roles != new_roles:
+                if (
+                    annotator.role != primary_role
+                    or annotator.normalized_roles != new_roles
+                ):
                     annotator.role = primary_role
                     annotator.roles = new_roles
                     annotator.save(update_fields=["role", "roles", "updated_at"])
@@ -292,6 +297,8 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
 class QueueItemSerializer(serializers.ModelSerializer):
     source_id = serializers.CharField(write_only=True, required=False)
     source_preview = serializers.SerializerMethodField()
+    workflow_status = serializers.SerializerMethodField()
+    workflow_status_label = serializers.SerializerMethodField()
     assigned_to_name = serializers.CharField(
         source="assigned_to.name", read_only=True, default=None
     )
@@ -311,6 +318,8 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "source_type",
             "source_id",
             "status",
+            "workflow_status",
+            "workflow_status_label",
             "priority",
             "order",
             "metadata",
@@ -339,6 +348,35 @@ class QueueItemSerializer(serializers.ModelSerializer):
 
     def get_source_preview(self, obj):
         return resolve_source_preview(obj)
+
+    def get_workflow_status(self, obj):
+        if (
+            obj.review_status == "pending_review"
+            and QueueItemReviewThread.objects.filter(
+                queue_item=obj,
+                blocking=True,
+                status=QueueItemReviewThread.STATUS_ADDRESSED,
+                deleted=False,
+            ).exists()
+        ):
+            return "resubmitted"
+        if obj.review_status == "pending_review":
+            return "in_review"
+        if obj.review_status == "rejected":
+            return "needs_changes"
+        return obj.status
+
+    def get_workflow_status_label(self, obj):
+        status = self.get_workflow_status(obj)
+        return {
+            "pending": "Pending",
+            "in_progress": "In Progress",
+            "in_review": "In Review",
+            "needs_changes": "Needs Changes",
+            "resubmitted": "Resubmitted",
+            "completed": "Completed",
+            "skipped": "Skipped",
+        }.get(status, status)
 
     def create(self, validated_data):
         source_id = validated_data.pop("source_id", None)
@@ -480,6 +518,175 @@ class ItemAnnotationSerializer(serializers.ModelSerializer):
         read_only_fields = ["annotator"]
 
 
+class QueueItemReviewCommentSerializer(serializers.ModelSerializer):
+    thread_id = serializers.SerializerMethodField()
+    thread_status = serializers.SerializerMethodField()
+    thread_scope = serializers.SerializerMethodField()
+    blocking = serializers.SerializerMethodField()
+    reviewer_id = serializers.SerializerMethodField()
+    reviewer_name = serializers.SerializerMethodField()
+    reviewer_email = serializers.SerializerMethodField()
+    label_id = serializers.SerializerMethodField()
+    label_name = serializers.SerializerMethodField()
+    target_annotator_id = serializers.SerializerMethodField()
+    target_annotator_name = serializers.SerializerMethodField()
+    target_annotator_email = serializers.SerializerMethodField()
+    mentioned_users = serializers.SerializerMethodField()
+    reactions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = QueueItemReviewComment
+        fields = [
+            "id",
+            "thread_id",
+            "thread_status",
+            "thread_scope",
+            "blocking",
+            "action",
+            "comment",
+            "label_id",
+            "label_name",
+            "target_annotator_id",
+            "target_annotator_name",
+            "target_annotator_email",
+            "mentioned_users",
+            "reactions",
+            "reviewer_id",
+            "reviewer_name",
+            "reviewer_email",
+            "created_at",
+        ]
+
+    def get_thread_id(self, obj):
+        return str(obj.thread_id) if obj.thread_id else None
+
+    def get_thread_status(self, obj):
+        return obj.thread.status if obj.thread_id and obj.thread else None
+
+    def get_thread_scope(self, obj):
+        return obj.thread.scope if obj.thread_id and obj.thread else None
+
+    def get_blocking(self, obj):
+        return bool(obj.thread.blocking) if obj.thread_id and obj.thread else False
+
+    def get_reviewer_id(self, obj):
+        return str(obj.reviewer_id) if obj.reviewer_id else None
+
+    def get_reviewer_name(self, obj):
+        return obj.reviewer.name if obj.reviewer else None
+
+    def get_reviewer_email(self, obj):
+        return obj.reviewer.email if obj.reviewer else None
+
+    def get_label_id(self, obj):
+        return str(obj.label_id) if obj.label_id else None
+
+    def get_label_name(self, obj):
+        return obj.label.name if obj.label else None
+
+    def get_target_annotator_id(self, obj):
+        return str(obj.target_annotator_id) if obj.target_annotator_id else None
+
+    def get_target_annotator_name(self, obj):
+        return obj.target_annotator.name if obj.target_annotator else None
+
+    def get_target_annotator_email(self, obj):
+        return obj.target_annotator.email if obj.target_annotator else None
+
+    def get_mentioned_users(self, obj):
+        return [
+            {
+                "id": str(user.id),
+                "name": user.name,
+                "email": user.email,
+            }
+            for user in obj.mentioned_users.all()
+        ]
+
+    def get_reactions(self, obj):
+        request = self.context.get("request")
+        current_user_id = (
+            str(request.user.id)
+            if request
+            and getattr(request, "user", None)
+            and request.user.is_authenticated
+            else None
+        )
+        reactions = obj.reactions or {}
+        return [
+            {
+                "emoji": emoji,
+                "count": len(user_ids),
+                "user_ids": [str(user_id) for user_id in user_ids],
+                "reacted_by_current_user": bool(
+                    current_user_id
+                    and current_user_id in {str(uid) for uid in user_ids}
+                ),
+            }
+            for emoji, user_ids in reactions.items()
+            if isinstance(user_ids, list)
+        ]
+
+
+class QueueItemReviewThreadSerializer(serializers.ModelSerializer):
+    created_by_id = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    created_by_email = serializers.SerializerMethodField()
+    label_id = serializers.SerializerMethodField()
+    label_name = serializers.SerializerMethodField()
+    target_annotator_id = serializers.SerializerMethodField()
+    target_annotator_name = serializers.SerializerMethodField()
+    target_annotator_email = serializers.SerializerMethodField()
+    comments = QueueItemReviewCommentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = QueueItemReviewThread
+        fields = [
+            "id",
+            "action",
+            "scope",
+            "status",
+            "blocking",
+            "label_id",
+            "label_name",
+            "target_annotator_id",
+            "target_annotator_name",
+            "target_annotator_email",
+            "created_by_id",
+            "created_by_name",
+            "created_by_email",
+            "addressed_at",
+            "resolved_at",
+            "reopened_at",
+            "created_at",
+            "comments",
+        ]
+
+    def get_created_by_id(self, obj):
+        return str(obj.created_by_id) if obj.created_by_id else None
+
+    def get_created_by_name(self, obj):
+        return obj.created_by.name if obj.created_by else None
+
+    def get_created_by_email(self, obj):
+        return obj.created_by.email if obj.created_by else None
+
+    def get_label_id(self, obj):
+        return str(obj.label_id) if obj.label_id else None
+
+    def get_label_name(self, obj):
+        return obj.label.name if obj.label else None
+
+    def get_target_annotator_id(self, obj):
+        return str(obj.target_annotator_id) if obj.target_annotator_id else None
+
+    def get_target_annotator_name(self, obj):
+        return obj.target_annotator.name if obj.target_annotator else None
+
+    def get_target_annotator_email(self, obj):
+        return obj.target_annotator.email if obj.target_annotator else None
+
+
 class SubmitAnnotationsSerializer(serializers.Serializer):
     annotations = serializers.ListField(
         child=serializers.DictField(),
@@ -541,6 +748,21 @@ class AnnotateDetailSerializer(serializers.Serializer):
                 "id": str(item.id),
                 "source_type": item.source_type,
                 "status": item.status,
+                "workflow_status": (
+                    "resubmitted"
+                    if item.review_status == "pending_review"
+                    and QueueItemReviewThread.objects.filter(
+                        queue_item=item,
+                        blocking=True,
+                        status=QueueItemReviewThread.STATUS_ADDRESSED,
+                        deleted=False,
+                    ).exists()
+                    else "in_review"
+                    if item.review_status == "pending_review"
+                    else "needs_changes"
+                    if item.review_status == "rejected"
+                    else item.status
+                ),
                 "review_status": item.review_status,
                 "order": item.order,
                 "assigned_to_id": (
@@ -573,6 +795,16 @@ class AnnotateDetailSerializer(serializers.Serializer):
             },
             "labels": QueueLabelDetailSerializer(labels, many=True).data,
             "annotations": ScoreSerializer(annotations, many=True).data,
+            "review_comments": QueueItemReviewCommentSerializer(
+                instance.get("review_comments", []),
+                many=True,
+                context=self.context,
+            ).data,
+            "review_threads": QueueItemReviewThreadSerializer(
+                instance.get("review_threads", []),
+                many=True,
+                context=self.context,
+            ).data,
             "existing_notes": instance.get("existing_notes", ""),
             "span_notes": instance.get("span_notes", []),
             "span_notes_source_id": instance.get("span_notes_source_id"),

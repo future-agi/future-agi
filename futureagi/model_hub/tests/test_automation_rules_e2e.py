@@ -18,10 +18,12 @@ from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
+    AnnotationQueueAnnotator,
     AutomationRule,
     QueueItem,
 )
 from model_hub.models.choices import (
+    AnnotatorRole,
     AutomationRuleTriggerFrequency,
     DatasetSourceChoices,
     SourceChoices,
@@ -381,6 +383,42 @@ class TestAutomationRulesE2E:
         assert result["added"] == 0
 
         # Verify no queue items were created
+        assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
+
+    def test_preview_rule_requires_queue_manager(
+        self, auth_client, organization, workspace, user
+    ):
+        """Rule preview is a queue-management action, same as evaluate."""
+        project = _create_project(organization, workspace, name="Preview ACL Project")
+        _create_trace(project, name="preview-acl-trace")
+
+        queue_id = _create_queue(auth_client, name="Preview ACL Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Preview ACL rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        rule_id = resp.data["id"]
+
+        AnnotationQueueAnnotator.objects.filter(
+            queue_id=queue_id,
+            user=user,
+        ).update(
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+
+        resp = auth_client.get(f"{_rule_detail_url(queue_id, rule_id)}preview/")
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
         assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
 
     # -----------------------------------------------------------------------

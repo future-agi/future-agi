@@ -393,7 +393,10 @@ export const annotateKeys = {
     annotatorId
       ? ["annotate-detail", queueId, itemId, annotatorId]
       : ["annotate-detail", queueId, itemId],
-  nextItem: (queueId) => ["annotate-next-item", queueId],
+  nextItem: (queueId, filters) =>
+    filters && Object.keys(filters).length
+      ? ["annotate-next-item", queueId, filters]
+      : ["annotate-next-item", queueId],
   annotations: (queueId, itemId) => ["item-annotations", queueId, itemId],
 };
 
@@ -427,13 +430,24 @@ export const useAnnotateDetail = (
 };
 
 export const useNextItem = (queueId, options = {}) => {
+  const { reviewStatus, excludeReviewStatus, ...queryOptions } = options;
+  const params = {
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+  };
+  const requestOptions = Object.keys(params).length ? { params } : undefined;
   return useQuery({
-    queryKey: annotateKeys.nextItem(queueId),
+    queryKey: annotateKeys.nextItem(queueId, params),
     queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/items/next-item/`),
+      axios.get(
+        `/model-hub/annotation-queues/${queueId}/items/next-item/`,
+        requestOptions,
+      ),
     select: (d) => extractData(d)?.item,
     enabled: !!queueId,
-    ...options,
+    ...queryOptions,
   });
 };
 
@@ -475,11 +489,18 @@ export const useSubmitAnnotations = () => {
 export const useCompleteItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude }) =>
-      axios.post(
+    mutationFn: ({ queueId, itemId, exclude, excludeReviewStatus }) => {
+      const payload = {
+        ...(exclude ? { exclude } : {}),
+        ...(excludeReviewStatus
+          ? { exclude_review_status: excludeReviewStatus }
+          : {}),
+      };
+      return axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/complete/`,
-        exclude ? { exclude } : undefined,
-      ),
+        Object.keys(payload).length ? payload : undefined,
+      );
+    },
     onSuccess: (_, variables) => {
       invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
@@ -502,11 +523,18 @@ export const useCompleteItem = () => {
 export const useSkipItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude }) =>
-      axios.post(
+    mutationFn: ({ queueId, itemId, exclude, excludeReviewStatus }) => {
+      const payload = {
+        ...(exclude ? { exclude } : {}),
+        ...(excludeReviewStatus
+          ? { exclude_review_status: excludeReviewStatus }
+          : {}),
+      };
+      return axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/skip/`,
-        exclude ? { exclude } : undefined,
-      ),
+        Object.keys(payload).length ? payload : undefined,
+      );
+    },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
@@ -542,17 +570,31 @@ export const useQueueAnalytics = (queueId, options = {}) => {
 export const useReviewItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, action, notes }) =>
+    mutationFn: ({ queueId, itemId, action, notes, labelComments = [] }) =>
       axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/review/`,
-        { action, notes },
+        { action, notes, label_comments: labelComments },
       ),
     onSuccess: (data, variables) => {
       const action = variables.action;
+      const requestedChanges =
+        action === "request_changes" || action === "reject";
       enqueueSnackbar(
-        action === "approve" ? "Item approved" : "Item rejected",
-        { variant: action === "approve" ? "success" : "warning" },
+        action === "approve"
+          ? "Item approved"
+          : requestedChanges
+            ? "Changes requested"
+            : "Review comment saved",
+        {
+          variant:
+            action === "approve"
+              ? "success"
+              : requestedChanges
+                ? "warning"
+                : "info",
+        },
       );
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
@@ -565,6 +607,101 @@ export const useReviewItem = () => {
     },
     onError: () => {
       enqueueSnackbar("Failed to review item", { variant: "error" });
+    },
+  });
+};
+
+export const useCreateDiscussionComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      queueId,
+      itemId,
+      comment,
+      threadId,
+      labelId,
+      targetAnnotatorId,
+      mentionedUserIds = [],
+    }) =>
+      axios.post(
+        `/model-hub/annotation-queues/${queueId}/items/${itemId}/discussion/`,
+        {
+          comment,
+          ...(threadId ? { thread_id: threadId } : {}),
+          ...(labelId ? { label_id: labelId } : {}),
+          ...(targetAnnotatorId
+            ? { target_annotator_id: targetAnnotatorId }
+            : {}),
+          mentioned_user_ids: mentionedUserIds,
+        },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Comment added", { variant: "success" });
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to add comment"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useResolveDiscussionThread = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, threadId, comment }) =>
+      axios.post(
+        `/model-hub/annotation-queues/${queueId}/items/${itemId}/discussion/${threadId}/resolve/`,
+        { ...(comment ? { comment } : {}) },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Thread resolved", { variant: "success" });
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to resolve thread"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useReopenDiscussionThread = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, threadId, comment }) =>
+      axios.post(
+        `/model-hub/annotation-queues/${queueId}/items/${itemId}/discussion/${threadId}/reopen/`,
+        { ...(comment ? { comment } : {}) },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Thread reopened", { variant: "info" });
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to reopen thread"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useToggleDiscussionReaction = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, commentId, emoji }) =>
+      axios.post(
+        `/model-hub/annotation-queues/${queueId}/items/${itemId}/discussion/comments/${commentId}/reaction/`,
+        { emoji },
+      ),
+    onSuccess: (_, variables) => {
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to update reaction"), {
+        variant: "error",
+      });
     },
   });
 };

@@ -11,6 +11,7 @@ export const ROLE_PRIORITY = [
 ];
 
 export const queueRoleList = (member) => {
+  if (!member) return [];
   if (Array.isArray(member?.roles) && member.roles.length > 0) {
     return member.roles;
   }

@@ -29,8 +29,10 @@ from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
-    ItemAnnotation,
     QueueItem,
+    QueueItemNote,
+    QueueItemReviewComment,
+    QueueItemReviewThread,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
@@ -95,8 +97,28 @@ def release_url(queue_id, item_id):
     return f"{QUEUE_URL}{queue_id}/items/{item_id}/release/"
 
 
+def import_annotations_url(queue_id, item_id):
+    return f"{QUEUE_URL}{queue_id}/items/{item_id}/annotations/import/"
+
+
 def annotations_list_url(queue_id, item_id):
     return f"{QUEUE_URL}{queue_id}/items/{item_id}/annotations/"
+
+
+def review_url(queue_id, item_id):
+    return f"{QUEUE_URL}{queue_id}/items/{item_id}/review/"
+
+
+def discussion_url(queue_id, item_id):
+    return f"{QUEUE_URL}{queue_id}/items/{item_id}/discussion/"
+
+
+def discussion_thread_url(queue_id, item_id, thread_id, action):
+    return f"{discussion_url(queue_id, item_id)}{thread_id}/{action}/"
+
+
+def discussion_reaction_url(queue_id, item_id, comment_id):
+    return f"{discussion_url(queue_id, item_id)}comments/{comment_id}/reaction/"
 
 
 def queue_status_url(queue_id):
@@ -213,7 +235,6 @@ def queue_with_items(auth_client, queue_id, dataset_rows, label, organization):
 
 @pytest.mark.django_db
 class TestAddItems:
-
     def test_add_dataset_rows(self, auth_client, queue_id, dataset_rows):
         _, rows = dataset_rows
         items = [
@@ -237,7 +258,6 @@ class TestAddItems:
 
 @pytest.mark.django_db
 class TestBulkRemove:
-
     def test_bulk_remove(self, auth_client, queue_with_items):
         queue_id, item_ids, _ = queue_with_items
         resp = auth_client.post(
@@ -259,7 +279,6 @@ class TestBulkRemove:
 
 @pytest.mark.django_db
 class TestSubmitAnnotations:
-
     def test_submit_annotations(self, auth_client, queue_with_items):
         """Submit annotation for an item."""
         queue_id, item_ids, label = queue_with_items
@@ -271,6 +290,178 @@ class TestSubmitAnnotations:
             payload,
             format="json",
         )
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["submitted"] == 1
+
+    def test_submit_rejects_items_waiting_for_review(
+        self, auth_client, queue_with_items
+    ):
+        """Pending-review items are locked until a reviewer requests changes."""
+        queue_id, item_ids, label = queue_with_items
+        AnnotationQueue.objects.filter(pk=queue_id).update(requires_review=True)
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "waiting for review" in _result(resp)
+        assert not Score.objects.filter(queue_item_id=item_ids[0]).exists()
+
+    def test_submit_rejects_rework_targeted_to_another_annotator(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        label,
+        organization,
+    ):
+        """A per-score review rejection can only be reworked by its target."""
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Only the second annotator should fix this score.",
+            organization=organization,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert "different annotator" in _result(resp)
+
+    def test_submit_allows_manager_to_override_targeted_rework(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        label,
+        organization,
+    ):
+        """Managers/reviewers can intentionally repair an item targeted to someone else."""
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=user,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [
+                    AnnotatorRole.MANAGER.value,
+                    AnnotatorRole.REVIEWER.value,
+                    AnnotatorRole.ANNOTATOR.value,
+                ],
+            },
+        )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Second annotator missed this.",
+            organization=organization,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["submitted"] == 1
+
+    def test_submit_allows_global_feedback_when_targeted_rework_coexists(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+        label,
+        organization,
+    ):
+        """Global reviewer feedback applies to every annotator even with targeted feedback."""
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            blocking=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_SCORE,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            blocking=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
+            format="json",
+        )
+
         assert resp.status_code == status.HTTP_200_OK
         assert _result(resp)["submitted"] == 1
 
@@ -291,7 +482,9 @@ class TestSubmitAnnotations:
         ann = Score.objects.get(queue_item_id=item_ids[0], label=label, deleted=False)
         assert ann.value == "negative"
 
-    def test_submit_stores_notes_per_label(self, auth_client, queue_with_items, label_b):
+    def test_submit_stores_notes_per_label(
+        self, auth_client, queue_with_items, label_b
+    ):
         """Labels with allow_notes keep their own notes instead of sharing one field."""
         queue_id, item_ids, label = queue_with_items
         queue = AnnotationQueue.objects.get(pk=queue_id)
@@ -383,6 +576,41 @@ class TestSubmitAnnotations:
         assert notes_by_label[str(label.id)] == "sentiment reload note"
         assert notes_by_label[str(label_b.id)] == "quality reload note"
 
+    @pytest.mark.api
+    def test_submit_item_notes_reload_for_dataset_rows(
+        self, auth_client, queue_with_items, user
+    ):
+        """Dataset-backed queue items persist whole-item notes for review."""
+        queue_id, item_ids, label = queue_with_items
+
+        submit_resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {"label_id": str(label.id), "value": "positive"},
+                ],
+                "item_notes": "whole dataset-row item note",
+            },
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK
+
+        assert (
+            QueueItemNote.objects.get(
+                queue_item_id=item_ids[0],
+                annotator=user,
+            ).notes
+            == "whole dataset-row item note"
+        )
+
+        detail_resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+
+        assert detail_resp.status_code == status.HTTP_200_OK
+        detail = _result(detail_resp)
+        assert detail["existing_notes"] == "whole dataset-row item note"
+        assert detail["span_notes"][0]["notes"] == "whole dataset-row item note"
+        assert detail["span_notes"][0]["annotator_id"] == str(user.id)
+
     def test_submit_only_stores_notes_for_note_enabled_labels(
         self, auth_client, queue_with_items, label_b
     ):
@@ -462,7 +690,6 @@ class TestSubmitAnnotations:
 
 @pytest.mark.django_db
 class TestCompleteItem:
-
     def test_complete_returns_next(self, auth_client, queue_with_items):
         """Complete item returns next pending item.
 
@@ -535,8 +762,854 @@ class TestCompleteItem:
 
 
 @pytest.mark.django_db
-class TestSkipItem:
+class TestReviewItem:
+    def test_approve_rejects_items_not_waiting_for_review(
+        self, auth_client, queue_with_items
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="rejected",
+        )
 
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "pending review" in _result(resp)
+
+    def test_request_changes_requires_feedback(self, auth_client, queue_with_items):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "request_changes"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Feedback is required" in _result(resp)
+
+    def test_request_changes_stores_overall_and_label_feedback(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+    ):
+        queue_id, item_ids, label = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.review_status = "pending_review"
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.save(update_fields=["review_status", "status", "updated_at"])
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {
+                "action": "request_changes",
+                "notes": "Please re-check the item.",
+                "label_comments": [
+                    {
+                        "label_id": str(label.id),
+                        "target_annotator_id": str(user.id),
+                        "comment": "Sentiment should be negative.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["action"] == "request_changes"
+        item.refresh_from_db()
+        assert item.status == QueueItemStatus.IN_PROGRESS.value
+        assert item.review_status == "rejected"
+        assert item.review_notes == "Please re-check the item."
+        assert item.reviewed_by == user
+        comments = list(
+            QueueItemReviewComment.objects.filter(queue_item=item).order_by(
+                "created_at"
+            )
+        )
+        assert len(comments) == 2
+        assert comments[0].label_id is None
+        assert comments[0].comment == "Please re-check the item."
+        assert comments[1].label_id == label.id
+        assert comments[1].target_annotator_id == user.id
+        assert comments[1].comment == "Sentiment should be negative."
+        threads = list(
+            QueueItemReviewThread.objects.filter(queue_item=item).order_by("created_at")
+        )
+        assert len(threads) == 2
+        assert threads[0].scope == QueueItemReviewThread.SCOPE_ITEM
+        assert threads[0].blocking is False
+        assert threads[1].scope == QueueItemReviewThread.SCOPE_SCORE
+        assert threads[1].blocking is True
+        assert threads[1].status == QueueItemReviewThread.STATUS_OPEN
+        assert comments[1].thread_id == threads[1].id
+
+        detail_resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        detail = _result(detail_resp)
+        assert len(detail["review_comments"]) == 2
+        assert len(detail["review_threads"]) == 2
+        label_comment = next(
+            c for c in detail["review_comments"] if c["label_id"] == str(label.id)
+        )
+        assert label_comment["label_name"] == label.name
+        assert label_comment["target_annotator_id"] == str(user.id)
+        assert label_comment["reviewer_name"] == user.name
+        assert label_comment["thread_status"] == QueueItemReviewThread.STATUS_OPEN
+        assert label_comment["blocking"] is True
+
+    def test_label_feedback_requires_target_annotator(
+        self,
+        auth_client,
+        queue_with_items,
+        label,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {
+                "action": "request_changes",
+                "label_comments": [
+                    {
+                        "label_id": str(label.id),
+                        "comment": "This needs a target annotator.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "target_annotator_id is required" in _result(resp)
+
+    def test_label_only_feedback_keeps_review_notes_private(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        label,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {
+                "action": "request_changes",
+                "label_comments": [
+                    {
+                        "label_id": str(label.id),
+                        "target_annotator_id": str(second_user.id),
+                        "comment": "This value should be negative.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.review_notes == "Reviewer requested changes on 1 annotation score."
+        assert second_user.email not in item.review_notes
+        assert "negative" not in item.review_notes
+
+    def test_approve_can_store_optional_review_comment(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve", "notes": "Looks good."},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        item = QueueItem.objects.get(pk=item_ids[0])
+        assert item.status == QueueItemStatus.COMPLETED.value
+        assert item.review_status == "approved"
+        comment = QueueItemReviewComment.objects.get(queue_item=item)
+        assert comment.action == QueueItemReviewComment.ACTION_APPROVE
+        assert comment.comment == "Looks good."
+
+    def test_review_returns_next_pending_review_item(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueue.objects.filter(pk=queue_id).update(requires_review=True)
+        QueueItem.objects.filter(pk__in=item_ids[:2]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["next_item"]["id"] == str(item_ids[1])
+
+    def test_approve_without_notes_clears_stale_request_change_summary(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.review_notes = "Old request-change feedback."
+        item.save(update_fields=["status", "review_status", "review_notes"])
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.review_status == "approved"
+        assert item.review_notes == ""
+
+    def test_approve_resolves_non_blocking_request_change_feedback(
+        self, auth_client, queue_with_items, user, organization
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        thread = QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            blocking=False,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            organization=organization,
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        thread.refresh_from_db()
+        assert thread.status == QueueItemReviewThread.STATUS_RESOLVED
+
+    def test_approve_rejects_open_blocking_feedback(
+        self, auth_client, queue_with_items, user, organization
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            blocking=True,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            organization=organization,
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "addressed before approval" in _result(resp)
+
+    def test_resubmit_addresses_feedback_and_approval_resolves_it(
+        self, auth_client, queue_with_items, user, organization
+    ):
+        queue_id, item_ids, label = queue_with_items
+        AnnotationQueue.objects.filter(pk=queue_id).update(requires_review=True)
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+
+        review_resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {
+                "action": "request_changes",
+                "label_comments": [
+                    {
+                        "label_id": str(label.id),
+                        "target_annotator_id": str(user.id),
+                        "comment": "Fix this score.",
+                    }
+                ],
+            },
+            format="json",
+        )
+        assert review_resp.status_code == status.HTTP_200_OK
+        thread = QueueItemReviewThread.objects.get(
+            queue_item=item,
+            blocking=True,
+        )
+        assert thread.status == QueueItemReviewThread.STATUS_OPEN
+
+        submit_resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK
+        complete_resp = auth_client.post(complete_url(queue_id, item_ids[0]))
+        assert complete_resp.status_code == status.HTTP_200_OK
+
+        item.refresh_from_db()
+        thread.refresh_from_db()
+        assert item.review_status == "pending_review"
+        assert thread.status == QueueItemReviewThread.STATUS_ADDRESSED
+        assert QueueItemReviewComment.objects.filter(
+            thread=thread,
+            action=QueueItemReviewComment.ACTION_ADDRESSED,
+        ).exists()
+
+        detail_resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        detail = _result(detail_resp)
+        assert detail["item"]["workflow_status"] == "resubmitted"
+        assert detail["review_comments"][0]["thread_status"] == "addressed"
+
+        approve_resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "approve"},
+            format="json",
+        )
+        assert approve_resp.status_code == status.HTTP_200_OK
+        thread.refresh_from_db()
+        assert thread.status == QueueItemReviewThread.STATUS_RESOLVED
+
+
+@pytest.mark.django_db
+class TestQueueItemDiscussion:
+    def test_discussion_comment_stores_mentions_on_non_blocking_thread(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        user,
+        label,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "label_id": str(label.id),
+                "comment": (
+                    "Please double-check this label "
+                    f"@[Annotator Two](user:{second_user.id})."
+                ),
+                "mentioned_user_ids": [str(second_user.id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert created["action"] == QueueItemReviewComment.ACTION_COMMENT
+        assert created["label_id"] == str(label.id)
+        assert created["blocking"] is False
+        assert created["thread_status"] == QueueItemReviewThread.STATUS_OPEN
+        assert created["reviewer_id"] == str(user.id)
+        assert created["mentioned_users"] == [
+            {
+                "id": str(second_user.id),
+                "name": second_user.name,
+                "email": second_user.email,
+            }
+        ]
+
+        comment = QueueItemReviewComment.objects.get(id=created["id"])
+        assert comment.thread.blocking is False
+        assert list(comment.mentioned_users.values_list("id", flat=True)) == [
+            second_user.id
+        ]
+
+    def test_discussion_visibility_respects_target_annotator(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        third_user,
+        workspace,
+        user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        for member in (second_user, third_user):
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue_id=queue_id,
+                user=member,
+                defaults={
+                    "role": AnnotatorRole.ANNOTATOR.value,
+                    "roles": [AnnotatorRole.ANNOTATOR.value],
+                },
+            )
+
+        resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "Only annotator two should see this.",
+                "target_annotator_id": str(second_user.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+        second_resp = second_client.get(discussion_url(queue_id, item_ids[0]))
+        assert second_resp.status_code == status.HTTP_200_OK
+        second_comments = _result(second_resp)
+        assert [comment["comment"] for comment in second_comments] == [
+            "Only annotator two should see this."
+        ]
+        second_client.stop_workspace_injection()
+
+        third_client = WorkspaceAwareAPIClient()
+        third_client.force_authenticate(user=third_user)
+        third_client.set_workspace(workspace)
+        third_resp = third_client.get(discussion_url(queue_id, item_ids[0]))
+        assert third_resp.status_code == status.HTTP_200_OK
+        assert _result(third_resp) == []
+        third_client.stop_workspace_injection()
+
+    def test_annotator_cannot_target_discussion_to_another_annotator(
+        self,
+        queue_with_items,
+        second_user,
+        third_user,
+        workspace,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        for member in (second_user, third_user):
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue_id=queue_id,
+                user=member,
+                defaults={
+                    "role": AnnotatorRole.ANNOTATOR.value,
+                    "roles": [AnnotatorRole.ANNOTATOR.value],
+                },
+            )
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+        resp = second_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "Trying to hide this from others.",
+                "target_annotator_id": str(third_user.id),
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        second_client.stop_workspace_injection()
+
+    def test_non_author_annotator_cannot_resolve_or_reopen_discussion_thread(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        workspace,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {"comment": "Creator-owned thread."},
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        thread_id = _result(root_resp)["comment"]["thread_id"]
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+        resolve_resp = second_client.post(
+            discussion_thread_url(queue_id, item_ids[0], thread_id, "resolve"),
+            format="json",
+        )
+        reopen_resp = second_client.post(
+            discussion_thread_url(queue_id, item_ids[0], thread_id, "reopen"),
+            format="json",
+        )
+
+        assert resolve_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert reopen_resp.status_code == status.HTTP_403_FORBIDDEN
+        second_client.stop_workspace_injection()
+
+    def test_discussion_replies_reuse_thread_and_can_resolve_reopen(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "Can someone verify this?",
+                "mentioned_user_ids": [str(second_user.id)],
+            },
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        root = _result(root_resp)["comment"]
+        thread_id = root["thread_id"]
+
+        reply_resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "thread_id": thread_id,
+                "comment": "Verified and fixed.",
+                "mentioned_user_ids": [str(second_user.id)],
+            },
+            format="json",
+        )
+        assert reply_resp.status_code == status.HTTP_200_OK
+        reply = _result(reply_resp)["comment"]
+        assert reply["thread_id"] == thread_id
+        assert QueueItemReviewComment.objects.filter(thread_id=thread_id).count() == 2
+
+        resolve_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_ids[0], thread_id, "resolve"),
+            format="json",
+        )
+        assert resolve_resp.status_code == status.HTTP_200_OK
+        thread = QueueItemReviewThread.objects.get(id=thread_id)
+        assert thread.status == QueueItemReviewThread.STATUS_RESOLVED
+        assert _result(resolve_resp)["thread"]["status"] == "resolved"
+
+        reopen_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_ids[0], thread_id, "reopen"),
+            {"comment": "One more pass needed."},
+            format="json",
+        )
+        assert reopen_resp.status_code == status.HTTP_200_OK
+        thread.refresh_from_db()
+        assert thread.status == QueueItemReviewThread.STATUS_REOPENED
+        assert _result(reopen_resp)["comment"]["action"] == "reopen"
+
+    def test_replying_to_resolved_discussion_thread_records_reopen_audit(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item_id = item_ids[0]
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_id),
+            {"comment": "Original thread."},
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        thread_id = _result(root_resp)["comment"]["thread_id"]
+
+        resolve_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_id, thread_id, "resolve"),
+            format="json",
+        )
+        assert resolve_resp.status_code == status.HTTP_200_OK
+
+        reply_resp = auth_client.post(
+            discussion_url(queue_id, item_id),
+            {
+                "thread_id": thread_id,
+                "comment": "Reply after resolved.",
+            },
+            format="json",
+        )
+
+        assert reply_resp.status_code == status.HTTP_200_OK
+        thread = QueueItemReviewThread.objects.get(id=thread_id)
+        assert thread.status == QueueItemReviewThread.STATUS_REOPENED
+        actions = list(
+            QueueItemReviewComment.objects.filter(thread_id=thread_id)
+            .order_by("created_at")
+            .values_list("action", flat=True)
+        )
+        assert actions == [
+            QueueItemReviewComment.ACTION_COMMENT,
+            QueueItemReviewComment.ACTION_RESOLVE,
+            QueueItemReviewComment.ACTION_REOPEN,
+            QueueItemReviewComment.ACTION_COMMENT,
+        ]
+
+    def test_non_author_reply_cannot_reopen_resolved_discussion_thread(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        workspace,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item_id = item_ids[0]
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_id),
+            {"comment": "Creator-owned thread."},
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        thread_id = _result(root_resp)["comment"]["thread_id"]
+        resolve_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_id, thread_id, "resolve"),
+            format="json",
+        )
+        assert resolve_resp.status_code == status.HTTP_200_OK
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+        reply_resp = second_client.post(
+            discussion_url(queue_id, item_id),
+            {
+                "thread_id": thread_id,
+                "comment": "Trying to reopen someone else's resolved thread.",
+            },
+            format="json",
+        )
+
+        assert reply_resp.status_code == status.HTTP_403_FORBIDDEN
+        thread = QueueItemReviewThread.objects.get(id=thread_id)
+        assert thread.status == QueueItemReviewThread.STATUS_RESOLVED
+        assert QueueItemReviewComment.objects.filter(thread_id=thread_id).count() == 2
+        second_client.stop_workspace_injection()
+
+    def test_discussion_lifecycle_round_trips_through_annotate_detail(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item_id = item_ids[0]
+
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_id),
+            {"comment": "Lifecycle check."},
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        root_comment = _result(root_resp)["comment"]
+        thread_id = root_comment["thread_id"]
+
+        detail_resp = auth_client.get(annotate_detail_url(queue_id, item_id))
+        assert detail_resp.status_code == status.HTTP_200_OK
+        detail = _result(detail_resp)
+        thread = next(
+            thread
+            for thread in detail["review_threads"]
+            if thread["id"] == thread_id
+        )
+        assert thread["status"] == QueueItemReviewThread.STATUS_OPEN
+        assert thread["comments"][0]["comment"] == "Lifecycle check."
+
+        resolve_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_id, thread_id, "resolve"),
+            format="json",
+        )
+        assert resolve_resp.status_code == status.HTTP_200_OK
+
+        resolved_detail_resp = auth_client.get(
+            annotate_detail_url(queue_id, item_id)
+        )
+        assert resolved_detail_resp.status_code == status.HTTP_200_OK
+        resolved_detail = _result(resolved_detail_resp)
+        resolved_thread = next(
+            thread
+            for thread in resolved_detail["review_threads"]
+            if thread["id"] == thread_id
+        )
+        assert resolved_thread["status"] == QueueItemReviewThread.STATUS_RESOLVED
+        assert any(
+            comment["action"] == QueueItemReviewComment.ACTION_RESOLVE
+            for comment in resolved_thread["comments"]
+        )
+
+        reopen_resp = auth_client.post(
+            discussion_thread_url(queue_id, item_id, thread_id, "reopen"),
+            {"comment": "Needs one more pass."},
+            format="json",
+        )
+        assert reopen_resp.status_code == status.HTTP_200_OK
+
+        reaction_resp = auth_client.post(
+            discussion_reaction_url(queue_id, item_id, root_comment["id"]),
+            {"emoji": "🚀"},
+            format="json",
+        )
+        assert reaction_resp.status_code == status.HTTP_200_OK
+
+        reopened_detail_resp = auth_client.get(annotate_detail_url(queue_id, item_id))
+        assert reopened_detail_resp.status_code == status.HTTP_200_OK
+        reopened_detail = _result(reopened_detail_resp)
+        reopened_thread = next(
+            thread
+            for thread in reopened_detail["review_threads"]
+            if thread["id"] == thread_id
+        )
+        assert reopened_thread["status"] == QueueItemReviewThread.STATUS_REOPENED
+        assert any(
+            comment["action"] == QueueItemReviewComment.ACTION_REOPEN
+            and comment["comment"] == "Needs one more pass."
+            for comment in reopened_thread["comments"]
+        )
+        root_comment_after_reaction = next(
+            comment
+            for comment in reopened_thread["comments"]
+            if comment["id"] == root_comment["id"]
+        )
+        assert root_comment_after_reaction["reactions"] == [
+            {
+                "emoji": "🚀",
+                "count": 1,
+                "user_ids": [str(user.id)],
+                "reacted_by_current_user": True,
+            }
+        ]
+
+    def test_discussion_comment_reactions_toggle_per_user(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        root_resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {"comment": "React to this."},
+            format="json",
+        )
+        assert root_resp.status_code == status.HTTP_200_OK
+        comment_id = _result(root_resp)["comment"]["id"]
+
+        add_resp = auth_client.post(
+            discussion_reaction_url(queue_id, item_ids[0], comment_id),
+            {"emoji": "🧠"},
+            format="json",
+        )
+        assert add_resp.status_code == status.HTTP_200_OK
+        reactions = _result(add_resp)["comment"]["reactions"]
+        assert reactions == [
+            {
+                "emoji": "🧠",
+                "count": 1,
+                "user_ids": [str(user.id)],
+                "reacted_by_current_user": True,
+            }
+        ]
+
+        remove_resp = auth_client.post(
+            discussion_reaction_url(queue_id, item_ids[0], comment_id),
+            {"emoji": "🧠"},
+            format="json",
+        )
+        assert remove_resp.status_code == status.HTTP_200_OK
+        assert _result(remove_resp)["comment"]["reactions"] == []
+
+        invalid_resp = auth_client.post(
+            discussion_reaction_url(queue_id, item_ids[0], comment_id),
+            {"emoji": "done"},
+            format="json",
+        )
+        assert invalid_resp.status_code == status.HTTP_400_BAD_REQUEST
+
+        ascii_symbol_resp = auth_client.post(
+            discussion_reaction_url(queue_id, item_ids[0], comment_id),
+            {"emoji": "$"},
+            format="json",
+        )
+        assert ascii_symbol_resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestSkipItem:
     def test_skip_returns_next(self, auth_client, queue_with_items):
         """Skip item returns next pending item."""
         queue_id, item_ids, _ = queue_with_items
@@ -551,6 +1624,21 @@ class TestSkipItem:
         auth_client.post(skip_url(queue_id, item_ids[0]), format="json")
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.status == QueueItemStatus.SKIPPED.value
+
+    def test_skip_rejects_items_waiting_for_review(self, auth_client, queue_with_items):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueue.objects.filter(pk=queue_id).update(requires_review=True)
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(skip_url(queue_id, item_ids[0]), format="json")
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "cannot be skipped" in _result(resp)
+        item = QueueItem.objects.get(pk=item_ids[0])
+        assert item.status == QueueItemStatus.IN_PROGRESS.value
 
     def test_skip_last_item(self, auth_client, queue_with_items):
         """Skip all items -- last one returns null next."""
@@ -574,7 +1662,6 @@ class TestSkipItem:
 
 @pytest.mark.django_db
 class TestNextItem:
-
     def test_next_returns_first_pending(self, auth_client, queue_with_items):
         queue_id, item_ids, _ = queue_with_items
         resp = auth_client.get(next_item_url(queue_id))
@@ -604,10 +1691,196 @@ class TestNextItem:
         # Should not return the completed item
         assert str(result["item"]["id"]) != str(item_ids[0])
 
+    def test_next_can_filter_pending_review_items(self, auth_client, queue_with_items):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[1]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.get(
+            next_item_url(queue_id), {"review_status": "pending_review"}
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"]["id"] == str(item_ids[1])
+
+    def test_next_can_exclude_pending_review_items(self, auth_client, queue_with_items):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.get(
+            next_item_url(queue_id), {"exclude_review_status": "pending_review"}
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"]["id"] == str(item_ids[1])
+
+    def test_next_routes_targeted_rework_only_to_target_annotator(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+        label,
+        organization,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Only the second annotator should fix this score.",
+            organization=organization,
+        )
+
+        non_target_resp = auth_client.get(next_item_url(queue_id))
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+        target_resp = second_client.get(next_item_url(queue_id))
+
+        assert non_target_resp.status_code == status.HTTP_200_OK
+        assert _result(non_target_resp)["item"]["id"] == str(item_ids[1])
+        assert target_resp.status_code == status.HTTP_200_OK
+        assert _result(target_resp)["item"]["id"] == str(item_ids[0])
+        second_client.stop_workspace_injection()
+
+    def test_next_keeps_global_rework_visible_when_targeted_rework_coexists(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+        label,
+        organization,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            blocking=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_SCORE,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            blocking=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        resp = auth_client.get(next_item_url(queue_id))
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"]["id"] == str(item_ids[0])
+
+    def test_next_does_not_apply_annotator_rework_scope_to_reviewer(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+        label,
+        organization,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "rejected"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=user,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [
+                    AnnotatorRole.MANAGER.value,
+                    AnnotatorRole.REVIEWER.value,
+                    AnnotatorRole.ANNOTATOR.value,
+                ],
+            },
+        )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_SCORE,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            blocking=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        resp = auth_client.get(next_item_url(queue_id))
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"]["id"] == str(item_ids[0])
+
 
 @pytest.mark.django_db
 class TestAnnotateDetail:
-
     def test_annotate_detail_returns_all_fields(self, auth_client, queue_with_items):
         """Annotate detail includes item, labels, annotations, progress."""
         queue_id, item_ids, label = queue_with_items
@@ -659,12 +1932,69 @@ class TestAnnotateDetail:
         assert resp.status_code == status.HTTP_200_OK
         item_payload = _result(resp)["item"]
         assert item_payload["review_status"] == "rejected"
-        assert (
-            item_payload["review_notes"]
-            == "Please re-check the sentiment label."
-        )
+        assert item_payload["review_notes"] == "Please re-check the sentiment label."
         assert item_payload["reviewed_by_name"] == user.name
         assert item_payload["reviewed_at"] is not None
+
+    def test_annotate_detail_filters_review_feedback_to_target_annotator(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+        label,
+        organization,
+    ):
+        """Annotators only receive feedback targeted to them or global feedback."""
+        queue_id, item_ids, _ = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Global item feedback.",
+            organization=organization,
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            label=label,
+            target_annotator=user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Feedback for the first annotator.",
+            organization=organization,
+        )
+        QueueItemReviewComment.objects.create(
+            queue_item=item,
+            reviewer=user,
+            label=label,
+            target_annotator=second_user,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Feedback for the second annotator.",
+            organization=organization,
+        )
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+
+        resp = second_client.get(annotate_detail_url(queue_id, item_ids[0]))
+
+        assert resp.status_code == status.HTTP_200_OK
+        comments = _result(resp)["review_comments"]
+        comment_texts = {comment["comment"] for comment in comments}
+        assert "Global item feedback." in comment_texts
+        assert "Feedback for the second annotator." in comment_texts
+        assert "Feedback for the first annotator." not in comment_texts
+        second_client.stop_workspace_injection()
 
     def test_reviewer_can_scope_annotate_detail_to_selected_annotator(
         self, auth_client, queue_with_items, user, second_user, organization
@@ -789,21 +2119,43 @@ class TestAnnotateDetail:
 
 @pytest.mark.django_db
 class TestReleaseReservation:
-
     def test_release_reservation(self, auth_client, queue_with_items, user):
         queue_id, item_ids, _ = queue_with_items
         # Acquire reservation
-        auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        auth_client.get(annotate_detail_url(queue_id, item_ids[0]), {"reserve": "true"})
         # Release
         resp = auth_client.post(release_url(queue_id, item_ids[0]), format="json")
         assert resp.status_code == status.HTTP_200_OK
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.reserved_by is None
 
+    def test_cannot_release_another_users_reservation(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        workspace,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        auth_client.get(annotate_detail_url(queue_id, item_ids[0]), {"reserve": "true"})
+
+        from conftest import WorkspaceAwareAPIClient
+
+        second_client = WorkspaceAwareAPIClient()
+        second_client.force_authenticate(user=second_user)
+        second_client.set_workspace(workspace)
+
+        resp = second_client.post(release_url(queue_id, item_ids[0]), format="json")
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        item = QueueItem.objects.get(pk=item_ids[0])
+        assert item.reserved_by is not None
+
+        second_client.stop_workspace_injection()
+
 
 @pytest.mark.django_db
 class TestReservationConflict:
-
     @pytest.mark.xfail(
         reason="Pre-existing: reservation conflict check missing. Second user "
         "can open the same item without 400. Part of the broader reservation-"
@@ -873,13 +2225,73 @@ class TestReservationConflict:
 
 
 # ===========================================================================
+# Queue item annotation import
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestImportAnnotations:
+    def test_import_annotations_writes_score_for_queue_source(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+        label,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.post(
+            import_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(label.id),
+                        "value": {"selected": ["positive"]},
+                        "score_source": "imported",
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp)["imported"] == 1
+
+        item = QueueItem.objects.get(pk=item_ids[0])
+        score = Score.no_workspace_objects.get(
+            queue_item=item,
+            dataset_row=item.dataset_row,
+            label=label,
+            annotator=user,
+            deleted=False,
+        )
+        assert score.source_type == item.source_type
+        assert score.value == {"selected": ["positive"]}
+        assert score.score_source == "imported"
+
+    def test_import_annotations_requires_annotations_list(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.post(
+            import_annotations_url(queue_id, item_ids[0]),
+            {"annotations": []},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+# ===========================================================================
 # Phase 3B -- Assignment & Distribution
 # ===========================================================================
 
 
 @pytest.mark.django_db
 class TestAssignItems:
-
     def test_assign_items_to_user(self, auth_client, queue_with_items, user):
         """Assign items to a specific annotator."""
         queue_id, item_ids, _ = queue_with_items
@@ -969,7 +2381,6 @@ class TestAssignItems:
 
 @pytest.mark.django_db
 class TestProgress:
-
     def test_progress_correct_counts(self, auth_client, queue_with_items):
         """Progress endpoint returns correct status counts."""
         queue_id, item_ids, label = queue_with_items
@@ -990,6 +2401,23 @@ class TestProgress:
         assert result["skipped"] == 1
         assert result["pending"] == 1
         assert result["progress_pct"] == pytest.approx(33.3, abs=0.1)
+
+    def test_progress_counts_pending_review_as_in_review(
+        self, auth_client, queue_with_items
+    ):
+        """Review-pending items are counted as their own workflow status."""
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.get(progress_url(queue_id))
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = _result(resp)
+        assert result["in_review"] == 1
+        assert result["in_progress"] == 0
 
     def test_progress_empty_queue(self, auth_client, queue_id):
         """Progress on empty queue returns zeros."""
@@ -1079,7 +2507,6 @@ class TestProgress:
 
 @pytest.mark.django_db
 class TestAutoCompleteQueue:
-
     def test_auto_complete_when_all_done(
         self, auth_client, active_queue_id, dataset_rows, label, organization
     ):
@@ -1136,7 +2563,6 @@ class TestAutoCompleteQueue:
 
 @pytest.mark.django_db
 class TestMultiAnnotatorComplete:
-
     @pytest.mark.xfail(
         reason="Pre-existing: multi-annotator threshold logic doesn't keep "
         "item IN_PROGRESS when annotations_required > 1 and only one "
@@ -1175,7 +2601,6 @@ class TestMultiAnnotatorComplete:
 
 @pytest.mark.django_db
 class TestFullAnnotationWorkflow:
-
     def test_end_to_end_flow(self, auth_client, queue_with_items):
         """Full flow: annotate detail -> submit -> complete -> next -> skip."""
         queue_id, item_ids, label = queue_with_items
@@ -1247,7 +2672,6 @@ def third_user(organization):
 
 @pytest.mark.django_db
 class TestRoundRobinAssignment:
-
     @pytest.fixture
     def rr_queue(self, auth_client, user, second_user, label, organization):
         """Create a round-robin queue with 2 annotators."""
@@ -1345,7 +2769,6 @@ class TestRoundRobinAssignment:
 
 @pytest.mark.django_db
 class TestLoadBalancedAssignment:
-
     @pytest.fixture
     def lb_queue(self, auth_client, user, second_user, third_user, label, organization):
         """Create a load-balanced queue with 3 annotators."""

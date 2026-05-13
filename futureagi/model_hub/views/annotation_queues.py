@@ -1,9 +1,11 @@
 import json
+import re
+import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
 
 import structlog
-from django.db.models import Count, Max, Prefetch, Q
+from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
@@ -21,6 +23,9 @@ from model_hub.models.annotation_queues import (
     AutomationRule,
     QueueItem,
     QueueItemAssignment,
+    QueueItemNote,
+    QueueItemReviewComment,
+    QueueItemReviewThread,
     annotation_queue_role_q,
 )
 from model_hub.models.choices import (
@@ -29,10 +34,10 @@ from model_hub.models.choices import (
     AnnotatorRole,
     AssignmentStrategy,
     DataTypeChoices,
-    QueueItemStatus,
     QueueItemSourceType,
-    SourceChoices,
+    QueueItemStatus,
     ScoreSource,
+    SourceChoices,
     StatusType,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
@@ -42,6 +47,8 @@ from model_hub.serializers.annotation_queues import (
     AnnotateDetailSerializer,
     AnnotationQueueSerializer,
     AutomationRuleSerializer,
+    QueueItemReviewCommentSerializer,
+    QueueItemReviewThreadSerializer,
     QueueItemSerializer,
     SubmitAnnotationsSerializer,
 )
@@ -59,7 +66,6 @@ from model_hub.utils.annotation_queue_helpers import (
     get_fk_field_name,
     resolve_source_content,
     resolve_source_object,
-    resolve_source_preview,
 )
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -96,6 +102,40 @@ ANNOTATION_SLOT_FIELDS = (
     ("annotation", "annotation record", DataTypeChoices.JSON.value),
 )
 
+OPEN_REVIEW_THREAD_STATUSES = (
+    QueueItemReviewThread.STATUS_OPEN,
+    QueueItemReviewThread.STATUS_REOPENED,
+)
+VISIBLE_REVIEW_COMMENT_ACTIONS = (
+    QueueItemReviewComment.ACTION_COMMENT,
+    QueueItemReviewComment.ACTION_APPROVE,
+    QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+)
+MAX_MENTIONED_USERS_PER_COMMENT = 50
+USER_MENTION_RE = re.compile(
+    r"user:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+MAX_DISCUSSION_REACTION_LENGTH = 16
+
+
+def _is_supported_discussion_reaction(value):
+    emoji = str(value or "").strip()
+    if not emoji or len(emoji) > MAX_DISCUSSION_REACTION_LENGTH:
+        return False
+
+    has_symbol = False
+    for char in emoji:
+        category = unicodedata.category(char)
+        if char.isspace() or char.isalpha() or char.isdigit():
+            return False
+        if char.isascii() and char not in ("\u200d", "\ufe0f", "\u20e3"):
+            return False
+        if category[0] in ("S", "M") or char in ("\u200d", "\ufe0f", "\u20e3"):
+            has_symbol = True
+            continue
+        return False
+    return has_symbol
+
 
 def _queue_item_user_scope(queryset, user, *, include_unassigned):
     """Apply legacy and multi-assignment ownership rules for queue items."""
@@ -105,10 +145,288 @@ def _queue_item_user_scope(queryset, user, *, include_unassigned):
         assignments__deleted=False,
     )
     if include_unassigned:
-        assigned_to_user |= Q(assigned_to__isnull=True) & ~Q(
-            assignments__deleted=False
-        )
+        assigned_to_user |= Q(assigned_to__isnull=True) & ~Q(assignments__deleted=False)
     return queryset.filter(assigned_to_user).distinct()
+
+
+def _scope_targeted_rework_items(queryset, user):
+    """Only route targeted review rework back to the targeted annotator."""
+    if not user:
+        return queryset
+
+    global_rework_threads = QueueItemReviewThread.objects.filter(
+        queue_item_id=OuterRef("pk"),
+        action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+        blocking=True,
+        status__in=OPEN_REVIEW_THREAD_STATUSES,
+        target_annotator__isnull=True,
+        deleted=False,
+    )
+    targeted_rework_threads = QueueItemReviewThread.objects.filter(
+        queue_item_id=OuterRef("pk"),
+        action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+        blocking=True,
+        status__in=OPEN_REVIEW_THREAD_STATUSES,
+        target_annotator__isnull=False,
+        deleted=False,
+    )
+    targeted_threads_to_user = targeted_rework_threads.filter(
+        target_annotator_id=user.id
+    )
+    targeted_rework = QueueItemReviewComment.objects.filter(
+        queue_item_id=OuterRef("pk"),
+        thread__isnull=True,
+        action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+        target_annotator__isnull=False,
+        deleted=False,
+    )
+    global_rework = QueueItemReviewComment.objects.filter(
+        queue_item_id=OuterRef("pk"),
+        thread__isnull=True,
+        action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+        target_annotator__isnull=True,
+        deleted=False,
+    )
+    targeted_to_user = targeted_rework.filter(target_annotator_id=user.id)
+    return queryset.annotate(
+        _has_global_rework_thread=Exists(global_rework_threads),
+        _has_targeted_rework_thread=Exists(targeted_rework_threads),
+        _targeted_thread_to_requester=Exists(targeted_threads_to_user),
+        _has_global_rework=Exists(global_rework),
+        _has_targeted_rework=Exists(targeted_rework),
+        _targeted_to_requester=Exists(targeted_to_user),
+    ).filter(
+        (Q(_has_targeted_rework_thread=False) & Q(_has_targeted_rework=False))
+        | Q(_has_global_rework_thread=True)
+        | Q(_has_global_rework=True)
+        | Q(_targeted_thread_to_requester=True)
+        | Q(_targeted_to_requester=True)
+    )
+
+
+def _targeted_rework_denies_user(item, user, *, allow_reviewer_override=False):
+    if not user or item.review_status != "rejected":
+        return False
+    if allow_reviewer_override and _has_queue_role(
+        item.queue_id,
+        user,
+        AnnotatorRole.REVIEWER.value,
+        AnnotatorRole.MANAGER.value,
+    ):
+        return False
+
+    global_threads = QueueItemReviewThread.objects.filter(
+        queue_item=item,
+        action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+        blocking=True,
+        status__in=OPEN_REVIEW_THREAD_STATUSES,
+        target_annotator__isnull=True,
+        deleted=False,
+    )
+    if global_threads.exists():
+        return False
+
+    targeted_threads = QueueItemReviewThread.objects.filter(
+        queue_item=item,
+        action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+        blocking=True,
+        status__in=OPEN_REVIEW_THREAD_STATUSES,
+        target_annotator__isnull=False,
+        deleted=False,
+    )
+    if targeted_threads.exists():
+        return not targeted_threads.filter(target_annotator=user).exists()
+
+    global_rework = QueueItemReviewComment.objects.filter(
+        queue_item=item,
+        thread__isnull=True,
+        action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+        target_annotator__isnull=True,
+        deleted=False,
+    )
+    if global_rework.exists():
+        return False
+
+    targeted_rework = QueueItemReviewComment.objects.filter(
+        queue_item=item,
+        thread__isnull=True,
+        action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+        target_annotator__isnull=False,
+        deleted=False,
+    )
+    return (
+        targeted_rework.exists()
+        and not targeted_rework.filter(target_annotator=user).exists()
+    )
+
+
+def _review_thread_scope(label=None, target_annotator=None):
+    if label and target_annotator:
+        return QueueItemReviewThread.SCOPE_SCORE
+    if label:
+        return QueueItemReviewThread.SCOPE_LABEL
+    return QueueItemReviewThread.SCOPE_ITEM
+
+
+def _create_review_thread_comment(
+    *,
+    item,
+    reviewer,
+    action,
+    comment,
+    organization,
+    workspace,
+    label=None,
+    target_annotator=None,
+    mentioned_users=None,
+    blocking=False,
+    status=None,
+):
+    thread = QueueItemReviewThread.objects.create(
+        queue_item=item,
+        created_by=reviewer,
+        label=label,
+        target_annotator=target_annotator,
+        action=action,
+        scope=_review_thread_scope(label, target_annotator),
+        blocking=blocking,
+        status=status or QueueItemReviewThread.STATUS_OPEN,
+        organization=organization,
+        workspace=workspace,
+    )
+    review_comment = QueueItemReviewComment.objects.create(
+        thread=thread,
+        queue_item=item,
+        reviewer=reviewer,
+        label=label,
+        target_annotator=target_annotator,
+        action=action,
+        comment=comment,
+        organization=organization,
+        workspace=workspace,
+    )
+    if mentioned_users:
+        review_comment.mentioned_users.set(mentioned_users)
+    return review_comment
+
+
+def _visible_review_threads(item, user, *, is_reviewer):
+    threads = (
+        item.review_threads.filter(deleted=False)
+        .select_related("created_by", "label", "target_annotator")
+        .prefetch_related(
+            Prefetch(
+                "comments",
+                queryset=QueueItemReviewComment.objects.filter(deleted=False)
+                .select_related("reviewer", "label", "target_annotator", "thread")
+                .prefetch_related("mentioned_users")
+                .order_by("created_at"),
+            )
+        )
+        .order_by("created_at")
+    )
+    if not is_reviewer:
+        threads = threads.filter(
+            Q(target_annotator__isnull=True) | Q(target_annotator=user)
+        )
+    return threads
+
+
+def _visible_review_comments(item, user, *, is_reviewer):
+    comments = (
+        item.review_comments.filter(
+            deleted=False,
+            action__in=VISIBLE_REVIEW_COMMENT_ACTIONS,
+        )
+        .select_related("thread", "reviewer", "label", "target_annotator")
+        .prefetch_related("mentioned_users")
+        .order_by("created_at")
+    )
+    if not is_reviewer:
+        comments = comments.filter(
+            Q(target_annotator__isnull=True) | Q(target_annotator=user)
+        )
+    return comments
+
+
+def _can_manage_discussion_thread(thread, user, *, is_reviewer):
+    return is_reviewer or str(thread.created_by_id or "") == str(user.id)
+
+
+def _open_blocking_review_threads(item):
+    return QueueItemReviewThread.objects.filter(
+        queue_item=item,
+        blocking=True,
+        status__in=OPEN_REVIEW_THREAD_STATUSES,
+        deleted=False,
+    )
+
+
+def _discussion_payload(item, request, *, is_reviewer, comment=None, thread=None):
+    comments = _visible_review_comments(
+        item,
+        request.user,
+        is_reviewer=is_reviewer,
+    ).filter(action=QueueItemReviewComment.ACTION_COMMENT)
+    threads = _visible_review_threads(item, request.user, is_reviewer=is_reviewer)
+    context = {"request": request}
+    payload = {
+        "review_comments": QueueItemReviewCommentSerializer(
+            comments,
+            many=True,
+            context=context,
+        ).data,
+        "review_threads": QueueItemReviewThreadSerializer(
+            threads,
+            many=True,
+            context=context,
+        ).data,
+    }
+    if comment is not None:
+        payload["comment"] = QueueItemReviewCommentSerializer(
+            comment,
+            context=context,
+        ).data
+    if thread is not None:
+        payload["thread"] = QueueItemReviewThreadSerializer(
+            thread,
+            context=context,
+        ).data
+    return payload
+
+
+def _mark_review_threads_addressed(item, user, organization, workspace):
+    """Mark visible blocking feedback as addressed when the annotator resubmits."""
+    threads = list(
+        _open_blocking_review_threads(item)
+        .filter(Q(target_annotator__isnull=True) | Q(target_annotator=user))
+        .select_related("label", "target_annotator")
+    )
+    now = timezone.now()
+    for thread in threads:
+        thread.status = QueueItemReviewThread.STATUS_ADDRESSED
+        thread.addressed_by = user
+        thread.addressed_at = now
+        thread.save(
+            update_fields=[
+                "status",
+                "addressed_by",
+                "addressed_at",
+                "updated_at",
+            ]
+        )
+        QueueItemReviewComment.objects.create(
+            thread=thread,
+            queue_item=item,
+            reviewer=user,
+            label=thread.label,
+            target_annotator=thread.target_annotator,
+            action=QueueItemReviewComment.ACTION_ADDRESSED,
+            comment="Resubmitted for review.",
+            organization=organization,
+            workspace=workspace,
+        )
+    return len(threads)
 
 
 def _scores_for_queue_item(item):
@@ -154,6 +472,88 @@ def _span_notes_target_for_queue_item(item):
     )
 
 
+def _serialize_queue_item_note(note):
+    return {
+        "id": str(note.id),
+        "notes": note.notes,
+        "annotator": note.annotator.email
+        if note.annotator_id and note.annotator
+        else None,
+        "annotator_id": str(note.annotator_id) if note.annotator_id else None,
+        "created_at": note.created_at.isoformat(),
+    }
+
+
+def _serialize_span_note(note):
+    return {
+        "id": str(note.id),
+        "notes": note.notes,
+        "annotator": note.created_by_annotator
+        or (note.created_by_user.name if note.created_by_user_id else None),
+        "annotator_id": str(note.created_by_user_id)
+        if note.created_by_user_id
+        else None,
+        "created_at": note.created_at.isoformat(),
+    }
+
+
+def _item_note_rows(item):
+    return list(
+        QueueItemNote.no_workspace_objects.filter(queue_item=item, deleted=False)
+        .select_related("annotator")
+        .order_by("-updated_at", "-created_at")
+    )
+
+
+def _span_note_rows(span):
+    if span is None:
+        return []
+    return list(
+        SpanNotes.objects.filter(span=span)
+        .select_related("created_by_user")
+        .order_by("-created_at")
+    )
+
+
+def _item_note_payloads(item, span_notes_target=None):
+    """Return whole-item notes from queue storage plus legacy span notes."""
+    queue_notes = _item_note_rows(item)
+    seen_user_ids = {note.annotator_id for note in queue_notes if note.annotator_id}
+    payloads = [_serialize_queue_item_note(note) for note in queue_notes]
+    for span_note in _span_note_rows(span_notes_target):
+        if span_note.created_by_user_id in seen_user_ids:
+            continue
+        payloads.append(_serialize_span_note(span_note))
+    return payloads
+
+
+def _existing_item_note_for_user(item, user_id, span_notes_target=None):
+    if not user_id:
+        return ""
+    queue_note = (
+        QueueItemNote.no_workspace_objects.filter(
+            queue_item=item,
+            annotator_id=user_id,
+            deleted=False,
+        )
+        .order_by("-updated_at", "-created_at")
+        .first()
+    )
+    if queue_note:
+        return queue_note.notes
+    if span_notes_target is None:
+        return ""
+    span_note = (
+        SpanNotes.objects.filter(
+            span=span_notes_target,
+            created_by_user_id=user_id,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    return span_note.notes if span_note else ""
+
+
 def _source_id_for_queue_item(item):
     fk_field = SOURCE_TYPE_FK_MAP.get(item.source_type)
     return str(getattr(item, f"{fk_field}_id", "") or "") if fk_field else ""
@@ -191,6 +591,13 @@ def _first_existing(content, *keys):
 
 
 def _latest_item_note(item):
+    queue_note = (
+        QueueItemNote.no_workspace_objects.filter(queue_item=item, deleted=False)
+        .order_by("-updated_at", "-created_at")
+        .first()
+    )
+    if queue_note:
+        return queue_note.notes
     span = _span_notes_target_for_queue_item(item)
     if span is None:
         return ""
@@ -235,10 +642,22 @@ def _span_note_targets_for_queue_items(items):
 
 
 def _latest_item_notes_for_queue_items(items):
+    item_ids = [item.id for item in items]
+    notes_by_item = {}
+    for note in (
+        QueueItemNote.no_workspace_objects.filter(
+            queue_item_id__in=item_ids,
+            deleted=False,
+        )
+        .order_by("queue_item_id", "-updated_at", "-created_at")
+        .values("queue_item_id", "notes")
+    ):
+        notes_by_item.setdefault(note["queue_item_id"], note["notes"])
+
     targets = _span_note_targets_for_queue_items(items)
     span_ids = [span.id for span in targets.values() if span is not None]
     if not span_ids:
-        return {}
+        return notes_by_item
 
     notes_by_span = {}
     for note in SpanNotes.objects.filter(span_id__in=span_ids).order_by(
@@ -246,11 +665,10 @@ def _latest_item_notes_for_queue_items(items):
     ):
         notes_by_span.setdefault(note.span_id, note.notes)
 
-    return {
-        item_id: notes_by_span.get(span.id, "")
-        for item_id, span in targets.items()
-        if span is not None
-    }
+    for item_id, span in targets.items():
+        if span is not None and item_id not in notes_by_item:
+            notes_by_item[item_id] = notes_by_span.get(span.id, "")
+    return notes_by_item
 
 
 def _normalize_export_status_filter(status_filter):
@@ -336,7 +754,9 @@ def _infer_dataset_type(value):
 
 
 def _source_export_label(source_type):
-    return SOURCE_TYPE_EXPORT_LABELS.get(source_type, str(source_type).replace("_", " "))
+    return SOURCE_TYPE_EXPORT_LABELS.get(
+        source_type, str(source_type).replace("_", " ")
+    )
 
 
 def _parse_attribute_field_id(field_id):
@@ -487,7 +907,9 @@ def _annotation_metrics_for_scores(scores):
     for score in scores:
         if not score.label:
             continue
-        metrics.setdefault(score.label.name, []).append(_serialize_score_for_export(score))
+        metrics.setdefault(score.label.name, []).append(
+            _serialize_score_for_export(score)
+        )
     return {
         label_name: entries[0] if len(entries) == 1 else entries
         for label_name, entries in metrics.items()
@@ -562,7 +984,9 @@ def _eval_metrics_for_queue_items(items):
                 continue
             seen_by_item[item_id].add(log.id)
             key = _eval_metric_key(log)
-            metrics_by_item[item_id].setdefault(key, []).append(_serialize_eval_log(log))
+            metrics_by_item[item_id].setdefault(key, []).append(
+                _serialize_eval_log(log)
+            )
 
     return metrics_by_item
 
@@ -648,7 +1072,11 @@ def _base_export_field_defs():
             "source_name", "Source name", "source_name", default=True, path="name"
         ),
         _export_field(
-            "source_status", "Source status", "source_status", default=True, path="status"
+            "source_status",
+            "Source status",
+            "source_status",
+            default=True,
+            path="status",
         ),
         _export_field(
             "project_id", "Project ID", "project_id", default=True, path="project_id"
@@ -774,11 +1202,17 @@ def _base_export_field_defs():
         _export_field("span_id", "Span ID", "span_id", path="span_id"),
         _export_field("call_id", "Call ID", "call_id", path="call_id"),
         _export_field("session_id", "Session ID", "session_id", path="session_id"),
-        _export_field("project_source", "Project source", "project_source", path="project_source"),
-        _export_field("observation_type", "Span type", "observation_type", path="observation_type"),
+        _export_field(
+            "project_source", "Project source", "project_source", path="project_source"
+        ),
+        _export_field(
+            "observation_type", "Span type", "observation_type", path="observation_type"
+        ),
         _export_field("model", "Model", "model", path="model"),
         _export_field("provider", "Provider", "provider", path="provider"),
-        _export_field("cost", "Cost", "cost", DataTypeChoices.FLOAT.value, "Metrics", path="cost"),
+        _export_field(
+            "cost", "Cost", "cost", DataTypeChoices.FLOAT.value, "Metrics", path="cost"
+        ),
         _export_field(
             "prompt_tokens",
             "Prompt tokens",
@@ -827,15 +1261,69 @@ def _base_export_field_defs():
             "Source",
             path="created_at",
         ),
-        _export_field("call_type", "Call type", "call_type", group="Voice", path="call_type"),
-        _export_field("phone_number", "Phone number", "phone_number", group="Voice", path="phone_number"),
-        _export_field("customer_number", "Customer number", "customer_number", group="Voice", path="customer_number"),
-        _export_field("ended_reason", "Ended reason", "ended_reason", group="Voice", path="ended_reason"),
-        _export_field("message_count", "Message count", "message_count", DataTypeChoices.INTEGER.value, "Voice", path="message_count"),
-        _export_field("user_wpm", "User WPM", "user_wpm", DataTypeChoices.FLOAT.value, "Voice", path="user_wpm"),
-        _export_field("agent_wpm", "Agent WPM", "agent_wpm", DataTypeChoices.FLOAT.value, "Voice", path="agent_wpm"),
-        _export_field("talk_ratio", "Talk ratio", "talk_ratio", DataTypeChoices.FLOAT.value, "Voice", path="talk_ratio"),
-        _export_field("call_summary", "Call summary", "call_summary", group="Voice", path="call_summary"),
+        _export_field(
+            "call_type", "Call type", "call_type", group="Voice", path="call_type"
+        ),
+        _export_field(
+            "phone_number",
+            "Phone number",
+            "phone_number",
+            group="Voice",
+            path="phone_number",
+        ),
+        _export_field(
+            "customer_number",
+            "Customer number",
+            "customer_number",
+            group="Voice",
+            path="customer_number",
+        ),
+        _export_field(
+            "ended_reason",
+            "Ended reason",
+            "ended_reason",
+            group="Voice",
+            path="ended_reason",
+        ),
+        _export_field(
+            "message_count",
+            "Message count",
+            "message_count",
+            DataTypeChoices.INTEGER.value,
+            "Voice",
+            path="message_count",
+        ),
+        _export_field(
+            "user_wpm",
+            "User WPM",
+            "user_wpm",
+            DataTypeChoices.FLOAT.value,
+            "Voice",
+            path="user_wpm",
+        ),
+        _export_field(
+            "agent_wpm",
+            "Agent WPM",
+            "agent_wpm",
+            DataTypeChoices.FLOAT.value,
+            "Voice",
+            path="agent_wpm",
+        ),
+        _export_field(
+            "talk_ratio",
+            "Talk ratio",
+            "talk_ratio",
+            DataTypeChoices.FLOAT.value,
+            "Voice",
+            path="talk_ratio",
+        ),
+        _export_field(
+            "call_summary",
+            "Call summary",
+            "call_summary",
+            group="Voice",
+            path="call_summary",
+        ),
     ]
 
 
@@ -992,10 +1480,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         "evaluation_data",
         "customer_latency_metrics",
     )
-    sample_contents = [
-        (item, resolve_source_content(item))
-        for item in sample_items
-    ]
+    sample_contents = [(item, resolve_source_content(item)) for item in sample_items]
     source_types = {
         content.get("type") or item.source_type
         for item, content in sample_contents
@@ -1029,7 +1514,11 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
                         ),
                         "default": False,
                         "path": path,
-                        **({"source_type": source_type} if has_multiple_source_types else {}),
+                        **(
+                            {"source_type": source_type}
+                            if has_multiple_source_types
+                            else {}
+                        ),
                     }
                 )
 
@@ -1040,12 +1529,20 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
             if not entries:
                 continue
             first_score = next(
-                (entry.get("score") for entry in entries if entry.get("score") is not None),
+                (
+                    entry.get("score")
+                    for entry in entries
+                    if entry.get("score") is not None
+                ),
                 None,
             )
             eval_field_defs = [
                 ("score", f"{eval_key} eval score", _infer_dataset_type(first_score)),
-                ("explanation", f"{eval_key} eval explanation", DataTypeChoices.JSON.value),
+                (
+                    "explanation",
+                    f"{eval_key} eval explanation",
+                    DataTypeChoices.JSON.value,
+                ),
                 ("error", f"{eval_key} eval error", DataTypeChoices.BOOLEAN.value),
             ]
             for kind, label_text, data_type in eval_field_defs:
@@ -1218,6 +1715,51 @@ def _has_queue_role(queue_id, user, *roles):
     ).exists()
 
 
+def _queue_member_ids(queue_id):
+    return {
+        str(user_id)
+        for user_id in AnnotationQueueAnnotator.objects.filter(
+            queue_id=queue_id,
+            deleted=False,
+        ).values_list("user_id", flat=True)
+    }
+
+
+def _extract_mentioned_user_ids(comment):
+    """Support rich-text mention payloads that embed ids as user:<uuid>."""
+    return {match.group(1) for match in USER_MENTION_RE.finditer(comment or "")}
+
+
+def _queue_members_from_ids(queue_id, user_ids):
+    if not user_ids:
+        return []
+
+    member_ids = _queue_member_ids(queue_id)
+    normalized_ids = []
+    seen = set()
+    for user_id in user_ids:
+        try:
+            normalized = str(uuid.UUID(str(user_id)))
+        except (TypeError, ValueError):
+            raise ValueError("Invalid mentioned user.")
+        if normalized not in member_ids:
+            raise ValueError("Mentioned users must be members of this queue.")
+        if normalized not in seen:
+            normalized_ids.append(normalized)
+            seen.add(normalized)
+        if len(normalized_ids) > MAX_MENTIONED_USERS_PER_COMMENT:
+            raise ValueError(
+                f"At most {MAX_MENTIONED_USERS_PER_COMMENT} users can be mentioned."
+            )
+
+    users_by_id = {
+        str(user.id): user for user in User.objects.filter(id__in=normalized_ids)
+    }
+    return [
+        users_by_id[user_id] for user_id in normalized_ids if user_id in users_by_id
+    ]
+
+
 def _restore_archived_default_queue(queue):
     """Un-soft-delete a previously archived default queue and reset its
     automation rules so they don't all fire at once on first scheduler tick.
@@ -1273,9 +1815,7 @@ def _finalize_bulk_add(queue, items_to_create):
         QueueItem.objects.bulk_update(created, ["assigned_to"])
     elif created and queue.auto_assign:
         member_ids = list(
-            AnnotationQueueAnnotator.objects.filter(
-                queue=queue, deleted=False
-            )
+            AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False)
             .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
             .values_list("user_id", flat=True)
             .distinct()
@@ -1286,9 +1826,7 @@ def _finalize_bulk_add(queue, items_to_create):
                 for item in created
                 for uid in member_ids
             ]
-            QueueItemAssignment.objects.bulk_create(
-                assignments, ignore_conflicts=True
-            )
+            QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
 
     # Re-activate the queue if it was completed and new items were added
     new_status = queue.status
@@ -1447,9 +1985,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 serializer.validated_data.get("requires_review", False)
             )
             if requires_review:
-                check_ee_feature(
-                    EEFeature.REVIEW_WORKFLOW, org_id=str(org.id)
-                )
+                check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
             _check_annotation_queue_create_limit(org)
         except serializers.ValidationError as exc:
             msg = _flatten_validation_errors(exc.detail)
@@ -1573,8 +2109,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         confirm_name = request.data.get("confirm_name") or ""
         if confirm_name != queue.name:
             return self._gm.bad_request(
-                "confirm_name must match the queue's exact name to "
-                "hard-delete it."
+                "confirm_name must match the queue's exact name to hard-delete it."
             )
         queue_id = str(queue.pk)
         # Real DB delete — not BaseModel.delete() which only flips deleted=True.
@@ -1595,6 +2130,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         for row in items_qs.values("status").annotate(cnt=Count("id")):
             status_counts[row["status"]] = row["cnt"]
 
+        in_review = items_qs.filter(review_status="pending_review").count()
+        in_progress = max(
+            status_counts.get(QueueItemStatus.IN_PROGRESS.value, 0) - in_review,
+            0,
+        )
         completed = status_counts.get("completed", 0)
         progress_pct = round((completed / total) * 100, 1) if total > 0 else 0
 
@@ -1606,7 +2146,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .annotate(
                 completed_cnt=Count("id", filter=Q(status="completed")),
                 pending_cnt=Count("id", filter=Q(status="pending")),
-                in_progress_cnt=Count("id", filter=Q(status="in_progress")),
+                in_progress_cnt=Count(
+                    "id",
+                    filter=Q(status="in_progress") & ~Q(review_status="pending_review"),
+                ),
+                in_review_cnt=Count("id", filter=Q(review_status="pending_review")),
             )
         ):
             uid = str(row["assigned_to"])
@@ -1616,6 +2160,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "completed": row["completed_cnt"],
                 "pending": row["pending_cnt"],
                 "in_progress": row["in_progress_cnt"],
+                "in_review": row["in_review_cnt"],
                 "annotations_count": 0,
             }
 
@@ -1636,6 +2181,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "completed": 0,
                     "pending": 0,
                     "in_progress": 0,
+                    "in_review": 0,
                     "annotations_count": row["annotations_count"],
                 }
 
@@ -1650,6 +2196,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         user_status_counts = {}
         for row in user_items.values("status").annotate(cnt=Count("id", distinct=True)):
             user_status_counts[row["status"]] = row["cnt"]
+        user_in_review = user_items.filter(review_status="pending_review").count()
+        user_in_progress = max(
+            user_status_counts.get(QueueItemStatus.IN_PROGRESS.value, 0)
+            - user_in_review,
+            0,
+        )
         user_completed = user_status_counts.get(QueueItemStatus.COMPLETED.value, 0)
         user_progress_pct = (
             round((user_completed / user_total) * 100, 1) if user_total > 0 else 0
@@ -1659,7 +2211,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             {
                 "total": total,
                 "pending": status_counts.get("pending", 0),
-                "in_progress": status_counts.get("in_progress", 0),
+                "in_progress": in_progress,
+                "in_review": in_review,
                 "completed": completed,
                 "skipped": status_counts.get("skipped", 0),
                 "progress_pct": progress_pct,
@@ -1668,9 +2221,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "total": user_total,
                     "completed": user_completed,
                     "pending": user_status_counts.get(QueueItemStatus.PENDING.value, 0),
-                    "in_progress": user_status_counts.get(
-                        QueueItemStatus.IN_PROGRESS.value, 0
-                    ),
+                    "in_progress": user_in_progress,
+                    "in_review": user_in_review,
                     "skipped": user_status_counts.get(QueueItemStatus.SKIPPED.value, 0),
                     "progress_pct": user_progress_pct,
                 },
@@ -1973,22 +2525,26 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 user=request.user,
             )
 
-        items_qs = QueueItem.objects.filter(queue=queue, deleted=False).select_related(
-            "queue",
-            "reviewed_by",
-            "trace",
-            "observation_span",
-            "dataset_row",
-            "prototype_run",
-            "call_execution",
-            "trace_session",
-        ).prefetch_related(
-            Prefetch(
-                "trace__observation_spans",
-                queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                    "start_time", "created_at"
-                ),
-                to_attr="_queue_export_spans",
+        items_qs = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .select_related(
+                "queue",
+                "reviewed_by",
+                "trace",
+                "observation_span",
+                "dataset_row",
+                "prototype_run",
+                "call_execution",
+                "trace_session",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "trace__observation_spans",
+                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
+                        "start_time", "created_at"
+                    ),
+                    to_attr="_queue_export_spans",
+                )
             )
         )
         if status_filter:
@@ -2564,42 +3120,52 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     if sc.notes:
                         existing_label_notes[str(sc.label_id)] = sc.notes
 
-            # Include SpanNotes from the scoring source when it is a span, or
-            # from the linked root span when a voice call saves labels on trace.
+            # Include whole-item notes saved through queue annotation. Trace/span
+            # items may also have legacy SpanNotes, so keep those as fallback.
             span_notes = []
+            queue_note_rows = []
+            if item is not None:
+                queue_note_rows = _item_note_rows(item)
+                span_notes = [
+                    _serialize_queue_item_note(note) for note in queue_note_rows
+                ]
+                user_queue_note = next(
+                    (
+                        note
+                        for note in queue_note_rows
+                        if note.annotator_id == request.user.pk
+                    ),
+                    None,
+                )
+                if user_queue_note:
+                    existing_notes = user_queue_note.notes
+
             span_notes_lookup_id = (
                 source_id_for_scores
                 if source_type_for_scores == "observation_span"
                 else span_notes_source_id
             )
             if span_notes_lookup_id:
-                from tracer.models.span_notes import SpanNotes
-
                 db_notes = list(
                     SpanNotes.objects.filter(span_id=span_notes_lookup_id)
                     .select_related("created_by_user")
                     .order_by("-created_at")
                 )
-                span_notes = [
-                    {
-                        "id": str(note.id),
-                        "notes": note.notes,
-                        "annotator": note.created_by_annotator
-                        or (
-                            note.created_by_user.name
-                            if note.created_by_user_id
-                            else None
-                        ),
-                        "created_at": note.created_at.isoformat(),
-                    }
+                seen_user_ids = {
+                    note.annotator_id for note in queue_note_rows if note.annotator_id
+                }
+                span_notes.extend(
+                    _serialize_span_note(note)
                     for note in db_notes
-                ]
+                    if note.created_by_user_id not in seen_user_ids
+                )
                 # Pre-populate existing_notes from the current user's own SpanNote
+                # only when a queue item note is not available.
                 user_span_note = next(
                     (n for n in db_notes if n.created_by_user_id == request.user.pk),
                     None,
                 )
-                if user_span_note:
+                if user_span_note and not existing_notes:
                     existing_notes = user_span_note.notes
 
             return {
@@ -2657,8 +3223,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         # still return them so labels are available project-wide
         missing_default_ids = default_queue_ids - seen_queues
         if missing_default_ids:
-            from tracer.models.project import Project
-
             missing_defaults = AnnotationQueue.objects.filter(
                 id__in=missing_default_ids,
             ).select_related("project", "dataset", "agent_definition")
@@ -2788,6 +3352,24 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     queryset = QueueItem.objects.all()
     _gm = GeneralMethods()
 
+    def _get_queue_for_management(self, queue_id, request):
+        try:
+            queue = AnnotationQueue.objects.get(
+                pk=queue_id,
+                organization=request.organization,
+                deleted=False,
+            )
+        except AnnotationQueue.DoesNotExist:
+            return None
+        return queue
+
+    def _require_queue_manager(self, queue, request):
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue items."
+            )
+        return None
+
     def get_queryset(self):
         queryset = (
             super()
@@ -2809,6 +3391,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         queue_id = self.kwargs.get("queue_id")
         if queue_id:
             queryset = queryset.filter(queue_id=queue_id)
+            if not _has_queue_role(
+                queue_id,
+                self.request.user,
+                AnnotatorRole.REVIEWER.value,
+                AnnotatorRole.MANAGER.value,
+            ):
+                queryset = _scope_targeted_rework_items(queryset, self.request.user)
 
         status = _normalize_export_status_filter(
             self.request.query_params.get("status")
@@ -2816,7 +3405,33 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         source_type = self.request.query_params.get("source_type")
         assigned_to = self.request.query_params.get("assigned_to")
 
-        if status:
+        if status == "in_review":
+            addressed_threads = QueueItemReviewThread.objects.filter(
+                queue_item_id=OuterRef("pk"),
+                blocking=True,
+                status=QueueItemReviewThread.STATUS_ADDRESSED,
+                deleted=False,
+            )
+            queryset = (
+                queryset.filter(review_status="pending_review")
+                .annotate(_has_addressed_review=Exists(addressed_threads))
+                .filter(_has_addressed_review=False)
+            )
+        elif status == "resubmitted":
+            addressed_threads = QueueItemReviewThread.objects.filter(
+                queue_item_id=OuterRef("pk"),
+                blocking=True,
+                status=QueueItemReviewThread.STATUS_ADDRESSED,
+                deleted=False,
+            )
+            queryset = (
+                queryset.filter(review_status="pending_review")
+                .annotate(_has_addressed_review=Exists(addressed_threads))
+                .filter(_has_addressed_review=True)
+            )
+        elif status == "needs_changes":
+            queryset = queryset.filter(review_status="rejected")
+        elif status:
             queryset = queryset.filter(status=status)
         if source_type:
             queryset = queryset.filter(source_type=source_type)
@@ -2847,6 +3462,23 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             organization=self.request.organization,
         )
 
+    def create(self, request, *args, **kwargs):
+        queue_id = kwargs.get("queue_id") or self.kwargs.get("queue_id")
+        queue = self._get_queue_for_management(queue_id, request)
+        if queue is None:
+            return self._gm.not_found("Queue not found.")
+        denied = self._require_queue_manager(queue, request)
+        if denied is not None:
+            return denied
+        return super().create(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        item = self.get_object()
+        denied = self._require_queue_manager(item.queue, request)
+        if denied is not None:
+            return denied
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=False, methods=["post"], url_path="add-items")
     def add_items(self, request, queue_id=None):
         serializer = AddItemsSerializer(data=request.data)
@@ -2860,6 +3492,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         except AnnotationQueue.DoesNotExist:
             return self._gm.not_found("Queue not found.")
+
+        denied = self._require_queue_manager(queue, request)
+        if denied is not None:
+            return denied
 
         if serializer.validated_data.get("selection"):
             return self._add_items_filter_mode(
@@ -3054,6 +3690,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="bulk-remove")
     def bulk_remove(self, request, queue_id=None):
+        queue = self._get_queue_for_management(queue_id, request)
+        if queue is None:
+            return self._gm.not_found("Queue not found.")
+        denied = self._require_queue_manager(queue, request)
+        if denied is not None:
+            return denied
+
         item_ids = request.data.get("item_ids", [])
         if not item_ids:
             return self._gm.bad_request("item_ids is required.")
@@ -3072,7 +3715,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     # ------------------------------------------------------------------
 
     def _get_next_pending_item(
-        self, queue_id, exclude_id=None, exclude_ids=None, user=None
+        self,
+        queue_id,
+        exclude_id=None,
+        exclude_ids=None,
+        user=None,
+        review_status=None,
+        exclude_review_status=None,
     ):
         """Return the next unfinished work item, keeping queue order stable.
 
@@ -3106,16 +3755,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             ],
             deleted=False,
         ).order_by("order", "created_at")
+        if review_status:
+            base_qs = base_qs.filter(review_status=review_status)
+        if exclude_review_status:
+            base_qs = base_qs.exclude(review_status=exclude_review_status)
 
         queue = AnnotationQueue.objects.filter(pk=queue_id).first()
-        is_reviewer = (
-            user
-            and _has_queue_role(
-                queue_id,
-                user,
-                AnnotatorRole.REVIEWER.value,
-                AnnotatorRole.MANAGER.value,
-            )
+        is_reviewer = user and _has_queue_role(
+            queue_id,
+            user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
         )
         if user and queue and not queue.auto_assign and not is_reviewer:
             base_qs = _queue_item_user_scope(
@@ -3123,6 +3773,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 user,
                 include_unassigned=True,
             ).order_by("order", "created_at")
+        if user and not is_reviewer and review_status != "pending_review":
+            base_qs = _scope_targeted_rework_items(base_qs, user)
 
         # Exclude items reserved by others (unless expired)
         available_qs = base_qs.filter(
@@ -3181,6 +3833,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except QueueItem.DoesNotExist:
             return self._gm.not_found("Queue item not found.")
 
+        if _targeted_rework_denies_user(
+            item,
+            request.user,
+            allow_reviewer_override=True,
+        ):
+            return self._gm.forbidden_response(
+                "This item was sent back to a different annotator."
+            )
+
+        if queue.requires_review and item.review_status == "pending_review":
+            return self._gm.bad_request(
+                "This item is waiting for review. It can be edited after a "
+                "reviewer requests changes."
+            )
+
         if is_completed_skipped_retry:
             queue.status = AnnotationQueueStatusChoices.ACTIVE.value
             queue.save(update_fields=["status", "updated_at"])
@@ -3193,9 +3860,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 queue_item=item, deleted=False
             ).exists() or bool(item.assigned_to_id)
             if has_assignments:
-                is_assigned = QueueItemAssignment.objects.filter(
-                    queue_item=item, user=request.user, deleted=False
-                ).exists() or item.assigned_to_id == request.user.id
+                is_assigned = (
+                    QueueItemAssignment.objects.filter(
+                        queue_item=item, user=request.user, deleted=False
+                    ).exists()
+                    or item.assigned_to_id == request.user.id
+                )
                 if not is_assigned:
                     is_manager = _has_queue_role(
                         queue_id,
@@ -3250,9 +3920,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 continue
 
             per_label_notes = (
-                ann_data.get("notes", label_notes_fallback)
-                if label.allow_notes
-                else ""
+                ann_data.get("notes", label_notes_fallback) if label.allow_notes else ""
             )
 
             # Upsert Score (unified annotation primitive)
@@ -3275,6 +3943,27 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     },
                 )
                 submitted += 1
+
+        if item_notes is not None:
+            if item_notes:
+                QueueItemNote.no_workspace_objects.update_or_create(
+                    queue_item=item,
+                    annotator=request.user,
+                    deleted=False,
+                    defaults={
+                        "notes": item_notes,
+                        "organization": request.organization,
+                        "workspace": getattr(request, "workspace", None)
+                        or item.workspace,
+                    },
+                )
+            else:
+                now = timezone.now()
+                QueueItemNote.no_workspace_objects.filter(
+                    queue_item=item,
+                    annotator=request.user,
+                    deleted=False,
+                ).update(deleted=True, deleted_at=now, updated_at=now)
 
         if span_notes_target is not None and item_notes is not None:
             if item_notes:
@@ -3347,6 +4036,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         queue = item.queue
 
+        if _targeted_rework_denies_user(
+            item,
+            request.user,
+            allow_reviewer_override=True,
+        ):
+            return self._gm.forbidden_response(
+                "This item was sent back to a different annotator."
+            )
+
         # Verify the requesting user has actually annotated this item.
         item_scores = _scores_for_queue_item(item)
         user_has_annotated = item_scores.filter(annotator=request.user).exists()
@@ -3359,6 +4057,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         annotation_count = item_scores.values("annotator").distinct().count()
         if annotation_count >= queue.annotations_required:
             if queue.requires_review:
+                if item.review_status == "rejected":
+                    _mark_review_threads_addressed(
+                        item,
+                        request.user,
+                        request.organization,
+                        getattr(request, "workspace", None),
+                    )
                 item.status = QueueItemStatus.IN_PROGRESS.value
                 item.review_status = "pending_review"
             else:
@@ -3389,6 +4094,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_id,
             exclude_ids=exclude_ids or None,
             user=request.user,
+            exclude_review_status=request.data.get("exclude_review_status"),
         )
         next_item_data = QueueItemSerializer(next_item).data if next_item else None
 
@@ -3412,6 +4118,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except QueueItem.DoesNotExist:
             return self._gm.not_found("Queue item not found.")
 
+        if _targeted_rework_denies_user(
+            item,
+            request.user,
+            allow_reviewer_override=True,
+        ):
+            return self._gm.forbidden_response(
+                "This item was sent back to a different annotator."
+            )
+
+        if item.queue.requires_review and item.review_status == "pending_review":
+            return self._gm.bad_request(
+                "This item is waiting for review and cannot be skipped."
+            )
+
         item.status = QueueItemStatus.SKIPPED.value
         self._clear_reservation(item)
         item.save(
@@ -3432,6 +4152,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_id,
             exclude_ids=exclude_ids or None,
             user=request.user,
+            exclude_review_status=request.data.get("exclude_review_status"),
         )
         next_item_data = QueueItemSerializer(next_item).data if next_item else None
 
@@ -3449,7 +4170,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         Query params:
           exclude: comma-separated item IDs to skip
           before:  item ID — returns the item immediately before this one in order
+          review_status: optional review status filter (for reviewer queues)
+          exclude_review_status: optional review status to omit (for annotator queues)
         """
+        review_status = request.query_params.get("review_status")
+        exclude_review_status = request.query_params.get("exclude_review_status")
         before_id = request.query_params.get("before")
         if before_id:
             try:
@@ -3458,15 +4183,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 )
             except QueueItem.DoesNotExist:
                 return self._gm.success_response({"item": None})
-            prev_item = (
-                QueueItem.objects.filter(
-                    queue_id=queue_id,
-                    deleted=False,
-                    order__lt=current.order,
-                )
-                .order_by("-order", "-created_at")
-                .first()
+            prev_qs = QueueItem.objects.filter(
+                queue_id=queue_id,
+                deleted=False,
+                order__lt=current.order,
             )
+            if review_status:
+                prev_qs = prev_qs.filter(review_status=review_status)
+            if exclude_review_status:
+                prev_qs = prev_qs.exclude(review_status=exclude_review_status)
+            if review_status != "pending_review":
+                prev_qs = _scope_targeted_rework_items(prev_qs, request.user)
+            prev_item = prev_qs.order_by("-order", "-created_at").first()
             item_data = QueueItemSerializer(prev_item).data if prev_item else None
             return self._gm.success_response({"item": item_data})
 
@@ -3475,6 +4203,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue_id,
             exclude_ids=exclude_ids or None,
             user=request.user,
+            review_status=review_status,
+            exclude_review_status=exclude_review_status,
         )
         if not item:
             return self._gm.success_response({"item": None})
@@ -3505,6 +4235,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         queue = item.queue
         now = timezone.now()
+        is_reviewer = _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        )
+        if not is_reviewer and _targeted_rework_denies_user(item, request.user):
+            return self._gm.forbidden_response(
+                "This item was sent back to a different annotator."
+            )
 
         # Reservation logic: opt-in via ?reserve=true query param
         reserve = request.query_params.get("reserve", "").lower() == "true"
@@ -3542,12 +4282,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # the role is the privacy boundary, and view-only mode would be
         # useless without the values it's trying to display. Regular
         # annotators only see their own scores.
-        is_reviewer = _has_queue_role(
-            queue_id,
-            request.user,
-            AnnotatorRole.REVIEWER.value,
-            AnnotatorRole.MANAGER.value,
-        )
         annotations_qs = _scores_for_queue_item(item).select_related("label")
         raw_annotator_id = request.query_params.get("annotator_id") or None
         viewing_annotator_id = None
@@ -3562,6 +4296,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         elif not is_reviewer:
             annotations_qs = annotations_qs.filter(annotator=request.user)
         annotations = annotations_qs
+        review_comments = _visible_review_comments(
+            item,
+            request.user,
+            is_reviewer=is_reviewer,
+        )
+        review_threads = _visible_review_threads(
+            item,
+            request.user,
+            is_reviewer=is_reviewer,
+        )
 
         existing_notes = ""
         span_notes = []
@@ -3569,32 +4313,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         span_notes_target = _span_notes_target_for_queue_item(item)
         if span_notes_target is not None:
             span_notes_source_id = span_notes_target.id
-            note_rows = list(
-                SpanNotes.objects.filter(span=span_notes_target)
-                .select_related("created_by_user")
-                .order_by("-created_at")
-            )
-            span_notes = [
-                {
-                    "id": str(note.id),
-                    "notes": note.notes,
-                    "annotator": note.created_by_annotator
-                    or (
-                        note.created_by_user.name
-                        if note.created_by_user_id
-                        else None
-                    ),
-                    "created_at": note.created_at.isoformat(),
-                }
-                for note in note_rows
-            ]
-            notes_user_id = viewing_annotator_id or request.user.pk
-            user_span_note = next(
-                (n for n in note_rows if n.created_by_user_id == notes_user_id),
-                None,
-            )
-            if user_span_note:
-                existing_notes = user_span_note.notes
+        span_notes = _item_note_payloads(item, span_notes_target)
+        notes_user_id = viewing_annotator_id or request.user.pk
+        existing_notes = _existing_item_note_for_user(
+            item,
+            notes_user_id,
+            span_notes_target,
+        )
 
         # Manual queues show overall progress. Distributed queues show the
         # current annotator's slice, so "2/4" means their assigned workload,
@@ -3637,9 +4362,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # items assigned to others, so they can navigate the full queue
         # in view-only mode.
         if is_reviewer:
-            annotatable_qs = QueueItem.objects.filter(
-                queue_id=queue_id, deleted=False
-            )
+            annotatable_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
         else:
             annotatable_qs = _queue_item_user_scope(
                 QueueItem.objects.filter(queue_id=queue_id, deleted=False),
@@ -3664,6 +4387,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             "queue": queue,
             "labels": labels,
             "annotations": annotations,
+            "review_comments": review_comments,
+            "review_threads": review_threads,
             "existing_notes": existing_notes,
             "span_notes": span_notes,
             "span_notes_source_id": span_notes_source_id,
@@ -3680,7 +4405,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             "prev_item_id": str(prev_item) if prev_item else None,
         }
 
-        serializer = AnnotateDetailSerializer(data)
+        serializer = AnnotateDetailSerializer(data, context={"request": request})
         return self._gm.success_response(serializer.data)
 
     @action(detail=False, methods=["post"], url_path="assign")
@@ -3697,6 +4422,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     remove — remove given users from assignments
                     If user_ids is empty with action="set", clears all assignments.
         """
+        queue = self._get_queue_for_management(queue_id, request)
+        if queue is None:
+            return self._gm.not_found("Queue not found.")
+        denied = self._require_queue_manager(queue, request)
+        if denied is not None:
+            return denied
+
         item_ids = request.data.get("item_ids", [])
         user_ids = request.data.get("user_ids", [])
         user_id = request.data.get("user_id")
@@ -3728,7 +4460,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.success_response({"assigned": 0})
 
         # Validate all user_ids
-        org = request.organization
         queue_member_ids = set(
             AnnotationQueueAnnotator.objects.filter(
                 queue_id=queue_id, deleted=False
@@ -3848,21 +4579,416 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer = ScoreSerializer(annotations, many=True)
         return self._gm.success_response(serializer.data)
 
+    def _discussion_item_and_role(self, request, queue_id, pk):
+        try:
+            item = QueueItem.objects.select_related("queue").get(
+                pk=pk,
+                queue_id=queue_id,
+                organization=request.organization,
+                deleted=False,
+            )
+        except QueueItem.DoesNotExist:
+            return None, False, self._gm.not_found("Queue item not found.")
+
+        is_queue_member = _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.ANNOTATOR.value,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        )
+        if not is_queue_member:
+            return (
+                None,
+                False,
+                self._gm.forbidden_response(
+                    "Only queue members can discuss this item."
+                ),
+            )
+
+        is_reviewer = _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        )
+        return item, is_reviewer, None
+
+    def _set_discussion_thread_status(
+        self,
+        request,
+        *,
+        queue_id,
+        pk,
+        thread_id,
+        next_status,
+    ):
+        item, is_reviewer, error = self._discussion_item_and_role(
+            request,
+            queue_id,
+            pk,
+        )
+        if error:
+            return error
+
+        try:
+            thread_uuid = uuid.UUID(str(thread_id))
+        except (TypeError, ValueError):
+            return self._gm.bad_request("Invalid discussion thread.")
+
+        thread = (
+            _visible_review_threads(item, request.user, is_reviewer=is_reviewer)
+            .filter(id=thread_uuid)
+            .first()
+        )
+        if thread is None:
+            return self._gm.not_found("Discussion thread not found.")
+        if thread.blocking and not is_reviewer:
+            return self._gm.forbidden_response(
+                "Only reviewers or managers can resolve blocking review threads."
+            )
+        if not thread.blocking and not _can_manage_discussion_thread(
+            thread,
+            request.user,
+            is_reviewer=is_reviewer,
+        ):
+            return self._gm.forbidden_response(
+                "Only reviewers, managers, or the thread creator can resolve or reopen this thread."
+            )
+
+        now = timezone.now()
+        update_fields = ["status", "updated_at"]
+        if next_status == QueueItemReviewThread.STATUS_RESOLVED:
+            thread.status = QueueItemReviewThread.STATUS_RESOLVED
+            thread.resolved_by = request.user
+            thread.resolved_at = now
+            action = QueueItemReviewComment.ACTION_RESOLVE
+            default_comment = "Resolved."
+            update_fields.extend(["resolved_by", "resolved_at"])
+        else:
+            thread.status = QueueItemReviewThread.STATUS_REOPENED
+            thread.reopened_by = request.user
+            thread.reopened_at = now
+            action = QueueItemReviewComment.ACTION_REOPEN
+            default_comment = "Reopened."
+            update_fields.extend(["reopened_by", "reopened_at"])
+        thread.save(update_fields=update_fields)
+
+        status_comment = QueueItemReviewComment.objects.create(
+            thread=thread,
+            queue_item=item,
+            reviewer=request.user,
+            label=thread.label,
+            target_annotator=thread.target_annotator,
+            action=action,
+            comment=str(request.data.get("comment") or default_comment).strip()
+            or default_comment,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
+        )
+
+        return self._gm.success_response(
+            _discussion_payload(
+                item,
+                request,
+                is_reviewer=is_reviewer,
+                comment=status_comment,
+                thread=thread,
+            )
+        )
+
+    @action(detail=True, methods=["get", "post"], url_path="discussion")
+    def discussion(self, request, queue_id=None, pk=None):
+        """List or create non-blocking discussion comments for a queue item."""
+        item, is_reviewer, error = self._discussion_item_and_role(
+            request,
+            queue_id,
+            pk,
+        )
+        if error:
+            return error
+
+        if request.method == "GET":
+            comments = _visible_review_comments(
+                item,
+                request.user,
+                is_reviewer=is_reviewer,
+            ).filter(action=QueueItemReviewComment.ACTION_COMMENT)
+            search = (request.query_params.get("search") or "").strip()
+            if search:
+                comments = comments.filter(
+                    Q(comment__icontains=search)
+                    | Q(reviewer__name__icontains=search)
+                    | Q(reviewer__email__icontains=search)
+                    | Q(target_annotator__name__icontains=search)
+                    | Q(target_annotator__email__icontains=search)
+                    | Q(label__name__icontains=search)
+                )
+            return self._gm.success_response(
+                QueueItemReviewCommentSerializer(
+                    comments,
+                    many=True,
+                    context={"request": request},
+                ).data
+            )
+
+        comment = str(
+            request.data.get("comment") or request.data.get("content") or ""
+        ).strip()
+        if not comment:
+            return self._gm.bad_request("Comment text is required.")
+
+        queue_labels = {
+            str(queue_label.label_id): queue_label.label
+            for queue_label in item.queue.queue_labels.filter(
+                deleted=False
+            ).select_related("label")
+        }
+        label = None
+        label_id = request.data.get("label_id") or request.data.get("label")
+        if label_id:
+            label = queue_labels.get(str(label_id))
+            if not label:
+                return self._gm.bad_request(
+                    f"Label {label_id} is not part of this queue."
+                )
+
+        member_ids = _queue_member_ids(queue_id)
+        target_annotator = None
+        target_annotator_id = request.data.get("target_annotator_id")
+        if target_annotator_id:
+            try:
+                target_uuid = uuid.UUID(str(target_annotator_id))
+            except (TypeError, ValueError):
+                return self._gm.bad_request("Invalid target annotator.")
+            if str(target_uuid) not in member_ids:
+                return self._gm.bad_request(
+                    "Target annotator must be a member of this queue."
+                )
+            if not is_reviewer and str(target_uuid) != str(request.user.id):
+                return self._gm.forbidden_response(
+                    "Only reviewers or managers can target comments to another annotator."
+                )
+            target_annotator = User.objects.filter(pk=target_uuid).first()
+            if target_annotator is None:
+                return self._gm.bad_request("Target annotator not found.")
+
+        thread = None
+        thread_id = request.data.get("thread_id") or request.data.get("thread")
+        if thread_id:
+            try:
+                thread_uuid = uuid.UUID(str(thread_id))
+            except (TypeError, ValueError):
+                return self._gm.bad_request("Invalid discussion thread.")
+            thread = (
+                _visible_review_threads(item, request.user, is_reviewer=is_reviewer)
+                .filter(id=thread_uuid)
+                .first()
+            )
+            if thread is None:
+                return self._gm.not_found("Discussion thread not found.")
+            if thread.blocking and not is_reviewer:
+                return self._gm.forbidden_response(
+                    "Only reviewers or managers can reply to blocking review threads."
+                )
+            label = thread.label
+            target_annotator = thread.target_annotator
+
+        raw_mentions = request.data.get("mentioned_user_ids")
+        if raw_mentions is None:
+            raw_mentions = request.data.get("mentions", [])
+        if isinstance(raw_mentions, str):
+            raw_mentions = [raw_mentions]
+        if not isinstance(raw_mentions, list):
+            return self._gm.bad_request("mentioned_user_ids must be a list.")
+
+        mention_ids = set(str(user_id) for user_id in raw_mentions)
+        mention_ids.update(_extract_mentioned_user_ids(comment))
+        if target_annotator is not None:
+            mention_ids.add(str(target_annotator.id))
+        try:
+            mentioned_users = _queue_members_from_ids(queue_id, mention_ids)
+        except ValueError as exc:
+            return self._gm.bad_request(str(exc))
+
+        if thread is not None:
+            if thread.status == QueueItemReviewThread.STATUS_RESOLVED:
+                if not _can_manage_discussion_thread(
+                    thread,
+                    request.user,
+                    is_reviewer=is_reviewer,
+                ):
+                    return self._gm.forbidden_response(
+                        "Only reviewers, managers, or the thread creator can reopen this thread."
+                    )
+                reopened_at = timezone.now()
+                thread.status = QueueItemReviewThread.STATUS_REOPENED
+                thread.reopened_by = request.user
+                thread.reopened_at = reopened_at
+                thread.save(
+                    update_fields=[
+                        "status",
+                        "reopened_by",
+                        "reopened_at",
+                        "updated_at",
+                    ]
+                )
+                QueueItemReviewComment.objects.create(
+                    thread=thread,
+                    queue_item=item,
+                    reviewer=request.user,
+                    label=label,
+                    target_annotator=target_annotator,
+                    action=QueueItemReviewComment.ACTION_REOPEN,
+                    comment="Reopened by reply.",
+                    organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
+            created_comment = QueueItemReviewComment.objects.create(
+                thread=thread,
+                queue_item=item,
+                reviewer=request.user,
+                label=label,
+                target_annotator=target_annotator,
+                action=QueueItemReviewComment.ACTION_COMMENT,
+                comment=comment,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+            )
+            if mentioned_users:
+                created_comment.mentioned_users.set(mentioned_users)
+        else:
+            created_comment = _create_review_thread_comment(
+                item=item,
+                reviewer=request.user,
+                label=label,
+                target_annotator=target_annotator,
+                action=QueueItemReviewComment.ACTION_COMMENT,
+                comment=comment,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+                mentioned_users=mentioned_users,
+                blocking=False,
+                status=QueueItemReviewThread.STATUS_OPEN,
+            )
+            thread = created_comment.thread
+
+        return self._gm.success_response(
+            _discussion_payload(
+                item,
+                request,
+                is_reviewer=is_reviewer,
+                comment=created_comment,
+                thread=thread,
+            )
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"discussion/(?P<thread_id>[^/.]+)/resolve",
+    )
+    def resolve_discussion_thread(self, request, queue_id=None, pk=None, thread_id=None):
+        return self._set_discussion_thread_status(
+            request,
+            queue_id=queue_id,
+            pk=pk,
+            thread_id=thread_id,
+            next_status=QueueItemReviewThread.STATUS_RESOLVED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"discussion/(?P<thread_id>[^/.]+)/reopen",
+    )
+    def reopen_discussion_thread(self, request, queue_id=None, pk=None, thread_id=None):
+        return self._set_discussion_thread_status(
+            request,
+            queue_id=queue_id,
+            pk=pk,
+            thread_id=thread_id,
+            next_status=QueueItemReviewThread.STATUS_REOPENED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"discussion/comments/(?P<comment_id>[^/.]+)/reaction",
+    )
+    def discussion_comment_reaction(
+        self,
+        request,
+        queue_id=None,
+        pk=None,
+        comment_id=None,
+    ):
+        """Toggle the current user's reaction on a discussion comment."""
+        item, is_reviewer, error = self._discussion_item_and_role(
+            request,
+            queue_id,
+            pk,
+        )
+        if error:
+            return error
+
+        try:
+            comment_uuid = uuid.UUID(str(comment_id))
+        except (TypeError, ValueError):
+            return self._gm.bad_request("Invalid discussion comment.")
+
+        comment = (
+            _visible_review_comments(item, request.user, is_reviewer=is_reviewer)
+            .filter(id=comment_uuid, action=QueueItemReviewComment.ACTION_COMMENT)
+            .first()
+        )
+        if comment is None:
+            return self._gm.not_found("Discussion comment not found.")
+
+        emoji = str(request.data.get("emoji") or request.data.get("reaction") or "")
+        if not _is_supported_discussion_reaction(emoji):
+            return self._gm.bad_request("Unsupported reaction emoji.")
+
+        user_id = str(request.user.id)
+        reactions = dict(comment.reactions or {})
+        user_ids = {str(value) for value in reactions.get(emoji, [])}
+        if user_id in user_ids:
+            user_ids.remove(user_id)
+        else:
+            user_ids.add(user_id)
+        if user_ids:
+            reactions[emoji] = sorted(user_ids)
+        else:
+            reactions.pop(emoji, None)
+        comment.reactions = reactions
+        comment.save(update_fields=["reactions", "updated_at"])
+
+        return self._gm.success_response(
+            _discussion_payload(
+                item,
+                request,
+                is_reviewer=is_reviewer,
+                comment=comment,
+                thread=comment.thread,
+            )
+        )
+
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
-        """Approve or reject an item as a reviewer."""
+        """Approve, request changes, or leave reviewer feedback on an item."""
         try:
-            try:
-                from ee.usage.services.entitlements import Entitlements
-            except ImportError:
-                Entitlements = None
+            from ee.usage.services.entitlements import Entitlements
+        except ImportError:
+            Entitlements = None
 
+        if Entitlements is not None:
             org = getattr(request, "organization", None) or request.user.organization
-            feat_check = Entitlements.check_feature(str(org.id), "has_review_workflow")
+            feat_check = Entitlements.check_feature(
+                str(org.id),
+                "has_review_workflow",
+            )
             if not feat_check.allowed:
                 return self._gm.forbidden_response(feat_check.reason)
-        except ImportError:
-            pass
 
         # Verify requesting user has reviewer or manager role
         if not _has_queue_role(
@@ -3885,54 +5011,255 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except QueueItem.DoesNotExist:
             return self._gm.not_found("Queue item not found.")
 
-        review_action = request.data.get("action")
-        notes = request.data.get("notes", "")
+        requested_action = request.data.get("action")
+        action_aliases = {
+            "approve": QueueItemReviewComment.ACTION_APPROVE,
+            "reject": QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            "request_changes": QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            "comment": QueueItemReviewComment.ACTION_COMMENT,
+        }
+        review_action = action_aliases.get(requested_action)
+        if review_action is None:
+            return self._gm.bad_request(
+                "action must be 'approve', 'request_changes', 'reject', or 'comment'."
+            )
+        if (
+            review_action
+            in (
+                QueueItemReviewComment.ACTION_APPROVE,
+                QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            )
+            and item.review_status != "pending_review"
+        ):
+            return self._gm.bad_request(
+                "Only items pending review can be approved or sent back."
+            )
 
-        if review_action not in ("approve", "reject"):
-            return self._gm.bad_request("action must be 'approve' or 'reject'.")
+        notes = str(request.data.get("notes") or "").strip()
+        raw_label_comments = request.data.get("label_comments") or []
+        if not isinstance(raw_label_comments, list):
+            return self._gm.bad_request("label_comments must be a list.")
+
+        queue_labels = {
+            str(queue_label.label_id): queue_label.label
+            for queue_label in item.queue.queue_labels.filter(
+                deleted=False
+            ).select_related("label")
+        }
+        queue_member_ids = {
+            str(user_id)
+            for user_id in AnnotationQueueAnnotator.objects.filter(
+                queue_id=queue_id,
+                deleted=False,
+            ).values_list("user_id", flat=True)
+        }
+
+        label_comments = []
+        for raw_comment in raw_label_comments:
+            if not isinstance(raw_comment, dict):
+                return self._gm.bad_request("Each label comment must be an object.")
+
+            comment = str(
+                raw_comment.get("comment") or raw_comment.get("notes") or ""
+            ).strip()
+            if not comment:
+                continue
+
+            label_id = raw_comment.get("label_id") or raw_comment.get("label")
+            if not label_id:
+                return self._gm.bad_request("label_id is required for label comments.")
+            label = queue_labels.get(str(label_id))
+            if not label:
+                return self._gm.bad_request(
+                    f"Label {label_id} is not part of this queue."
+                )
+
+            target_annotator = None
+            target_annotator_id = raw_comment.get(
+                "target_annotator_id"
+            ) or raw_comment.get("annotator_id")
+            if not target_annotator_id:
+                return self._gm.bad_request(
+                    "target_annotator_id is required for label feedback."
+                )
+            try:
+                target_uuid = uuid.UUID(str(target_annotator_id))
+            except (TypeError, ValueError):
+                return self._gm.bad_request("Invalid target annotator.")
+            if str(target_uuid) not in queue_member_ids:
+                return self._gm.bad_request(
+                    "Target annotator must be a member of this queue."
+                )
+            target_annotator = User.objects.filter(pk=target_uuid).first()
+            if target_annotator is None:
+                return self._gm.bad_request("Target annotator not found.")
+
+            label_comments.append(
+                {
+                    "label": label,
+                    "target_annotator": target_annotator,
+                    "comment": comment,
+                }
+            )
+
+        has_feedback = bool(notes or label_comments)
+        if (
+            review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES
+            and not has_feedback
+        ):
+            return self._gm.bad_request("Feedback is required when requesting changes.")
+        if review_action == QueueItemReviewComment.ACTION_COMMENT and not has_feedback:
+            return self._gm.bad_request("Comment text is required.")
 
         now = timezone.now()
+        workspace = getattr(request, "workspace", None)
 
-        if review_action == "approve":
+        if review_action == QueueItemReviewComment.ACTION_APPROVE:
+            open_blocking_threads = _open_blocking_review_threads(item)
+            if open_blocking_threads.exists():
+                return self._gm.bad_request(
+                    "All requested changes must be addressed before approval."
+                )
             item.status = QueueItemStatus.COMPLETED.value
             item.review_status = "approved"
-        else:
-            # Set to PENDING so the item re-enters the annotation queue
-            item.status = QueueItemStatus.PENDING.value
+            QueueItemReviewThread.objects.filter(
+                queue_item=item,
+                status__in=[
+                    QueueItemReviewThread.STATUS_OPEN,
+                    QueueItemReviewThread.STATUS_REOPENED,
+                    QueueItemReviewThread.STATUS_ADDRESSED,
+                ],
+                deleted=False,
+            ).update(
+                status=QueueItemReviewThread.STATUS_RESOLVED,
+                resolved_by=request.user,
+                resolved_at=now,
+                updated_at=now,
+            )
+        elif review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES:
+            # Keep the item unfinished so it re-enters annotator work queues,
+            # while preserving the legacy "rejected" review filter/export value.
+            item.status = QueueItemStatus.IN_PROGRESS.value
             item.review_status = "rejected"
 
-        item.reviewed_by = request.user
-        item.reviewed_at = now
-        item.review_notes = notes
-        self._clear_reservation(item)
-        item.save(
-            update_fields=[
-                "status",
-                "review_status",
-                "reviewed_by",
-                "reviewed_at",
-                "review_notes",
-                "reserved_by",
-                "reserved_at",
-                "reservation_expires_at",
-                "updated_at",
-            ]
-        )
+        if notes:
+            _create_review_thread_comment(
+                item=item,
+                reviewer=request.user,
+                action=review_action,
+                comment=notes,
+                organization=request.organization,
+                workspace=workspace,
+                # If score-specific feedback exists, the overall note is context.
+                # Otherwise it is the blocking review issue for the whole item.
+                blocking=(
+                    review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES
+                    and not label_comments
+                ),
+                status=(
+                    QueueItemReviewThread.STATUS_RESOLVED
+                    if review_action == QueueItemReviewComment.ACTION_APPROVE
+                    else QueueItemReviewThread.STATUS_OPEN
+                ),
+            )
+        elif review_action == QueueItemReviewComment.ACTION_APPROVE:
+            _create_review_thread_comment(
+                item=item,
+                reviewer=request.user,
+                action=review_action,
+                comment="Approved.",
+                organization=request.organization,
+                workspace=workspace,
+                blocking=False,
+                status=QueueItemReviewThread.STATUS_RESOLVED,
+            )
+
+        for label_comment in label_comments:
+            _create_review_thread_comment(
+                item=item,
+                reviewer=request.user,
+                label=label_comment["label"],
+                target_annotator=label_comment["target_annotator"],
+                action=review_action,
+                comment=label_comment["comment"],
+                organization=request.organization,
+                workspace=workspace,
+                blocking=(
+                    review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES
+                ),
+                status=(
+                    QueueItemReviewThread.STATUS_OPEN
+                    if review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES
+                    else QueueItemReviewThread.STATUS_RESOLVED
+                ),
+            )
+
+        if review_action != QueueItemReviewComment.ACTION_COMMENT:
+            item.reviewed_by = request.user
+            item.reviewed_at = now
+            if notes:
+                item.review_notes = notes
+            elif label_comments:
+                count = len(label_comments)
+                suffix = "score" if count == 1 else "scores"
+                item.review_notes = (
+                    f"Reviewer requested changes on {count} annotation {suffix}."
+                )
+            else:
+                item.review_notes = ""
+            self._clear_reservation(item)
+            item.save(
+                update_fields=[
+                    "status",
+                    "review_status",
+                    "reviewed_by",
+                    "reviewed_at",
+                    "review_notes",
+                    "reserved_by",
+                    "reserved_at",
+                    "reservation_expires_at",
+                    "updated_at",
+                ]
+            )
 
         # Auto-complete queue check
-        if review_action == "approve":
+        if review_action == QueueItemReviewComment.ACTION_APPROVE:
             self._maybe_auto_complete_queue(queue_id)
 
+        next_review_status = "pending_review" if item.queue.requires_review else None
         next_item = self._get_next_pending_item(
-            queue_id, exclude_id=pk, user=request.user
+            queue_id,
+            exclude_id=pk,
+            user=request.user,
+            review_status=next_review_status,
         )
         next_item_data = QueueItemSerializer(next_item).data if next_item else None
+        review_comments = _visible_review_comments(
+            item,
+            request.user,
+            is_reviewer=True,
+        )
+        review_threads = _visible_review_threads(
+            item,
+            request.user,
+            is_reviewer=True,
+        )
 
         return self._gm.success_response(
             {
                 "reviewed_item_id": str(pk),
                 "action": review_action,
                 "next_item": next_item_data,
+                "review_comments": QueueItemReviewCommentSerializer(
+                    review_comments,
+                    many=True,
+                    context={"request": request},
+                ).data,
+                "review_threads": QueueItemReviewThreadSerializer(
+                    review_threads,
+                    many=True,
+                    context={"request": request},
+                ).data,
             }
         )
 
@@ -4151,6 +5478,10 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, queue_id=None, pk=None):
         """Preview how many items match a rule (dry run)."""
+        manager_error = self._queue_manager_error(request, queue_id=queue_id)
+        if manager_error:
+            return manager_error
+
         try:
             rule = AutomationRule.objects.get(
                 pk=pk,

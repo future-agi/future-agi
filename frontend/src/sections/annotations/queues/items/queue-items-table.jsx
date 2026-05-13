@@ -50,6 +50,7 @@ const REVIEW_COLORS = {
   pending_review: "warning",
   approved: "success",
   rejected: "error",
+  resubmitted: "info",
 };
 
 function getPreviewText(preview) {
@@ -114,10 +115,13 @@ PreviewCellRenderer.propTypes = {
 
 function StatusCellRenderer({ data }) {
   if (!data) return null;
+  const workflowStatus =
+    data.workflow_status ||
+    (data.review_status === "pending_review" ? "in_review" : data.status);
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Stack direction="row" alignItems="center" spacing={0.5}>
-        <ItemStatusBadge status={data.status} />
+        <ItemStatusBadge status={workflowStatus} />
         {data.reserved_by && (
           <Tooltip title={`Reserved by ${data.reserved_by_name || "someone"}`}>
             <Iconify
@@ -442,7 +446,7 @@ AddedCellRenderer.propTypes = {
 };
 
 function ActionsCellRenderer({ data, context }) {
-  if (!data) return null;
+  if (!data || !context?.onRemoveConfirm) return null;
   return (
     <Box
       sx={{
@@ -497,117 +501,119 @@ export default function QueueItemsTable({
   onAssign,
   autoAssign = false,
   gridRef = null,
+  canManageItems = true,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
 
   const [removeTarget, setRemoveTarget] = useState(null);
 
   const columnDefs = useMemo(
-    () => [
-      {
-        field: "source_type",
-        headerName: "Source",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : SourceCellRenderer,
-      },
-      {
-        field: "preview",
-        headerName: "Preview",
-        flex: 2.5,
-        minWidth: 250,
-        cellRenderer: loading ? SkeletonCell : PreviewCellRenderer,
-      },
-      {
-        field: "status",
-        headerName: "Status",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
-      },
-      {
-        field: "latency",
-        headerName: "Latency",
-        flex: 0.8,
-        minWidth: 110,
-        cellRenderer: loading
-          ? SkeletonCell
-          : (params) => (
-              <MetricCellRenderer
-                {...params}
-                valueGetter={(preview) =>
-                  preview.latency_ms ?? preview.avg_agent_latency_ms
-                }
-                suffix="ms"
-              />
-            ),
-      },
-      {
-        field: "responseTime",
-        headerName: "Response Time",
-        flex: 0.9,
-        minWidth: 130,
-        cellRenderer: loading
-          ? SkeletonCell
-          : (params) => (
-              <MetricCellRenderer
-                {...params}
-                valueGetter={(preview) => preview.response_time_ms}
-                suffix="ms"
-              />
-            ),
-      },
-      {
-        field: "duration",
-        headerName: "Duration",
-        flex: 0.8,
-        minWidth: 110,
-        cellRenderer: loading
-          ? SkeletonCell
-          : (params) => (
-              <MetricCellRenderer
-                {...params}
-                valueGetter={(preview) => preview.duration_seconds}
-                suffix="s"
-              />
-            ),
-      },
-      {
-        field: "assignedTo",
-        headerName: "Assigned To",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : AssignedCellRenderer,
-        valueGetter: (params) => {
-          const users = params.data?.assigned_users || [];
-          return users.map((u) => u.id).join(",");
+    () =>
+      [
+        {
+          field: "source_type",
+          headerName: "Source",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : SourceCellRenderer,
         },
-      },
-      {
-        field: "review_status",
-        headerName: "Review",
-        flex: 0.8,
-        minWidth: 110,
-        cellRenderer: loading ? SkeletonCell : ReviewCellRenderer,
-      },
-      {
-        field: "created_at",
-        headerName: "Added",
-        flex: 1,
-        minWidth: 140,
-        cellRenderer: loading ? SkeletonCell : AddedCellRenderer,
-      },
-      {
-        field: "actions",
-        headerName: "",
-        width: 60,
-        maxWidth: 60,
-        cellRenderer: loading ? SkeletonCell : ActionsCellRenderer,
-        sortable: false,
-        resizable: false,
-      },
-    ],
-    [loading],
+        {
+          field: "preview",
+          headerName: "Preview",
+          flex: 2.5,
+          minWidth: 250,
+          cellRenderer: loading ? SkeletonCell : PreviewCellRenderer,
+        },
+        {
+          field: "status",
+          headerName: "Status",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+        },
+        {
+          field: "latency",
+          headerName: "Latency",
+          flex: 0.8,
+          minWidth: 110,
+          cellRenderer: loading
+            ? SkeletonCell
+            : (params) => (
+                <MetricCellRenderer
+                  {...params}
+                  valueGetter={(preview) =>
+                    preview.latency_ms ?? preview.avg_agent_latency_ms
+                  }
+                  suffix="ms"
+                />
+              ),
+        },
+        {
+          field: "responseTime",
+          headerName: "Response Time",
+          flex: 0.9,
+          minWidth: 130,
+          cellRenderer: loading
+            ? SkeletonCell
+            : (params) => (
+                <MetricCellRenderer
+                  {...params}
+                  valueGetter={(preview) => preview.response_time_ms}
+                  suffix="ms"
+                />
+              ),
+        },
+        {
+          field: "duration",
+          headerName: "Duration",
+          flex: 0.8,
+          minWidth: 110,
+          cellRenderer: loading
+            ? SkeletonCell
+            : (params) => (
+                <MetricCellRenderer
+                  {...params}
+                  valueGetter={(preview) => preview.duration_seconds}
+                  suffix="s"
+                />
+              ),
+        },
+        {
+          field: "assignedTo",
+          headerName: "Assigned To",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : AssignedCellRenderer,
+          valueGetter: (params) => {
+            const users = params.data?.assigned_users || [];
+            return users.map((u) => u.id).join(",");
+          },
+        },
+        {
+          field: "review_status",
+          headerName: "Review",
+          flex: 0.8,
+          minWidth: 110,
+          cellRenderer: loading ? SkeletonCell : ReviewCellRenderer,
+        },
+        {
+          field: "created_at",
+          headerName: "Added",
+          flex: 1,
+          minWidth: 140,
+          cellRenderer: loading ? SkeletonCell : AddedCellRenderer,
+        },
+        {
+          field: "actions",
+          headerName: "",
+          width: 60,
+          maxWidth: 60,
+          cellRenderer: loading ? SkeletonCell : ActionsCellRenderer,
+          sortable: false,
+          resizable: false,
+        },
+      ].filter((column) => canManageItems || column.field !== "actions"),
+    [loading, canManageItems],
   );
 
   const defaultColDef = useMemo(
@@ -629,13 +635,13 @@ export default function QueueItemsTable({
 
   const gridContext = useMemo(
     () => ({
-      onRemoveConfirm: (item) => setRemoveTarget(item),
+      onRemoveConfirm: canManageItems ? (item) => setRemoveTarget(item) : null,
       annotators,
       onAssign,
       autoAssign,
       gridRef,
     }),
-    [annotators, onAssign, autoAssign, gridRef],
+    [annotators, onAssign, autoAssign, gridRef, canManageItems],
   );
 
   const onCellClicked = useCallback(
@@ -707,7 +713,7 @@ export default function QueueItemsTable({
   );
 
   const handleConfirmRemove = () => {
-    if (removeTarget) {
+    if (removeTarget && onRemove) {
       onRemove(removeTarget);
       setRemoveTarget(null);
     }
@@ -735,12 +741,12 @@ export default function QueueItemsTable({
             headerHeight={42}
             pagination={false}
             animateRows={false}
-            rowSelection={{ mode: "multiRow" }}
+            rowSelection={canManageItems ? { mode: "multiRow" } : undefined}
             selectionColumnDef={selectionColumnDef}
-            suppressRowClickSelection
+            suppressRowClickSelection={canManageItems}
             rowStyle={{ cursor: onItemClick ? "pointer" : "default" }}
             onCellClicked={onCellClicked}
-            onSelectionChanged={onSelectionChanged}
+            onSelectionChanged={canManageItems ? onSelectionChanged : undefined}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
             onBodyScroll={(e) => {
@@ -817,10 +823,11 @@ QueueItemsTable.propTypes = {
   selectedIds: PropTypes.object.isRequired,
   onSelectToggle: PropTypes.func,
   onSelectAll: PropTypes.func,
-  onRemove: PropTypes.func.isRequired,
+  onRemove: PropTypes.func,
   onItemClick: PropTypes.func,
   annotators: PropTypes.array,
   onAssign: PropTypes.func,
   autoAssign: PropTypes.bool,
   gridRef: PropTypes.object,
+  canManageItems: PropTypes.bool,
 };

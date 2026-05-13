@@ -6,11 +6,13 @@ import React, {
   forwardRef,
   useImperativeHandle,
   useRef,
+  useMemo,
 } from "react";
 import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Collapse,
   Divider,
@@ -26,6 +28,7 @@ import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import LabelInput from "./label-input";
 import AnnotationHistory from "./annotation-history";
 
@@ -67,6 +70,182 @@ const Kbd = ({ children }) => (
 Kbd.propTypes = {
   children: PropTypes.node,
 };
+
+function reviewAuthorName(comment) {
+  return comment?.reviewer_name || comment?.reviewer_email || "Reviewer";
+}
+
+function formatReviewTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  let exact = String(value);
+  let relative = exact;
+  try {
+    exact = fDateTime(date) || exact;
+  } catch {
+    exact = String(value);
+  }
+  try {
+    relative = fToNowStrict(date) || exact;
+  } catch {
+    relative = exact;
+  }
+  return { relative, exact };
+}
+
+function reviewThreadStatusLabel(status) {
+  return (
+    {
+      open: "Open",
+      reopened: "Reopened",
+      addressed: "Addressed",
+      resolved: "Resolved",
+    }[status] || null
+  );
+}
+
+function reviewThreadStatusColor(status) {
+  return (
+    {
+      open: "warning",
+      reopened: "warning",
+      addressed: "info",
+      resolved: "success",
+    }[status] || "default"
+  );
+}
+
+function quietSurface(theme, opacity = 0.035) {
+  return alpha(theme.palette.text.primary, opacity);
+}
+
+function statusTone(theme, color = "warning") {
+  const paletteColor = theme.palette[color] || theme.palette.info;
+  return {
+    border: alpha(
+      paletteColor.main,
+      theme.palette.mode === "dark" ? 0.32 : 0.24,
+    ),
+    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.12 : 0.055),
+    text:
+      theme.palette.mode === "dark"
+        ? paletteColor.light || paletteColor.main
+        : paletteColor.dark || paletteColor.main,
+  };
+}
+
+function statusChipSx(color) {
+  return (theme) => {
+    const tone = statusTone(theme, color);
+    return {
+      height: 20,
+      fontSize: 11,
+      fontWeight: 700,
+      borderColor: tone.border,
+      bgcolor: tone.bg,
+      color: tone.text,
+      "& .MuiChip-label": { px: 0.75 },
+    };
+  };
+}
+
+function focusedScopeSx(isFocused) {
+  if (!isFocused) return {};
+  return {
+    outline: "2px solid",
+    outlineOffset: -2,
+    outlineColor: (theme) => theme.palette.primary.main,
+    boxShadow: (theme) =>
+      `0 0 0 5px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.28 : 0.16)}`,
+    bgcolor: (theme) =>
+      alpha(
+        theme.palette.primary.main,
+        theme.palette.mode === "dark" ? 0.1 : 0.06,
+      ),
+    scrollMarginBlock: 96,
+    transition:
+      "outline-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease",
+  };
+}
+
+function ReviewStatusChip({ comment }) {
+  const label = reviewThreadStatusLabel(comment?.thread_status);
+  if (!label) return null;
+  return (
+    <Chip
+      size="small"
+      label={label}
+      variant="outlined"
+      sx={(theme) => ({
+        ...statusChipSx(reviewThreadStatusColor(comment.thread_status))(theme),
+        height: 18,
+        fontSize: 10,
+        ml: 0.75,
+      })}
+    />
+  );
+}
+
+ReviewStatusChip.propTypes = {
+  comment: PropTypes.object,
+};
+
+function isDiscussionComment(comment) {
+  return comment?.action === "comment";
+}
+
+function isOpenReviewStatus(status) {
+  return status === "open" || status === "reopened";
+}
+
+function isBlockingReviewFeedback(comment) {
+  return comment?.blocking || comment?.action === "request_changes";
+}
+
+function isActionableReviewComment(comment) {
+  if (isDiscussionComment(comment)) return false;
+  if (comment?.thread_status && !isOpenReviewStatus(comment.thread_status)) {
+    return false;
+  }
+  return isBlockingReviewFeedback(comment);
+}
+
+function reviewCommentTargetLabel(comment) {
+  const parts = [];
+  if (comment?.label_name) parts.push(comment.label_name);
+  if (comment?.target_annotator_name || comment?.target_annotator_email) {
+    parts.push(comment.target_annotator_name || comment.target_annotator_email);
+  }
+  return parts.join(" / ") || "Whole item";
+}
+
+function normalizeMentionMarkdown(text) {
+  return String(text || "").replace(
+    /@\[([^[\]]{1,100})\]\(user:[^)]+\)/g,
+    "@$1",
+  );
+}
+
+function groupReviewCommentsByLabel(reviewComments) {
+  const map = new Map();
+  for (const comment of reviewComments || []) {
+    if (isDiscussionComment(comment)) continue;
+    const labelId = comment?.label_id;
+    if (!labelId) continue;
+    const key = String(labelId);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(comment);
+  }
+  return map;
+}
+
+function reviewCommentVisibleToAnnotator(comment, currentUserId) {
+  if (!comment?.target_annotator_id) return true;
+  if (!currentUserId) return false;
+  return String(comment.target_annotator_id) === String(currentUserId);
+}
 
 function ShortcutsOverlay({ onClose }) {
   return (
@@ -161,11 +340,14 @@ const LabelPanel = forwardRef(function LabelPanel(
     readOnly = false,
     readOnlyReason = null,
     reviewFeedback = "",
+    reviewComments = [],
     annotators = null,
     viewingAnnotatorId = null,
     currentUserId = null,
+    focusedCommentScope = null,
     onViewingAnnotatorChange,
     isAnnotatorSwitchPending = false,
+    submitLabel = "Submit & Next",
   },
   ref,
 ) {
@@ -176,6 +358,34 @@ const LabelPanel = forwardRef(function LabelPanel(
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [errorLabels, setErrorLabels] = useState(new Set());
+  const visibleReviewComments = useMemo(
+    () =>
+      (reviewComments || []).filter((comment) =>
+        reviewCommentVisibleToAnnotator(comment, currentUserId),
+      ),
+    [reviewComments, currentUserId],
+  );
+  const reviewCommentsByLabel = useMemo(
+    () => groupReviewCommentsByLabel(visibleReviewComments),
+    [visibleReviewComments],
+  );
+  const overallReviewComments = useMemo(
+    () =>
+      visibleReviewComments.filter(
+        (comment) =>
+          !isDiscussionComment(comment) &&
+          !comment?.label_id &&
+          !isActionableReviewComment(comment),
+      ),
+    [visibleReviewComments],
+  );
+  const actionableReviewComments = useMemo(
+    () => visibleReviewComments.filter(isActionableReviewComment),
+    [visibleReviewComments],
+  );
+  const hasReviewCommentTrail = (reviewComments || []).some(
+    (comment) => !isDiscussionComment(comment),
+  );
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
@@ -450,14 +660,136 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Box>
       )}
 
-      {reviewFeedback && (
+      {actionableReviewComments.length > 0 && (
+        <Box
+          sx={(theme) => {
+            const tone = statusTone(theme, "warning");
+            return {
+              mb: 2,
+              p: 1.25,
+              border: "1px solid",
+              borderColor: tone.border,
+              borderRadius: 0.75,
+              bgcolor: tone.bg,
+            };
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <Iconify
+              icon="solar:flag-bold"
+              width={18}
+              sx={(theme) => ({ color: statusTone(theme, "warning").text })}
+            />
+            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+              Feedback to address
+            </Typography>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={actionableReviewComments.length}
+              sx={(theme) => statusChipSx("warning")(theme)}
+            />
+          </Stack>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mt: 0.5 }}
+          >
+            Update the matching labels, then submit for review. Open feedback is
+            marked addressed automatically.
+          </Typography>
+          <Stack spacing={0.75} sx={{ mt: 1 }}>
+            {actionableReviewComments.map((comment) => {
+              const timestamp = formatReviewTime(comment?.created_at);
+              return (
+                <Box
+                  key={comment.id || comment.created_at}
+                  sx={{
+                    p: 1,
+                    borderRadius: 0.75,
+                    bgcolor: "background.paper",
+                    border: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={reviewCommentTargetLabel(comment)}
+                      sx={(theme) => ({
+                        ...statusChipSx("warning")(theme),
+                        maxWidth: "100%",
+                      })}
+                    />
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ ml: "auto" }}
+                    >
+                      {reviewAuthorName(comment)}
+                    </Typography>
+                    {timestamp && (
+                      <Tooltip title={timestamp.exact}>
+                        <Typography variant="caption" color="text.disabled">
+                          {timestamp.relative}
+                        </Typography>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    {normalizeMentionMarkdown(comment.comment)}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Stack>
+        </Box>
+      )}
+
+      {overallReviewComments.length > 0 ? (
+        <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+          <Typography variant="caption" fontWeight={700} display="block">
+            Reviewer feedback
+          </Typography>
+          <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+            {overallReviewComments.map((comment) => {
+              const timestamp = formatReviewTime(comment?.created_at);
+              return (
+                <Box key={comment.id || comment.created_at}>
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Typography variant="caption" color="text.secondary">
+                      {reviewAuthorName(comment)}
+                    </Typography>
+                    <ReviewStatusChip comment={comment} />
+                    {timestamp && (
+                      <Tooltip title={timestamp.exact}>
+                        <Typography
+                          variant="caption"
+                          color="text.disabled"
+                          sx={{ ml: "auto" }}
+                        >
+                          {timestamp.relative}
+                        </Typography>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                  <Typography variant="body2">
+                    {normalizeMentionMarkdown(comment.comment)}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Stack>
+        </Alert>
+      ) : reviewFeedback && !hasReviewCommentTrail ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
           <Typography variant="caption" fontWeight={700} display="block">
             Reviewer feedback
           </Typography>
           <Typography variant="body2">{reviewFeedback}</Typography>
         </Alert>
-      )}
+      ) : null}
 
       {/* Shortcuts toggle + Instructions row */}
       <Stack
@@ -565,6 +897,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             size="small"
             value={viewingAnnotatorId || ""}
             onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
+            inputProps={{ "aria-label": "Viewing annotator" }}
             sx={{
               borderRadius: 0.5,
               "& .MuiSelect-select": { py: 1 },
@@ -616,7 +949,7 @@ const LabelPanel = forwardRef(function LabelPanel(
       <Stack
         spacing={2}
         sx={{
-          flex: 1,
+          flexShrink: 0,
           ...((readOnly || isAnnotatorSwitchPending) && {
             pointerEvents: "none",
             opacity: isAnnotatorSwitchPending ? 0.4 : 0.7,
@@ -626,11 +959,22 @@ const LabelPanel = forwardRef(function LabelPanel(
       >
         {labels.map((ql, i) => {
           const labelId = ql.label_id;
+          const labelReviewComments =
+            reviewCommentsByLabel.get(String(labelId)) || [];
+          const labelFocused =
+            focusedCommentScope === `label:${labelId}` ||
+            String(focusedCommentScope || "").startsWith(`${labelId}:`);
           return (
             <Box
               key={ql.id}
+              data-review-label-id={labelId}
+              data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
-              sx={{ cursor: "default" }}
+              sx={{
+                borderRadius: 0.75,
+                cursor: "default",
+                ...focusedScopeSx(labelFocused),
+              }}
             >
               <LabelInput
                 label={{
@@ -658,11 +1002,83 @@ const LabelPanel = forwardRef(function LabelPanel(
                     : undefined
                 }
               />
+              {labelReviewComments.length > 0 && (
+                <Box
+                  sx={(theme) => {
+                    const tone = statusTone(theme, "warning");
+                    return {
+                      mt: 1,
+                      p: 1.25,
+                      borderRadius: 0.5,
+                      border: "1px solid",
+                      borderColor: tone.border,
+                      bgcolor: tone.bg,
+                    };
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    fontWeight={700}
+                    sx={(theme) => ({
+                      display: "block",
+                      mb: 0.75,
+                      color: statusTone(theme, "warning").text,
+                    })}
+                  >
+                    Reviewer feedback
+                  </Typography>
+                  <Stack spacing={0.75}>
+                    {labelReviewComments.map((comment) => {
+                      const timestamp = formatReviewTime(comment?.created_at);
+                      return (
+                        <Box key={comment.id || comment.created_at}>
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.5}
+                          >
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {reviewAuthorName(comment)}
+                            </Typography>
+                            <ReviewStatusChip comment={comment} />
+                            {timestamp && (
+                              <Tooltip title={timestamp.exact}>
+                                <Typography
+                                  variant="caption"
+                                  color="text.disabled"
+                                  sx={{ ml: "auto" }}
+                                >
+                                  {timestamp.relative}
+                                </Typography>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                          <Typography variant="body2">
+                            {normalizeMentionMarkdown(comment.comment)}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              )}
             </Box>
           );
         })}
 
-        <Box>
+        <Box
+          data-review-item-summary="true"
+          data-comment-focus={
+            focusedCommentScope === "item" ? "true" : undefined
+          }
+          sx={{
+            borderRadius: 0.75,
+            ...focusedScopeSx(focusedCommentScope === "item"),
+          }}
+        >
           <Typography
             variant="caption"
             color="text.secondary"
@@ -694,8 +1110,34 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Button
               variant="contained"
               fullWidth
-              color="primary"
-              sx={{ mt: 2 }}
+              color="inherit"
+              sx={{
+                mt: 2,
+                borderRadius: 0.75,
+                minHeight: 42,
+                fontWeight: 800,
+                bgcolor: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? theme.palette.common.white
+                    : theme.palette.grey[900],
+                color: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? theme.palette.grey[900]
+                    : theme.palette.common.white,
+                boxShadow: "none",
+                "&:hover": {
+                  bgcolor: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? alpha(theme.palette.common.white, 0.92)
+                      : theme.palette.grey[800],
+                  boxShadow: (theme) =>
+                    `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+                },
+                "&.Mui-disabled": {
+                  color: "text.disabled",
+                  bgcolor: (theme) => quietSurface(theme, 0.08),
+                },
+              }}
               onClick={handleSubmit}
               disabled={isPending || !hasValues}
               startIcon={
@@ -704,7 +1146,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                 ) : null
               }
             >
-              Submit & Next
+              {submitLabel}
             </Button>
           </span>
         </Tooltip>
@@ -726,11 +1168,14 @@ LabelPanel.propTypes = {
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,
   reviewFeedback: PropTypes.string,
+  reviewComments: PropTypes.array,
   annotators: PropTypes.array,
   viewingAnnotatorId: PropTypes.string,
   currentUserId: PropTypes.string,
+  focusedCommentScope: PropTypes.string,
   onViewingAnnotatorChange: PropTypes.func,
   isAnnotatorSwitchPending: PropTypes.bool,
+  submitLabel: PropTypes.string,
 };
 
 export default LabelPanel;

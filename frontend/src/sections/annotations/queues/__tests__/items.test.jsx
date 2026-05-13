@@ -112,6 +112,7 @@ describe("ItemStatusBadge", () => {
   it.each([
     ["pending", "Pending"],
     ["in_progress", "In Progress"],
+    ["in_review", "In Review"],
     ["completed", "Completed"],
     ["skipped", "Skipped"],
   ])("renders %s status as '%s'", (status, label) => {
@@ -162,6 +163,16 @@ describe("QueueItemsEmpty", () => {
     render(<QueueItemsEmpty onAddClick={onClick} />);
     await user.click(screen.getByRole("button", { name: /add items/i }));
     expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("hides add action when the user cannot manage queue items", () => {
+    render(<QueueItemsEmpty />);
+    expect(
+      screen.getByText("A queue manager can add items to this queue."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add items/i }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -238,6 +249,33 @@ describe("QueueItemsTable", () => {
     render(<QueueItemsTable {...tableProps} />);
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
+  });
+
+  it("shows pending review items as in review in the workflow status", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        data={[
+          {
+            ...MOCK_ITEMS[0],
+            status: "in_progress",
+            review_status: "pending_review",
+          },
+        ]}
+        totalCount={1}
+      />,
+    );
+    expect(screen.getByText("In Review")).toBeInTheDocument();
+  });
+
+  it("hides selection and remove controls for non-managers", () => {
+    render(<QueueItemsTable {...tableProps} canManageItems={false} />);
+    expect(screen.queryByLabelText("select-all")).not.toBeInTheDocument();
+    expect(
+      screen
+        .queryAllByTestId("iconify")
+        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+    ).toBe(false);
   });
 
   it("shows assigned-to avatars or assign chip", () => {

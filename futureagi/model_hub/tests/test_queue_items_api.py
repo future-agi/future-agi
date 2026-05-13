@@ -13,7 +13,13 @@ import uuid
 import pytest
 from rest_framework import status
 
-from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+from model_hub.models.annotation_queues import (
+    AnnotationQueue,
+    AnnotationQueueAnnotator,
+    QueueItem,
+    QueueItemReviewThread,
+)
+from model_hub.models.choices import AnnotatorRole
 from model_hub.models.develop_dataset import Dataset, Row
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -33,8 +39,19 @@ def bulk_remove_url(queue_id):
     return f"{QUEUE_URL}{queue_id}/items/bulk-remove/"
 
 
+def assign_items_url(queue_id):
+    return f"{QUEUE_URL}{queue_id}/items/assign/"
+
+
 def item_detail_url(queue_id, item_id):
     return f"{QUEUE_URL}{queue_id}/items/{item_id}/"
+
+
+def demote_queue_creator_to_annotator(queue_id, user):
+    membership = AnnotationQueueAnnotator.objects.get(queue_id=queue_id, user=user)
+    membership.role = AnnotatorRole.ANNOTATOR.value
+    membership.roles = [AnnotatorRole.ANNOTATOR.value]
+    membership.save(update_fields=["role", "roles", "updated_at"])
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +88,6 @@ def dataset_with_rows(organization, workspace):
 
 @pytest.mark.django_db
 class TestAddItems:
-
     def test_add_dataset_rows(self, auth_client, queue, dataset_with_rows):
         """TC-1: Add dataset rows to queue."""
         _, rows = dataset_with_rows
@@ -124,6 +140,21 @@ class TestAddItems:
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_add_items_requires_queue_manager(
+        self, auth_client, queue, dataset_with_rows, user
+    ):
+        """Annotators can work items, but only managers can add items."""
+        _, rows = dataset_with_rows
+        demote_queue_creator_to_annotator(queue, user)
+
+        resp = auth_client.post(
+            add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
 
 # ---------------------------------------------------------------------------
 # 2A.2 – List Items
@@ -132,7 +163,6 @@ class TestAddItems:
 
 @pytest.mark.django_db
 class TestListItems:
-
     def _add_rows(self, auth_client, queue, rows):
         items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
         auth_client.post(add_items_url(queue), {"items": items}, format="json")
@@ -152,6 +182,50 @@ class TestListItems:
         resp = auth_client.get(items_url(queue), {"status": "pending"})
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3  # All are pending by default
+
+    def test_filter_by_in_review_workflow_status(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """status=in_review maps to review_status=pending_review."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        item.status = "in_progress"
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+
+        resp = auth_client.get(items_url(queue), {"status": "in_review"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["workflow_status"] == "in_review"
+        assert resp.data["results"][0]["workflow_status_label"] == "In Review"
+
+    def test_filter_by_resubmitted_workflow_status(
+        self, auth_client, queue, dataset_with_rows, user, organization
+    ):
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        item.status = "in_progress"
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            blocking=True,
+            status=QueueItemReviewThread.STATUS_ADDRESSED,
+            organization=organization,
+        )
+
+        resp = auth_client.get(items_url(queue), {"status": "resubmitted"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["workflow_status"] == "resubmitted"
+        assert resp.data["results"][0]["workflow_status_label"] == "Resubmitted"
 
     def test_status_all_does_not_filter_items(
         self, auth_client, queue, dataset_with_rows
@@ -179,7 +253,6 @@ class TestListItems:
 
 @pytest.mark.django_db
 class TestRemoveItems:
-
     def _add_and_get_item_ids(self, auth_client, queue, rows):
         items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
         auth_client.post(add_items_url(queue), {"items": items}, format="json")
@@ -207,6 +280,34 @@ class TestRemoveItems:
         list_resp = auth_client.get(items_url(queue))
         assert list_resp.data["count"] == 1
 
+    def test_manage_item_actions_require_queue_manager(
+        self, auth_client, queue, dataset_with_rows, user
+    ):
+        """Annotators cannot delete, bulk-remove, or assign queue items."""
+        _, rows = dataset_with_rows
+        item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
+        demote_queue_creator_to_annotator(queue, user)
+
+        delete_resp = auth_client.delete(item_detail_url(queue, item_ids[0]))
+        bulk_resp = auth_client.post(
+            bulk_remove_url(queue),
+            {"item_ids": item_ids[:1]},
+            format="json",
+        )
+        assign_resp = auth_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(user.id)],
+                "action": "set",
+            },
+            format="json",
+        )
+
+        assert delete_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert bulk_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert assign_resp.status_code == status.HTTP_403_FORBIDDEN
+
 
 # ---------------------------------------------------------------------------
 # 2A.4 – Model Validation
@@ -215,7 +316,6 @@ class TestRemoveItems:
 
 @pytest.mark.django_db
 class TestQueueItemModelValidation:
-
     def test_create_item_matching_fk(
         self, organization, workspace, queue, dataset_with_rows, auth_client
     ):

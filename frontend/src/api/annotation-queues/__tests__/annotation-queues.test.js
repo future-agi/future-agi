@@ -12,10 +12,16 @@ import {
   annotateKeys,
   automationRuleKeys,
   useCreateAutomationRule,
+  useCreateDiscussionComment,
   useAnnotateDetail,
   useCompleteItem,
+  useNextItem,
   useQueueItemsForSource,
+  useReopenDiscussionThread,
+  useReviewItem,
+  useResolveDiscussionThread,
   useSubmitAnnotations,
+  useToggleDiscussionReaction,
 } from "../annotation-queues";
 
 vi.mock("src/utils/axios", () => ({
@@ -149,6 +155,16 @@ describe("Annotation Queues API", () => {
       ]);
     });
 
+    it("generates filtered nextItem key", () => {
+      expect(
+        annotateKeys.nextItem("q-1", { review_status: "pending_review" }),
+      ).toEqual([
+        "annotate-next-item",
+        "q-1",
+        { review_status: "pending_review" },
+      ]);
+    });
+
     it("generates annotations key", () => {
       expect(annotateKeys.annotations("q-1", "item-1")).toEqual([
         "item-annotations",
@@ -198,6 +214,52 @@ describe("Annotation Queues API", () => {
       expect(axios.get).toHaveBeenCalledWith(
         "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
         { params: { annotator_id: "user-2" } },
+      );
+    });
+  });
+
+  describe("useNextItem", () => {
+    it("passes review mode filters", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1" } } },
+      });
+
+      const { result } = renderHook(
+        () => useNextItem("queue-1", { reviewStatus: "pending_review" }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        { params: { review_status: "pending_review" } },
+      );
+    });
+
+    it("passes annotator mode filters", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1" } } },
+      });
+
+      const { result } = renderHook(
+        () => useNextItem("queue-1", { excludeReviewStatus: "pending_review" }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        { params: { exclude_review_status: "pending_review" } },
       );
     });
   });
@@ -280,6 +342,33 @@ describe("Annotation Queues API", () => {
   });
 
   describe("useCompleteItem", () => {
+    it("sends annotator-mode next-item filter when completing", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { next_item: null } },
+      });
+
+      const { result } = renderHook(() => useCompleteItem(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        exclude: "item-1",
+        excludeReviewStatus: "pending_review",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/complete/",
+          {
+            exclude: "item-1",
+            exclude_review_status: "pending_review",
+          },
+        );
+      });
+    });
+
     it("invalidates annotate detail and annotation history after complete", async () => {
       axios.post.mockResolvedValueOnce({
         data: { result: { next_item: null } },
@@ -303,6 +392,141 @@ describe("Annotation Queues API", () => {
         expect(invalidateSpy).toHaveBeenCalledWith({
           queryKey: annotateKeys.annotations("queue-1", "item-1"),
         });
+      });
+    });
+  });
+
+  describe("useReviewItem", () => {
+    it("posts overall and label-level reviewer feedback", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result } = renderHook(() => useReviewItem(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        action: "request_changes",
+        notes: "overall feedback",
+        labelComments: [
+          {
+            label_id: "label-1",
+            target_annotator_id: "user-1",
+            comment: "fix this label",
+          },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/review/",
+          {
+            action: "request_changes",
+            notes: "overall feedback",
+            label_comments: [
+              {
+                label_id: "label-1",
+                target_annotator_id: "user-1",
+                comment: "fix this label",
+              },
+            ],
+          },
+        );
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith("Changes requested", {
+          variant: "warning",
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.detail("queue-1", "item-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.annotations("queue-1", "item-1"),
+        });
+      });
+    });
+  });
+
+  describe("discussion hooks", () => {
+    it("posts root comments, scoped replies, and mentions", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: {} } });
+      const { result } = renderHook(() => useCreateDiscussionComment(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        threadId: "thread-1",
+        labelId: "label-1",
+        comment: "@Narda please check",
+        mentionedUserIds: ["user-2"],
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/",
+          {
+            comment: "@Narda please check",
+            thread_id: "thread-1",
+            label_id: "label-1",
+            mentioned_user_ids: ["user-2"],
+          },
+        );
+      });
+    });
+
+    it("posts resolve, reopen, and reaction actions", async () => {
+      axios.post.mockResolvedValue({ data: { result: {} } });
+
+      const { result: resolveResult } = renderHook(
+        () => useResolveDiscussionThread(),
+        { wrapper: createQueryWrapper() },
+      );
+      resolveResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        threadId: "thread-1",
+      });
+
+      const { result: reopenResult } = renderHook(
+        () => useReopenDiscussionThread(),
+        { wrapper: createQueryWrapper() },
+      );
+      reopenResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        threadId: "thread-1",
+      });
+
+      const { result: reactionResult } = renderHook(
+        () => useToggleDiscussionReaction(),
+        { wrapper: createQueryWrapper() },
+      );
+      reactionResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+        emoji: "👍",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/thread-1/resolve/",
+          {},
+        );
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/thread-1/reopen/",
+          {},
+        );
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/reaction/",
+          { emoji: "👍" },
+        );
       });
     });
   });
