@@ -139,8 +139,8 @@ export const DynamicColumns = [
 export const replaceColumnIdWithName = (text, allColumns) => {
   let updatedText = text;
   allColumns.forEach(({ headerName, field }) => {
-    const pattern = new RegExp(`{{\\s*${field}\\s*}}`, "g");
-    updatedText = updatedText.replace(pattern, `{{${headerName}}}`);
+    const pattern = new RegExp(`{{\\s*${field}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+    updatedText = updatedText.replace(pattern, `{{${headerName}$1}}`);
   });
 
   return updatedText;
@@ -149,9 +149,9 @@ export const replaceColumnIdWithName = (text, allColumns) => {
 export const replaceColumnNameWithId = (text, allColumns) => {
   let newText = text;
   allColumns.forEach(({ headerName, field }) => {
-    const pattern = new RegExp(`{{${headerName}}}`, "g");
+    const pattern = new RegExp(`{{${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)}}`, "g");
     if (newText && newText.length) {
-      newText = newText.replace(pattern, `{{${field}}}`);
+      newText = newText.replace(pattern, `{{${field}$1}}`);
     }
   });
   return newText;

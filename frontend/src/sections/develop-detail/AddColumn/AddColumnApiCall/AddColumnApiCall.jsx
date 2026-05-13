@@ -22,7 +22,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useAddColumnApiCallStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import { useDatasetColumnConfig, useGetJsonColumnSchema } from "src/api/develop/develop-detail";
 import { ShowComponent } from "src/components/show";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { transformDynamicColumnConfig } from "../common";
@@ -69,8 +69,9 @@ export const AddColumnApiCallChild = ({
   const queryClient = useQueryClient();
 
   const allColumns = useDatasetColumnConfig(dataset);
+  const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset);
 
-  const { control, handleSubmit, reset } = useForm({
+  const { control, handleSubmit, reset, setError } = useForm({
     defaultValues: getDefaultValue(),
     resolver: zodResolver(
       getAddColumnApiCallValidation(allColumns, !!onFormSubmit, !!editId),
@@ -160,7 +161,27 @@ export const AddColumnApiCallChild = ({
     };
   };
 
+  // If body is a bare {{variable}}, only allow a top-level JSON/array column
+  // (no dot-paths — input.prompt could resolve to a plain string).
+  const validateBodyVariable = (formValues) => {
+    const body = formValues?.config?.body;
+    if (typeof body !== "string") return true;
+    const m = body.trim().match(/^\{\{(.+)\}\}$/);
+    if (!m) return true;
+    const ref = m[1].trim();
+    // Must be an exact column UUID (36 chars, no trailing path)
+    const col = allColumns.find((c) => c.field === ref);
+    if (col && ["json", "array"].includes(col.dataType)) return true;
+    setError("config.body", {
+      type: "manual",
+      message:
+        "This variable is not a JSON or array column. Wrap it in a JSON object, e.g. {\"key\": \"{{variable}}\"}",
+    });
+    return false;
+  };
+
   const onSubmit = (formValues) => {
+    if (!validateBodyVariable(formValues)) return;
     if (editId) {
       updateColumn({
         config: { ...transformFormToApi(formValues) },
@@ -176,6 +197,7 @@ export const AddColumnApiCallChild = ({
   };
 
   const handlePreview = handleSubmit((formValues) => {
+    if (!validateBodyVariable(formValues)) return;
     if (!onFormSubmit) {
       preview(transformFormToApi(formValues));
     }
@@ -251,6 +273,7 @@ export const AddColumnApiCallChild = ({
             control={control}
             contentFieldName="config.url"
             allColumns={allColumns}
+            jsonSchemas={jsonSchemas}
             placeholder="Enter api endpoint"
             multiline={false}
             label="Add API Endpoint"
@@ -284,6 +307,7 @@ export const AddColumnApiCallChild = ({
                 control={control}
                 fieldName="config.params"
                 allColumns={allColumns}
+                jsonSchemas={jsonSchemas}
               />
             </AccordionDetails>
           </Accordion>
@@ -298,6 +322,7 @@ export const AddColumnApiCallChild = ({
                 control={control}
                 fieldName="config.headers"
                 allColumns={allColumns}
+                jsonSchemas={jsonSchemas}
               />
             </AccordionDetails>
           </Accordion>
@@ -310,6 +335,7 @@ export const AddColumnApiCallChild = ({
             <AccordionDetails sx={{ padding: 0 }}>
               <RequestBody
                 allColumns={allColumns}
+                jsonSchemas={jsonSchemas}
                 contentFieldName="config.body"
                 control={control}
               />

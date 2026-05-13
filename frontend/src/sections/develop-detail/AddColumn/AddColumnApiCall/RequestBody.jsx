@@ -25,6 +25,7 @@ const RequestBody = ({
   control,
   contentFieldName,
   allColumns,
+  jsonSchemas = {},
   placeholder,
   showHelper = true,
   multiline = true,
@@ -55,11 +56,16 @@ const RequestBody = ({
   const errorMessage = _.get(errors, `${contentFieldName}.message`) || "";
   const isError = !!errorMessage;
 
-  // Valid column names for highlighting
-  const columnNameSet = useMemo(
-    () => new Set(allColumns.map((c) => c.headerName)),
-    [allColumns],
-  );
+  // Valid column names (including JSON paths) for highlighting
+  const columnNameSet = useMemo(() => {
+    const names = new Set(allColumns.map((c) => c.headerName));
+    allColumns.forEach((col) => {
+      jsonSchemas?.[col?.field]?.keys?.forEach((path) => {
+        names.add(`${col.headerName}.${path}`);
+      });
+    });
+    return names;
+  }, [allColumns, jsonSchemas]);
 
   // Highlighted text: green for valid variables, red for invalid/incomplete
   const highlightedContent = useMemo(() => {
@@ -100,22 +106,29 @@ const RequestBody = ({
     return textBeforeCursor.substring(idx + 2, selectionStart);
   }, [value]);
 
-  // Filtered column options for dropdown
+  // Filtered column options for dropdown (including JSON dot-notation paths)
   const columnOptions = useMemo(() => {
-    return allColumns.reduce((filtered, column) => {
-      if (
-        column?.headerName
-          ?.toLowerCase()
-          .startsWith(searchText.toLowerCase())
-      ) {
-        filtered.push({
-          label: column.headerName,
-          value: `{{${column.headerName}}}`,
-        });
+    const options = [];
+    const lower = searchText.toLowerCase();
+
+    allColumns.forEach((column) => {
+      const name = column?.headerName;
+      if (!name) return;
+
+      if (name.toLowerCase().startsWith(lower)) {
+        options.push({ label: name, value: `{{${name}}}` });
       }
-      return filtered;
-    }, []);
-  }, [allColumns, searchText]);
+
+      jsonSchemas?.[column?.field]?.keys?.forEach((path) => {
+        const fullPath = `${name}.${path}`;
+        if (fullPath.toLowerCase().startsWith(lower)) {
+          options.push({ label: fullPath, value: `{{${fullPath}}}` });
+        }
+      });
+    });
+
+    return options;
+  }, [allColumns, jsonSchemas, searchText]);
 
   const onCloseDropdown = useCallback(() => {
     setShowDropdown(false);
@@ -426,6 +439,7 @@ RequestBody.propTypes = {
   control: PropTypes.object,
   contentFieldName: PropTypes.string,
   allColumns: PropTypes.array,
+  jsonSchemas: PropTypes.object,
   placeholder: PropTypes.string,
   showHelper: PropTypes.bool,
   multiline: PropTypes.bool,
