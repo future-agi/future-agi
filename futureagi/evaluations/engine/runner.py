@@ -152,7 +152,7 @@ def run_eval(request: EvalRequest) -> EvalResult:
     # 3.5. Preprocess inputs (e.g., compute embeddings for CLIP/FID)
     from evaluations.engine.preprocessing import preprocess_inputs
 
-    run_params = preprocess_inputs(eval_template.name, run_params)
+    run_params = preprocess_inputs(eval_type_id, run_params)
 
     # 4. Execute
     start_time = time.time()
