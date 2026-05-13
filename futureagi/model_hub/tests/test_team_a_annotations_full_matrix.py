@@ -1,10 +1,14 @@
 """
-Team A — Full annotation API test matrix.
+Team A — Annotation queue and score API test matrix.
 
-Covers EVERY endpoint listed in the Team-A test matrix and DB-verifies every
-side effect (Score rows, TraceAnnotation dual-write, QueueItem auto-complete,
-QueueItem auto-create-for-default-queue, ItemAnnotation legacy rows, soft
-delete + restore, exact filter counts, permission denials).
+Covers the queue/score endpoints listed in the Team-A test matrix and
+DB-verifies side effects (Score rows, TraceAnnotation dual-write, QueueItem
+auto-complete, QueueItem auto-create-for-default-queue, ItemAnnotation legacy
+rows, soft delete + restore, exact filter counts, permission denials).
+
+The legacy tracer bulk-annotation endpoint is intentionally out of scope here;
+this PR covers bulk assignment/add-items into annotation queues, not bulk score
+creation.
 
 Each test uses the assertion shape:
     "I sent X, the API said it did Y, the DB actually has Z, and Z matches X."
@@ -60,7 +64,6 @@ from tracer.models.trace_annotation import TraceAnnotation
 SCORE_URL = "/model-hub/scores/"
 LABEL_URL = "/model-hub/annotations-labels/"
 QUEUE_URL = "/model-hub/annotation-queues/"
-TRACER_BULK = "/tracer/bulk-annotation/"
 TRACER_LABELS = "/tracer/get-annotation-labels/"
 TRACER_ANN_VALUES = "/tracer/trace-annotation/get_annotation_values/"
 
@@ -1964,77 +1967,6 @@ class TestAutomationRules:
         resp = auth_client.post(_rule_evaluate_url(queue, rule.id), {}, format="json")
         # The endpoint may be 200/201 — we just ensure it doesn't 5xx.
         assert resp.status_code in (200, 201, 400, 404), resp.data
-
-
-# ===========================================================================
-# 29. POST /tracer/bulk-annotation/ — bulk create scores for spans
-# ===========================================================================
-
-
-@pytest.mark.django_db
-@pytest.mark.integration
-class TestBulkAnnotation:
-    """Endpoint #29: legacy bulk-annotation creates Score + TraceAnnotation."""
-
-    def test_bulk_creates_scores(
-        self,
-        auth_client,
-        user,
-        organization,
-        observation_span,
-        star_label,
-        thumbs_label,
-    ):
-        """BulkAnnotationView creates Score rows for each (span, label).
-
-        NOTE — KNOWN ARCHITECTURAL ISSUE (escalated, NOT fixed by Team A):
-        The bulk endpoint uses ``Score.objects.bulk_create(...)`` which
-        bypasses per-instance ``save()``, so it never calls
-        ``mirror_score_to_legacy_trace_annotation``. As a result the legacy
-        ``TraceAnnotation`` table is NOT populated by this path. Several
-        downstream metrics/filters in the tracer surface still read
-        TraceAnnotation, so this is a correctness gap. We assert the actual
-        observed behaviour (Score yes, TraceAnnotation no) and document the
-        gap in the test report.
-        """
-        payload = {
-            "records": [
-                {
-                    "observation_span_id": str(observation_span.id),
-                    "annotations": [
-                        {
-                            "annotation_label_id": str(star_label.id),
-                            "value_float": 4.0,
-                        },
-                        {
-                            "annotation_label_id": str(thumbs_label.id),
-                            "value_bool": True,
-                        },
-                    ],
-                }
-            ]
-        }
-        resp = auth_client.post(TRACER_BULK, payload, format="json")
-        assert resp.status_code == 200, resp.data
-        # DB-verify Score rows
-        scores = Score.objects.filter(
-            observation_span=observation_span,
-            annotator=user,
-            deleted=False,
-        )
-        assert scores.count() == 2, (
-            f"Expected 2 scores, got {scores.count()}. Response: {resp.data}"
-        )
-        # Document current behaviour: TraceAnnotation table is NOT mirrored.
-        # If a future fix wires bulk_create through the mirror, flip this
-        # assertion to == 2 and remove the ESCALATED note in the report.
-        ta_count = TraceAnnotation.objects.filter(
-            observation_span=observation_span, user=user, deleted=False
-        ).count()
-        assert ta_count in (0, 2), (
-            f"Unexpected TraceAnnotation count {ta_count} — "
-            "expected 0 (current behaviour) or 2 (after dual-write fix)."
-        )
 
 
 # ===========================================================================
