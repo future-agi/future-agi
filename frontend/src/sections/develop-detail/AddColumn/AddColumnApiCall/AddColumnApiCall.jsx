@@ -71,7 +71,7 @@ export const AddColumnApiCallChild = ({
   const allColumns = useDatasetColumnConfig(dataset);
   const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset);
 
-  const { control, handleSubmit, reset, setError } = useForm({
+  const { control, handleSubmit, reset, setError, getValues } = useForm({
     defaultValues: getDefaultValue(),
     resolver: zodResolver(
       getAddColumnApiCallValidation(allColumns, !!onFormSubmit, !!editId),
@@ -161,6 +161,32 @@ export const AddColumnApiCallChild = ({
     };
   };
 
+  // Block columns whose name contains a dot (dot is the JSON path separator).
+  // Uses raw form values so we have display names + array indices for setError.
+  const validateDotInColumnNames = () => {
+    const dotCols = allColumns.filter((c) => c.headerName?.includes("."));
+    if (!dotCols.length) return true;
+    const raw = getValues()?.config || {};
+    const find = (t) => dotCols.find((c) => t?.includes(c.headerName));
+    const msg = (n) => `"${n}" contains a dot — rename the column to use it as a variable.`;
+
+    let col = find(raw.url);
+    if (col) { setError("config.url", { type: "manual", message: msg(col.headerName) }); return false; }
+    col = find(raw.body);
+    if (col) { setError("config.body", { type: "manual", message: msg(col.headerName) }); return false; }
+    for (let i = 0; i < (raw.params || []).length; i++) {
+      if (raw.params[i]?.type !== "Variable") continue;
+      col = find(raw.params[i].value);
+      if (col) { setError(`config.params.${i}.value`, { type: "manual", message: msg(col.headerName) }); return false; }
+    }
+    for (let i = 0; i < (raw.headers || []).length; i++) {
+      if (raw.headers[i]?.type !== "Variable") continue;
+      col = find(raw.headers[i].value);
+      if (col) { setError(`config.headers.${i}.value`, { type: "manual", message: msg(col.headerName) }); return false; }
+    }
+    return true;
+  };
+
   // If body is a bare {{variable}}, only allow a top-level JSON/array column
   // (no dot-paths — input.prompt could resolve to a plain string).
   const validateBodyVariable = (formValues) => {
@@ -181,6 +207,7 @@ export const AddColumnApiCallChild = ({
   };
 
   const onSubmit = (formValues) => {
+    if (!validateDotInColumnNames()) return;
     if (!validateBodyVariable(formValues)) return;
     if (editId) {
       updateColumn({
@@ -197,6 +224,7 @@ export const AddColumnApiCallChild = ({
   };
 
   const handlePreview = handleSubmit((formValues) => {
+    if (!validateDotInColumnNames()) return;
     if (!validateBodyVariable(formValues)) return;
     if (!onFormSubmit) {
       preview(transformFormToApi(formValues));

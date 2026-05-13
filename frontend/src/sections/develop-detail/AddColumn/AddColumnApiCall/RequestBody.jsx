@@ -459,8 +459,8 @@ const RequestBody = ({
           to access variables
         </Typography>
       )}
-      {!!isError && (
-        <FormHelperText sx={{ paddingLeft: 1, marginTop: 0 }} error={!!isError}>
+      {!!errorMessage.trim() && (
+        <FormHelperText sx={{ paddingLeft: 1, marginTop: 0 }} error>
           {errorMessage}
         </FormHelperText>
       )}
