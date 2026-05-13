@@ -65,7 +65,9 @@ from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
     model_manager,
 )
+from tfc.routers import uses_db
 from tfc.telemetry import wrap_for_thread
+from model_hub.db_routing import DATABASE_FOR_DATASET_LIST
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -1400,6 +1402,7 @@ class GetDatasetsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @uses_db(DATABASE_FOR_DATASET_LIST, feature_key="feature:dataset_list")
     def get(self, request, *args, **kwargs):  # Changed from 'post' to 'get'
         try:
             # Get pagination and sorting parameters
@@ -1432,9 +1435,15 @@ class GetDatasetsView(APIView):
                 except (ValueError, TypeError):
                     sort_params = []
 
-            # Base queryset with annotations for counts
+            # Base queryset with annotations for counts.
+            # Routes to replica when "feature:dataset_list" is opted in;
+            # otherwise stays on default. The aggregate Subqueries
+            # (number_of_datapoints/experiments/optimisations/derived)
+            # inherit the alias because they're compiled into the same
+            # SELECT, not separate related-manager calls.
             queryset = (
-                Dataset.objects.filter(
+                Dataset.objects.db_manager(DATABASE_FOR_DATASET_LIST)
+                .filter(
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                     deleted=False,

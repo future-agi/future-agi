@@ -2,9 +2,11 @@ import structlog
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
+from agentcc.db_routing import DATABASE_FOR_ORG_CONFIG_BULK
 from agentcc.models import AgentccOrgConfig
 from agentcc.permissions import IsAdminToken
 from agentcc.services.config_push import _build_payload
+from tfc.routers import uses_db
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -22,11 +24,14 @@ class OrgConfigBulkView(APIView):
     renderer_classes = [JSONRenderer]  # bypass camelCase — Go expects snake_case
     _gm = GeneralMethods()
 
+    @uses_db(DATABASE_FOR_ORG_CONFIG_BULK, feature_key="feature:org_config_bulk")
     def get(self, request):
         try:
-            configs = AgentccOrgConfig.no_workspace_objects.filter(
-                is_active=True, deleted=False
-            ).select_related("organization")
+            # Pure routing: same query as before, just on the replica alias
+            # when "feature:org_config_bulk" is opted in.
+            configs = AgentccOrgConfig.no_workspace_objects.db_manager(
+                DATABASE_FOR_ORG_CONFIG_BULK
+            ).filter(is_active=True, deleted=False).select_related("organization")
 
             result = {}
             for cfg in configs:

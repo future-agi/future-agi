@@ -3,8 +3,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.project import Project
@@ -188,9 +190,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             normalized.append(metric_copy)
         return normalized
 
+    @uses_db(DATABASE_FOR_DASHBOARD_LIST, feature_key="feature:dashboard_list")
     def list(self, request, *args, **kwargs):
         try:
-            queryset = self.get_queryset()
+            # Route the main list read to replica when "feature:dashboard_list"
+            # is opted in. Note: DashboardSerializer.get_widget_count() does
+            # an `obj.widgets.filter().count()` per row that goes through the
+            # router for DashboardWidget (and likely lands on `default`).
+            # That's a pre-existing N+1 we are NOT fixing here — pure-routing
+            # change only. Fixing the serializer is a separate refactor.
+            queryset = self.get_queryset().using(DATABASE_FOR_DASHBOARD_LIST)
             serializer = DashboardSerializer(
                 queryset, many=True, context={"request": request}
             )
