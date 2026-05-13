@@ -122,11 +122,10 @@ function mapCategory(raw) {
 }
 
 // `value` is the canonical backend op name; `label` is the dropdown text.
+// For strings/text: "equals"/"not equals" send `in`/`not_in` (`IN (x)` ≡ `= x`).
 const STRING_OPS = [
-  { value: "equals", label: "equals" },
-  { value: "not_equals", label: "not equals" },
-  { value: "in", label: "in" },
-  { value: "not_in", label: "not in" },
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
@@ -192,10 +191,8 @@ const CATEGORICAL_OPS = [
 ];
 
 const TEXT_OPS = [
-  { value: "equals", label: "equals" },
-  { value: "not_equals", label: "not equals" },
-  { value: "in", label: "in" },
-  { value: "not_in", label: "not in" },
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
@@ -267,11 +264,14 @@ const DEFAULT_OP_FOR_TYPE = {
   date: "on",
   boolean: "equals",
   array: "contains",
-  string: "equals",
+  string: "in",
   categorical: "is",
   thumbs: "is",
-  text: "equals",
+  text: "in",
 };
+
+// Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
+const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 const NO_VALUE_OPS = new Set([
   "is_empty",
@@ -1415,7 +1415,7 @@ function FilterRow({
 const DEFAULT_ROW = {
   field: "",
   fieldCategory: "system",
-  operator: "equals",
+  operator: "in",
   value: [],
 };
 
@@ -1552,10 +1552,30 @@ const TraceFilterPanel = ({
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
           const prop = properties.find((p) => p.id === f.field);
+          const fieldType = f.fieldType || prop?.type || "string";
+          const hydratedOp =
+            (fieldType === "string" || fieldType === "text") &&
+            HYDRATE_STRING_OP[f.operator]
+              ? HYDRATE_STRING_OP[f.operator]
+              : f.operator;
+          // Scalar legacy `equals` value → array for the multi-select picker.
+          let value = f.value;
+          if (
+            hydratedOp !== f.operator &&
+            LIST_VALUE_OPS.has(hydratedOp) &&
+            !Array.isArray(value)
+          ) {
+            value =
+              value === "" || value === null || value === undefined
+                ? []
+                : [value];
+          }
           return {
             ...f,
             fieldCategory: f.fieldCategory || prop?.category || "system",
-            fieldType: f.fieldType || prop?.type || "string",
+            fieldType,
+            operator: hydratedOp,
+            value,
           };
         });
         setRows(enriched);
