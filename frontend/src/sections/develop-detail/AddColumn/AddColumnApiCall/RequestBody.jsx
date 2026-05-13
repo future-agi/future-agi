@@ -222,7 +222,7 @@ const RequestBody = ({
   useEffect(() => {
     if (!showDropdown) return;
     const handler = (e) => {
-      if (dropdownRef.current?.contains(e.target)) return;
+      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
       onCloseDropdown();
     };
     window.addEventListener("scroll", handler, true);
