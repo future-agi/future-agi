@@ -381,16 +381,25 @@ class ExploreTraceTool(BaseTool):
             if "```json" in raw:
                 match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
                 if match:
-                    parsed = json.loads(match.group(1))
+                    try:
+                        parsed = json.loads(match.group(1))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
             elif "```" in raw:
                 match = re.search(r"```\s*(.*?)\s*```", raw, re.DOTALL)
                 if match:
-                    parsed = json.loads(match.group(1))
+                    try:
+                        parsed = json.loads(match.group(1))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
             if not parsed:
                 match = re.search(r"\{.*\}", raw, re.DOTALL)
                 if match:
-                    parsed = json.loads(match.group(0))
+                    try:
+                        parsed = json.loads(match.group(0))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
             if not parsed:
                 return {"sub_flows": [], "trace_overview": ""}
