@@ -334,6 +334,104 @@ class RunTestListView(APIView):
             )
 
 
+class CreateMinimalSuiteView(APIView):
+    """
+    Create a minimal runnable simulation suite from the CLI.
+
+    Accepts {name, agent_url?, description?} and atomically creates:
+      AgentDefinition → AgentVersion → Scenario → RunTest
+
+    Idempotent by name — returns the existing suite if one already exists
+    for this organisation (HTTP 200 with created=false).
+
+    POST /simulate/run-tests/create-cli/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from simulate.models.agent_definition import AgentDefinition, AgentTypeChoices
+        from simulate.models.agent_version import AgentVersion
+        from simulate.models.scenarios import Scenarios
+
+        org = getattr(request, "organization", None) or request.user.organization
+        workspace = getattr(request, "workspace", None)
+
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        agent_url = (request.data.get("agent_url") or "").strip() or None
+        description = (request.data.get("description") or "").strip()
+
+        try:
+            with transaction.atomic():
+                # Idempotent inside atomic so concurrent creates don't race past the check
+                existing = (
+                    RunTest.objects.select_for_update()
+                    .filter(name=name, organization=org, deleted=False)
+                    .first()
+                )
+                if existing:
+                    return Response(
+                        {"id": str(existing.id), "name": existing.name, "created": False},
+                        status=status.HTTP_200_OK,
+                    )
+
+                agent_def = AgentDefinition.objects.create(
+                    agent_name=name,
+                    agent_type=AgentTypeChoices.TEXT,
+                    inbound=False,
+                    description=description or "",
+                    languages=[],
+                    websocket_url=agent_url or "",
+                    organization=org,
+                    workspace=workspace,
+                )
+                agent_version = (
+                    AgentVersion.objects.filter(agent_definition=agent_def)
+                    .order_by("-version_number")
+                    .first()
+                )
+                if not agent_version:
+                    agent_version = AgentVersion.objects.create(
+                        agent_definition=agent_def,
+                        description="",
+                        commit_message="",
+                        organization=org,
+                        workspace=workspace,
+                    )
+
+                scenario = Scenarios.objects.create(
+                    name=f"{name}-default-scenario",
+                    source="",
+                    scenario_type="script",
+                    organization=org,
+                    workspace=workspace,
+                )
+
+                run_test = RunTest.objects.create(
+                    name=name,
+                    description=description,
+                    agent_definition=agent_def,
+                    agent_version=agent_version,
+                    organization=org,
+                    workspace=workspace,
+                )
+                run_test.scenarios.add(scenario)
+
+            return Response(
+                {"id": str(run_test.id), "name": run_test.name, "created": True},
+                status=status.HTTP_201_CREATED,
+            )
+        except Exception as exc:
+            logger.error("create_minimal_suite_failed", error=str(exc))
+            return Response(
+                {"error": f"Failed to create suite: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 class CreateRunTestView(APIView):
     """
     API View to create a new RunTest

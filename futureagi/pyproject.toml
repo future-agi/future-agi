@@ -176,6 +176,11 @@ dev = [
     "types-pyyaml",
 ]
 
+[tool.setuptools]
+# Explicit package list prevents the "multiple top-level packages in flat-layout"
+# error from setuptools auto-discovery when doing `pip install -e .`
+packages = ["tfc"]
+
 [tool.black]
 line-length = 88
 exclude = '''
