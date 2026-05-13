@@ -121,23 +121,31 @@ function mapCategory(raw) {
   return "system";
 }
 
+// `value` is the canonical backend op name; `label` is the dropdown text.
 const STRING_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "in", label: "in" },
+  { value: "not_in", label: "not in" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
+  { value: "ends_with", label: "ends with" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const NUMBER_OPS = [
-  { value: "equal_to", label: "equals" },
-  { value: "not_equal_to", label: "not equal" },
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
   { value: "greater_than", label: "greater than" },
   { value: "greater_than_or_equal", label: "greater than or equals" },
   { value: "less_than", label: "less than" },
   { value: "less_than_or_equal", label: "less than or equals" },
   { value: "between", label: "between", range: true },
   { value: "not_between", label: "not between", range: true },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const DATE_OPS = [
@@ -148,7 +156,12 @@ const DATE_OPS = [
   { value: "not_between", label: "not between", range: true },
 ];
 
-const BOOLEAN_OPS = [{ value: "is", label: "is" }];
+const BOOLEAN_OPS = [
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
+];
 
 // thumbs_up_down annotations: 2 fixed display choices ("Thumbs Up"/"Thumbs Down").
 // Distinct from CATEGORICAL_OPS — we don't expose contains/not_contains for a
@@ -179,25 +192,28 @@ const CATEGORICAL_OPS = [
 ];
 
 const TEXT_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "in", label: "in" },
+  { value: "not_in", label: "not in" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
   { value: "ends_with", label: "ends with" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
-// Map QueryInput operator keys → Basic tab operator keys
+// Identity maps; kept for the QueryInput integration call sites.
 const QUERY_TO_BASIC_OP = {
-  equals: "is",
-  not_equals: "is_not",
+  equals: "equals",
+  not_equals: "not_equals",
   starts_with: "starts_with",
 };
 
-// Reverse: Basic tab operator keys → QueryInput operator keys
 const BASIC_TO_QUERY_OP = {
-  is: "equals",
-  is_not: "not_equals",
+  equals: "equals",
+  not_equals: "not_equals",
   starts_with: "starts_with",
 };
 
@@ -247,14 +263,14 @@ const getOperatorsForFilter = (filter) => {
 };
 
 const DEFAULT_OP_FOR_TYPE = {
-  number: "equal_to",
+  number: "equals",
   date: "on",
-  boolean: "is",
+  boolean: "equals",
   array: "contains",
-  string: "is",
+  string: "equals",
   categorical: "is",
   thumbs: "is",
-  text: "is",
+  text: "equals",
 };
 
 const NO_VALUE_OPS = new Set([
@@ -263,6 +279,19 @@ const NO_VALUE_OPS = new Set([
   "is_null",
   "is_not_null",
 ]);
+
+// Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
+const SINGLE_VALUE_OPS = new Set([
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "ends_with",
+]);
+
+// List ops — multi-select picker.
+const LIST_VALUE_OPS = new Set(["in", "not_in"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -1038,7 +1067,7 @@ function FilterRow({
         prop.type === "text"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "is";
+      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1068,6 +1097,17 @@ function FilterRow({
         else if (!newDef?.range && oldDef?.range) newVal = "";
       }
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
+      // Multi → single: drop stale extra picks.
+      if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
+        newVal = [newVal[0]];
+      }
+      // Single → list: picker expects an array.
+      if (LIST_VALUE_OPS.has(newOp) && !Array.isArray(newVal)) {
+        newVal =
+          newVal === "" || newVal === null || newVal === undefined
+            ? []
+            : [newVal];
+      }
       onChange(index, { ...filter, operator: newOp, value: newVal });
     },
     [index, filter, isNumber, isDate, onChange],
@@ -1279,7 +1319,10 @@ function FilterRow({
         value={filter.value}
         source={source}
         property={properties.find((p) => p.id === filter.field)}
-        singleSelect={ID_ONLY_FIELDS.has(filter.field)}
+        singleSelect={
+          ID_ONLY_FIELDS.has(filter.field) ||
+          SINGLE_VALUE_OPS.has(filter.operator)
+        }
         onChange={(newVal) => onChange(index, { ...filter, value: newVal })}
       />
     );
@@ -1341,9 +1384,7 @@ function FilterRow({
         value={
           ops.some((o) => o.value === filter.operator)
             ? filter.operator
-            : isNumber
-              ? "equal_to"
-              : "is"
+            : "equals"
         }
         onChange={handleOperatorChange}
         sx={{ minWidth: 70, fontSize: 12, height: 28 }}
@@ -1374,7 +1415,7 @@ function FilterRow({
 const DEFAULT_ROW = {
   field: "",
   fieldCategory: "system",
-  operator: "is",
+  operator: "equals",
   value: [],
 };
 
@@ -1573,7 +1614,7 @@ const TraceFilterPanel = ({
           field: f.field,
           fieldCategory: prop?.category || "system",
           fieldType: prop?.type || "string",
-          operator: f.operator || "is",
+          operator: f.operator || "equals",
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
