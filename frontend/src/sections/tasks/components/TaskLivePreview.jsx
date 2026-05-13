@@ -683,6 +683,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
+                    "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -1171,6 +1172,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1184,6 +1186,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
