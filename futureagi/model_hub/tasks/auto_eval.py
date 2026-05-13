@@ -222,17 +222,17 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
     # Guard against duplicates when flush_auto_eval_batch is re-invoked for
     # rows whose Evaluation records survived a prior partial failure (e.g. the
     # process died after bulk_create but before the workflow-fail cleanup ran).
+    surviving_ids: list[str] = []
+    already_surviving_qs = Evaluation.objects.filter(
+        eval_template=config.eval_template,
+        organization=config.organization,
+        status__in=[StatusChoices.PENDING, StatusChoices.PROCESSING],
+        metadata__source="auto_eval",
+        metadata__source_config_id=str(config.id),
+    ).exclude(metadata__row_id=None)
     already_created_row_ids = set(
         str(v)
-        for v in Evaluation.objects.filter(
-            eval_template=config.eval_template,
-            organization=config.organization,
-            status__in=[StatusChoices.PENDING, StatusChoices.PROCESSING],
-            metadata__source="auto_eval",
-            metadata__source_config_id=str(config.id),
-        )
-        .values_list("metadata__row_id", flat=True)
-        .exclude(metadata__row_id=None)
+        for v in already_surviving_qs.values_list("metadata__row_id", flat=True)
     )
     if already_created_row_ids:
         skipped = [r for r in row_ids if str(r) in already_created_row_ids]
@@ -244,6 +244,14 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
                     "skipped_count": len(skipped),
                 },
             )
+            # Collect surviving eval IDs — they must reach Temporal even though
+            # we are not re-creating them.
+            surviving_ids = [
+                str(i)
+                for i in already_surviving_qs.filter(
+                    metadata__row_id__in=[str(r) for r in skipped]
+                ).values_list("id", flat=True)
+            ]
         row_ids = [r for r in row_ids if str(r) not in already_created_row_ids]
 
     rows = list(
@@ -252,7 +260,7 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
         )
     )
     if not rows:
-        return []
+        return surviving_ids
 
     mapping = config.column_mapping  # {"col_name": "input_field"}
 
@@ -303,4 +311,4 @@ def _create_evaluations_from_rows(config, row_ids: list) -> list:
         )
 
     created = Evaluation.objects.bulk_create(evaluations)
-    return [str(e.id) for e in created]
+    return [str(e.id) for e in created] + surviving_ids
