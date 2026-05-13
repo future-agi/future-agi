@@ -50,6 +50,10 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
+// Direct id columns the backend resolves without col_type — injecting one
+// routes the filter through the metrics pipeline and silently returns 0.
+const ID_COLUMNS = new Set(["trace_id", "span_id"]);
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   const userFilters = (oldFormatFilters || [])
@@ -57,6 +61,7 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
     .map((f) => {
       const isAttribute = f.property === "attributes";
       const columnId = isAttribute ? f.propertyId : f.property;
+      const isIdColumn = ID_COLUMNS.has(columnId);
       const colType =
         COL_TYPE_MAP[f.fieldCategory] ||
         (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
@@ -66,7 +71,7 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
           filter_type: f?.filterConfig?.filterType || "text",
           filter_op: f?.filterConfig?.filterOp || "equals",
           filter_value: f?.filterConfig?.filterValue,
-          col_type: colType,
+          ...(!isIdColumn && { col_type: colType }),
         },
       };
     });
