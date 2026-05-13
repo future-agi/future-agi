@@ -13,6 +13,10 @@ const NODE_TYPE_CONFIG = {
     iconSrc: "/assets/icons/ic_rounded_square.svg",
     color: "green.600",
   },
+  [NODE_TYPES.HTTP_REQUEST]: {
+    iconSrc: "/assets/icons/ic_agent_flow.svg",
+    color: "blue.500",
+  },
   default: {
     iconSrc: "/assets/icons/navbar/ic_agents.svg",
     color: "text.secondary",
