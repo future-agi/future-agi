@@ -112,7 +112,6 @@ def _verify_extraction_safe(
         return True, "no callers"
 
     solver = Solver()
-    any_unsafe = Bool("any_unsafe")
     unsafe_conditions = []
 
     for i, call in enumerate(callers):
@@ -273,7 +272,10 @@ def suggest_refactors(
             file=func.file,
             line=func.line,
             violation_count=len(func_viols),
-            caller_count=len(set(cs.caller_name for cs in callers if cs.caller_name)),
+            caller_count=len({
+                cs.caller_name if cs.caller_name else f"__module__:{cs.file}"
+                for cs in callers
+            }),
             modes=[v.context for v in func_viols],
             violations=func_viols,
             z3_safe=z3_safe,

@@ -96,9 +96,11 @@ def check_codebase(
             seen.add(key)
             violations.append(_to_violation(evidence))
 
-    # Per-call-site checks
+    # Per-call-site checks (modes with check=None are file-level only)
     for call in call_sites:
         for mode in modes:
+            if mode.check is None:
+                continue
             for evidence in mode.check(call, model_index, func_index):
                 _add(evidence)
 
@@ -163,6 +165,8 @@ def check_codebase_incremental(
 
     for call in dirty_call_sites:
         for mode in modes:
+            if mode.check is None:
+                continue
             for evidence in mode.check(call, model_index, func_index):
                 _add(evidence)
 

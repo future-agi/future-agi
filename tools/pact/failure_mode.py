@@ -762,6 +762,25 @@ def _scan_file_unvalidated_lookup_chain(path: str) -> list[FailureEvidence]:
             # var_name → set of collections it was membership-checked against
             self._guarded: dict[str, set[str]] = {}
 
+        def _visit_scope(self, node: pyast.AST) -> None:
+            # Each function/class body is a fresh variable scope — save and restore
+            # so that .get() assignments in function A never pollute function B.
+            saved_get = dict(self._get_vars)
+            saved_guarded = {k: set(v) for k, v in self._guarded.items()}
+            self._get_vars = {}
+            self._guarded = {}
+            self.generic_visit(node)
+            self._get_vars = saved_get
+            self._guarded = saved_guarded
+
+        def visit_FunctionDef(self, node: pyast.FunctionDef) -> None:
+            self._visit_scope(node)
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+        def visit_ClassDef(self, node: pyast.ClassDef) -> None:
+            self._visit_scope(node)
+
         def visit_Assign(self, node: pyast.Assign) -> None:
             # x = something.get(...) or x = d[k] — track .get() assignments
             if (
@@ -836,7 +855,7 @@ UNVALIDATED_LOOKUP_CHAIN = FailureMode(
         "without a membership check. The None guard doesn't protect against the value "
         "being absent from the second index."
     ),
-    check=_check_unvalidated_lookup_chain,
+    check=None,  # file_check runs once per file; per-call-site check would re-run the whole scan
     file_check=_scan_file_unvalidated_lookup_chain,
 )
 
