@@ -165,7 +165,9 @@ export const transformDynamicColumnConfig = (type, config, allColumns) => {
           ...config,
           url: replaceColumnIdWithName(config?.url || "", allColumns),
           body: replaceColumnIdWithName(
-            JSON.stringify(config?.body) || "",
+            typeof config?.body === "string"
+              ? config.body
+              : JSON.stringify(config?.body) || "",
             allColumns,
           ),
           params: Object.entries(config?.params || {}).map(([key, value]) => ({
