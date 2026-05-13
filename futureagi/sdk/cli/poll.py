@@ -245,7 +245,7 @@ class SimulatePoller:
         else:
             state.pass_rate = 0.0
 
-        state.exit_code = 0 if (state.pass_rate or 0) >= self.threshold else 1
+        state.exit_code = 0 if state.pass_rate >= self.threshold else 1
         state.phase = Phase.DONE
 
     # ------------------------------------------------------------------
