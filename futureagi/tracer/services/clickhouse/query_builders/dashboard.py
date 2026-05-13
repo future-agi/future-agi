@@ -1433,9 +1433,12 @@ class DashboardQueryBuilder:
                 )
 
                 output_type = (f.get("output_type") or "SCORE").upper()
-                # config is double-encoded
-                if output_type == "PASS_FAIL":
-                    eval_col = "if(eval_output_str = 'Passed', 1.0, 0.0)"
+                # For PASS_FAIL/CHOICES evals, compare against the raw string
+                # column directly. The old numeric cast
+                # (if(eval_output_str='Passed',1.0,0.0)) caused a type mismatch
+                # when the filter value is a string list like ['Passed'].
+                if output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
+                    eval_col = "eval_output_str"
                 else:
                     eval_col = "eval_score"
 

@@ -864,13 +864,24 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         ).values_list("eval_template_id", flat=True)
                     )
 
+                # Always include org-owned templates (user-created custom evals)
+                # alongside any templates discovered via ClickHouse usage data,
+                # so custom evals appear even before first use.
+                from django.db.models import Q
+
                 if used_template_ids:
                     # Use no_workspace_objects since system eval templates
                     # may have no workspace (workspace=None).
-                    eval_templates = EvalTemplate.no_workspace_objects.filter(
-                        id__in=used_template_ids,
-                        deleted=False,
-                    ).values("id", "name", "config", "choices")
+                    template_filter = Q(id__in=used_template_ids, deleted=False)
+                    if not filter_by_project:
+                        template_filter |= Q(
+                            organization=workspace.organization, deleted=False
+                        )
+                    eval_templates = (
+                        EvalTemplate.no_workspace_objects.filter(template_filter)
+                        .values("id", "name", "config", "choices")
+                        .distinct()
+                    )
                 elif filter_by_project:
                     # Project-scoped but no evals found — return empty
                     eval_templates = EvalTemplate.objects.none().values(
@@ -878,10 +889,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                 else:
                     # Fallback: list all templates for the org
-                    eval_templates = EvalTemplate.objects.filter(
-                        organization=workspace.organization,
-                        deleted=False,
-                    ).values("id", "name", "config", "choices")
+                    eval_templates = (
+                        EvalTemplate.objects.filter(
+                            organization=workspace.organization,
+                            deleted=False,
+                        )
+                        .values("id", "name", "config", "choices")
+                        .distinct()
+                    )
 
                 for et in eval_templates:
                     tid = str(et["id"])
