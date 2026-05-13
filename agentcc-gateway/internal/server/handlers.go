@@ -1116,6 +1116,18 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// setRequestModelOverride updates the model name on whichever request type is active.
+// For chat requests rc.Request is non-nil; for embedding requests rc.EmbeddingRequest is non-nil
+// and rc.Request is nil, so we must update both when present.
+func setRequestModelOverride(rc *models.RequestContext, model string) {
+	if rc.Request != nil {
+		rc.Request.Model = model
+	}
+	if rc.EmbeddingRequest != nil {
+		rc.EmbeddingRequest.Model = model
+	}
+}
+
 // resolveProvider resolves the provider for a model, with failover support for non-streaming.
 // For failover, it tries providers sequentially until one succeeds at the provider call level.
 func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, error) {
@@ -1151,7 +1163,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				rc.Provider = action.Provider
 				rc.Metadata["routing_rule"] = action.Name
 				if action.ModelOverride != "" {
-					rc.Request.Model = action.ModelOverride
+					setRequestModelOverride(rc, action.ModelOverride)
 				}
 				return p, nil
 			}
@@ -1175,7 +1187,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
 		if result.ModelOverride != "" {
-			rc.Request.Model = result.ModelOverride
+			setRequestModelOverride(rc, result.ModelOverride)
 		}
 		return result.Provider, nil
 	}
@@ -1193,7 +1205,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
 			if fbErr == nil {
 				rc.Provider = fbResult.Provider.ID()
-				rc.Request.Model = fbModel
+				setRequestModelOverride(rc, fbModel)
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = model
 				rc.Metadata["fallback_model"] = fbModel
@@ -1201,7 +1213,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 					rc.Metadata["routing_strategy"] = fbResult.StrategyName
 				}
 				if fbResult.ModelOverride != "" {
-					rc.Request.Model = fbResult.ModelOverride
+					setRequestModelOverride(rc, fbResult.ModelOverride)
 				}
 				return fbResult.Provider, nil
 			}
