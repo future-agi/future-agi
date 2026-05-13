@@ -127,9 +127,15 @@ pip install ai-evaluation
 **One command, full stack. Published images, no source build.**
 
 ```bash
+# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 ./bin/install
+
+# Windows (PowerShell)
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
 Open [http://localhost:3000](http://localhost:3000).

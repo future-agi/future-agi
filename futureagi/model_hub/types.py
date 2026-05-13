@@ -144,8 +144,12 @@ class EvalCreateRequest(BaseModel):
         None  # {variables_only, dataset_row, trace_context, ...}
     )
     summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom_instructions: str}
+        None  # {type: short|long|concise|custom, custom: str}
     )
+    # Error Localization — mirrors EvalUpdateRequest. Without this here the
+    # FE's create payload (which always includes the toggle value) is
+    # rejected by `extra="forbid"`.
+    error_localizer_enabled: bool = False
     # Template format — determines how variables are extracted
     template_format: Literal["mustache", "jinja"] = "mustache"
 

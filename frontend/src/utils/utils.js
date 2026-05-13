@@ -1353,8 +1353,13 @@ export const tokenMatchesLeaf = (tok, pathLower, valueLower, words) => {
 };
 
 // Strip the voice-detail wrapper (`observation_span.<n>.[span_attributes.]`)
-// and bare `span_attributes.` so the saved mapping uses bare attribute paths.
+// and any `span_attributes.` segment so the saved mapping uses bare attribute
+// paths. The `span_attributes.` strip is unanchored — backend dropdown paths
+// for traces/sessions look like `spans.0.<key>` or `traces.0.spans.0.<key>`
+// (no `span_attributes.` segment), but the FE walker over a fetched detail
+// hits `span_attributes.` mid-path; collapsing both forms keeps fieldSet and
+// flatValueMap lookups aligned with the saved mapping.
 export const stripAttributePathPrefix = (key) =>
   String(key ?? "")
     .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
-    .replace(/^span_attributes\./, "");
+    .replace(/(^|\.)span_attributes\./g, "$1");

@@ -399,6 +399,7 @@ def _get_evaluation_metric_stats(monitor, start_time, end_time):
 
     eval_results = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
+        target_type="span",
         created_at__range=(start_time, end_time),
         observation_span__in=ObservationSpan.objects.filter(filters),
     )
@@ -801,6 +802,7 @@ def _get_time_series_df_for_other_metrics(monitor, now):
 
             eval_results = EvalLogger.objects.filter(
                 custom_eval_config=custom_eval_config,
+                target_type="span",
                 created_at__lte=now,
                 observation_span__in=ObservationSpan.objects.filter(filters),
             )

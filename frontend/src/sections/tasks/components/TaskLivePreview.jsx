@@ -22,11 +22,13 @@ import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import EvalResultDisplay from "src/sections/evals/components/EvalResultDisplay";
+import SpanRowList from "src/sections/evals/components/SpanRowList";
 import {
   InlineAudio,
   RecordingGroup,
@@ -48,12 +50,18 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
-function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
+// Direct id columns the backend resolves without col_type — injecting one
+// routes the filter through the metrics pipeline and silently returns 0.
+const ID_COLUMNS = new Set(["trace_id", "span_id"]);
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   const userFilters = (oldFormatFilters || [])
     .filter((f) => f?.propertyId || f?.property)
     .map((f) => {
       const isAttribute = f.property === "attributes";
       const columnId = isAttribute ? f.propertyId : f.property;
+      const isIdColumn = ID_COLUMNS.has(columnId);
       const colType =
         COL_TYPE_MAP[f.fieldCategory] ||
         (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
@@ -63,7 +71,7 @@ function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
           filter_type: f?.filterConfig?.filterType || "text",
           filter_op: f?.filterConfig?.filterOp || "equals",
           filter_value: f?.filterConfig?.filterValue,
-          col_type: colType,
+          ...(!isIdColumn && { col_type: colType }),
         },
       };
     });
@@ -173,13 +181,6 @@ function flattenSpanTree(
   return result;
 }
 
-const ROW_TYPE_LABEL = {
-  spans: "Spans",
-  traces: "Traces",
-  sessions: "Sessions",
-  voiceCalls: "Voice Calls",
-};
-
 // ───────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────
@@ -222,14 +223,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     queryFn: async () => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
 
-      // Voice calls use a dedicated list_voice_calls endpoint with a
-      // different request/response shape (no filter array).
       if (rowType === "voiceCalls") {
         const resp = await axios.get(endpoints.project.getCallLogs, {
           params: {
             project_id: projectId,
             page: 1,
             page_size: 50,
+            filters: JSON.stringify(apiFilters),
           },
         });
         const result = resp.data?.result || resp.data || {};
@@ -329,6 +329,61 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           const allSpans = flattenSpanTree(spans);
           detailData = { ...traceInfo, spans: allSpans };
         }
+      } else if (rowType === "sessions" && currentRow?.session_id) {
+        // Sessions need a layered fetch: list_sessions returns flat
+        // session-summary rows (id, total_cost, traces_count, etc.) but
+        // no nested traces/spans. The walker that powers fieldNames /
+        // the "(not in row)" check needs the actual session shape so
+        // mapping paths like `traces.<i>.input` and
+        // `traces.0.spans.<j>.<key>` resolve. Two-step fetch:
+        //   1) GET /tracer/trace-session/<id>/ → paginated trace list
+        //      (no spans nested per the BE contract)
+        //   2) GET /tracer/trace/<first_trace_id>/ → spans tree for the
+        //      first trace. Span-level mapping paths only resolve for
+        //      the first trace in the preview; deeper drill-in would
+        //      need a click-to-fetch UI that we don't have here yet.
+        const sid = currentRow.session_id;
+        let sessionMeta = {};
+        let traces = [];
+        try {
+          const sResp = await axios.get(
+            `${endpoints.project.traceSession}${sid}/`,
+            { params: { page_number: 0, page_size: 30 } },
+          );
+          const sResult = sResp.data?.result || {};
+          sessionMeta = sResult.session_metadata || {};
+          traces = sResult.response || [];
+        } catch {
+          // Session fetch failed — fall back to the flat row so the
+          // user at least sees session-summary fields.
+          detailData = { ...currentRow };
+        }
+
+        if (!detailData) {
+          let firstTraceSpans = [];
+          const firstTraceId = traces[0]?.trace_id;
+          if (firstTraceId) {
+            try {
+              const tResp = await axios.get(
+                endpoints.project.getTrace(firstTraceId),
+              );
+              const tResult = tResp.data?.result || {};
+              firstTraceSpans = flattenSpanTree(
+                tResult.observation_spans || [],
+              );
+            } catch {
+              // Trace fetch failed — leave empty; the rest of the
+              // preview still works with trace-level fields.
+            }
+          }
+          detailData = {
+            ...sessionMeta,
+            traces: traces.map((t, i) => ({
+              ...t,
+              spans: i === 0 ? firstTraceSpans : [],
+            })),
+          };
+        }
       } else {
         detailData = { ...currentRow };
       }
@@ -411,6 +466,15 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     if (rowType === "sessions" && _sessionId) autoCtx.session_id = _sessionId;
     if (rowType === "voiceCalls" && _traceId) autoCtx.trace_id = _traceId;
 
+    // Sessions: the lazy fetch only populates `traces[0].spans` (other
+    // traces have empty `spans` arrays), so a walk over spanDetail can't
+    // resolve mappings into unloaded traces. The BE's
+    // `_process_session_mapping` walks the real DB and handles every path
+    // correctly — delegate by sending the saved mapping as `mapping_paths`
+    // alongside `session_id` (already in autoCtx). Same code path as
+    // eval-task runtime, so preview matches prod.
+    const isSession = rowType === "sessions";
+
     // Build a flat fieldName→value lookup by walking spanDetail,
     // soft-flattening span_attributes keys (same logic as the
     // fieldNames dropdown in TracingTestMode). This ensures mapped
@@ -446,15 +510,17 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         }
       }
     };
-    walkValues(spanDetail, "");
+    if (!isSession) walkValues(spanDetail, "");
 
-    // Soft-flatten: strip `span_attributes.` prefix, top-level wins.
+    // Soft-flatten: route through `stripAttributePathPrefix` so any
+    // `span_attributes.` segment — anchored *or* nested inside `spans.<n>.`
+    // or `traces.<i>.spans.<j>.` — collapses to the same form the BE
+    // dropdown emits and that saved mappings store. Top-level keys (i.e.
+    // paths that did NOT need stripping) win the dedupe.
     const flatValueMap = {};
     for (const [path, val] of Object.entries(valueMap)) {
-      const short = path.startsWith("span_attributes.")
-        ? path.slice("span_attributes.".length)
-        : path;
-      if (!(short in flatValueMap) || !path.startsWith("span_attributes.")) {
+      const short = stripAttributePathPrefix(path);
+      if (!(short in flatValueMap) || short === path) {
         flatValueMap[short] = val;
       }
     }
@@ -504,17 +570,26 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             evalItem?.config?.run_config?.data_injection ||
             evalItem?.config?.data_injection ||
             {};
+          // Sessions delegate path resolution to the BE
+          // (`_process_session_mapping`) — see `isSession` branch above.
+          // Other row types resolve locally because their lazy fetch
+          // returns the full data they need.
+          const savedMapping = evalItem?.mapping || {};
+          const playgroundConfig = {
+            ...(Object.keys(diFlags).length > 0
+              ? { run_config: { data_injection: diFlags } }
+              : {}),
+          };
+          if (!isSession) {
+            playgroundConfig.mapping = resolveMapping(savedMapping);
+          }
           const { data } = await axios.post(
             endpoints.develop.eval.evalPlayground,
             {
               template_id: templateId,
               model: evalItem?.model || "turing_large",
-              config: {
-                mapping: resolveMapping(evalItem?.mapping),
-                ...(Object.keys(diFlags).length > 0
-                  ? { data_injection: diFlags }
-                  : {}),
-              },
+              config: playgroundConfig,
+              ...(isSession ? { mapping_paths: savedMapping } : {}),
               ...autoCtx,
             },
           );
@@ -605,7 +680,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             </Typography>
             {projectId && (
               <Chip
-                label={ROW_TYPE_LABEL[rowType] || rowType}
+                label={ROW_TYPE_LABELS[rowType] || rowType}
                 size="small"
                 sx={{
                   height: 18,
@@ -613,6 +688,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
+                    "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -735,6 +811,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               <VariableMappingView
                 evalsDetails={evalsDetails || []}
                 fieldNames={fieldNames}
+                rowType={rowType}
                 testResults={testResults}
               />
             )}
@@ -765,8 +842,17 @@ const RowDetailTable = ({
   // Flatten span_attributes children into the top-level entries so users
   // see e.g. "llm.system" as its own row instead of a collapsed object.
   // Top-level keys win deduplication (same logic as the fieldNames flatten).
+  // The `spans` key is filtered out here because it gets a dedicated
+  // collapsible-row renderer below — same pattern as TracingTestMode so
+  // the two preview surfaces look identical for trace + session row types.
+  // canonicalEntries (not Object.entries) drops the camelCase aliases the
+  // axios interceptor adds for any snake_case key — without it, every
+  // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
+  // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = Object.entries(spanDetail).filter(([key]) => key !== "spans");
+    const raw = canonicalEntries(spanDetail).filter(
+      ([key]) => key !== "spans",
+    );
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||
@@ -777,7 +863,7 @@ const RowDetailTable = ({
     }
     const topKeys = new Set(raw.map(([k]) => k));
     const flattened = raw.filter(([k]) => k !== "span_attributes");
-    for (const [k, v] of Object.entries(spanAttrs)) {
+    for (const [k, v] of canonicalEntries(spanAttrs)) {
       if (!topKeys.has(k)) {
         flattened.push([k, v]);
       }
@@ -963,6 +1049,16 @@ const RowDetailTable = ({
               </Box>
             );
           })}
+
+        {/* Spans section — each span as a collapsible row. Shared
+            renderer with TracingTestMode so the picker drawer and the
+            preview pane look identical for trace + session row types. */}
+        <SpanRowList
+          spans={spanDetail.spans}
+          expandedCols={expandedCols}
+          setExpandedCols={setExpandedCols}
+          tableSearch={tableSearch}
+        />
       </Box>
     </Box>
   );
@@ -983,10 +1079,17 @@ RowDetailTable.propTypes = {
 const VariableMappingView = ({
   evalsDetails,
   fieldNames,
+  rowType,
   testResults = {},
 }) => {
   const fieldSet = useMemo(() => new Set(fieldNames), [fieldNames]);
   const hasEvals = evalsDetails.length > 0;
+  // For sessions the lazy fetch only covers `traces[0].spans`, so the
+  // walker over the preview detail can't witness paths into other traces
+  // or beyond the first trace's loaded spans. The `(not in row)` chip
+  // becomes misinformation in that regime — the BE is the authoritative
+  // resolver at test time. Suppress the check entirely for sessions.
+  const skipRowCheck = rowType === "sessions";
 
   if (!hasEvals) return null;
 
@@ -1074,6 +1177,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1087,6 +1191,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1113,6 +1218,7 @@ const VariableMappingView = ({
                         ? field.slice("span_attributes.".length)
                         : field;
                     const resolved =
+                      skipRowCheck ||
                       fieldSet.has(field) ||
                       (strippedField && fieldSet.has(strippedField));
                     return (
@@ -1255,6 +1361,7 @@ const VariableMappingView = ({
 VariableMappingView.propTypes = {
   evalsDetails: PropTypes.array.isRequired,
   fieldNames: PropTypes.array.isRequired,
+  rowType: PropTypes.string,
   testResults: PropTypes.object,
 };
 

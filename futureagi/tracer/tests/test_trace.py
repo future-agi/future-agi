@@ -5,8 +5,10 @@ Tests for /tracer/trace/ endpoints.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from tracer.models.trace import Trace
@@ -167,6 +169,57 @@ class TestTraceListTracesAPI:
         total = metadata.get("total_rows", 0)
         # Should return at most 3 traces
         assert total <= 3
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestVoiceCallListAPI:
+    """Tests for GET /tracer/trace/list_voice_calls/ endpoint."""
+
+    def test_list_voice_calls_falls_back_to_pg_when_clickhouse_fails(
+        self, auth_client, project, trace
+    ):
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        ObservationSpan.objects.create(
+            id=f"conversation_{uuid.uuid4().hex[:16]}",
+            project=project,
+            trace=trace,
+            name="Conversation",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            end_time=timezone.now(),
+            latency_ms=1000,
+            status="OK",
+            provider="vapi",
+            span_attributes={"raw_log": {"id": "provider-call-1"}},
+        )
+
+        with patch.object(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            return_value=True,
+        ), patch.object(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            side_effect=Exception("clickhouse unavailable"),
+        ) as ch_query:
+            response = auth_client.get(
+                "/tracer/trace/list_voice_calls/",
+                {
+                    "project_id": str(project.id),
+                    "page": 1,
+                    "page_size": 10,
+                    "filters": "[]",
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        ch_query.assert_called()
+        payload = response.json()
+        assert payload["count"] >= 1
+        assert payload["results"][0]["trace_id"] == str(trace.id)
 
 
 @pytest.mark.integration

@@ -171,7 +171,13 @@ class ModelServingClient:
 
     def embed_image_text(self, content: str | Image.Image | bytes, model_name: str = "image_text_embedding") -> list[float]:
         """
-        ✅ IMPROVED: Get image-text embeddings from the serving service.
+        Get image-text embeddings from the serving service.
+
+        Routes URL / data-URI strings to the *image* branch (so CLIP encodes
+        the pixels) and plain strings to the *text* branch (so CLIP encodes
+        the caption). Treating every string as text — the previous behaviour
+        — embedded the URL/base64 literal in the text encoder, producing
+        garbage similarities that hovered near the noise floor.
         """
         if content is None:
             raise ValueError("Content input cannot be None")
@@ -179,12 +185,14 @@ class ModelServingClient:
         data = {"input_type": "image-text"}
 
         if isinstance(content, str):
-            # Assume it's text
-            data["text"] = content
+            stripped = content.strip()
+            if stripped.startswith(("http://", "https://", "data:")):
+                data["image"] = self._process_image_input(content)
+            else:
+                data["text"] = content
         else:
-            # Process as image
-            processed_image = self._process_image_input(content)
-            data["image"] = processed_image
+            # PIL Image, bytes — always the image branch.
+            data["image"] = self._process_image_input(content)
 
         try:
             response = self._make_request("/embed/image-text", data)

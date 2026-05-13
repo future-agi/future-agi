@@ -4,6 +4,18 @@ const OUTPUT_TYPE_CONFIG_MAP = {
   deterministic: "choices",
 };
 
+const ROW_TYPE_CONTEXT_OPTIONS = {
+  spans: ["span_context"],
+  traces: ["trace_context"],
+  sessions: ["session_context"],
+  voiceCalls: ["call_context"],
+};
+
+export const contextOptionsForRowType = (rowType) =>
+  ROW_TYPE_CONTEXT_OPTIONS[rowType] || null;
+
+export { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
+
 export const hasNonEmptyPromptMessage = (messages = []) =>
   messages.some((message) => {
     if (!["system", "user"].includes(message?.role)) return false;

@@ -22,6 +22,60 @@ _activity_registry: Dict[str, List[Callable]] = {}
 _workflows_registered: bool = False
 _activities_registered: bool = False
 
+TEMPORAL_ACTIVITY_MODULES = [
+    # agent_prompt_optimiser eval activities
+    "tfc.temporal.agent_prompt_optimiser.eval_activities",
+    # Background tasks (post-registration, huggingface, etc.)
+    "tfc.temporal.background_tasks.activities",
+    # model_hub tasks
+    "model_hub.tasks.run_prompt",
+    "model_hub.tasks.experiment_runner",
+    "model_hub.tasks.user_evaluation",
+    "model_hub.tasks.insights",
+    "model_hub.tasks.agent",
+    "model_hub.tasks.model_log",
+    "model_hub.tasks.dataset_embeddings",
+    "model_hub.tasks.optimisation_runner",
+    "model_hub.tasks.prompt_template_optimizer",
+    "model_hub.tasks.develop_dataset",
+    # model_hub views
+    "model_hub.views.run_prompt",
+    "model_hub.views.experiment_runner",
+    "model_hub.views.dynamic_columns",
+    "model_hub.views.optimize_dataset",
+    "model_hub.views.prompt_template",
+    "model_hub.views.develop_dataset",
+    "model_hub.views.datasets.create.file_upload",
+    "model_hub.views.utils.evals",
+    # model_hub utils
+    "model_hub.utils.auto_annotate",
+    # tracer tasks
+    "tracer.tasks",
+    "tracer.tasks.trace_scanner",
+    "tracer.tasks.recordings_rehost",
+    "tracer.utils.span",
+    "tracer.utils.eval",
+    "tracer.utils.observability_provider",
+    "tracer.utils.trace_ingestion",
+    "tracer.utils.inline_evals",
+    "tracer.utils.external_eval",
+    "tracer.utils.eval_tasks",
+    "tracer.utils.monitor",
+    # simulate tasks
+    "simulate.tasks.eval_summary_tasks",
+    "simulate.tasks.scenario_tasks",
+    "simulate.services.test_executor",
+    "simulate.tasks.chat_sim",
+    # voice tasks
+    "ee.voice.tasks.call_log_tasks",
+    # integration tasks
+    "integrations.temporal.activities",
+    "integrations.services.langfuse_service",
+    "integrations.transformers.langfuse_transformer",
+    # billing tasks (Phase 4.6 — budget catch-up)
+    "tfc.temporal.schedules.billing",
+]
+
 
 # =============================================================================
 # Registration Functions
@@ -706,61 +760,7 @@ def _import_temporal_activity_modules() -> None:
 
     log = get_logger(__name__)
 
-    # List of modules with @temporal_activity decorators
-    modules_to_import = [
-        # agent_prompt_optimiser eval activities
-        "tfc.temporal.agent_prompt_optimiser.eval_activities",
-        # Background tasks (post-registration, huggingface, etc.)
-        "tfc.temporal.background_tasks.activities",
-        # model_hub tasks
-        "model_hub.tasks.run_prompt",
-        "model_hub.tasks.experiment_runner",
-        "model_hub.tasks.user_evaluation",
-        "model_hub.tasks.insights",
-        "model_hub.tasks.annotation_automation",
-        "model_hub.tasks.agent",
-        "model_hub.tasks.model_log",
-        "model_hub.tasks.dataset_embeddings",
-        "model_hub.tasks.optimisation_runner",
-        "model_hub.tasks.prompt_template_optimizer",
-        "model_hub.tasks.develop_dataset",
-        # model_hub views
-        "model_hub.views.run_prompt",
-        "model_hub.views.experiment_runner",
-        "model_hub.views.dynamic_columns",
-        "model_hub.views.optimize_dataset",
-        "model_hub.views.prompt_template",
-        "model_hub.views.develop_dataset",
-        "model_hub.views.datasets.create.file_upload",
-        "model_hub.views.utils.evals",
-        # model_hub utils
-        "model_hub.utils.auto_annotate",
-        # tracer tasks
-        "tracer.tasks",
-        "tracer.tasks.trace_scanner",
-        "tracer.tasks.recordings_rehost",
-        "tracer.utils.span",
-        "tracer.utils.eval",
-        "tracer.utils.observability_provider",
-        "tracer.utils.trace_ingestion",
-        "tracer.utils.inline_evals",
-        "tracer.utils.external_eval",
-        "tracer.utils.eval_tasks",
-        "tracer.utils.monitor",
-        # simulate tasks
-        "simulate.tasks.eval_summary_tasks",
-        "simulate.tasks.scenario_tasks",
-        "simulate.services.test_executor",
-        "simulate.tasks.chat_sim",
-        # integration tasks
-        "integrations.temporal.activities",
-        "integrations.services.langfuse_service",
-        "integrations.transformers.langfuse_transformer",
-        # billing tasks (Phase 4.6 — budget catch-up)
-        "tfc.temporal.schedules.billing",
-    ]
-
-    for module_name in modules_to_import:
+    for module_name in TEMPORAL_ACTIVITY_MODULES:
         try:
             __import__(module_name)
             log.debug("module_imported", module=module_name)

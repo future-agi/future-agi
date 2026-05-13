@@ -289,14 +289,20 @@ const getDataSource = (
           }
         }
       } catch (e) {
-        // React Query throws `CancelledError` when a new query supersedes
-        // an in-flight one (common during bulk stop-eval / invalidations).
-        // It's expected flow control, not a real failure — don't log or
-        // flip the grid into failed state for it.
+        // Flow-control errors from request cancellation are not real failures:
+        //   • React Query throws CancelledError when a new query supersedes an
+        //     in-flight one (common during bulk stop-eval / invalidations).
+        //   • Axios throws CanceledError (one L) / code ERR_CANCELED when the
+        //     underlying request is aborted before React Query wraps it.
+        //   • Fetch / AbortController surfaces AbortError.
+        // Don't log or flip the grid into failed state for any of these.
         const err = /** @type {any} */ (e);
+        const name = err?.name || err?.constructor?.name;
         const isCancelled =
-          err?.name === "CancelledError" ||
-          err?.constructor?.name === "CancelledError";
+          name === "CancelledError" ||
+          name === "CanceledError" ||
+          name === "AbortError" ||
+          err?.code === "ERR_CANCELED";
         if (isCancelled) return;
         logger.error("[getRows] failed", {
           message: e instanceof Error ? e.message : String(e),
@@ -411,6 +417,18 @@ const getAverageColumnConfig = (columns, tableRows) => {
   }
 
   for (const [_, cols] of Object.entries(grouping)) {
+    // Ensure evaluation columns come before evaluation_reason so we
+    // pick the result column (which carries averageScore) as cols[0].
+    if (cols.length > 1) {
+      cols.sort((a, b) => {
+        const aType = a.originType || a.origin_type || "";
+        const bType = b.originType || b.origin_type || "";
+        if (aType === "evaluation" && bType !== "evaluation") return -1;
+        if (bType === "evaluation" && aType !== "evaluation") return 1;
+        return 0;
+      });
+    }
+
     if (cols.length === 1) {
       const eachCol = cols[0];
 

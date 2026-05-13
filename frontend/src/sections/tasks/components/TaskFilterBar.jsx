@@ -187,8 +187,25 @@ FilterChip.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
+// Map task rowType → TraceFilterPanel `tab` so the property picker
+// surfaces Trace ID / Span ID the same way LLM Tracing does. Callers
+// use inconsistent casing ("spans"/"Span", "traces"/"Trace") so we
+// normalize. Sessions / voiceCalls return null (no id fields).
+const rowTypeToFilterTab = (rowType) => {
+  const key = String(rowType || "").toLowerCase();
+  if (key === "spans" || key === "span") return "spans";
+  if (key === "traces" || key === "trace") return "trace";
+  return null;
+};
+
 // ── Main ──
-const TaskFilterBar = ({ control, setValue, projectId }) => {
+const TaskFilterBar = ({
+  control,
+  setValue,
+  projectId,
+  isSimulator = false,
+  rowType,
+}) => {
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
   const [panelFilters, setPanelFilters] = useState(() =>
@@ -208,6 +225,15 @@ const TaskFilterBar = ({ control, setValue, projectId }) => {
 
   const [anchorEl, setAnchorEl] = useState(null);
   const addBtnRef = useRef(null);
+
+  // Re-anchor when chips swap the trigger DOM node, so an open popover
+  // doesn't end up attached to a detached element.
+  const hasFiltersForEffect = panelFilters.length > 0;
+  useEffect(() => {
+    if (anchorEl && addBtnRef.current && anchorEl !== addBtnRef.current) {
+      setAnchorEl(addBtnRef.current);
+    }
+  }, [hasFiltersForEffect, anchorEl]);
 
   const applyPanelFilters = useCallback(
     (next) => {
@@ -341,6 +367,8 @@ const TaskFilterBar = ({ control, setValue, projectId }) => {
         onClose={() => setAnchorEl(null)}
         currentFilters={panelFilters}
         projectId={projectId}
+        isSimulator={isSimulator}
+        tab={rowTypeToFilterTab(rowType)}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>
@@ -351,6 +379,8 @@ TaskFilterBar.propTypes = {
   control: PropTypes.object.isRequired,
   setValue: PropTypes.func.isRequired,
   projectId: PropTypes.string,
+  isSimulator: PropTypes.bool,
+  rowType: PropTypes.string,
 };
 
 export default TaskFilterBar;

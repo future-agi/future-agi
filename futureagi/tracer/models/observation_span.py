@@ -13,6 +13,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 
 
 def validate_span_status(value):
@@ -241,21 +242,53 @@ class ObservationSpan(BaseModel):
         ]
 
 
+class EvalTargetType(models.TextChoices):
+    """The unit of evaluation an EvalLogger row represents.
+
+    The discriminator that distinguishes span-level results (current shape)
+    from trace-level results (anchored to the trace's root span — same FK
+    columns as a span row, target_type tells them apart) and session-level
+    results (FKs nullable on this row, ``trace_session`` set instead).
+    See ``EvalLogger.Meta.constraints`` for the per-target_type FK rule.
+    """
+
+    SPAN = "span", "Span"
+    TRACE = "trace", "Trace"
+    SESSION = "session", "Session"
+
+
 class EvalLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Nullable for ``target_type='session'`` rows; populated otherwise.
+    # Per the eval_logger_target_type_fks check constraint:
+    #   span/trace target -> observation_span + trace set, trace_session NULL
+    #   session target    -> observation_span + trace NULL,  trace_session set
     trace = models.ForeignKey(
         Trace,
         on_delete=models.CASCADE,
         related_name="eval_logs",
-        null=False,
-        blank=False,
+        null=True,
+        blank=True,
     )
     observation_span = models.ForeignKey(
         ObservationSpan,
         on_delete=models.CASCADE,
         related_name="eval_logs",
-        null=False,
-        blank=False,
+        null=True,
+        blank=True,
+    )
+    trace_session = models.ForeignKey(
+        TraceSession,
+        on_delete=models.CASCADE,
+        related_name="eval_logs",
+        null=True,
+        blank=True,
+    )
+    target_type = models.CharField(
+        max_length=16,
+        choices=EvalTargetType.choices,
+        default=EvalTargetType.SPAN,
+        db_index=True,
     )
     eval_type_id = models.CharField(max_length=255, null=True, blank=True)
     output_metadata = models.JSONField(null=True, blank=True)
@@ -282,6 +315,47 @@ class EvalLogger(BaseModel):
     def __str__(self):
         return f"Eval Log {self.id}"
 
+    def clean(self):
+        """Enforce the per-``target_type`` FK shape at the Python layer.
+
+        Mirrors the ``eval_logger_target_type_fks`` DB CHECK constraint so
+        single-row ``.save()`` writes raise a clean ``ValidationError`` early
+        instead of bubbling an opaque ``IntegrityError`` from Postgres. The
+        DB CHECK remains the authoritative defense for paths that bypass
+        ``Model.save()`` — ``bulk_create``, raw SQL, the ClickHouse CDC
+        mirror.
+        """
+        super().clean()
+        if self.target_type == EvalTargetType.SESSION:
+            if self.observation_span_id or self.trace_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must not set "
+                    "observation_span or trace."
+                )
+            if not self.trace_session_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must set trace_session."
+                )
+        else:
+            if self.trace_session_id:
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must not set "
+                    "trace_session."
+                )
+            if not (self.observation_span_id and self.trace_id):
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must set both "
+                    "observation_span and trace."
+                )
+
+    def save(self, *args, **kwargs):
+        # ``full_clean()`` runs field validators + ``clean()``. Single-row
+        # writes via ``.save()`` get this validation; ``bulk_create`` / raw
+        # inserts rely on the DB CHECK constraint instead (Django skips
+        # ``clean()`` for ``bulk_create`` by design).
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = "tracer_eval_logger"
         ordering = ["-created_at"]
@@ -289,8 +363,43 @@ class EvalLogger(BaseModel):
         indexes = [
             models.Index(fields=["trace", "created_at"]),
             models.Index(fields=["observation_span"]),
+            models.Index(fields=["trace_session"]),
             models.Index(fields=["custom_eval_config"]),
             models.Index(fields=["output_bool"]),
             models.Index(fields=["output_float"]),
             models.Index(fields=["error"]),
+            # Dedup queries from the trace + session evaluators (PR4) and
+            # span-only readers narrow on this triple. Created concurrently
+            # in the migration to avoid table locks in prod.
+            models.Index(
+                fields=["eval_task_id", "target_type", "custom_eval_config"],
+                name="eval_logger_task_target_idx",
+            ),
+        ]
+        constraints = [
+            # Mutual-exclusion rule: span and trace targets share the
+            # span+trace FK shape (trace anchors to the trace's root span,
+            # disambiguated by ``target_type``); session targets have NULL
+            # span/trace and a populated ``trace_session`` instead. The
+            # FE-visible "session evals never appear on span/trace
+            # surfaces" rule is enforced at the reader level by
+            # ``target_type IN ('span','trace')`` filters; this constraint
+            # just keeps the DB shape consistent.
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(target_type__in=["span", "trace"])
+                        & models.Q(observation_span__isnull=False)
+                        & models.Q(trace__isnull=False)
+                        & models.Q(trace_session__isnull=True)
+                    )
+                    | (
+                        models.Q(target_type="session")
+                        & models.Q(observation_span__isnull=True)
+                        & models.Q(trace__isnull=True)
+                        & models.Q(trace_session__isnull=False)
+                    )
+                ),
+                name="eval_logger_target_type_fks",
+            ),
         ]

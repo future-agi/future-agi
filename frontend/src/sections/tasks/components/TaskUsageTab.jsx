@@ -694,14 +694,44 @@ const DetailPanelContent = ({ row, isDark }) => {
               {detail.model && (
                 <DetailRow label="Model" value={detail.model} mono />
               )}
-              {detail.span_name && (
-                <DetailRow label="Span" value={detail.span_name} mono />
-              )}
-              {detail.span_id && (
-                <DetailRow label="Span ID" value={detail.span_id} mono />
-              )}
-              {detail.trace_id && (
-                <DetailRow label="Trace ID" value={detail.trace_id} mono />
+
+              {detail.target_type === "session" ? (
+                <>
+                  {detail.session_name && (
+                    <DetailRow
+                      label="Session"
+                      value={detail.session_name}
+                      mono
+                    />
+                  )}
+                  {detail.session_id && (
+                    <DetailRow
+                      label="Session ID"
+                      value={detail.session_id}
+                      mono
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  {detail.target_type === "trace" && (
+                    <DetailRow
+                      label="Type"
+                      value="Trace eval"
+                      chip
+                      chipColor="info"
+                    />
+                  )}
+                  {detail.span_name && (
+                    <DetailRow label="Span" value={detail.span_name} mono />
+                  )}
+                  {detail.span_id && (
+                    <DetailRow label="Span ID" value={detail.span_id} mono />
+                  )}
+                  {detail.trace_id && (
+                    <DetailRow label="Trace ID" value={detail.trace_id} mono />
+                  )}
+                </>
               )}
               {row.created_at && (
                 <DetailRow
@@ -816,8 +846,8 @@ const TaskUsageTab = ({ taskId }) => {
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
   const evalsList = chartData?.evals || [];
-  const logItems = logsData?.items || [];
-  const totalLogs = logsData?.total || 0;
+  const logItems = logsData?.results || [];
+  const totalLogs = logsData?.count || 0;
   // Backend may have widened the window to "all time" if the requested
   // period excluded every run. Surface that to the user as a hint so
   // they don't think the date filter is broken.

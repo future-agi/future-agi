@@ -38,6 +38,13 @@ const TABS = {
   SCENARIO: "scenario",
 };
 
+const hasAttributeContent = (value) => {
+  if (!value) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
 const VoiceRightPanel = ({
   data,
   onCompareBaseline,
@@ -280,11 +287,12 @@ const VoiceRightPanel = ({
     //  3. Legacy `trace_details.attributes` for older cached payloads.
     //  4. The span object itself as a last resort.
     return (
-      observationSpan?.span_attributes ||
-      data?.attributes ||
-      data?.trace_details?.attributes ||
-      observationSpan ||
-      null
+      [
+        observationSpan?.span_attributes,
+        data?.attributes,
+        data?.trace_details?.attributes,
+        observationSpan,
+      ].find(hasAttributeContent) || null
     );
   }, [data, observationSpan]);
 

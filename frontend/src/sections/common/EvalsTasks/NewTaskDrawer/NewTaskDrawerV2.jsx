@@ -138,6 +138,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -151,6 +152,7 @@ const NewTaskDrawerV2 = ({
   }, [onClose, reset]);
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
 
   const {
@@ -194,6 +196,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -220,6 +223,7 @@ const NewTaskDrawerV2 = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -230,6 +234,7 @@ const NewTaskDrawerV2 = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -243,11 +248,12 @@ const NewTaskDrawerV2 = ({
 
   // Fetch eval attributes for variable mapping
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
@@ -315,9 +321,13 @@ const NewTaskDrawerV2 = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch {
-        // If backend save fails, still add locally
-        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
       }
     },
     [project, addEval],

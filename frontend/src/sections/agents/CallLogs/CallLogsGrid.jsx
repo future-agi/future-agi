@@ -16,6 +16,7 @@ import {
   Pagination,
   PaginationItem,
   Select,
+  Skeleton,
   Stack,
   Typography,
   useTheme,
@@ -39,6 +40,37 @@ import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverl
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
+// Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
+// the rest of the row.
+const CustomColCellRenderer = (params) => {
+  const v = params?.value;
+  const display = v == null || v === "" ? "-" : v;
+  return (
+    <Box
+      sx={{
+        px: 1.5,
+        py: 0.5,
+        display: "flex",
+        alignItems: "center",
+        height: "100%",
+      }}
+    >
+      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+        {String(display)}
+      </Typography>
+    </Box>
+  );
+};
+
+const CustomColLoadingSkeleton = () => (
+  <Skeleton
+    variant="rectangular"
+    width="80%"
+    height={15}
+    sx={{ mx: 1, borderRadius: 0.5 }}
+  />
+);
+
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
     id,
@@ -48,11 +80,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     onConfigLoaded = () => {},
     enabled = true,
     onSelectionChanged,
-    // Optional richer selection callback — fires alongside onSelectionChanged
-    // with {traceIds, isAllOnPageSelected, currentPageSize, totalPages,
-    // pageLimit}. Used by LLMTracingView's simulator branch to decide when
-    // to show the "select all matching filter" banner (Phase 9 of the
-    // annotation-queue-bulk-select revamp).
+    // Richer selection callback used by LLMTracingView's simulator branch
+    // to decide when to show the "select all matching filter" banner.
     onSelectionMeta,
     cellHeight = "Short",
     columnVisibility,
@@ -80,9 +109,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       reset: state.reset,
     }));
 
-  // Highlight the row whose detail drawer is currently open. Mirrors the
-  // TraceGrid activeTraceId pattern so the experience matches the trace
-  // detail drawer the user referenced.
+  // Highlight the row whose detail drawer is open (mirrors TraceGrid).
   const { testDetailDrawerOpen } = useTestDetailSideDrawerStoreShallow(
     (state) => ({
       testDetailDrawerOpen: state.testDetailDrawerOpen,
@@ -267,15 +294,52 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       .filter((c) => !existingFields.has(c.id))
       .map((c) => ({
         headerName: c.name,
-        field: c.id,
+        // colId (not field) so AG Grid doesn't deep-resolve the dotted path
+        // — list_voice_calls returns flat rows; the valueGetter below handles
+        // the resolution.
+        colId: c.id,
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        valueGetter: (params) => params.data?.[c.id] ?? "-",
+        cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
+        valueGetter: (params) => {
+          if (!params.data) return null;
+          let value = params.data[c.id];
+          if (value === undefined && c.id.includes(".")) {
+            value = c.id
+              .split(".")
+              .reduce((obj, key) => obj?.[key], params.data);
+          }
+          // /eval-attributes serves Vapi attribute paths with namespace
+          // prefixes (call.*, vapi.*) but /list_voice_calls returns them
+          // as flat keys. Whitelisted — a generic "drop leading segments"
+          // would false-positive on paths like phone_number.id → row.id.
+          const VOICE_FLAT_NAMESPACE_PREFIXES = ["call.", "vapi."];
+          if (value === undefined) {
+            const matchedPrefix = VOICE_FLAT_NAMESPACE_PREFIXES.find((p) =>
+              c.id.startsWith(p),
+            );
+            if (matchedPrefix) {
+              value = params.data[c.id.slice(matchedPrefix.length)];
+            }
+          }
+          if (value === undefined || value === null) return null;
+          if (Array.isArray(value) || typeof value === "object") {
+            return JSON.stringify(value);
+          }
+          return String(value);
+        },
       }));
 
-    return [...updated, ...newCustomDefs];
-  }, [callLogsColumnDefs, columnVisibility]);
+    // Group under a "Custom Columns" header for parity with the other grids.
+    if (newCustomDefs.length > 0) {
+      return [
+        ...updated,
+        { headerName: "Custom Columns", children: newCustomDefs },
+      ];
+    }
+    return updated;
+  }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
       resetToggleAnnotationsStore();
