@@ -251,7 +251,7 @@ def is_dag(adjacency: Adjacency, nodes: List[NodeId]) -> bool:
     for src in nodes:
         for tgt in adjacency.get(src, []):
             if tgt not in node_set:
-                continue
+                continue  # skip edges to external nodes not in the analyzed set
             in_degree[tgt] = in_degree.get(tgt, 0) + 1
 
     queue: deque[NodeId] = deque(n for n in nodes if in_degree[n] == 0)
