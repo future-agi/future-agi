@@ -1,5 +1,6 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.db.models import Q
 
 from tfc.utils.base_model import BaseModel
 
@@ -75,10 +76,22 @@ class DatasetEvalConfig(BaseModel):
 
     class Meta:
         db_table = "model_hub_dataset_eval_config"
-        unique_together = [("dataset", "eval_template", "deleted")]
+        constraints = [
+            models.UniqueConstraint(
+                condition=Q(deleted=False),
+                fields=("dataset", "eval_template"),
+                name="unique_active_dataset_eval_config",
+            ),
+        ]
         indexes = [
-            models.Index(fields=["dataset", "enabled"]),
-            models.Index(fields=["organization"]),
+            models.Index(
+                fields=["dataset", "enabled"],
+                name="dataset_eval_config_dataset_enabled_idx",
+            ),
+            models.Index(
+                fields=["organization"],
+                name="dataset_eval_config_org_idx",
+            ),
         ]
 
     def __str__(self):

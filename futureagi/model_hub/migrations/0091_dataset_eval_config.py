@@ -91,15 +91,14 @@ class Migration(migrations.Migration):
             ],
             options={
                 "db_table": "model_hub_dataset_eval_config",
+                "constraints": [
+                    models.UniqueConstraint(
+                        condition=models.Q(deleted=False),
+                        fields=("dataset", "eval_template"),
+                        name="unique_active_dataset_eval_config",
+                    ),
+                ],
             },
-        ),
-        migrations.AddConstraint(
-            model_name="datasetevalconfig",
-            constraint=models.UniqueConstraint(
-                condition=models.Q(deleted=False),
-                fields=("dataset", "eval_template"),
-                name="unique_active_dataset_eval_config",
-            ),
         ),
         migrations.AddIndex(
             model_name="datasetevalconfig",
