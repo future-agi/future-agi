@@ -1712,6 +1712,11 @@ _TRACE_PUBLIC_FIELDS = frozenset(
 )
 _SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
 
+# Span ordering within a trace. Picker SQL aggregates (CH + PG) must
+# iterate in this same order — otherwise advertised ``spans.<n>.<key>``
+# paths won't match what the resolver looks up at run time.
+_SPAN_ORDER_BY: tuple[str, ...] = ("start_time", "id")
+
 
 def _resolve_span_path(span: ObservationSpan, path: str):
     """Walk a path against a span via the ``span_attributes`` bag.
@@ -1766,7 +1771,7 @@ def _resolve_trace_path(trace: Trace, path: str):
         return walked if walked is not None else _MISSING
 
     if head == "spans":
-        spans = list(trace.observation_spans.order_by("start_time", "id"))
+        spans = list(trace.observation_spans.order_by(*_SPAN_ORDER_BY))
         return _resolve_collection_path(spans, rest, _resolve_span_path)
 
     return _MISSING
@@ -1789,13 +1794,10 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
         return walked if walked is not None else _MISSING
 
     if head == "traces":
-        # Match the trace-listing UI's ordering (``list_traces_of_session``
-        # in ``tracer/views/trace.py``): earliest root span's ``start_time``,
-        # falling back to ``created_at`` when no root span has landed yet.
-        # Without this, sessions whose traces share a ``created_at`` (the
-        # SDK stamps every trace in a run with the same instant) tie-break
-        # by id alphabetically -- picking a "trace 0" the user never sees
-        # at the top of the trace list.
+        # Trace ordering: earliest root span's ``start_time`` falling back
+        # to ``created_at`` — matches ``list_traces_of_session`` in
+        # ``tracer/views/trace.py``. Picker aggregates mirror this; if you
+        # change it, update them too.
         from django.db.models import OuterRef, Subquery
         from django.db.models.functions import Coalesce
 

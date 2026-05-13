@@ -278,6 +278,111 @@ class SQL_query_handler:
         return [row[0] for row in rows]
 
     @classmethod
+    def get_observed_trace_attribute_pairs(cls, project_id, sample_size=100):
+        """Distinct ``(span_idx, key)`` pairs realised in the project's
+        most recent traces. Span ORDER BY must match ``_SPAN_ORDER_BY`` in
+        ``tracer/utils/eval.py`` or picker slots drift from the resolver.
+        """
+        query = """
+            WITH sample AS (
+                SELECT id FROM tracer_trace
+                WHERE project_id = %s AND deleted = FALSE
+                ORDER BY created_at DESC
+                LIMIT %s
+            ),
+            ranked AS (
+                SELECT s.trace_id, s.span_attributes,
+                       row_number() OVER (
+                           PARTITION BY s.trace_id
+                           ORDER BY s.start_time, s.id
+                       ) - 1 AS idx
+                FROM tracer_observation_span s
+                WHERE s.trace_id IN (SELECT id FROM sample)
+                  AND s.deleted = FALSE
+                  AND s.span_attributes IS NOT NULL
+                  AND s.span_attributes != '{}'::jsonb
+            )
+            SELECT DISTINCT idx, key
+            FROM ranked, jsonb_object_keys(span_attributes) AS key
+            ORDER BY idx, key
+        """
+        rows = cls.execute_query(query, [project_id, sample_size])
+        return [(int(row[0]), row[1]) for row in rows]
+
+    @classmethod
+    def get_observed_session_attribute_data(cls, project_id, sample_size=100):
+        """``(trace_indices, triples)``. ``trace_indices`` is surfaced
+        separately so the picker can still emit ``traces.<i>.<field>`` for
+        traces with zero spans (trace fields are real model columns).
+        Trace + span ORDER BY mirrors ``_resolve_session_path``.
+        """
+        query = """
+            WITH sample AS (
+                SELECT id FROM trace_session
+                WHERE project_id = %s AND deleted = FALSE
+                ORDER BY created_at DESC
+                LIMIT %s
+            ),
+            session_traces AS (
+                SELECT t.id, t.session_id, t.created_at
+                FROM tracer_trace t
+                WHERE t.session_id IN (SELECT id FROM sample)
+                  AND t.deleted = FALSE
+            ),
+            root_start AS (
+                SELECT s.trace_id, MIN(s.start_time) AS root_start_time
+                FROM tracer_observation_span s
+                WHERE s.parent_span_id IS NULL
+                  AND s.deleted = FALSE
+                  AND s.trace_id IN (SELECT id FROM session_traces)
+                GROUP BY s.trace_id
+            ),
+            ranked_traces AS (
+                SELECT t.id AS trace_id, t.session_id,
+                       row_number() OVER (
+                           PARTITION BY t.session_id
+                           ORDER BY COALESCE(r.root_start_time, t.created_at),
+                                    t.id
+                       ) - 1 AS trace_idx
+                FROM session_traces t
+                LEFT JOIN root_start r ON r.trace_id = t.id
+            ),
+            ranked_spans AS (
+                SELECT rt.trace_idx, s.span_attributes,
+                       row_number() OVER (
+                           PARTITION BY s.trace_id
+                           ORDER BY s.start_time, s.id
+                       ) - 1 AS span_idx
+                FROM ranked_traces rt
+                JOIN tracer_observation_span s ON s.trace_id = rt.trace_id
+                WHERE s.deleted = FALSE
+                  AND s.span_attributes IS NOT NULL
+                  AND s.span_attributes != '{}'::jsonb
+            ),
+            triples AS (
+                SELECT DISTINCT trace_idx, span_idx, key
+                FROM ranked_spans,
+                     jsonb_object_keys(span_attributes) AS key
+            ),
+            indices AS (
+                SELECT DISTINCT trace_idx FROM ranked_traces
+            )
+            SELECT trace_idx, span_idx, key FROM triples
+            UNION ALL
+            SELECT trace_idx, NULL::int, NULL::text FROM indices
+            ORDER BY 1, 2 NULLS FIRST, 3
+        """
+        rows = cls.execute_query(query, [project_id, sample_size])
+        trace_indices: set[int] = set()
+        triples: list[tuple[int, int, str]] = []
+        for row in rows:
+            t_idx = int(row[0])
+            trace_indices.add(t_idx)
+            if row[1] is not None and row[2] is not None:
+                triples.append((t_idx, int(row[1]), row[2]))
+        return trace_indices, triples
+
+    @classmethod
     def get_eval_attributes_for_project(cls, project_id):
         """
         DEPRECATED: Use get_span_attributes_for_project instead.
