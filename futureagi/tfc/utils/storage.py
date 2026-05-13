@@ -592,7 +592,12 @@ def detect_audio_format(audio_bytes):
         stderr=subprocess.PIPE,
     )
 
-    stdout, stderr = process.communicate(input=audio_bytes)
+    try:
+        stdout, stderr = process.communicate(input=audio_bytes, timeout=10)
+    except subprocess.TimeoutExpired as e:
+        process.kill()
+        process.communicate()
+        raise TimeoutError("Audio format detection timed out (exceeded 10s)") from e
 
     if process.returncode != 0:
         raise Exception(f"FFmpeg Error: {stderr.decode('utf-8')}")
@@ -627,12 +632,21 @@ def convert_to_mp3(audio_bytes):
             stderr=subprocess.PIPE,
         )
 
-        stdout, stderr = process.communicate(input=audio_bytes)
+        try:
+            stdout, stderr = process.communicate(input=audio_bytes, timeout=60)
+        except subprocess.TimeoutExpired as e:
+            process.kill()
+            process.communicate()
+            raise TimeoutError(
+                "Audio conversion timed out (exceeded 60s for 50MB max input)"
+            ) from e
 
         if process.returncode != 0:
             raise Exception(f"FFmpeg Conversion Error: {stderr.decode('utf-8')}")
 
         return stdout, "mp3"
+    except TimeoutError:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise ValueError(get_storage_error_message("UNABLE_TO_PROCESS_AUDIO")) from e
