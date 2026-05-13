@@ -10,10 +10,7 @@ describe("contextOptionsForRowType", () => {
   it("maps each known row type to its default data_injection flags", () => {
     expect(contextOptionsForRowType("spans")).toEqual(["span_context"]);
     expect(contextOptionsForRowType("traces")).toEqual(["trace_context"]);
-    expect(contextOptionsForRowType("sessions")).toEqual([
-      "session_context",
-      "trace_context",
-    ]);
+    expect(contextOptionsForRowType("sessions")).toEqual(["session_context"]);
     expect(contextOptionsForRowType("voiceCalls")).toEqual(["call_context"]);
   });
 

@@ -27,6 +27,7 @@ import {
   serializeEvalConfig,
 } from "src/sections/common/EvalPicker";
 import { enqueueSnackbar } from "src/components/snackbar";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -334,6 +335,7 @@ const TaskConfigPanel = ({
     fields: configuredEvals,
     append: addEval,
     remove: removeEval,
+    replace: replaceEvals,
     update: updateEval,
   } = useFieldArray({
     name: "evalsDetails",
@@ -342,6 +344,32 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
+
+
+
+  const [pendingProject, setPendingProject] = useState(null);
+
+  const handleProjectFieldChange = useCallback(
+    (newVal) => {
+      if (!newVal || newVal === project) return;
+      if (configuredEvals.length === 0) return;
+      setPendingProject(project);
+    },
+    [project, configuredEvals.length],
+  );
+
+  const handleConfirmProjectChange = useCallback(() => {
+    replaceEvals([]);
+    setPendingProject(null);
+  }, [replaceEvals]);
+
+  const handleCancelProjectChange = useCallback(() => {
+    setValue("project", pendingProject, {
+      shouldDirty: false,
+      shouldValidate: false,
+    });
+    setPendingProject(null);
+  }, [pendingProject, setValue]);
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
@@ -582,6 +610,7 @@ const TaskConfigPanel = ({
                     value: p.id,
                   })) || []
                 }
+                onChange={handleProjectFieldChange}
                 style={{ width: "100%" }}
                 noOptions="No projects available"
               />
@@ -809,6 +838,18 @@ const TaskConfigPanel = ({
         onFiltersChange={(f) =>
           setValue("filters", f || [], { shouldDirty: true })
         }
+      />
+
+      <ModalWrapper
+        open={!!pendingProject}
+        onClose={handleCancelProjectChange}
+        onCancelBtn={handleCancelProjectChange}
+        onSubmit={handleConfirmProjectChange}
+        title="Switch project?"
+        subTitle="Switching the project will remove the evaluations you've already added to this task."
+        actionBtnTitle="Confirm"
+        cancelBtnTitle="Cancel"
+        isValid
       />
     </>
   );

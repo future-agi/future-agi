@@ -577,7 +577,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           const savedMapping = evalItem?.mapping || {};
           const playgroundConfig = {
             ...(Object.keys(diFlags).length > 0
-              ? { data_injection: diFlags }
+              ? { run_config: { data_injection: diFlags } }
               : {}),
           };
           if (!isSession) {
@@ -688,6 +688,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
+                    "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -1176,6 +1177,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1189,6 +1191,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
