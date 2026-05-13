@@ -1486,9 +1486,19 @@ describe("AnnotationComparisonPanel", () => {
 
     expect(screen.getByRole("button", { name: "Resolving..." })).toBeDisabled();
     expect(
+      within(screen.getByRole("button", { name: "Resolving..." })).getByRole(
+        "progressbar",
+      ),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("button", { name: "Resolve thread" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reopening..." })).toBeDisabled();
+    expect(
+      within(screen.getByRole("button", { name: "Reopening..." })).getByRole(
+        "progressbar",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reopen thread" })).toBeEnabled();
   });
 
@@ -1521,11 +1531,37 @@ describe("AnnotationComparisonPanel", () => {
       />,
     );
 
-    const addReactionButtons = screen.getAllByRole("button", {
-      name: "Add reaction",
+    const updatingReactionButton = screen.getByRole("button", {
+      name: "Updating reaction",
     });
-    expect(addReactionButtons[0]).toBeDisabled();
-    expect(addReactionButtons[1]).toBeEnabled();
+    expect(updatingReactionButton).toBeDisabled();
+    expect(
+      within(updatingReactionButton).getByRole("progressbar"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add reaction" })).toBeEnabled();
+  });
+
+  it("shows comment submit loading on the active composer", () => {
+    mockDiscussionMutationState.create = {
+      isPending: true,
+      variables: undefined,
+    };
+
+    render(
+      <CollaborationDrawer
+        open
+        onClose={vi.fn()}
+        labels={labels}
+        members={annotators}
+        queueId="queue-1"
+        itemId="item-1"
+        itemLabel="trace item-1"
+      />,
+    );
+
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    expect(sendButton).toBeDisabled();
+    expect(within(sendButton).getByRole("progressbar")).toBeInTheDocument();
   });
 
   it("treats reopened threads as open action items", () => {

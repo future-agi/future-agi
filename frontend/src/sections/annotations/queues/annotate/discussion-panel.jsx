@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   Collapse,
   Divider,
   Drawer,
@@ -21,6 +22,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import {
@@ -1046,10 +1048,12 @@ function CommentComposer({
             sx={(theme) => statusChipSx("warning")(theme)}
           />
         )}
-        <Button
+        <LoadingButton
           size="small"
           variant="contained"
           onClick={handleSubmit}
+          loading={Boolean(isPending)}
+          loadingPosition="start"
           disabled={!canSubmit}
           startIcon={<Iconify icon="eva:paper-plane-fill" width={16} />}
           sx={{
@@ -1067,7 +1071,7 @@ function CommentComposer({
           }}
         >
           {submitLabel}
-        </Button>
+        </LoadingButton>
       </Stack>
     </Stack>
   );
@@ -1277,6 +1281,7 @@ function ReactionBar({ comment, onReact, disabled = false }) {
   );
   const pickerOpen = Boolean(anchorEl);
   const canReact = !disabled && Boolean(comment?.id);
+  const isUpdating = disabled && Boolean(comment?.id);
 
   const handleReact = (emoji) => {
     if (!canReact) return;
@@ -1335,12 +1340,12 @@ function ReactionBar({ comment, onReact, disabled = false }) {
           </Button>
         );
       })}
-      <Tooltip title="Add reaction">
+      <Tooltip title={isUpdating ? "Updating reaction" : "Add reaction"}>
         <span>
           <IconButton
             size="small"
             disabled={!canReact}
-            aria-label="Add reaction"
+            aria-label={isUpdating ? "Updating reaction" : "Add reaction"}
             onClick={(event) => setAnchorEl(event.currentTarget)}
             sx={{
               width: 28,
@@ -1355,7 +1360,11 @@ function ReactionBar({ comment, onReact, disabled = false }) {
               },
             }}
           >
-            <Iconify icon="solar:smile-circle-outline" width={16} />
+            {isUpdating ? (
+              <CircularProgress size={14} color="inherit" />
+            ) : (
+              <Iconify icon="solar:smile-circle-outline" width={16} />
+            )}
           </IconButton>
         </span>
       </Tooltip>
@@ -1628,29 +1637,33 @@ function DiscussionThreadCard({
         {resolved ? (
           <Tooltip title="Move this thread back to Open threads">
             <span style={{ marginLeft: "auto" }}>
-              <Button
+              <LoadingButton
                 size="small"
                 variant="outlined"
                 onClick={() =>
                   onReopen?.({ queueId, itemId, threadId: thread.id })
                 }
+                loading={Boolean(isReopening)}
+                loadingPosition="start"
                 disabled={actionsDisabled || isReopening}
                 startIcon={<Iconify icon="solar:restart-bold" width={15} />}
                 sx={actionButtonSx("warning")}
               >
                 {isReopening ? "Reopening..." : "Reopen thread"}
-              </Button>
+              </LoadingButton>
             </span>
           </Tooltip>
         ) : (
           <Tooltip title="Move this thread to Resolved">
             <span style={{ marginLeft: "auto" }}>
-              <Button
+              <LoadingButton
                 size="small"
                 variant="outlined"
                 onClick={() =>
                   onResolve?.({ queueId, itemId, threadId: thread.id })
                 }
+                loading={Boolean(isResolving)}
+                loadingPosition="start"
                 disabled={actionsDisabled || isResolving}
                 startIcon={
                   <Iconify icon="solar:check-circle-bold" width={15} />
@@ -1658,7 +1671,7 @@ function DiscussionThreadCard({
                 sx={actionButtonSx("success")}
               >
                 {isResolving ? "Resolving..." : "Resolve thread"}
-              </Button>
+              </LoadingButton>
             </span>
           </Tooltip>
         )}
@@ -2561,15 +2574,17 @@ export default function DiscussionPanel({
           )}
         </Box>
 
-        <Button
+        <LoadingButton
           variant="outlined"
           size="small"
           onClick={handleSubmit}
+          loading={Boolean(isPending)}
+          loadingPosition="start"
           disabled={!canSubmit}
           startIcon={<Iconify icon="eva:paper-plane-fill" width={16} />}
         >
           Add comment
-        </Button>
+        </LoadingButton>
       </Stack>
     </Box>
   );
