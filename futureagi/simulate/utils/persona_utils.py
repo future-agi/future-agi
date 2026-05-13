@@ -3,7 +3,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def persona_first(values: str | list | None, field: str, default: str) -> str:
+def persona_first(values: str | list[str] | None, field: str, default: str) -> str:
     """Return a scalar string from a persona field that may be stored as a
     plain string or a list.
 
