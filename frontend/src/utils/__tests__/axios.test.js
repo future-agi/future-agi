@@ -5,9 +5,10 @@ vi.mock("../Mixpanel", () => ({
 }));
 
 import axiosInstance from "../axios";
+import { canonicalKeys } from "../utils";
 
 describe("axios response shape", () => {
-  it("does not add camelCase aliases to backend response keys", () => {
+  it("adds camelCase aliases while canonicalKeys still hides duplicates", () => {
     const fulfilled = axiosInstance.interceptors.response.handlers.find(
       (handler) => handler.fulfilled,
     )?.fulfilled;
@@ -23,13 +24,17 @@ describe("axios response shape", () => {
 
     const result = fulfilled(response);
 
-    expect(Object.keys(result.data)).toEqual(["created_at", "span_attributes"]);
-    expect(result.data.createdAt).toBeUndefined();
+    expect(result.data.createdAt).toBe("2026-05-13T00:00:00Z");
+    expect(result.data.spanAttributes).toBe(result.data.span_attributes);
+    expect(result.data.span_attributes["genAi.usage.totalTokens"]).toBe(
+      undefined,
+    );
+    expect(canonicalKeys(result.data)).toEqual([
+      "created_at",
+      "span_attributes",
+    ]);
     expect(Object.keys(result.data.span_attributes)).toEqual([
       "gen_ai.usage.total_tokens",
     ]);
-    expect(
-      result.data.span_attributes["genAi.usage.totalTokens"],
-    ).toBeUndefined();
   });
 });
