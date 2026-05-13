@@ -572,7 +572,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           const savedMapping = evalItem?.mapping || {};
           const playgroundConfig = {
             ...(Object.keys(diFlags).length > 0
-              ? { data_injection: diFlags }
+              ? { run_config: { data_injection: diFlags } }
               : {}),
           };
           if (!isSession) {
