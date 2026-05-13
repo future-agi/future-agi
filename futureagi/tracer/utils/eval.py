@@ -38,7 +38,11 @@ EXPERIMENT = "experiment"
 OBSERVE = "observe"
 
 # Re-export for backward compat
-from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
+from tracer.utils.eval_helpers import (  # noqa: F401, E402
+    evalable_field_names,
+    evalable_fk_remap,
+    resolve_eval_config_id,
+)
 
 # Friendly eval-mapping shorthands used in saved configs. The user-
 # facing variable picker (voice projects in particular) lets people map
@@ -185,7 +189,8 @@ def _process_mapping(
             if isinstance(resolved_value, str):
                 parsed_mapping[key] = resolved_value
             else:
-                parsed_mapping[key] = json.dumps(resolved_value)
+                # default=str serializes datetime / UUID columns.
+                parsed_mapping[key] = json.dumps(resolved_value, default=str)
         else:
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
@@ -1478,36 +1483,184 @@ def _resolve_collection_path(items: list, path: str, item_resolver):
     return item_resolver(items[idx], rest)
 
 
-# Allow-list of model attributes the trace + session mapping resolvers
-# expose. Prevents users from mapping eval inputs to internal Django state
-# (``_state``, ``pk``, manager refs, methods, FK-Model objects) and keeps
-# the mappable surface a deliberate API contract — not "whatever happens
-# to be on the model". When a new field is added to one of these models,
-# decide whether it belongs in the eval-mapping surface and update the
-# set if so. Span resolution intentionally has no allow-list — it routes
-# through the OTel ``span_attributes`` JSONField bag, which is the
-# canonical surface the span mapping picker exposes today.
-_TRACE_PUBLIC_FIELDS = frozenset(
-    {"input", "output", "name", "error", "tags", "metadata", "external_id"}
+# Mapping allow-lists, derived from ``Model._meta`` so they track the schema.
+_TRACE_PUBLIC_FIELDS = evalable_field_names(Trace)
+_SPAN_PUBLIC_FIELDS = evalable_field_names(ObservationSpan)
+_SESSION_PUBLIC_FIELDS = evalable_field_names(TraceSession)
+# FK picker-name → ``getattr`` target (``session`` → ``session_id``, …).
+_TRACE_FK_REMAP = evalable_fk_remap(Trace)
+_SPAN_FK_REMAP = evalable_fk_remap(ObservationSpan)
+_SESSION_FK_REMAP = evalable_fk_remap(TraceSession)
+
+
+# Aggregates / root-span shorthands computed at resolve time. Same
+# expressions as ``list_traces`` / ``list_sessions`` — values match the
+# FE tables.
+_TRACE_DERIVED_FIELDS = frozenset(
+    {
+        "node_type",
+        "trace_name",
+        "start_time",
+        "status",
+        "total_tokens",
+        "total_prompt_tokens",
+        "total_completion_tokens",
+        "total_cost",
+        "total_duration_ms",
+        "total_spans",
+        "error_count",
+    }
 )
-_SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
+_SESSION_DERIVED_FIELDS = frozenset(
+    {
+        "total_tokens",
+        "total_prompt_tokens",
+        "total_completion_tokens",
+        "total_cost",
+        "start_time",
+        "end_time",
+        "duration",
+        "total_traces",
+        "first_message",
+        "last_message",
+    }
+)
+
+
+def _compute_trace_derived(trace: Trace) -> dict:
+    """Mirrors aggregates in ``list_traces``. Memoised per-instance."""
+    cache = getattr(trace, "_eval_derived_cache", None)
+    if cache is not None:
+        return cache
+
+    from django.db.models import (
+        Count,
+        FloatField,
+        IntegerField,
+        Max,
+        Q,
+        Sum,
+    )
+    from django.db.models.functions import Coalesce
+
+    spans = ObservationSpan.objects.filter(trace_id=trace.id)
+    agg = spans.aggregate(
+        total_tokens=Coalesce(Sum("total_tokens", output_field=IntegerField()), 0),
+        total_prompt_tokens=Coalesce(
+            Sum("prompt_tokens", output_field=IntegerField()), 0
+        ),
+        total_completion_tokens=Coalesce(
+            Sum("completion_tokens", output_field=IntegerField()), 0
+        ),
+        total_cost=Coalesce(Sum("cost", output_field=FloatField()), 0.0),
+        total_spans=Count("id"),
+        error_count=Count("id", filter=Q(status="ERROR")),
+        # Root spans only — matches ``max(root_latencies)`` in trace.py.
+        total_duration_ms=Coalesce(
+            Max("latency_ms", filter=Q(parent_span_id__isnull=True)), 0
+        ),
+    )
+
+    root_span = (
+        spans.filter(parent_span_id__isnull=True).order_by("start_time").first()
+    )
+    root_statuses = set(
+        spans.filter(parent_span_id__isnull=True)
+        .values_list("status", flat=True)
+        .distinct()
+    )
+    if "ERROR" in root_statuses:
+        status = "ERROR"
+    elif "OK" in root_statuses:
+        status = "OK"
+    else:
+        status = "UNSET"
+
+    cache = {
+        "node_type": root_span.observation_type if root_span else "unknown",
+        "trace_name": (
+            root_span.name if root_span else "[ Incomplete Trace ]"
+        ),
+        "start_time": (
+            root_span.start_time
+            if root_span and root_span.start_time
+            else trace.created_at
+        ),
+        "status": status,
+        "total_tokens": agg["total_tokens"],
+        "total_prompt_tokens": agg["total_prompt_tokens"],
+        "total_completion_tokens": agg["total_completion_tokens"],
+        "total_cost": (
+            round(agg["total_cost"], 6) if agg["total_cost"] else 0.0
+        ),
+        "total_duration_ms": agg["total_duration_ms"],
+        "total_spans": agg["total_spans"],
+        "error_count": agg["error_count"],
+    }
+    trace._eval_derived_cache = cache
+    return cache
+
+
+def _compute_session_derived(session: TraceSession) -> dict:
+    """Mirrors aggregates in ``list_sessions``. Memoised per-instance."""
+    cache = getattr(session, "_eval_derived_cache", None)
+    if cache is not None:
+        return cache
+
+    from django.db.models import Count, FloatField, IntegerField, Max, Min, Sum
+    from django.db.models.functions import Coalesce
+
+    spans = ObservationSpan.objects.filter(trace__session_id=session.id)
+    agg = spans.aggregate(
+        total_tokens=Coalesce(Sum("total_tokens", output_field=IntegerField()), 0),
+        total_prompt_tokens=Coalesce(
+            Sum("prompt_tokens", output_field=IntegerField()), 0
+        ),
+        total_completion_tokens=Coalesce(
+            Sum("completion_tokens", output_field=IntegerField()), 0
+        ),
+        total_cost=Coalesce(Sum("cost", output_field=FloatField()), 0.0),
+        start_time=Min("start_time"),
+        end_time=Max("end_time"),
+        total_traces=Count("trace_id", distinct=True),
+    )
+
+    start, end = agg.get("start_time"), agg.get("end_time")
+    if start and end:
+        try:
+            duration = (end - start).total_seconds()
+        except (TypeError, AttributeError):
+            duration = 0
+    else:
+        duration = 0
+
+    first = spans.order_by("start_time").values_list("input", flat=True).first()
+    last = spans.order_by("-start_time").values_list("input", flat=True).first()
+
+    cache = {
+        "total_tokens": agg["total_tokens"],
+        "total_prompt_tokens": agg["total_prompt_tokens"],
+        "total_completion_tokens": agg["total_completion_tokens"],
+        "total_cost": (
+            round(agg["total_cost"], 6) if agg["total_cost"] else 0.0
+        ),
+        "start_time": start,
+        "end_time": end,
+        "duration": duration,
+        "total_traces": agg["total_traces"],
+        "first_message": first,
+        "last_message": last,
+    }
+    session._eval_derived_cache = cache
+    return cache
 
 
 def _resolve_span_path(span: ObservationSpan, path: str):
-    """Walk a path against a span via the ``span_attributes`` bag.
+    """Walk a path against a span.
 
-    Routes through ``_resolve_attr(span_attrs, path)`` — same surface as the
-    pre-existing ``_process_mapping`` resolver, so a saved span mapping that
-    works at the span level also works when the path bottoms out at a span
-    via ``spans.<n>.<field>`` from a trace or session resolver. The SDK
-    mirrors model fields (``input``, ``output``, ``model``, etc.) into
-    ``span_attributes`` during ingestion, so users don't lose access to
-    them.
-
-    The explicit ``span_attributes`` head case lets a path return the
-    whole bag (``spans.0.span_attributes``) or walk into a nested key
-    (``spans.0.span_attributes.foo.bar``) without going through the
-    aliasing fallback in ``_resolve_attr``.
+    Order: ``span_attributes.<...>`` → model column → ``_resolve_attr``
+    fallback (legacy span_attributes lookup with friendly aliases). On a
+    name collision the model column wins.
     """
     from tracer.utils.attribute_accessor import get_span_attributes
 
@@ -1525,6 +1678,13 @@ def _resolve_span_path(span: ObservationSpan, path: str):
         walked = _walk_dotted_path(span_attrs, rest)
         return walked if walked is not None else _MISSING
 
+    if head in _SPAN_PUBLIC_FIELDS:
+        value = getattr(span, _SPAN_FK_REMAP.get(head, head))
+        if not rest:
+            return value
+        walked = _walk_dotted_path(value, rest)
+        return walked if walked is not None else _MISSING
+
     span_attrs = get_span_attributes(span)
     return _resolve_attr(span_attrs, path)
 
@@ -1539,7 +1699,15 @@ def _resolve_trace_path(trace: Trace, path: str):
     rest = parts[1] if len(parts) > 1 else ""
 
     if head in _TRACE_PUBLIC_FIELDS:
-        value = getattr(trace, head)
+        value = getattr(trace, _TRACE_FK_REMAP.get(head, head))
+        if not rest:
+            return value
+        walked = _walk_dotted_path(value, rest)
+        return walked if walked is not None else _MISSING
+
+    if head in _TRACE_DERIVED_FIELDS:
+        derived = _compute_trace_derived(trace)
+        value = derived.get(head)
         if not rest:
             return value
         walked = _walk_dotted_path(value, rest)
@@ -1562,7 +1730,15 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
     rest = parts[1] if len(parts) > 1 else ""
 
     if head in _SESSION_PUBLIC_FIELDS:
-        value = getattr(trace_session, head)
+        value = getattr(trace_session, _SESSION_FK_REMAP.get(head, head))
+        if not rest:
+            return value
+        walked = _walk_dotted_path(value, rest)
+        return walked if walked is not None else _MISSING
+
+    if head in _SESSION_DERIVED_FIELDS:
+        derived = _compute_session_derived(trace_session)
+        value = derived.get(head)
         if not rest:
             return value
         walked = _walk_dotted_path(value, rest)
@@ -1645,7 +1821,10 @@ def _process_trace_mapping(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
             )
-        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+        # default=str serializes datetime / UUID columns.
+        parsed[key] = (
+            value if isinstance(value, str) else json.dumps(value, default=str)
+        )
 
     return parsed
 
@@ -1694,7 +1873,10 @@ def _process_session_mapping(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on session {trace_session.id}"
             )
-        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+        # default=str serializes datetime / UUID columns.
+        parsed[key] = (
+            value if isinstance(value, str) else json.dumps(value, default=str)
+        )
 
     return parsed
 

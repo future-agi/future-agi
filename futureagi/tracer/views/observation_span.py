@@ -84,9 +84,12 @@ from tracer.serializers.trace import TraceSerializer
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
+    _SESSION_DERIVED_FIELDS,
+    _TRACE_DERIVED_FIELDS,
     evaluate_observation_span,
     evaluate_observation_span_observe,
 )
+from tracer.utils.eval_helpers import evalable_field_names
 from tracer.utils.eval_tasks import parsing_evaltask_filters
 from tracer.utils.filters import FilterEngine
 from tracer.utils.graphs_optimized import (
@@ -2832,13 +2835,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
-        """Distinct span_attributes keys for a project (spans surface).
+        """Span model columns + distinct span_attributes keys for a project.
 
-        Query params:
-            filters: JSON {"project_id": "<uuid>"} (required)
-
-        Returns:
-            List of attribute key strings.
+        Model columns come first (sorted) — durable contract above the
+        project-observed OTel bag keys.
         """
         try:
             filters = self.request.query_params.get("filters", "{}")
@@ -2849,7 +2849,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 return self._gm.bad_request("project_id is required")
 
-            result = self._get_span_attribute_keys(project_id)
+            result = self._merge_model_and_attr_keys(
+                self._SPAN_PUBLIC_FIELDS,
+                self._get_span_attribute_keys(project_id),
+            )
             return self._gm.success_response(result)
 
         except Exception as e:
@@ -2918,19 +2921,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the eval attributes list {str(e)}"
             )
 
-    # Trace + session model fields the resolver allow-lists; mirrors the
-    # frozensets in tracer.utils.eval. Hand-synced so a model change shows
-    # up in both places at review time.
-    _TRACE_PUBLIC_FIELDS = (
-        "input",
-        "output",
-        "name",
-        "error",
-        "tags",
-        "metadata",
-        "external_id",
-    )
-    _SESSION_PUBLIC_FIELDS = ("name", "bookmarked")
+    # Mapping allow-lists, derived from Model._meta — same source the
+    # runtime resolver in tracer.utils.eval uses.
+    _TRACE_PUBLIC_FIELDS = tuple(sorted(evalable_field_names(Trace)))
+    _SPAN_PUBLIC_FIELDS = tuple(sorted(evalable_field_names(ObservationSpan)))
+    _SESSION_PUBLIC_FIELDS = tuple(sorted(evalable_field_names(TraceSession)))
 
     # Cap on how many entities to scan when computing observed maxes.
     # Most projects' traces have a few-to-dozens of spans; bounding the
@@ -3011,32 +3006,54 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         )
         return agg["max_count"] or 0
 
+    @staticmethod
+    def _merge_model_and_attr_keys(model_fields, attr_keys) -> list:
+        """Union: model fields first, then attr keys, no duplicates."""
+        seen = set()
+        merged = []
+        for k in list(model_fields) + list(attr_keys):
+            if k and k not in seen:
+                merged.append(k)
+                seen.add(k)
+        return merged
+
     def _build_trace_attribute_paths(
         self, project_id: str, span_attribute_keys: list
     ) -> list:
-        """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
-        index up to the observed max spans-per-trace."""
-        paths = list(self._TRACE_PUBLIC_FIELDS)
+        """Trace fields + derived aggregates + ``spans.<n>.<key>``."""
+        paths = self._merge_model_and_attr_keys(
+            self._TRACE_PUBLIC_FIELDS, sorted(_TRACE_DERIVED_FIELDS)
+        )
         max_spans = self._max_spans_per_trace(project_id)
+        span_keys = self._merge_model_and_attr_keys(
+            self._SPAN_PUBLIC_FIELDS, span_attribute_keys
+        )
         for i in range(max_spans):
-            for key in span_attribute_keys:
+            for key in span_keys:
                 paths.append(f"spans.{i}.{key}")
         return paths
 
     def _build_session_attribute_paths(
         self, project_id: str, span_attribute_keys: list
     ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
-        paths = list(self._SESSION_PUBLIC_FIELDS)
+        """Session fields + derived aggregates + ``traces.<i>.<...>`` +
+        ``traces.<i>.spans.<j>.<key>``."""
+        paths = self._merge_model_and_attr_keys(
+            self._SESSION_PUBLIC_FIELDS, sorted(_SESSION_DERIVED_FIELDS)
+        )
         max_traces = self._max_traces_per_session(project_id)
         max_spans = self._max_spans_per_trace(project_id)
+        trace_fields = self._merge_model_and_attr_keys(
+            self._TRACE_PUBLIC_FIELDS, sorted(_TRACE_DERIVED_FIELDS)
+        )
+        span_keys = self._merge_model_and_attr_keys(
+            self._SPAN_PUBLIC_FIELDS, span_attribute_keys
+        )
         for i in range(max_traces):
-            for trace_field in self._TRACE_PUBLIC_FIELDS:
+            for trace_field in trace_fields:
                 paths.append(f"traces.{i}.{trace_field}")
             for j in range(max_spans):
-                for key in span_attribute_keys:
+                for key in span_keys:
                     paths.append(f"traces.{i}.spans.{j}.{key}")
         return paths
 

@@ -64,6 +64,32 @@ class TestGetEvalAttributesListSpans:
         assert "input" in result
         assert not any("." in path for path in result)
 
+    def test_spans_includes_model_columns(
+        self, auth_client, populated_observe_project
+    ):
+        """Span model columns appear alongside span_attributes keys."""
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "spans",
+            },
+        )
+        result = response.json().get("result", [])
+        for col in (
+            "model",
+            "provider",
+            "latency_ms",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "metadata",
+            "tags",
+            "status",
+        ):
+            assert col in result, f"missing span model column {col!r} in picker"
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -83,17 +109,12 @@ class TestGetEvalAttributesListTraces:
         )
         assert response.status_code == 200
         result = response.json().get("result", [])
-        # All allow-list trace fields surface as bare scalar paths.
-        for field in (
-            "input",
-            "output",
-            "name",
-            "error",
-            "tags",
-            "metadata",
-            "external_id",
-        ):
-            assert field in result
+        # Every Trace column appears; tracks the schema.
+        from tracer.models.trace import Trace
+        from tracer.utils.eval_helpers import evalable_field_names
+
+        for field in evalable_field_names(Trace):
+            assert field in result, f"missing trace column {field!r} in picker"
 
     def test_includes_indexed_span_paths_per_observed_key(
         self, auth_client, populated_observe_project
@@ -118,6 +139,45 @@ class TestGetEvalAttributesListTraces:
             assert f"spans.{i}.output" in result
         # No phantom positions beyond the observed max
         assert "spans.3.input" not in result
+
+    def test_indexed_span_paths_include_model_columns(
+        self, auth_client, populated_observe_project
+    ):
+        """``spans.<n>.<col>`` for span model columns, not only attr keys."""
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "traces",
+            },
+        )
+        result = response.json().get("result", [])
+        for i in range(3):
+            for col in ("model", "provider", "latency_ms", "prompt_tokens"):
+                assert f"spans.{i}.{col}" in result, (
+                    f"missing spans.{i}.{col} in trace picker"
+                )
+
+    def test_includes_trace_derived_fields(
+        self, auth_client, populated_observe_project
+    ):
+        """Derived trace aggregates appear alongside real columns."""
+        from tracer.utils.eval import _TRACE_DERIVED_FIELDS
+
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "traces",
+            },
+        )
+        result = response.json().get("result", [])
+        for derived in _TRACE_DERIVED_FIELDS:
+            assert derived in result, (
+                f"missing derived trace field {derived!r} in picker"
+            )
 
     def test_does_not_expose_first_last_aliases(
         self, auth_client, populated_observe_project
@@ -157,6 +217,26 @@ class TestGetEvalAttributesListSessions:
         result = response.json().get("result", [])
         for field in ("name", "bookmarked"):
             assert field in result
+
+    def test_includes_session_derived_fields(
+        self, auth_client, populated_observe_project
+    ):
+        """Derived session aggregates appear alongside real columns."""
+        from tracer.utils.eval import _SESSION_DERIVED_FIELDS
+
+        project = populated_observe_project["project"]
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "sessions",
+            },
+        )
+        result = response.json().get("result", [])
+        for derived in _SESSION_DERIVED_FIELDS:
+            assert derived in result, (
+                f"missing derived session field {derived!r} in picker"
+            )
 
     def test_includes_indexed_traces_with_trace_fields(
         self, auth_client, populated_observe_project
