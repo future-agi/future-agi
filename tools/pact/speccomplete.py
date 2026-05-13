@@ -12,14 +12,13 @@ The result is a spec that's ready for TLC model checking.
 from __future__ import annotations
 
 import os
-import textwrap
 from pathlib import Path
 from typing import Optional
 
-from .specgen import spec_gen
+from .specgen import synthesize as _spec_synthesize
 
 
-_SYSTEM = textwrap.dedent(
+_SYSTEM = (
     "You are a TLA+ specification expert. Your job is to complete a partially"
     " generated TLA+ spec by filling in every TODO comment.\n\n"
     "Rules:\n"
@@ -37,21 +36,23 @@ _SYSTEM = textwrap.dedent(
 )
 
 
-_USER_TEMPLATE = """\
-## Python source ({filename})
+def _build_user_msg(filename: str, source: str, skeleton: str) -> str:
+    """Build the LLM prompt without using str.format() on user-supplied content.
 
-```python
-{source}
-```
-
-## TLA+ skeleton to complete
-
-```tla
-{skeleton}
-```
-
-Complete the spec. Output only the TLA+ text.
-"""
+    str.format() raises KeyError when source or skeleton contain bare braces
+    (dict literals, f-strings, TLA+ set expressions like {"NULL"}).
+    """
+    return (
+        f"## Python source ({filename})\n\n"
+        "```python\n"
+        + source
+        + "\n```\n\n"
+        "## TLA+ skeleton to complete\n\n"
+        "```tla\n"
+        + skeleton
+        + "\n```\n\n"
+        "Complete the spec. Output only the TLA+ text.\n"
+    )
 
 
 def spec_complete(
@@ -67,7 +68,9 @@ def spec_complete(
     Raises RuntimeError if the API key is missing.
     """
     source = path.read_text(encoding="utf-8")
-    skeleton = spec_gen(path)
+    # Drive synthesize directly so the file is read only once (spec_gen would re-read it).
+    module_name = "".join(w.capitalize() for w in path.stem.split("_"))
+    skeleton = _spec_synthesize(source, module_name)
 
     key = api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("PACT_ANTHROPIC_API_KEY")
     if not key:
@@ -79,7 +82,7 @@ def spec_complete(
     import anthropic
     client = anthropic.Anthropic(api_key=key)
 
-    user_msg = _USER_TEMPLATE.format(
+    user_msg = _build_user_msg(
         filename=path.name,
         source=source[:8000],   # stay within context; models.py rarely exceeds this
         skeleton=skeleton,
