@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Run formal tests standalone — no Django, no Docker, no rest_framework.
+# pytest accounts/formal_tests/ from the futureagi/ directory uses this config.
+addopts = "--noconftest"
