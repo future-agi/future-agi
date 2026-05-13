@@ -7,14 +7,15 @@ from django.http import JsonResponse
 
 logger = structlog.get_logger(__name__)
 
-# Aliases whose failure should 503 the request. Everything else (replica,
-# default_direct, product DBs we may add later) is best-effort — a transient
-# outage there should NOT block requests that don't read from it.
-#
-# Previously this middleware iterated every entry in `connections` and
-# treated any failure as fatal. With the read replica configured, a brief
-# replica blip would 503 requests that don't even read from replica — see
-# `internal-docs/design/do-and-do-not.md` for the rule.
+# Aliases whose failure should 503 the request. We intentionally probe
+# ONLY these on the request path. Other aliases (replica, default_direct,
+# product DBs we may add later) are NOT probed here for two reasons:
+#   1. probing the replica on every protected request adds latency to
+#      every such request, even when the replica is healthy;
+#   2. a brief replica blip would 503 requests that don't even read from
+#      replica.
+# Health of non-critical aliases is monitored OUT-OF-BAND via
+# `tfc.telemetry.replica_lag` (Prometheus gauge) — see that module.
 #
 # Operational note: the structured-log event names emitted below
 # ("database_connection_failed_critical") replace an earlier f-string
@@ -26,13 +27,19 @@ _CRITICAL_DB_ALIASES = ("default",)
 def check_db_connection():
     """Check if the critical database connections are alive.
 
-    Only probes aliases in `_CRITICAL_DB_ALIASES`. A failure here returns
-    False (→ 503 from the decorator). Non-critical aliases (`replica`,
-    `default_direct`) are intentionally NOT probed on the request path —
-    a slow / down replica would otherwise add probe latency to every
-    request protected by `@db_connection_required`. Health of non-critical
-    aliases is monitored out-of-band via `tfc.telemetry.replica_lag` and
-    similar.
+    Only probes aliases in `_CRITICAL_DB_ALIASES` (currently: `default`).
+    A failure here returns False (→ 503 from the decorator). Non-critical
+    aliases (`replica`, `default_direct`) are intentionally NOT probed on
+    the request path. Their health is monitored out-of-band via
+    `tfc.telemetry.replica_lag` (Prometheus gauge).
+
+    Consequence for routed endpoints: if `READ_REPLICA_OPT_IN` is enabled
+    and the replica is down, a routed view's `.using("replica")` query will
+    fail at execution time. The view's own exception handler decides the
+    response status (often 400 or 500), NOT this middleware. Mitigation:
+    flip `READ_REPLICA_OPT_IN=""` and restart workers to disable routing
+    globally; or add an explicit `try/except OperationalError -> retry on
+    default` for the affected endpoint.
     """
     all_ok = True
     for db_name in _CRITICAL_DB_ALIASES:

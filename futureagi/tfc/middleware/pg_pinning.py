@@ -7,12 +7,19 @@ only if read-after-write bugs surface on the HTTP path. Non-HTTP entrypoints
 `tfc.routers.force_primary()` directly — a cookie middleware doesn't help
 there.
 
+IMPORTANT SCOPE: this middleware only protects ROUTER-MEDIATED reads.
+Endpoints that use explicit `.using("replica")` or `db_manager("replica")`
+calls (our 9 feature-key-routed endpoints) bypass the router and will
+continue to hit replica regardless of `force_primary()`. For those, the
+mitigations are: (a) write the read without `.using()` so the router
+chooses, or (b) flip `READ_REPLICA_OPT_IN=""` and restart workers.
+
 Two protections layered:
 
   1. Non-idempotent methods (POST/PUT/PATCH/DELETE) get wrapped in
-     `force_primary()` so reads INSIDE the mutating request hit primary.
-     (Without this, a POST that writes and then reads before returning the
-     response could still hit replica.)
+     `force_primary()` so router-mediated reads INSIDE the mutating
+     request hit primary. (Without this, a POST that writes and then
+     reads before returning the response could still hit replica.)
 
   2. A short-lived cookie (`pg_pin_primary`, default 10s TTL) is set on the
      response. Subsequent requests carrying the cookie are also wrapped in

@@ -45,17 +45,30 @@ def _replica_configured() -> bool:
 @contextmanager
 def force_primary():
     """
-    Pin all reads inside this block to the primary database.
+    Pin ROUTER-MEDIATED reads inside this block to the primary database.
+
+    SCOPE — important caveat:
+      This only affects reads that flow through `ReadReplicaRouter.db_for_read()`,
+      i.e. ordinary `Model.objects.filter(...)` calls that let the router pick.
+      It does NOT redirect code that explicitly bypasses the router via
+      `.using("replica")` or `db_manager("replica")` — those continue to
+      use the specified alias. Our 9 currently-routed endpoints (project_list,
+      dashboard_list, etc.) all use explicit aliases, so `force_primary()`
+      cannot redirect them. Read-after-write on those endpoints must either
+      (a) construct the query without `.using()` so it goes through the
+      router, or (b) flip `READ_REPLICA_OPT_IN=""` to disable routing.
 
     Safe across threads AND coroutines. Reentrant.
 
-    Use around code that just wrote and immediately reads, or anywhere
-    read-after-write consistency is required.
+    Use around code that just wrote and immediately reads, where the read
+    is a plain ORM query that goes through the router.
 
     Example:
         with force_primary():
             org.save()
             fresh = Organization.objects.get(pk=org.pk)  # hits primary
+            # NOTE: `Organization.objects.using("replica").get(...)` inside
+            # this block would still hit replica — explicit beats router.
 
     Or as a decorator via `primary_required`.
     """
