@@ -4,7 +4,9 @@ import traceback
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any, Callable, Optional
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -1895,12 +1897,18 @@ class EvalTemplateCreateV2View(APIView):
                 output_type_normalized=req.output_type,
                 pass_threshold=req.pass_threshold,
                 choice_scores=req.choice_scores,
+                error_localizer_enabled=req.error_localizer_enabled,
             )
 
             # 8. Create initial version (V1)
             from model_hub.models.evals_metric import EvalTemplateVersion
 
             try:
+                # Column snapshot fields default to capturing the template's
+                # current value (output_type_normalized, pass_threshold,
+                # choice_scores, error_localizer_enabled, eval_tags) — see
+                # EvalTemplateVersionManager.create_version. We don't pass
+                # them explicitly here.
                 EvalTemplateVersion.objects.create_version(
                     eval_template=eval_template,
                     prompt_messages=[],
@@ -2502,6 +2510,59 @@ class EvalTemplateVersionCreateView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@dataclass(frozen=True)
+class _SnapshotField:
+    """Snapshot column to restore from version → template. Future fields
+    add one entry to ``_VERSION_SNAPSHOT_FIELDS`` below; no apply/capture
+    rewrite needed."""
+
+    name: str
+    transform: Optional[Callable[[Any], Any]] = None
+
+
+# Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
+# so pre-fix rows preserve the live template's current value. eval_tags
+# is list()-copied so later template mutations don't propagate into the
+# version snapshot.
+_VERSION_SNAPSHOT_FIELDS: tuple = (
+    _SnapshotField("output_type_normalized"),
+    _SnapshotField("pass_threshold"),
+    _SnapshotField("choice_scores"),
+    _SnapshotField("error_localizer_enabled"),
+    _SnapshotField("eval_tags", transform=list),
+)
+
+
+def _apply_version_snapshot_to_template(template, version):
+    """Copy a version's snapshot fields onto the live EvalTemplate.
+
+    Shared by SetDefaultVersionView (activating a version) and
+    RestoreVersionView (after creating a mirror version). ``config`` and
+    ``criteria`` are always overwritten; ``model`` is restored only when
+    non-empty; each ``_VERSION_SNAPSHOT_FIELDS`` entry is restored only
+    when non-NULL on the version row. Returns the list of changed field
+    names for ``template.save(update_fields=...)``.
+    """
+    fields_to_update = ["config", "criteria", "updated_at"]
+    template.config = version.config_snapshot or {}
+    template.criteria = version.criteria or ""
+
+    if version.model:
+        template.model = version.model
+        fields_to_update.append("model")
+
+    for snap in _VERSION_SNAPSHOT_FIELDS:
+        value = getattr(version, snap.name)
+        if value is None:
+            continue
+        if snap.transform is not None:
+            value = snap.transform(value)
+        setattr(template, snap.name, value)
+        fields_to_update.append(snap.name)
+
+    return fields_to_update
+
+
 class SetDefaultVersionView(APIView):
     """
     PUT /model-hub/eval-templates/<id>/versions/<version_id>/set-default/
@@ -2546,12 +2607,8 @@ class SetDefaultVersionView(APIView):
                 version.save(update_fields=["is_default"])
                 # Align template state with the active default version so
                 # runtime and detail page resolve from the same config.
-                template.config = version.config_snapshot or {}
-                template.criteria = version.criteria or ""
-                template.model = version.model or template.model
-                template.save(
-                    update_fields=["config", "criteria", "model", "updated_at"]
-                )
+                update_fields = _apply_version_snapshot_to_template(template, version)
+                template.save(update_fields=update_fields)
 
             return self._gm.success_response(
                 {
@@ -2604,7 +2661,13 @@ class RestoreVersionView(APIView):
             except EvalTemplateVersion.DoesNotExist:
                 return self._gm.not_found("Version not found.")
 
-            # Create a new version with the source version's config
+            # Create a new version that mirrors the source. We propagate the
+            # column-level snapshot fields explicitly so the new version
+            # captures the SOURCE version's state, not the live template's
+            # state at restore time. Without this the manager's auto-capture
+            # would read the template — which still has whatever config was
+            # active before the restore — producing a snapshot that doesn't
+            # match the restored content.
             new_version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=source_version.prompt_messages or [],
@@ -2614,13 +2677,23 @@ class RestoreVersionView(APIView):
                 user=request.user,
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
+                output_type_normalized=source_version.output_type_normalized,
+                pass_threshold=source_version.pass_threshold,
+                choice_scores=source_version.choice_scores,
+                error_localizer_enabled=source_version.error_localizer_enabled,
+                eval_tags=(
+                    list(source_version.eval_tags)
+                    if source_version.eval_tags is not None
+                    else None
+                ),
             )
 
-            # Also update the template's config to match the restored version
-            template.config = source_version.config_snapshot or {}
-            template.criteria = source_version.criteria or ""
-            template.model = source_version.model or ""
-            template.save(update_fields=["config", "criteria", "model", "updated_at"])
+            # Also update the template's live state to match the restored
+            # version (column snapshot + config + criteria + model).
+            update_fields = _apply_version_snapshot_to_template(
+                template, source_version
+            )
+            template.save(update_fields=update_fields)
 
             return self._gm.success_response(
                 {

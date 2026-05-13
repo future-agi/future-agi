@@ -175,3 +175,224 @@ class TestVersionCreateAPI:
             format="json",
         )
         assert response.status_code == 404
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestVersionSnapshotColumns:
+    def test_auto_capture_from_template(
+        self, user_template, user, organization, workspace
+    ):
+        user_template.output_type_normalized = "pass_fail"
+        user_template.pass_threshold = 0.7
+        user_template.choice_scores = {"Yes": 1.0, "No": 0.0}
+        user_template.error_localizer_enabled = True
+        user_template.eval_tags = ["safety", "quality"]
+        user_template.save()
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        assert v.output_type_normalized == "pass_fail"
+        assert v.pass_threshold == 0.7
+        assert v.choice_scores == {"Yes": 1.0, "No": 0.0}
+        assert v.error_localizer_enabled is True
+        assert v.eval_tags == ["safety", "quality"]
+
+    def test_explicit_override_wins(
+        self, user_template, user, organization, workspace
+    ):
+        user_template.pass_threshold = 0.9
+        user_template.save()
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            pass_threshold=0.3,
+        )
+        assert v.pass_threshold == 0.3
+
+    def test_explicit_none_is_honored(
+        self, user_template, user, organization, workspace
+    ):
+        user_template.choice_scores = {"Yes": 1.0}
+        user_template.save()
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            choice_scores=None,
+        )
+        assert v.choice_scores is None
+
+    def test_eval_tags_is_list_copied(
+        self, user_template, user, organization, workspace
+    ):
+        user_template.eval_tags = ["a", "b"]
+        user_template.save()
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        user_template.eval_tags.append("c")
+        user_template.save()
+        v.refresh_from_db()
+        assert v.eval_tags == ["a", "b"]
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestApplyVersionSnapshotToTemplate:
+    def test_applies_non_null_fields(
+        self, user_template, user, organization, workspace
+    ):
+        from model_hub.views.separate_evals import (
+            _apply_version_snapshot_to_template,
+        )
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="updated",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.6,
+            eval_tags=["restored"],
+        )
+
+        user_template.output_type_normalized = "pass_fail"
+        user_template.pass_threshold = 0.1
+        user_template.eval_tags = ["drifted"]
+        user_template.save()
+
+        fields = _apply_version_snapshot_to_template(user_template, v)
+        user_template.save(update_fields=fields)
+        user_template.refresh_from_db()
+
+        assert user_template.output_type_normalized == "percentage"
+        assert user_template.pass_threshold == 0.6
+        assert user_template.eval_tags == ["restored"]
+        assert user_template.criteria == "updated"
+
+    def test_skips_null_snapshot_fields(
+        self, user_template, user, organization, workspace
+    ):
+        """NULL snapshot fields simulate a pre-migration-0091 version row;
+        restore must preserve the template's current values."""
+        from model_hub.views.separate_evals import (
+            _apply_version_snapshot_to_template,
+        )
+
+        user_template.pass_threshold = 0.42
+        user_template.eval_tags = ["keep-me"]
+        user_template.save()
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized=None,
+            pass_threshold=None,
+            choice_scores=None,
+            error_localizer_enabled=None,
+            eval_tags=None,
+        )
+
+        fields = _apply_version_snapshot_to_template(user_template, v)
+        user_template.save(update_fields=fields)
+        user_template.refresh_from_db()
+
+        assert user_template.pass_threshold == 0.42
+        assert user_template.eval_tags == ["keep-me"]
+        assert "pass_threshold" not in fields
+        assert "eval_tags" not in fields
+
+    def test_eval_tags_mutation_isolation_on_restore(
+        self, user_template, user, organization, workspace
+    ):
+        from model_hub.views.separate_evals import (
+            _apply_version_snapshot_to_template,
+        )
+
+        v = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="X",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            eval_tags=["a", "b"],
+        )
+        fields = _apply_version_snapshot_to_template(user_template, v)
+        user_template.save(update_fields=fields)
+
+        user_template.eval_tags.append("c")
+        user_template.save()
+        v.refresh_from_db()
+        assert v.eval_tags == ["a", "b"]
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestOutputTypeNormalizedChoices:
+    def test_accepts_valid_values(self, organization, workspace):
+        from django.core.exceptions import ValidationError
+
+        for value in ("pass_fail", "percentage", "deterministic"):
+            t = EvalTemplate.no_workspace_objects.create(
+                name=f"t-{value}",
+                organization=organization,
+                workspace=workspace,
+                owner=OwnerChoices.USER.value,
+                config={},
+                eval_tags=[],
+                criteria="X",
+                model="turing_large",
+                output_type_normalized=value,
+            )
+            try:
+                t.full_clean()
+            except ValidationError:
+                raise AssertionError(
+                    f"'{value}' should be a valid OutputTypeNormalized choice"
+                )
+
+    def test_rejects_invalid_value(self, organization, workspace):
+        from django.core.exceptions import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            EvalTemplate.no_workspace_objects.create(
+                name="t-invalid",
+                organization=organization,
+                workspace=workspace,
+                owner=OwnerChoices.USER.value,
+                config={},
+                eval_tags=[],
+                criteria="X",
+                model="turing_large",
+                output_type_normalized="not_a_real_choice",
+            )
+        assert "output_type_normalized" in str(exc_info.value)
