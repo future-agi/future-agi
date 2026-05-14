@@ -686,14 +686,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               </Box>
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography
-                component="a"
-                variant="body2"
-                href="#"
-                sx={{ color: "primary.main", textDecoration: "none" }}
-              >
-                Learn more
-              </Typography>
               <IconButton onClick={handleClose}>
                 <Iconify icon="mingcute:close-line" width={20} />
               </IconButton>
