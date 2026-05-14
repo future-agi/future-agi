@@ -145,8 +145,35 @@ export const evalNodeFormSchema = z.object({
 });
 
 /**
+ * Schema for API Call Node Form
+ */
+export const apiCallNodeFormSchema = z.object({
+  nodeType: z.literal("api_call").optional(),
+  nodeId: z.string().optional(),
+  name: z
+    .string()
+    .min(1, "Node name is required")
+    .regex(
+      /^[a-z][a-z0-9_]*$/,
+      "Name must be lowercase letters, numbers, and underscores only",
+    )
+    .trim(),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
+  url: z.string().min(1, "URL is required"),
+  headers: z.array(z.object({ key: z.string(), value: z.string() })).optional().default([]),
+  bodyType: z.enum(["json", "form", "raw"]).optional().default("json"),
+  body: z.string().optional().default(""),
+  authType: z.enum(["none", "bearer", "basic", "api_key"]).optional().default("none"),
+  authToken: z.string().optional(),
+  apiKeyName: z.string().optional(),
+  apiKeyValue: z.string().optional(),
+  timeout: z.number().min(1).max(300).optional().default(30),
+  retries: z.number().min(0).max(5).optional().default(0),
+});
+
+/**
  * Get the appropriate schema based on node type
- * @param {string} nodeType - The type of node ('prompt', 'agent', 'eval')
+ * @param {string} nodeType - The type of node ('prompt', 'agent', 'eval', 'api_call')
  * @returns {z.ZodSchema} The Zod schema for the node type
  */
 export function getNodeFormSchema(nodeType) {
@@ -157,6 +184,8 @@ export function getNodeFormSchema(nodeType) {
       return agentNodeFormSchema;
     case "eval":
       return evalNodeFormSchema;
+    case "api_call":
+      return apiCallNodeFormSchema;
     default:
       // Return a basic schema for unknown types
       return z.object({
