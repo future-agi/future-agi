@@ -1067,7 +1067,9 @@ function FilterRow({
         prop.type === "text"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      const defaultOp = ID_ONLY_FIELDS.has(prop.id)
+        ? "is"
+        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
