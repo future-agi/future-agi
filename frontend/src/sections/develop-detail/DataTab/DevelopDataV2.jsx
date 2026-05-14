@@ -23,7 +23,12 @@ import {
   getDatasetQueryKey,
   getDatasetQueryOptions,
 } from "src/api/develop/develop-detail";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  isCancelledError,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useParams } from "react-router";
 import {
   DATASET_TYPES,
@@ -289,14 +294,23 @@ const getDataSource = (
           }
         }
       } catch (e) {
-        // React Query throws `CancelledError` when a new query supersedes
-        // an in-flight one (common during bulk stop-eval / invalidations).
-        // It's expected flow control, not a real failure — don't log or
-        // flip the grid into failed state for it.
-        const err = /** @type {any} */ (e);
+        // Flow-control errors from request cancellation are not real failures:
+        //   • React Query throws CancelledError when a new query supersedes an
+        //     in-flight one (common during bulk stop-eval / invalidations).
+        //     Its class extends Error but never sets `this.name`, and the
+        //     constructor name gets mangled in production — only `instanceof`
+        //     (via `isCancelledError`) is reliable.
+        //   • Axios throws CanceledError (one L) / code ERR_CANCELED when the
+        //     underlying request is aborted before React Query wraps it.
+        //   • Fetch / AbortController surfaces AbortError.
+        // Don't log or flip the grid into failed state for any of these.
+        const err = e;
+        const name = err?.name;
         const isCancelled =
-          err?.name === "CancelledError" ||
-          err?.constructor?.name === "CancelledError";
+          isCancelledError(err) ||
+          name === "CanceledError" ||
+          name === "AbortError" ||
+          err?.code === "ERR_CANCELED";
         if (isCancelled) return;
         logger.error("[getRows] failed", {
           message: e instanceof Error ? e.message : String(e),
@@ -411,6 +425,18 @@ const getAverageColumnConfig = (columns, tableRows) => {
   }
 
   for (const [_, cols] of Object.entries(grouping)) {
+    // Ensure evaluation columns come before evaluation_reason so we
+    // pick the result column (which carries averageScore) as cols[0].
+    if (cols.length > 1) {
+      cols.sort((a, b) => {
+        const aType = a.originType || a.origin_type || "";
+        const bType = b.originType || b.origin_type || "";
+        if (aType === "evaluation" && bType !== "evaluation") return -1;
+        if (bType === "evaluation" && aType !== "evaluation") return 1;
+        return 0;
+      });
+    }
+
     if (cols.length === 1) {
       const eachCol = cols[0];
 
@@ -562,6 +588,17 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     [],
   );
   isProcessingSyntheticData;
+
+  // Reset row selection when dataset changes or component unmounts (tab switch)
+  useEffect(() => {
+    useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+    useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    gridApiRef.current?.api?.deselectAll();
+    return () => {
+      useDevelopSelectedRowsStore.getState().setToggledNodes([]);
+      useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    };
+  }, [dataset]);
 
   useEffect(() => {
     const dataSource = getDataSource(
@@ -719,6 +756,21 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         }
       } else {
         grouping[eachCol?.id] = [eachCol];
+      }
+    }
+
+    // Ensure evaluation columns come before evaluation_reason in each
+    // group so the result renders by default (not the reason).
+    for (const key of Object.keys(grouping)) {
+      const grp = grouping[key];
+      if (grp.length > 1) {
+        grp.sort((a, b) => {
+          const aType = a.originType || a.origin_type || "";
+          const bType = b.originType || b.origin_type || "";
+          if (aType === "evaluation" && bType !== "evaluation") return -1;
+          if (bType === "evaluation" && aType !== "evaluation") return 1;
+          return 0;
+        });
       }
     }
 

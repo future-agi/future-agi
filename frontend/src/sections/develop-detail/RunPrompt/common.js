@@ -220,6 +220,7 @@ export const transformDefaultData = (editConfigData, allColumns) => {
       // maxTokens: editConfigData?.maxTokens,
       // presencePenalty: editConfigData?.presencePenalty,
       // frequencyPenalty: editConfigData?.frequencyPenalty,
+      template_format: runPromptConfig?.template_format || "mustache",
       prompt: "",
       promptVersion: "",
       // toolChoice: editConfigData?.toolChoice || "none",

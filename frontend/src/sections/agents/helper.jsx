@@ -10,7 +10,7 @@ import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { Skeleton } from "@mui/material";
+import { Box, Skeleton } from "@mui/material";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import headerComponentLabels from "./headerComponetLabels";
@@ -137,11 +137,11 @@ export const createAgentDefinitionSchema = (options) => {
         !isLiveKitProvider(data.provider)
       ) {
         // Phone number is optional when API key + assistant ID are provided (web bridge)
-        const hasWebBridgeCreds =
-          data.apiKey?.trim() && data.assistantId?.trim();
+        // const hasWebBridgeCreds =
+        //   data.apiKey?.trim() && data.assistantId?.trim();
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
-        if (!hasWebBridgeCreds) {
+        // if (!hasWebBridgeCreds) {
           if (!hasCountryCode) {
             ctx.addIssue({
               path: ["countryCode"],
@@ -156,7 +156,7 @@ export const createAgentDefinitionSchema = (options) => {
               code: z.ZodIssueCode.custom,
             });
           }
-        } else {
+        // } else {
           // Both are optional, but if one is provided the other is required
           if (hasContactNumber && !hasCountryCode) {
             ctx.addIssue({
@@ -172,7 +172,7 @@ export const createAgentDefinitionSchema = (options) => {
               code: z.ZodIssueCode.custom,
             });
           }
-        }
+        // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
           const trimmedNumber = data.contactNumber.trim();
@@ -381,16 +381,36 @@ export const generateEvalColumnsFromConfig = (items = []) => {
   return items.map((item) => {
     const evalId = item.id;
     const displayName = item.name?.replace(/_/g, " ") || evalId;
+    const isReason = item.source_field === "reason";
+    const dataKey = isReason ? item.parent_eval_id : evalId;
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: 140,
+      minWidth: isReason ? 240 : 140,
+      hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
       headerComponentParams: { displayName },
-      valueGetter: (params) => params.data?.eval_outputs?.[evalId] || {},
+      valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
       cellRenderer: (params) => {
-        const evalData = params?.data?.eval_outputs?.[evalId] || {};
+        const evalData = params?.data?.eval_outputs?.[dataKey] || {};
+        if (isReason) {
+          const reason = evalData?.reason;
+          return (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                height: "100%",
+                width: "100%",
+                padding: "4px 8px",
+                color: "text.primary",
+              }}
+            >
+              {reason || "-"}
+            </Box>
+          );
+        }
         return (
           <EvalCellRenderer
             value={{
@@ -640,6 +660,7 @@ export const getCallLogsColumnDefs = (
       flex: 0,
       minWidth: 120,
       cellRenderer: TalkRatioCell,
+      hide: true,
     },
 
     // ── Resources ─────────────────────────────────────────────────────

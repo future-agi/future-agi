@@ -164,8 +164,9 @@ export default function AnnotateWorkspaceView() {
   const { mutate: skipItem, isPending: isSkipping } = useSkipItem();
   const { mutate: reviewItem, isPending: isReviewing } = useReviewItem();
 
+  const requiresReview = queueDetail?.requires_review === true;
   const isPendingReview = detail?.item?.review_status === "pending_review";
-  const isReviewMode = isPendingReview && canReview;
+  const isReviewMode = isPendingReview && canReview && requiresReview;
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
@@ -174,6 +175,7 @@ export default function AnnotateWorkspaceView() {
   const isAssignedToMe = assignedUsers.some(
     (a) => String(a.id) === currentUserId,
   );
+  const isManualAssignment = queueDetail?.auto_assign === false;
   const assignedToName =
     hasAssignments && !isAssignedToMe
       ? assignedUsers
@@ -181,7 +183,15 @@ export default function AnnotateWorkspaceView() {
           .filter(Boolean)
           .join(", ") || "other annotators"
       : null;
-  const isAssignedToOther = !isReviewMode && hasAssignments && !isAssignedToMe;
+  // In manual-assignment queues, only explicitly assigned users may annotate.
+  // Auto-assign queues implicitly assign everyone, so they never block.
+  const cannotAnnotate = isManualAssignment && !isAssignedToMe;
+  // Reviewers/managers see assigned-to-other items in read-only mode (when
+  // not actively reviewing). Other members are fully blocked.
+  const isViewOnlyForReviewer = canReview && cannotAnnotate && !isReviewMode;
+  const isBlockedAssignedToOther = !canReview && cannotAnnotate;
+  // Backwards-compatible flag passed to header for disabling Skip.
+  const isAssignedToOther = cannotAnnotate && !isReviewMode;
 
   const isSubmittingRef = useRef(false);
 
@@ -317,7 +327,12 @@ export default function AnnotateWorkspaceView() {
       return;
     }
 
-    // Otherwise, fetch the next pending item from the API
+    // detail.next_item_id is status-agnostic — works for view-only managers.
+    if (detail?.next_item_id) {
+      dispatch({ type: "push", id: detail.next_item_id });
+      return;
+    }
+
     if (isFetchingNext) return;
     setIsFetchingNext(true);
     nextAbortRef.current?.abort();
@@ -341,11 +356,12 @@ export default function AnnotateWorkspaceView() {
     } finally {
       setIsFetchingNext(false);
     }
-  }, [historyIndex, itemHistory, queueId, isFetchingNext]);
+  }, [historyIndex, itemHistory, queueId, isFetchingNext, detail]);
 
   const handleKeyboardSubmit = useCallback(() => {
+    if (isViewOnlyForReviewer || isBlockedAssignedToOther) return;
     labelPanelRef.current?.submit();
-  }, []);
+  }, [isViewOnlyForReviewer, isBlockedAssignedToOther]);
 
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
@@ -526,7 +542,7 @@ export default function AnnotateWorkspaceView() {
               reviewStatus={detail?.item?.review_status}
               itemId={currentItemId}
             />
-          ) : isAssignedToOther ? (
+          ) : isBlockedAssignedToOther ? (
             <Stack
               alignItems="center"
               justifyContent="center"
@@ -565,6 +581,12 @@ export default function AnnotateWorkspaceView() {
               queueId={queueId}
               itemId={currentItemId}
               onDirtyChange={handleDirtyChange}
+              readOnly={isViewOnlyForReviewer}
+              readOnlyReason={
+                isViewOnlyForReviewer
+                  ? `Assigned to ${assignedToName || "another annotator"} — view only`
+                  : null
+              }
             />
           )}
         </Box>

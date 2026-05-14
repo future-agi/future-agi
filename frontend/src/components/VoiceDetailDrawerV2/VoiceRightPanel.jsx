@@ -37,7 +37,14 @@ const TABS = {
   SCENARIO: "scenario",
 };
 
-const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
+const hasAttributeContent = (value) => {
+  if (!value) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
+const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
@@ -119,11 +126,14 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
       value: TABS.ATTRIBUTES,
       icon: "mdi:code-json",
     });
-    t.push({
-      label: "Annotations",
-      value: TABS.ANNOTATIONS,
-      icon: "mdi:pencil-outline",
-    });
+    if (!hideAnnotationTab) {
+      t.push({
+        label: "Annotations",
+        value: TABS.ANNOTATIONS,
+        icon: "mdi:pencil-outline",
+      });
+    }
+
     if (hasScenarioData) {
       t.push({
         label: "Scenario",
@@ -132,7 +142,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
       });
     }
     return t;
-  }, [hasLogs, hasScenarioData]);
+  }, [hasLogs, hasScenarioData, hideAnnotationTab]);
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
@@ -282,11 +292,12 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction }) => {
     //  3. Legacy `trace_details.attributes` for older cached payloads.
     //  4. The span object itself as a last resort.
     return (
-      observationSpan?.span_attributes ||
-      data?.attributes ||
-      data?.trace_details?.attributes ||
-      observationSpan ||
-      null
+      [
+        observationSpan?.span_attributes,
+        data?.attributes,
+        data?.trace_details?.attributes,
+        observationSpan,
+      ].find(hasAttributeContent) || null
     );
   }, [data, observationSpan]);
 
@@ -489,6 +500,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hideAnnotationTab: PropTypes.bool
 };
 
 export default VoiceRightPanel;

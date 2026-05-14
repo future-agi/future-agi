@@ -68,6 +68,11 @@ class EvalResult:
     end_time: float | None = None
     duration: float | None = None
 
+    # Cost tracking (populated from the evaluator instance post-run so callers
+    # can emit billing events without having to hold the instance themselves).
+    cost: dict | None = None
+    token_usage: dict | None = None
+
 
 def run_eval(request: EvalRequest) -> EvalResult:
     """
@@ -96,12 +101,9 @@ def run_eval(request: EvalRequest) -> EvalResult:
         )
 
     call_type = request.inputs.get("call_type", "")
-    if call_type in ("protect", "protect_flash") and eval_type_id != "DeterministicEvaluator":
-        eval_type_id = "DeterministicEvaluator"
-        # Patch template config so format_eval_value uses DeterministicEvaluator branch
-        eval_template.config = {**eval_template.config, "eval_type_id": "DeterministicEvaluator"}
-        if not request.model:
-            request.model = "protect_flash" if call_type == "protect_flash" else "protect"
+    # Set a default model for protect calls if not provided.
+    if call_type in ("protect", "protect_flash") and not request.model:
+        request.model = "protect_flash" if call_type == "protect_flash" else "protect"
 
     is_futureagi = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -139,6 +141,13 @@ def run_eval(request: EvalRequest) -> EvalResult:
             organization_id=request.organization_id,
             workspace_id=request.workspace_id,
         )
+
+    # Ensure eval_name is available for protect calls.
+    # Also forward max_tokens from inputs if present.
+    if call_type in ("protect", "protect_flash"):
+        run_params.setdefault("eval_name", eval_template.name)
+        if "max_tokens" in request.inputs:
+            run_params.setdefault("max_tokens", request.inputs["max_tokens"])
 
     # 3.5. Preprocess inputs (e.g., compute embeddings for CLIP/FID)
     from evaluations.engine.preprocessing import preprocess_inputs
@@ -179,4 +188,6 @@ def run_eval(request: EvalRequest) -> EvalResult:
         start_time=start_time,
         end_time=end_time,
         duration=end_time - start_time,
+        cost=getattr(eval_instance, "cost", None),
+        token_usage=getattr(eval_instance, "token_usage", None),
     )

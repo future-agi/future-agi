@@ -60,6 +60,9 @@ const ObserveToolbar = ({
   onApplyExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
+  // prepends the matching id filter(s) to its property picker.
+  tab,
   // Columns
   columns,
   onColumnVisibilityChange,
@@ -84,6 +87,7 @@ const ObserveToolbar = ({
   onToggleNonAnnotated,
   // Group
   groupBy,
+  hiddenGroupByOptions,
   onGroupByChange,
   // Grid
   rowCount,
@@ -111,6 +115,8 @@ const ObserveToolbar = ({
   onApplyCompareExtraFilters,
   // Add Evals — opens prefilled task-create draft
   onAddEvals,
+  // Spans view — swaps "Trace Name" filter label to "Span Name"
+  isSpansView = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -185,35 +191,31 @@ const ObserveToolbar = ({
       setPanelFilters(null);
       return;
     }
-    const opReverseMap = {
-      equals: "is",
-      not_equals: "is_not",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-    };
-    const NUMBER_OP_SET = new Set([
-      "equal_to",
-      "not_equal_to",
-      "greater_than",
-      "greater_than_or_equal",
-      "less_than",
-      "less_than_or_equal",
-      "between",
-      "not_between",
-    ]);
     const RANGE_OPS = new Set(["between", "not_between"]);
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
-      const isNumberOp = NUMBER_OP_SET.has(rawOp);
+      const rawType = gf.filter_config?.filter_type;
+      // Trust explicit `filter_type` only; ops are shared across types.
+      const isNumberType = rawType === "number";
+      const isBooleanType = rawType === "boolean";
       const isRange = RANGE_OPS.has(rawOp);
       const rawVal = gf.filter_config?.filter_value;
       let value;
-      if (isRange && rawVal) {
-        value = String(rawVal)
-          .split(",")
-          .map((v) => v.trim());
-      } else if (isNumberOp) {
+      if (isRange) {
+        // Normalize to a 2-element string array for the TextField pair.
+        if (Array.isArray(rawVal)) {
+          value = rawVal.map((v) => (v == null ? "" : String(v)));
+        } else if (rawVal != null) {
+          value = String(rawVal)
+            .split(",")
+            .map((v) => v.trim());
+        } else {
+          value = ["", ""];
+        }
+      } else if (isBooleanType) {
+        // MUI Select needs "true"/"false" strings; backend uses native bool.
+        value = rawVal === true || rawVal === "true" ? "true" : "false";
+      } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
       } else {
         value = rawVal
@@ -231,21 +233,38 @@ const ObserveToolbar = ({
       };
       const rawColType =
         gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      const rawFilterType = gf.filter_config?.filter_type;
+      // Auto-migrate legacy saved views: thumbs annotations used to be
+      // stored as filter_type=categorical with values like ["Thumbs Up",
+      // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
+      // so the BE thumbs branch handles them and the panel renders the
+      // right operators/picker.
+      const looksLikeThumbsValues = (() => {
+        if (rawColType !== "ANNOTATION") return false;
+        if (rawFilterType !== "categorical") return false;
+        const vals = Array.isArray(value) ? value : value ? [value] : [];
+        if (vals.length === 0) return false;
+        const tokens = new Set(["thumbs up", "thumbs down", "up", "down"]);
+        return vals.every((v) => tokens.has(String(v).trim().toLowerCase()));
+      })();
       return {
         field: gf.column_id,
         fieldName: gf.display_name,
         fieldCategory: colTypeReverseMap[rawColType] || "system",
-        fieldType: isNumberOp
-          ? "number"
-          : gf.filter_config?.filter_type === "number"
+        fieldType: isBooleanType
+          ? "boolean"
+          : isNumberType
             ? "number"
-            : gf.filter_config?.filter_type === "categorical"
-              ? "categorical"
-              : gf.filter_config?.filter_type === "text" &&
-                  rawColType === "ANNOTATION"
-                ? "text"
-                : "string",
-        operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
+            : rawFilterType === "number"
+              ? "number"
+              : rawFilterType === "thumbs" || looksLikeThumbsValues
+                ? "thumbs"
+                : rawFilterType === "categorical"
+                  ? "categorical"
+                  : rawFilterType === "text" && rawColType === "ANNOTATION"
+                    ? "text"
+                    : "string",
+        operator: rawOp,
         value,
       };
     });
@@ -383,7 +402,9 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
+            tab={tab}
             isSimulator={isSimulator}
+            isSpansView={isSpansView}
             source={
               mode === "sessions"
                 ? "sessions"
@@ -401,27 +422,13 @@ const ObserveToolbar = ({
                 }
                 return;
               }
-              const opMap = {
-                is: "equals",
-                is_not: "not_equals",
-                contains: "contains",
-                not_contains: "not_contains",
-                equals: "equals",
-                // Number operators — pass through directly
-                equal_to: "equal_to",
-                not_equal_to: "not_equal_to",
-                greater_than: "greater_than",
-                greater_than_or_equal: "greater_than_or_equal",
-                less_than: "less_than",
-                less_than_or_equal: "less_than_or_equal",
-                between: "between",
-                not_between: "not_between",
-              };
+              // Panel and backend share canonical op names — no translation.
               const typeMap = {
                 string: "text",
                 number: "number",
                 boolean: "boolean",
                 categorical: "categorical",
+                thumbs: "thumbs",
                 text: "text",
               };
               const colTypeMap = {
@@ -430,21 +437,55 @@ const ObserveToolbar = ({
                 eval: "EVAL_METRIC",
                 annotation: "ANNOTATION",
               };
+              const RANGE_OPS = new Set(["between", "not_between"]);
+              const LIST_OPS = new Set(["in", "not_in"]);
+              // Legacy panel ops emitted by THUMBS_OPS / CATEGORICAL_OPS /
+              // ID_ONLY_OPS — translate to canonical so BE accepts them.
+              const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
               const apiFilters = newFilters.map((f) => {
-                const baseOp = opMap[f.operator] || f.operator;
-                // Multi-value picks (enum / choices) come in as arrays. For
-                // the `is`/`is_not` (equals/not_equals) ops, promote to
-                // `in`/`not_in` so the backend sees a proper IN clause
-                // instead of an equality check against a joined string.
-                let filterOp = baseOp;
+                const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
                 let filterValue = f.value;
                 if (Array.isArray(filterValue)) {
-                  if (filterValue.length === 1) {
+                  if (RANGE_OPS.has(filterOp)) {
+                    // Coerce numeric range bounds.
+                    filterValue = filterValue.map((v) =>
+                      f.fieldType === "number" && v !== "" && v !== null
+                        ? Number(v)
+                        : v,
+                    );
+                  } else if (LIST_OPS.has(filterOp)) {
+                    filterValue = filterValue.filter(
+                      (v) => v !== "" && v !== null && v !== undefined,
+                    );
+                  } else if (filterValue.length === 1) {
                     filterValue = filterValue[0];
-                  } else if (filterValue.length > 1) {
-                    if (baseOp === "equals") filterOp = "in";
-                    else if (baseOp === "not_equals") filterOp = "not_in";
-                    else filterValue = filterValue.join(",");
+                  }
+                } else if (LIST_OPS.has(filterOp)) {
+                  // Scalar handed to a list op; wrap as 1-element list.
+                  filterValue =
+                    filterValue === "" ||
+                    filterValue === null ||
+                    filterValue === undefined
+                      ? []
+                      : [filterValue];
+                }
+                // Coerce TextField string to Number for the wire.
+                if (
+                  f.fieldType === "number" &&
+                  !Array.isArray(filterValue) &&
+                  filterValue !== "" &&
+                  filterValue !== null &&
+                  filterValue !== undefined
+                ) {
+                  const n = Number(filterValue);
+                  if (!Number.isNaN(n)) filterValue = n;
+                }
+                // Coerce MUI Select "true"/"false" string to native bool.
+                if (f.fieldType === "boolean") {
+                  if (filterValue === "true" || filterValue === true) {
+                    filterValue = true;
+                  } else if (filterValue === "false" || filterValue === false) {
+                    filterValue = false;
                   }
                 }
                 return {
@@ -541,6 +582,7 @@ const ObserveToolbar = ({
             onToggleNonAnnotated={onToggleNonAnnotated}
             groupBy={groupBy}
             onGroupByChange={onGroupByChange}
+            hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
@@ -608,6 +650,7 @@ ObserveToolbar.propTypes = {
   showNonAnnotated: PropTypes.bool,
   onToggleNonAnnotated: PropTypes.func,
   groupBy: PropTypes.string,
+  hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onGroupByChange: PropTypes.func,
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
@@ -623,12 +666,14 @@ ObserveToolbar.propTypes = {
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,
+  isSpansView: PropTypes.bool,
 };
 
 export default React.memo(ObserveToolbar);

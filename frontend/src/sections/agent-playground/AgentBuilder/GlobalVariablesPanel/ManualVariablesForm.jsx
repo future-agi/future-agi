@@ -73,20 +73,15 @@ export default function ManualVariablesForm({
   isDirty,
   cellMap,
   graphId,
+  variables = {},
 }) {
-  const {
-    globalVariables,
-    setGlobalVariables,
-    setOpen,
-    pendingRun,
-    setPendingRun,
-  } = useGlobalVariablesDrawerStoreShallow((s) => ({
-    globalVariables: s.globalVariables,
-    setGlobalVariables: s.setGlobalVariables,
-    setOpen: s.setOpen,
-    pendingRun: s.pendingRun,
-    setPendingRun: s.setPendingRun,
-  }));
+  const { setGlobalVariables, setOpen, pendingRun, setPendingRun } =
+    useGlobalVariablesDrawerStoreShallow((s) => ({
+      setGlobalVariables: s.setGlobalVariables,
+      setOpen: s.setOpen,
+      pendingRun: s.pendingRun,
+      setPendingRun: s.setPendingRun,
+    }));
 
   const { control, reset } = useFormContext();
   const { mutateAsync: updateCell } = useUpdateDatasetCell();
@@ -114,7 +109,7 @@ export default function ManualVariablesForm({
       // Find changed fields and update each cell via cellMap lookup
       const updates = [];
       for (const [key, value] of Object.entries(flatValues)) {
-        if (value === globalVariables[key]) continue;
+        if (value === variables[key]) continue;
         const cell = cellMap[key];
         if (cell) {
           updates.push(updateCell({ graphId, cellId: cell.id, value }));
@@ -137,7 +132,7 @@ export default function ManualVariablesForm({
     }
   };
 
-  const isEmpty = Object.keys(globalVariables).length === 0;
+  const isEmpty = Object.keys(variables).length === 0;
   if (isEmpty) {
     return (
       <Box sx={{ height: "calc(100vh - 100px)", width: "100%" }}>
@@ -162,7 +157,7 @@ export default function ManualVariablesForm({
       ) : (
         <Box>
           <Stack direction="column" spacing={2}>
-            {Object.keys(globalVariables).map((key) => (
+            {Object.keys(variables).map((key) => (
               <Controller
                 key={key}
                 name={escapeModelKey(key)}
@@ -215,4 +210,5 @@ ManualVariablesForm.propTypes = {
   isDirty: PropTypes.bool.isRequired,
   cellMap: PropTypes.object,
   graphId: PropTypes.string,
+  variables: PropTypes.object.isRequired,
 };

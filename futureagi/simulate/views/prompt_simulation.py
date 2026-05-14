@@ -17,11 +17,10 @@ from accounts.utils import get_request_organization
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import RunTest, Scenarios, SimulateEvalConfig
-from simulate.serializers.run_test import (
-    CreatePromptSimulationSerializer,
-    RunTestSerializer,
-)
+from simulate.serializers.requests.run_test import CreatePromptSimulationSerializer
+from simulate.serializers.run_test import RunTestSerializer
 from simulate.services.test_executor import TestExecutor
+from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -493,6 +492,10 @@ class ExecutePromptSimulationView(APIView):
                     final_scenario_ids = [
                         str(scenario_id) for scenario_id in all_scenario_ids
                     ]
+
+            gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
+            if gate_response is not None:
+                return gate_response
 
             # Use the existing TestExecutor
             test_executor = TestExecutor()

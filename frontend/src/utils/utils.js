@@ -911,6 +911,15 @@ export function formatMs(ms) {
   return `${(ms / 86_400_000).toFixed(1)}d`;
 }
 
+export const fmtMs = (
+  ms,
+  { forceMs = false, secondsDecimals = 2, emptyText = "—" } = {},
+) => {
+  if (ms == null || !Number.isFinite(ms)) return emptyText;
+  if (!forceMs && ms >= 1000) return `${(ms / 1000).toFixed(secondsDecimals)}s`;
+  return `${Math.round(ms)}ms`;
+};
+
 export const formatPercentage = (value) => {
   if (value == null || isNaN(value)) return "-";
   return value % 1 === 0 ? `${value}%` : `${value?.toFixed(2)}%`;
@@ -1200,7 +1209,7 @@ export function isValidUrl(str) {
   if (typeof str !== "string" || !str) return false;
   try {
     const url = new URL(str);
-    return url.protocol === "https:";
+    return url.protocol === "https:" || url.protocol === "http:";
   } catch {
     return false;
   }
@@ -1342,3 +1351,15 @@ export const tokenMatchesLeaf = (tok, pathLower, valueLower, words) => {
   }
   return false;
 };
+
+// Strip the voice-detail wrapper (`observation_span.<n>.[span_attributes.]`)
+// and any `span_attributes.` segment so the saved mapping uses bare attribute
+// paths. The `span_attributes.` strip is unanchored — backend dropdown paths
+// for traces/sessions look like `spans.0.<key>` or `traces.0.spans.0.<key>`
+// (no `span_attributes.` segment), but the FE walker over a fetched detail
+// hits `span_attributes.` mid-path; collapsing both forms keeps fieldSet and
+// flatValueMap lookups aligned with the saved mapping.
+export const stripAttributePathPrefix = (key) =>
+  String(key ?? "")
+    .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
+    .replace(/(^|\.)span_attributes\./g, "$1");

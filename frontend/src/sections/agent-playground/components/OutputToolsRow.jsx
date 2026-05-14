@@ -4,6 +4,7 @@ import { Stack } from "@mui/material";
 import CustomModelTools from "src/components/custom-model-tools";
 import CustomTooltip from "src/components/tooltip";
 import ResponseFormatDropdown from "./ResponseFormatDropdown";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
 
 export default function OutputToolsRow({
   control,
@@ -13,6 +14,8 @@ export default function OutputToolsRow({
   modelConfig,
   onToolsApply,
   disabled,
+  templateFormat = "mustache",
+  onTemplateFormatChange,
 }) {
   const tooltipProps = {
     show: !isModelSelected,
@@ -52,6 +55,11 @@ export default function OutputToolsRow({
           />
         </span>
       </CustomTooltip>
+      <TemplateFormatSelector
+        value={templateFormat}
+        onChange={onTemplateFormatChange}
+        disabled={disabled}
+      />
     </Stack>
   );
 }
@@ -64,4 +72,6 @@ OutputToolsRow.propTypes = {
   modelConfig: PropTypes.object,
   onToolsApply: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  templateFormat: PropTypes.string,
+  onTemplateFormatChange: PropTypes.func,
 };

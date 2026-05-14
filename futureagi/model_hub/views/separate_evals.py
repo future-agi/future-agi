@@ -4,7 +4,9 @@ import traceback
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any, Callable, Optional
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -57,6 +59,7 @@ from tfc.telemetry import wrap_for_thread
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
+
 try:
     from ee.usage.exceptions import UsageLimitExceeded
 except ImportError:
@@ -68,6 +71,7 @@ from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
+
 try:
     from ee.usage.models.usage import APICallLog, APICallStatusChoices
 except ImportError:
@@ -107,11 +111,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -1273,10 +1274,10 @@ class EvalTemplateListView(APIView):
         from model_hub.types import EvalListItem, EvalListResponse
         from model_hub.utils.eval_list import (
             build_eval_list_queryset,
-            compute_thirty_day_data,
             derive_eval_type,
             derive_output_type,
-            get_created_by_name,
+            fetch_version_metadata,
+            get_organization_display_name,
         )
 
         try:
@@ -1312,7 +1313,7 @@ class EvalTemplateListView(APIView):
                     )[:1],
                     to_attr="_prefetched_evaluators",
                 ),
-            )
+            ).select_related("organization")
 
             # 3. Sort
             order_field = req.get("sort_by", "updated_at")
@@ -1383,6 +1384,10 @@ class EvalTemplateListView(APIView):
                         name.strip() if name.strip() else v.created_by.email
                     )
 
+            version_counts, default_version_numbers = fetch_version_metadata(
+                str(t.id) for t in templates
+            )
+
             # 8. Build response items
             items = []
             for template in templates:
@@ -1400,8 +1405,12 @@ class EvalTemplateListView(APIView):
                         u = prefetched[0].user
                         created_by = (getattr(u, "name", "") or "").strip() or u.email
                     else:
-                        created_by = version_creators.get(tid, "User")
+                        created_by = version_creators.get(tid) or (
+                            get_organization_display_name(template)
+                        )
 
+                vcount = version_counts.get(tid, 0)
+                default_vnum = default_version_numbers.get(tid)
                 items.append(
                     EvalListItem(
                         id=tid,
@@ -1415,8 +1424,8 @@ class EvalTemplateListView(APIView):
                             else "user"
                         ),
                         created_by_name=created_by,
-                        version_count=1,
-                        current_version="V1",
+                        version_count=max(vcount, 1),
+                        current_version=(f"V{default_vnum}" if default_vnum else "V1"),
                         last_updated=template.updated_at.isoformat(),
                         thirty_day_chart=[],
                         thirty_day_error_rate=[],
@@ -1915,12 +1924,18 @@ class EvalTemplateCreateV2View(APIView):
                 output_type_normalized=req.output_type,
                 pass_threshold=req.pass_threshold,
                 choice_scores=req.choice_scores,
+                error_localizer_enabled=req.error_localizer_enabled,
             )
 
             # 8. Create initial version (V1)
             from model_hub.models.evals_metric import EvalTemplateVersion
 
             try:
+                # Column snapshot fields default to capturing the template's
+                # current value (output_type_normalized, pass_threshold,
+                # choice_scores, error_localizer_enabled, eval_tags) — see
+                # EvalTemplateVersionManager.create_version. We don't pass
+                # them explicitly here.
                 EvalTemplateVersion.objects.create_version(
                     eval_template=eval_template,
                     prompt_messages=[],
@@ -2044,9 +2059,11 @@ class EvalTemplateDetailView(APIView):
                     getattr(template, "multi_choice", False)
                     or config.get("multi_choice", False)
                 ),
-                code=(config.get("code") or None)
-                if derive_eval_type(template) == "code"
-                else None,
+                code=(
+                    (config.get("code") or None)
+                    if derive_eval_type(template) == "code"
+                    else None
+                ),
                 code_language=config.get("language")
                 or config.get("code_language")
                 or "python",
@@ -2520,6 +2537,59 @@ class EvalTemplateVersionCreateView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@dataclass(frozen=True)
+class _SnapshotField:
+    """Snapshot column to restore from version → template. Future fields
+    add one entry to ``_VERSION_SNAPSHOT_FIELDS`` below; no apply/capture
+    rewrite needed."""
+
+    name: str
+    transform: Optional[Callable[[Any], Any]] = None
+
+
+# Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
+# so pre-fix rows preserve the live template's current value. eval_tags
+# is list()-copied so later template mutations don't propagate into the
+# version snapshot.
+_VERSION_SNAPSHOT_FIELDS: tuple = (
+    _SnapshotField("output_type_normalized"),
+    _SnapshotField("pass_threshold"),
+    _SnapshotField("choice_scores"),
+    _SnapshotField("error_localizer_enabled"),
+    _SnapshotField("eval_tags", transform=list),
+)
+
+
+def _apply_version_snapshot_to_template(template, version):
+    """Copy a version's snapshot fields onto the live EvalTemplate.
+
+    Shared by SetDefaultVersionView (activating a version) and
+    RestoreVersionView (after creating a mirror version). ``config`` and
+    ``criteria`` are always overwritten; ``model`` is restored only when
+    non-empty; each ``_VERSION_SNAPSHOT_FIELDS`` entry is restored only
+    when non-NULL on the version row. Returns the list of changed field
+    names for ``template.save(update_fields=...)``.
+    """
+    fields_to_update = ["config", "criteria", "updated_at"]
+    template.config = version.config_snapshot or {}
+    template.criteria = version.criteria or ""
+
+    if version.model:
+        template.model = version.model
+        fields_to_update.append("model")
+
+    for snap in _VERSION_SNAPSHOT_FIELDS:
+        value = getattr(version, snap.name)
+        if value is None:
+            continue
+        if snap.transform is not None:
+            value = snap.transform(value)
+        setattr(template, snap.name, value)
+        fields_to_update.append(snap.name)
+
+    return fields_to_update
+
+
 class SetDefaultVersionView(APIView):
     """
     PUT /model-hub/eval-templates/<id>/versions/<version_id>/set-default/
@@ -2564,12 +2634,8 @@ class SetDefaultVersionView(APIView):
                 version.save(update_fields=["is_default"])
                 # Align template state with the active default version so
                 # runtime and detail page resolve from the same config.
-                template.config = version.config_snapshot or {}
-                template.criteria = version.criteria or ""
-                template.model = version.model or template.model
-                template.save(
-                    update_fields=["config", "criteria", "model", "updated_at"]
-                )
+                update_fields = _apply_version_snapshot_to_template(template, version)
+                template.save(update_fields=update_fields)
 
             return self._gm.success_response(
                 {
@@ -2622,7 +2688,13 @@ class RestoreVersionView(APIView):
             except EvalTemplateVersion.DoesNotExist:
                 return self._gm.not_found("Version not found.")
 
-            # Create a new version with the source version's config
+            # Create a new version that mirrors the source. We propagate the
+            # column-level snapshot fields explicitly so the new version
+            # captures the SOURCE version's state, not the live template's
+            # state at restore time. Without this the manager's auto-capture
+            # would read the template — which still has whatever config was
+            # active before the restore — producing a snapshot that doesn't
+            # match the restored content.
             new_version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=source_version.prompt_messages or [],
@@ -2632,13 +2704,23 @@ class RestoreVersionView(APIView):
                 user=request.user,
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
+                output_type_normalized=source_version.output_type_normalized,
+                pass_threshold=source_version.pass_threshold,
+                choice_scores=source_version.choice_scores,
+                error_localizer_enabled=source_version.error_localizer_enabled,
+                eval_tags=(
+                    list(source_version.eval_tags)
+                    if source_version.eval_tags is not None
+                    else None
+                ),
             )
 
-            # Also update the template's config to match the restored version
-            template.config = source_version.config_snapshot or {}
-            template.criteria = source_version.criteria or ""
-            template.model = source_version.model or ""
-            template.save(update_fields=["config", "criteria", "model", "updated_at"])
+            # Also update the template's live state to match the restored
+            # version (column snapshot + config + criteria + model).
+            update_fields = _apply_version_snapshot_to_template(
+                template, source_version
+            )
+            template.save(update_fields=update_fields)
 
             return self._gm.success_response(
                 {
@@ -2745,7 +2827,10 @@ class CompositeEvalCreateView(APIView):
             CompositeCreateRequest,
             CompositeCreateResponse,
         )
-        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
+        from model_hub.utils.eval_list import (
+            derive_eval_type,
+            infer_composite_eval_type,
+        )
 
         try:
             try:
@@ -2992,7 +3077,10 @@ class CompositeEvalDetailView(APIView):
             CompositeDetailResponse,
             CompositeUpdateRequest,
         )
-        from model_hub.utils.eval_list import derive_eval_type, infer_composite_eval_type
+        from model_hub.utils.eval_list import (
+            derive_eval_type,
+            infer_composite_eval_type,
+        )
 
         try:
             try:
@@ -4193,7 +4281,7 @@ class EvalUsageStatsView(APIView):
     GET /model-hub/eval-templates/<id>/usage/
 
     Returns usage stats, chart data, and paginated eval logs.
-    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d)
+    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
     """
 
     _gm = GeneralMethods()
@@ -4206,6 +4294,8 @@ class EvalUsageStatsView(APIView):
         "7d": timedelta(days=7),
         "30d": timedelta(days=30),
         "90d": timedelta(days=90),
+        "180d": timedelta(days=180),
+        "365d": timedelta(days=365),
     }
 
     def get(self, request, template_id, *args, **kwargs):
@@ -4408,6 +4498,7 @@ class EvalUsageStatsView(APIView):
                 "error_localizer",
                 "kb_id",
                 "row_context",
+                "result",
             }
 
             for log in logs_page:
@@ -5015,9 +5106,11 @@ class EvalPlayGroundAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"), request.data.get("template_id")
+        )
         if gate is not None:
             return gate
 
@@ -5036,6 +5129,9 @@ class EvalPlayGroundAPIView(APIView):
                 mapping = validated_data.get("mapping", {})
                 if not mapping and isinstance(runtime_config, dict):
                     mapping = runtime_config.get("mapping", {})
+                mapping_paths = validated_data.get("mapping_paths") or {}
+                if not mapping_paths and isinstance(runtime_config, dict):
+                    mapping_paths = runtime_config.get("mapping_paths", {}) or {}
                 template_id = validated_data.get("template_id", None)
                 input_data_types = validated_data.get("input_data_types", {})
                 if not input_data_types and isinstance(runtime_config, dict):
@@ -5063,10 +5159,45 @@ class EvalPlayGroundAPIView(APIView):
                         logger.warning(f"Failed to fetch span {_span_id}: {_e}")
                 if trace_context is None and _trace_id:
                     try:
+                        from django.db.models import Count, Sum, Min, Max, Q
                         from tracer.models.trace import Trace
+                        from tracer.models.observation_span import ObservationSpan
 
                         _t = Trace.objects.filter(id=_trace_id).first()
                         if _t:
+                            # Aggregate stats from child spans (single query)
+                            _span_agg = ObservationSpan.objects.filter(
+                                trace=_t, deleted=False
+                            ).aggregate(
+                                span_count=Count("id"),
+                                error_count=Count("id", filter=Q(status="ERROR")),
+                                total_tokens=Sum("total_tokens"),
+                                total_cost=Sum("cost"),
+                                start_time=Min("start_time"),
+                                end_time=Max("end_time"),
+                                total_latency=Sum("latency_ms"),
+                            )
+
+                            # Lightweight span summaries for the agent to
+                            # browse and decide which to drill into.
+                            # Only fetch essential fields, cap at 200 spans.
+                            _span_summaries = list(
+                                ObservationSpan.objects.filter(trace=_t, deleted=False)
+                                .order_by("start_time")
+                                .values(
+                                    "id",
+                                    "name",
+                                    "observation_type",
+                                    "status",
+                                    "status_message",
+                                    "latency_ms",
+                                    "model",
+                                    "total_tokens",
+                                    "cost",
+                                    "parent_span_id",
+                                )[:200]
+                            )
+
                             trace_context = {
                                 "id": str(_t.id),
                                 "project_id": (
@@ -5078,29 +5209,190 @@ class EvalPlayGroundAPIView(APIView):
                                 ),
                                 "metadata": _t.metadata or {},
                                 "tags": _t.tags or [],
+                                "input": _t.input,
+                                "output": _t.output,
+                                "error": _t.error,
+                                "created_at": (
+                                    _t.created_at.isoformat() if _t.created_at else None
+                                ),
+                                "span_count": _span_agg["span_count"] or 0,
+                                "error_count": _span_agg["error_count"] or 0,
+                                "total_tokens": _span_agg["total_tokens"] or 0,
+                                "total_cost": (
+                                    float(round(_span_agg["total_cost"], 6))
+                                    if _span_agg["total_cost"]
+                                    else 0
+                                ),
+                                "total_latency_ms": _span_agg["total_latency"] or 0,
+                                "start_time": (
+                                    str(_span_agg["start_time"])
+                                    if _span_agg["start_time"]
+                                    else None
+                                ),
+                                "end_time": (
+                                    str(_span_agg["end_time"])
+                                    if _span_agg["end_time"]
+                                    else None
+                                ),
+                                "spans": _span_summaries,
                             }
                     except Exception as _e:
                         logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
                 if session_context is None and _session_id:
                     try:
+                        from django.db.models import Count, Sum, Min, Max, Q
+                        from tracer.models.trace import Trace
                         from tracer.models.trace_session import TraceSession
+                        from tracer.models.observation_span import ObservationSpan
 
                         _ss = TraceSession.objects.filter(id=_session_id).first()
                         if _ss:
+                            # Get trace IDs for this session
+                            _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
+
+                            # Aggregate stats across all spans in session
+                            _sess_agg = ObservationSpan.objects.filter(
+                                trace__in=_trace_qs, deleted=False
+                            ).aggregate(
+                                total_spans=Count("id"),
+                                error_count=Count("id", filter=Q(status="ERROR")),
+                                total_tokens=Sum("total_tokens"),
+                                total_cost=Sum("cost"),
+                                start_time=Min("start_time"),
+                                end_time=Max("end_time"),
+                            )
+
+                            # Lightweight trace summaries for the agent to
+                            # browse and decide which to drill into. Use one
+                            # grouped aggregate instead of N+1 per-trace queries.
+                            _traces_page = list(_trace_qs.order_by("created_at")[:100])
+                            _trace_ids = [_tr.id for _tr in _traces_page]
+                            _per_trace = {
+                                _row["trace_id"]: _row
+                                for _row in (
+                                    ObservationSpan.objects.filter(
+                                        trace_id__in=_trace_ids, deleted=False
+                                    )
+                                    .values("trace_id")
+                                    .annotate(
+                                        span_count=Count("id"),
+                                        error_count=Count(
+                                            "id", filter=Q(status="ERROR")
+                                        ),
+                                        total_tokens=Sum("total_tokens"),
+                                        total_latency=Sum("latency_ms"),
+                                    )
+                                )
+                            }
+                            _trace_summaries = []
+                            for _tr in _traces_page:
+                                _agg = _per_trace.get(_tr.id, {})
+                                _err_count = _agg.get("error_count") or 0
+                                _trace_summaries.append(
+                                    {
+                                        "id": str(_tr.id),
+                                        "name": _tr.name,
+                                        "created_at": (
+                                            _tr.created_at.isoformat()
+                                            if _tr.created_at
+                                            else None
+                                        ),
+                                        "span_count": _agg.get("span_count") or 0,
+                                        "error_count": _err_count,
+                                        "total_tokens": _agg.get("total_tokens") or 0,
+                                        "total_latency_ms": _agg.get("total_latency")
+                                        or 0,
+                                        "has_error": bool(_tr.error or _err_count > 0),
+                                    }
+                                )
+
+                            _start = _sess_agg["start_time"]
+                            _end = _sess_agg["end_time"]
+                            _duration = None
+                            if _start and _end:
+                                _duration = (_end - _start).total_seconds()
+
                             session_context = {
                                 "id": str(_ss.id),
                                 "name": _ss.name,
                                 "project_id": (
                                     str(_ss.project_id) if _ss.project_id else None
                                 ),
-                                "status": _ss.status,
-                                "start_time": (
-                                    str(_ss.start_time) if _ss.start_time else None
+                                "bookmarked": _ss.bookmarked,
+                                "created_at": (
+                                    _ss.created_at.isoformat()
+                                    if _ss.created_at
+                                    else None
                                 ),
-                                "end_time": str(_ss.end_time) if _ss.end_time else None,
+                                "trace_count": _trace_qs.count(),
+                                "total_spans": _sess_agg["total_spans"] or 0,
+                                "error_count": _sess_agg["error_count"] or 0,
+                                "total_tokens": _sess_agg["total_tokens"] or 0,
+                                "total_cost": (
+                                    float(round(_sess_agg["total_cost"], 6))
+                                    if _sess_agg["total_cost"]
+                                    else 0
+                                ),
+                                "start_time": (str(_start) if _start else None),
+                                "end_time": (str(_end) if _end else None),
+                                "duration_seconds": _duration,
+                                "traces": _trace_summaries,
                             }
                     except Exception as _e:
                         logger.warning(f"Failed to fetch session {_session_id}: {_e}")
+
+                # Resolve session-level dotted-path mapping server-side.
+                # The TaskLivePreview session branch sends `mapping_paths`
+                # (variable -> dotted path) because its lazy fetch only
+                # populates the first trace's spans, so local resolution
+                # would silently drop deeper mappings. `_process_session_mapping`
+                # walks the real DB models — same code path as the
+                # eval-task runtime, so preview results match prod.
+                logger.info(
+                    "eval_playground_session_mapping_inputs",
+                    extra={
+                        "session_id": str(_session_id) if _session_id else None,
+                        "mapping_paths_keys": (
+                            list(mapping_paths.keys())
+                            if isinstance(mapping_paths, dict)
+                            else None
+                        ),
+                        "incoming_mapping_keys": (
+                            list(mapping.keys()) if isinstance(mapping, dict) else None
+                        ),
+                    },
+                )
+                if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                    from tracer.models.trace_session import TraceSession
+                    from tracer.utils.eval import _process_session_mapping
+
+                    _ss_for_mapping = TraceSession.objects.filter(
+                        id=_session_id
+                    ).first()
+                    if _ss_for_mapping is None:
+                        return self._gm.bad_request(f"Session {_session_id} not found")
+                    try:
+                        resolved_session_mapping = _process_session_mapping(
+                            dict(mapping_paths),
+                            _ss_for_mapping,
+                            template_id,
+                        )
+                    except ValueError as ve:
+                        return self._gm.bad_request(str(ve))
+                    logger.info(
+                        "eval_playground_session_mapping_resolved",
+                        extra={
+                            "session_id": str(_session_id),
+                            "resolved_keys": list(resolved_session_mapping.keys()),
+                        },
+                    )
+                    # FE-supplied resolved `mapping` wins over the
+                    # server-side resolution on key collision — lets the
+                    # caller force a value for a variable if they need to.
+                    _merged = dict(resolved_session_mapping)
+                    _merged.update(mapping or {})
+                    mapping = _merged
+
                 if call_context is None and _call_id:
                     try:
                         from simulate.models.test_execution import (
@@ -5168,6 +5460,16 @@ class EvalPlayGroundAPIView(APIView):
                         get_error_message("MISSING_EVAL_TEMPLATE")
                     )
 
+                # Validate + coerce function params (matches Dataset / Experiments
+                # paths). Without this, FE-sent blank strings flow straight into
+                # int()/float() inside eval bodies and crash with cryptic errors.
+                try:
+                    runtime_config = normalize_eval_runtime_config(
+                        eval_template.config, runtime_config
+                    )
+                except ValueError as ve:
+                    return self._gm.bad_request(str(ve))
+
                 try:
                     # Run the evaluation with the provided config
                     response = run_eval_func(
@@ -5192,7 +5494,9 @@ class EvalPlayGroundAPIView(APIView):
                         response if response else "Evaluation has been updated."
                     )
                 except Exception as e:
-                    if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
+                    if UsageLimitExceeded is not None and isinstance(
+                        e, UsageLimitExceeded
+                    ):
                         logger.warning(f"Eval playground usage limit: {str(e)}")
                         return self._gm.usage_limit_response(e.check_result)
                     logger.error(f"Error in run_eval_func: {str(e)}")
@@ -5653,9 +5957,13 @@ class TestEvaluationTemplateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_response
+        from tfc.ee_gates import turing_oss_gate_for_template
 
-        gate = turing_oss_gate_response(request.data.get("model"))
+        gate = turing_oss_gate_for_template(
+            request.data.get("model"),
+            template_id=request.data.get("template_id"),
+            eval_type=request.data.get("eval_type"),
+        )
         if gate is not None:
             return gate
 

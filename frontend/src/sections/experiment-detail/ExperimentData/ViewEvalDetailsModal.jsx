@@ -22,6 +22,7 @@ import {
   getStatusColor,
 } from "src/sections/develop-detail/DataTab/common";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { canonicalEntries } from "src/utils/utils";
 
 export default function ViewDetailsModal({
   evalDetail,
@@ -41,6 +42,12 @@ export default function ViewDetailsModal({
       return JSON.parse(evalDetail?.cellValue?.replace(/'/g, '"'));
     }
   }, [evalDetail?.cellValue]);
+  const metadataErrorAnalysis =
+    evalDetail?.valueInfos?.metadata?.errorAnalysis ||
+    evalDetail?.valueInfos?.metadata?.error_analysis;
+  const metadataErrorAnalysisEntries = canonicalEntries(
+    metadataErrorAnalysis || {},
+  );
 
   return (
     <Dialog
@@ -204,17 +211,15 @@ export default function ViewDetailsModal({
             Possible Error
           </Typography>
           {/* <FailedFetchingError /> */}
-          {evalDetail?.valueInfos?.metadata?.errorAnalysis?.input1 &&
-            evalDetail?.valueInfos?.metadata?.errorAnalysis?.input1?.length <
-              1 && (
-              <Typography
-                color={"text.disabled"}
-                typography={"s1"}
-                fontWeight={"fontWeightRegular"}
-              >
-                No error found
-              </Typography>
-            )}
+          {metadataErrorAnalysisEntries.length === 0 && (
+            <Typography
+              color={"text.disabled"}
+              typography={"s1"}
+              fontWeight={"fontWeightRegular"}
+            >
+              No error found
+            </Typography>
+          )}
           <Box
             sx={{
               display: "flex",
@@ -226,11 +231,10 @@ export default function ViewDetailsModal({
           >
             {evalDetail &&
               typeof evalDetail?.valueInfos?.metadata === "object" &&
-              evalDetail?.valueInfos?.metadata?.errorAnalysis &&
+              metadataErrorAnalysis &&
               (() => {
-                const hasOrgSegment = Object.values(
-                  evalDetail.valueInfos.metadata.errorAnalysis,
-                )
+                const hasOrgSegment = metadataErrorAnalysisEntries
+                  .map(([, value]) => value)
                   .flat()
                   .some((entry) => entry.orgSegment);
 
@@ -243,9 +247,7 @@ export default function ViewDetailsModal({
                   );
                 }
 
-                return Object.entries(
-                  evalDetail.valueInfos.metadata.errorAnalysis,
-                )
+                return metadataErrorAnalysisEntries
                   .filter(([_, value]) => value.length)
                   .map(([key, value]) => (
                     <ErrorLocalizeCard

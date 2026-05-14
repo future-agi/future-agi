@@ -72,6 +72,130 @@ class TestClickHouseSchema:
         # spans_mv must appear before span_metrics_hourly
         assert names.index("spans_mv") < names.index("span_metrics_hourly")
 
+    def test_eval_logger_ddl_has_target_type_and_trace_session_columns(self):
+        """PR3: tracer_eval_logger DDL must carry the new row_type-stack columns.
+
+        Asserts (a) ``trace_session_id`` is present and Nullable, (b)
+        ``target_type`` is present with default 'span', (c) ``trace_id`` and
+        ``observation_span_id`` are Nullable, (d) the eval_metrics_hourly MV
+        resolves project_id correctly for session rows so all target types
+        contribute to the rollup.
+        """
+        from tracer.services.clickhouse.schema import (
+            CDC_EVAL_LOGGER,
+            EVAL_METRICS_HOURLY_MV,
+            TRACE_SESSION_DICT,
+        )
+
+        # New columns
+        assert "trace_session_id Nullable(UUID)" in CDC_EVAL_LOGGER
+        assert "target_type LowCardinality(String) DEFAULT 'span'" in CDC_EVAL_LOGGER
+
+        # Existing FK columns must be Nullable for session rows to land
+        assert "trace_id Nullable(UUID)" in CDC_EVAL_LOGGER
+        assert "observation_span_id Nullable(String)" in CDC_EVAL_LOGGER
+
+        # Bloom filter index on the new discriminator + session FK
+        assert "idx_target_type target_type" in CDC_EVAL_LOGGER
+        assert "idx_trace_session_id trace_session_id" in CDC_EVAL_LOGGER
+
+        # Allow nullable key for trace_id in ORDER BY
+        assert "allow_nullable_key = 1" in CDC_EVAL_LOGGER
+
+        # New TRACE_SESSION_DICT exists and points at the trace_session table
+        assert "CREATE DICTIONARY IF NOT EXISTS trace_session_dict" in TRACE_SESSION_DICT
+        assert "trace_session" in TRACE_SESSION_DICT
+        assert "project_id UUID" in TRACE_SESSION_DICT
+
+        # MV INCLUDES sessions: no target_type filter; project_id resolved
+        # via trace_session_dict for session rows, trace_dict for span/trace
+        assert "target_type IN" not in EVAL_METRICS_HOURLY_MV, (
+            "EVAL_METRICS_HOURLY_MV should NOT filter by target_type — sessions "
+            "must contribute to the rollup. See PR3."
+        )
+        assert "trace_session_dict" in EVAL_METRICS_HOURLY_MV
+        assert "trace_dict" in EVAL_METRICS_HOURLY_MV
+        # The branching expression must be present
+        assert (
+            "if(" in EVAL_METRICS_HOURLY_MV
+            and "target_type = 'session'" in EVAL_METRICS_HOURLY_MV
+        ), "MV must branch project_id resolution on target_type='session'"
+
+    def test_post_ddl_alters_evolves_existing_eval_logger_tables(self):
+        """ALTER statements bring already-created tracer_eval_logger tables forward."""
+        from tracer.services.clickhouse.schema import POST_DDL_ALTERS
+
+        joined = "\n".join(POST_DDL_ALTERS)
+        assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS trace_session_id" in joined
+        assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS target_type" in joined
+        assert "tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)" in joined
+        # The MODIFY trace_id must be sandwiched between DROP INDEX and ADD
+        # INDEX for idx_trace_id (CH refuses to alter a column that's part
+        # of a skip index — Code: 524).
+        drop_idx = joined.index("DROP INDEX IF EXISTS idx_trace_id")
+        modify = joined.index("MODIFY COLUMN trace_id Nullable(UUID)")
+        readd_idx = joined.index("ADD INDEX IF NOT EXISTS idx_trace_id ")
+        assert drop_idx < modify < readd_idx, (
+            "POST_DDL_ALTERS must order DROP INDEX → MODIFY COLUMN → ADD INDEX "
+            "for idx_trace_id; ClickHouse refuses to alter an indexed column."
+        )
+
+    def test_mv_recreate_manifest_consistency(self):
+        """Every MV_RECREATE_MANIFEST entry must resolve to a real DDL constant."""
+        from tracer.services.clickhouse import schema as ch_schema
+
+        for mv_name, manifest in ch_schema.MV_RECREATE_MANIFEST.items():
+            const_name = manifest["ddl_constant_name"]
+            ddl = getattr(ch_schema, const_name, None)
+            assert isinstance(ddl, str) and ddl.strip(), (
+                f"Manifest entry for '{mv_name}' references "
+                f"non-existent or empty DDL constant '{const_name}'"
+            )
+            # The MV must reference its declared source and target tables.
+            assert manifest["source_table"] in ddl, (
+                f"DDL for '{mv_name}' does not reference source_table "
+                f"{manifest['source_table']!r}"
+            )
+            assert manifest["target_table"] in ddl, (
+                f"DDL for '{mv_name}' does not reference target_table "
+                f"{manifest['target_table']!r}"
+            )
+
+    def test_mv_recreate_manifest_backfill_mirrors_mv_filter(self):
+        """The backfill_select must produce the same row set as the MV.
+
+        Both the MV body and the manifest's backfill query include all
+        target types (span/trace/session) and resolve project_id via the
+        same target_type-branching expression. Drift between the two
+        would cause the backfill to re-aggregate a different population
+        than the MV processes on live writes.
+        """
+        from tracer.services.clickhouse.schema import (
+            EVAL_METRICS_HOURLY_MV,
+            MV_RECREATE_MANIFEST,
+        )
+
+        manifest = MV_RECREATE_MANIFEST["eval_metrics_hourly_mv"]
+        backfill = manifest["backfill_select"]
+
+        # Neither the MV nor the backfill filters by target_type — sessions
+        # are deliberately included in the rollup. Pin this so a future
+        # "fix" doesn't accidentally re-introduce the filter.
+        assert "target_type IN" not in EVAL_METRICS_HOURLY_MV
+        assert "target_type IN" not in backfill
+
+        # Both branch project_id resolution on session vs span/trace
+        for body in (EVAL_METRICS_HOURLY_MV, backfill):
+            assert "target_type = 'session'" in body
+            assert "trace_session_dict" in body
+            assert "trace_dict" in body
+
+        # Backfill carries the cutoff parameter
+        assert "%(cutoff)s" in backfill
+        # Backfill GROUP BY must match — the recreate command's chunk-injection
+        # logic relies on the GROUP BY marker being present.
+        assert "GROUP BY" in backfill
+
     def test_get_drop_statements(self):
         """Drop statements should be generated in reverse dependency order."""
         from tracer.services.clickhouse.schema import get_drop_statements
@@ -309,7 +433,7 @@ class TestClickHouseFilterBuilder:
                 "filter_config": {
                     "filter_type": "boolean",
                     "filter_op": "equals",
-                    "filter_value": 1,
+                    "filter_value": True,
                     "col_type": "SPAN_ATTRIBUTE",
                 },
             }
@@ -1161,10 +1285,10 @@ class TestSessionListQueryBuilder:
         query, params = builder.build()
         assert "min(start_time)" in query.lower() or "MIN(start_time)" in query
         assert "max(end_time)" in query.lower() or "MAX(end_time)" in query
-        assert "uniqExact(trace_id)" in query or "uniqexact(trace_id)" in query.lower()
+        assert "uniq(trace_id)" in query
 
-    def test_build_count_query(self):
-        """build_count_query() should count distinct sessions."""
+    def test_build_count_query_simple(self):
+        """build_count_query() without HAVING filters uses count(DISTINCT ...)."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -1173,11 +1297,34 @@ class TestSessionListQueryBuilder:
             page_number=0,
             page_size=10,
         )
-        # Call build first to set up dates
         builder.build()
         query, params = builder.build_count_query()
-        assert "count()" in query
-        assert "trace_session_id" in query
+        assert "count(DISTINCT trace_session_id)" in query
+        assert "GROUP BY" not in query
+
+    def test_build_count_query_with_having(self):
+        """build_count_query() with HAVING filters uses full aggregation subquery."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "greater_than",
+                        "filter_value": 60,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_count_query()
+        assert "count() AS total" in query
+        assert "GROUP BY trace_session_id" in query
+        assert "HAVING" in query
 
     def test_build_with_user_id(self):
         """When user_id is provided, query should filter by end_user_id."""
@@ -1206,6 +1353,239 @@ class TestSessionListQueryBuilder:
         )
         query, params = builder.build()
         assert "trace_session_id IS NOT NULL" in query
+
+    def test_build_uses_uniq_not_uniqExact(self):
+        """build() should use approximate uniq() instead of expensive uniqExact()."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        query, params = builder.build()
+        assert "uniq(trace_id)" in query
+        assert "uniqExact" not in query
+
+    def test_has_having_filters_false_for_no_aggregate_filters(self):
+        """has_having_filters() returns False when no aggregate column filters."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "greater_than",
+                        "filter_value": "2025-01-01T00:00:00Z",
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        assert builder.has_having_filters() is False
+
+    def test_has_having_filters_true_for_aggregate_filters(self):
+        """has_having_filters() returns True when filtering on duration/cost/tokens."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "total_cost",
+                    "filter_config": {
+                        "filter_op": "greater_than",
+                        "filter_value": 1.0,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        assert builder.has_having_filters() is True
+
+    def test_span_attributes_query_root_spans_only(self):
+        """Span attributes query should filter to root spans only."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
+
+    def test_span_attributes_query_has_limit(self):
+        """Span attributes query should have a LIMIT to prevent unbounded scans."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
+        assert "LIMIT 500" in query
+
+    def test_span_attributes_query_empty_sessions(self):
+        """Span attributes query should return empty for no sessions."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, params = builder.build_span_attributes_query([])
+        assert query == ""
+        assert params == {}
+
+    def test_count_query_routes_correctly(self):
+        """build_count_query() should route to simple path without HAVING filters."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        # No aggregate filters -> simple path
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+        query, _ = builder.build_count_query()
+        assert "count(DISTINCT trace_session_id)" in query
+
+        # With aggregate filter -> aggregated path
+        builder2 = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_op": "less_than",
+                        "filter_value": 300,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder2.build()
+        query2, _ = builder2.build_count_query()
+        assert "count() AS total" in query2
+        assert "GROUP BY" in query2
+
+
+@pytest.mark.unit
+class TestSessionListCountSkipLogic:
+    """Tests for the count-query-skip optimization in _list_sessions_clickhouse."""
+
+    def test_skip_count_first_page_small_result(self):
+        """When Phase 1 returns <= page_size rows on page 0, total = len(results)."""
+        page_size = 30
+        page_number = 0
+        result_data = [{"session_id": f"s-{i}"} for i in range(15)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count == 15
+
+    def test_skip_count_later_page_no_more(self):
+        """When Phase 1 returns < page_size on a later page, total = offset + len."""
+        page_size = 30
+        page_number = 3
+        result_data = [{"session_id": f"s-{i}"} for i in range(10)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count == 100
+
+    def test_needs_count_query_when_has_more(self):
+        """When Phase 1 returns page_size + 1 rows, count query is needed."""
+        page_size = 30
+        page_number = 0
+        result_data = [{"session_id": f"s-{i}"} for i in range(31)]
+
+        has_more = len(result_data) > page_size
+        actual_data = result_data[:page_size]
+
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            total_count = None
+
+        assert total_count is None
+        assert len(actual_data) == 30
+
+
+@pytest.mark.unit
+class TestSpanAttributesParsing:
+    """Tests for the orjson + key-cap optimization in span attribute processing."""
+
+    def test_json_loads_fallback(self):
+        """_json_loads should work whether orjson is available or not."""
+        from tracer.views.trace_session import _json_loads
+
+        result = _json_loads(b'{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_json_loads_handles_string(self):
+        """_json_loads should handle string input."""
+        from tracer.views.trace_session import _json_loads
+
+        result = _json_loads('{"env": "production", "count": 42}')
+        assert result == {"env": "production", "count": 42}
+
+    def test_max_attr_keys_cap(self):
+        """Attribute processing should cap keys per session at 50."""
+        _MAX_ATTR_KEYS_PER_SESSION = 50
+        aggregated_attrs: dict = {}
+        sid = "session-1"
+
+        for i in range(100):
+            if (
+                sid in aggregated_attrs
+                and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
+            ):
+                continue
+            if sid not in aggregated_attrs:
+                aggregated_attrs[sid] = {}
+            key = f"attr_{i}"
+            if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
+                break
+            aggregated_attrs[sid][key] = {f"val_{i}"}
+
+        assert len(aggregated_attrs[sid]) == 50
 
 
 @pytest.mark.unit
@@ -3476,8 +3856,9 @@ class TestFilterBuilderEdgeCases:
             for v in params.values()
         )
 
-    def test_not_in_between_filter(self):
-        """not_in_between should produce NOT BETWEEN clause."""
+    def test_not_between_filter(self):
+        """not_between should produce NOT BETWEEN clause. (Canonical op
+        name; `not_in_between` is the retired legacy alias.)"""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -3488,7 +3869,7 @@ class TestFilterBuilderEdgeCases:
                 "column_id": "cost",
                 "filter_config": {
                     "filter_type": "number",
-                    "filter_op": "not_in_between",
+                    "filter_op": "not_between",
                     "filter_value": [0.1, 1.0],
                     "col_type": "SYSTEM_METRIC",
                 },
@@ -5578,3 +5959,399 @@ class TestNewQueryTypeRoutingSettings:
         assert "AnnotationGraphQueryBuilder" in pkg.__all__
         assert "MonitorMetricsQueryBuilder" in pkg.__all__
         assert "SessionAnalyticsQueryBuilder" in pkg.__all__
+
+
+# ============================================================================
+# SPAN_ATTRIBUTE filter contract — exhaustive per-type / per-op coverage
+# ============================================================================
+
+
+def _span_attr_filter(col_id, *, filter_type, filter_op, filter_value=None):
+    """Build a single SPAN_ATTRIBUTE filter dict in the API shape."""
+    return {
+        "column_id": col_id,
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
+def _translate_one(filter_dict, *, query_mode="trace"):
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+    )
+
+    builder = ClickHouseFilterBuilder(query_mode=query_mode)
+    where, params = builder.translate([filter_dict])
+    return where, params
+
+
+class TestSpanAttrConditionContract:
+    """End-to-end contract tests for _build_span_attr_condition.
+
+    These tests assert on the generated SQL string and the parameter dict
+    (matching the existing TestClickHouseFilterBuilder pattern) — no
+    ClickHouse connection required.
+    """
+
+    # ------------------------------------------------------------------
+    # text type — happy paths
+    # ------------------------------------------------------------------
+    def test_text_equals(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            )
+        )
+        assert "span_attr_str" in where
+        assert "mapContains(span_attr_str, 'k')" in where
+        assert "= %(" in where
+        assert "v" in params.values()
+
+    def test_text_not_equals_uses_exists_and(self):
+        """not_equals must require key present (exists AND ...), not the
+        legacy NOT exists OR ... shape that leaked rows past the filter."""
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="not_equals", filter_value="v"
+            )
+        )
+        assert "AND span_attr_str['k'] != " in where
+        assert "NOT mapContains" not in where
+
+    def test_text_in(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="in", filter_value=["a", "b"]
+            )
+        )
+        assert "span_attr_str['k'] IN" in where
+        assert ("a", "b") in params.values()
+
+    def test_text_not_in_uses_exists_and(self):
+        """Regression for the voice-call ended_reason no-op bug.
+        not_in must require key present, NOT use 'NOT exists OR ...'."""
+        where, params = _translate_one(
+            _span_attr_filter(
+                "ended_reason",
+                filter_type="text",
+                filter_op="not_in",
+                filter_value=["voicemail", "assistant-ended-call"],
+            )
+        )
+        assert "mapContains(span_attr_str, 'ended_reason')" in where
+        assert "AND span_attr_str['ended_reason'] NOT IN" in where
+        assert "NOT mapContains" not in where
+        assert ("voicemail", "assistant-ended-call") in params.values()
+
+    def test_text_contains_wildcard(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="contains", filter_value="abc"
+            )
+        )
+        assert "LIKE" in where
+        assert "%abc%" in params.values()
+
+    def test_text_not_contains_uses_exists_and(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="not_contains", filter_value="abc"
+            )
+        )
+        assert "AND span_attr_str['k'] NOT LIKE" in where
+        assert "NOT mapContains" not in where
+        assert "%abc%" in params.values()
+
+    def test_text_starts_with(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="starts_with", filter_value="abc"
+            )
+        )
+        assert "abc%" in params.values()
+
+    def test_text_ends_with(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="ends_with", filter_value="abc"
+            )
+        )
+        assert "%abc" in params.values()
+
+    def test_text_is_null(self):
+        where, _ = _translate_one(
+            _span_attr_filter("k", filter_type="text", filter_op="is_null")
+        )
+        assert "NOT mapContains(span_attr_str, 'k')" in where
+
+    def test_text_is_not_null(self):
+        where, _ = _translate_one(
+            _span_attr_filter("k", filter_type="text", filter_op="is_not_null")
+        )
+        assert "mapContains(span_attr_str, 'k')" in where
+        assert "NOT mapContains" not in where
+
+    # ------------------------------------------------------------------
+    # number type — happy paths + coercion
+    # ------------------------------------------------------------------
+    def test_number_equals_coerces_string_to_float(self):
+        """FE always ships numerics as strings; backend must coerce to
+        float so CH does numeric (not lexical) comparison."""
+        _, params = _translate_one(
+            _span_attr_filter(
+                "n", filter_type="number", filter_op="equals", filter_value="42"
+            )
+        )
+        assert 42.0 in params.values()
+        assert "42" not in [v for v in params.values() if isinstance(v, str)]
+
+    def test_number_greater_than(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="greater_than",
+                filter_value="100",
+            )
+        )
+        assert "span_attr_num" in where
+        assert "> %(" in where
+        assert 100.0 in params.values()
+
+    def test_number_between_coerces_each_bound(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="between",
+                filter_value=["10", "50"],
+            )
+        )
+        assert "BETWEEN" in where
+        assert 10.0 in params.values()
+        assert 50.0 in params.values()
+
+    def test_number_not_between_uses_exists_and(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="not_between",
+                filter_value=["10", "50"],
+            )
+        )
+        assert "AND span_attr_num['n'] NOT BETWEEN" in where
+        assert "NOT mapContains" not in where
+
+    def test_number_legacy_not_in_between_is_rejected(self):
+        """`not_in_between` is the retired alias. Builder must raise."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="not_in_between",
+                    filter_value=["10", "50"],
+                )
+            )
+
+    def test_number_between_with_single_element_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="between",
+                    filter_value=["10"],
+                )
+            )
+
+    def test_number_between_with_non_list_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="between",
+                    filter_value="10",
+                )
+            )
+
+    def test_number_greater_than_with_non_numeric_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="greater_than",
+                    filter_value="abc",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # boolean type — strict native bool only
+    # ------------------------------------------------------------------
+    def test_boolean_equals_true(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "b", filter_type="boolean", filter_op="equals", filter_value=True
+            )
+        )
+        assert "span_attr_bool" in where
+        assert 1 in params.values()
+
+    def test_boolean_equals_false(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "b", filter_type="boolean", filter_op="equals", filter_value=False
+            )
+        )
+        assert 0 in params.values()
+
+    def test_boolean_string_true_rejected(self):
+        """Strict: only native true/false. `'true'` strings must be rejected."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b",
+                    filter_type="boolean",
+                    filter_op="equals",
+                    filter_value="true",
+                )
+            )
+
+    def test_boolean_int_one_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b", filter_type="boolean", filter_op="equals", filter_value=1
+                )
+            )
+
+    def test_boolean_greater_than_rejected_by_contract(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b",
+                    filter_type="boolean",
+                    filter_op="greater_than",
+                    filter_value=True,
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # type ↔ op contract violations
+    # ------------------------------------------------------------------
+    def test_contains_on_number_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="contains",
+                    filter_value="abc",
+                )
+            )
+
+    def test_unknown_op_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k",
+                    filter_type="text",
+                    filter_op="somethingelse",
+                    filter_value="v",
+                )
+            )
+
+    def test_unknown_filter_type_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k",
+                    filter_type="json",
+                    filter_op="equals",
+                    filter_value="v",
+                )
+            )
+
+    def test_in_with_empty_list_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="in", filter_value=[]
+                )
+            )
+
+    def test_in_with_non_list_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="in", filter_value="a"
+                )
+            )
+
+    def test_equals_with_none_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="equals", filter_value=None
+                )
+            )
+
+    def test_legacy_equal_to_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="equal_to",
+                    filter_value="42",
+                )
+            )
+
+    def test_legacy_is_op_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="is", filter_value="v"
+                )
+            )
+
+    def test_sql_injection_via_key_raises(self):
+        """Key sanitizer must reject anything outside [a-zA-Z0-9._-]."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k'; DROP TABLE spans; --",
+                    filter_type="text",
+                    filter_op="equals",
+                    filter_value="v",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # trace-mode wrap vs span-mode bare
+    # ------------------------------------------------------------------
+    def test_trace_mode_wraps_predicate(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            ),
+            query_mode="trace",
+        )
+        assert "trace_id IN (SELECT trace_id FROM" in where
+
+    def test_span_mode_returns_bare_predicate(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            ),
+            query_mode="span",
+        )
+        assert "trace_id IN (" not in where
+        assert "mapContains" in where

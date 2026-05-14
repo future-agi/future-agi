@@ -60,9 +60,21 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Sync dist/ to GCS
+      # Hashed assets (Vite emits content-hashed filenames in /assets/) —
+      # safe to cache forever.
+      - name: Upload hashed assets with long-lived immutable cache
         run: |
-          gsutil -m rsync -R dist/ gs://futureagi-frontend-eu
+          gsutil -m -h "Cache-Control:public, max-age=31536000, immutable" \
+            rsync -R -d dist/assets/ gs://futureagi-frontend-eu/assets/
+
+      # Non-hashed root files (index.html, config.js, favicons) must NOT
+      # be cached. Browsers/CDN must re-validate on every request so a new
+      # deploy is picked up immediately. -x "^assets/" excludes hashed
+      # assets from this pass.
+      - name: Upload root files with no-cache
+        run: |
+          gsutil -m -h "Cache-Control:no-cache, must-revalidate" \
+            rsync -R -d -x "^assets/" dist/ gs://futureagi-frontend-eu
 
       - name: Invalidate Cloud CDN cache
         run: |

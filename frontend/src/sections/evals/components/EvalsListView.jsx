@@ -261,10 +261,11 @@ const mergeColumnOrder = (stored) => {
 };
 
 // Sort field map — frontend column id → backend sort key
+
 const SORT_FIELD_MAP = {
   name: "name",
   lastUpdated: "updated_at",
-  created_by_name: "created_at",
+  createdByName: "created_at",
 };
 
 // ── Component ──
@@ -537,6 +538,7 @@ const EvalsListView = () => {
         accessorKey: "created_by_name",
         header: "Created By",
         size: 150,
+        enableSorting: true,
         cell: ({ getValue }) => {
           const name = getValue() || "Unknown";
           const isSystem = name === "System";

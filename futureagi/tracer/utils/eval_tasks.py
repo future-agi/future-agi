@@ -17,11 +17,20 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from tfc.temporal import temporal_activity
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 from tracer.utils.eval import (
     evaluate_observation_span_observe,
+    evaluate_trace_observe,
+    evaluate_trace_session_observe,
 )
 from tracer.utils.filters import FilterEngine
 
@@ -231,10 +240,60 @@ def process_eval_task(eval_task_id: str):
         if eval_task.filters is not None:
             filters = parsing_evaltask_filters(eval_task.filters)
 
+        # Branch the candidate queryset and dispatch activity on
+        # row_type. The rest of the function operates on ``entity_qs``
+        # (a Django queryset of the entities we'll evaluate) and
+        # ``dispatch`` (the activity to fan out to). The span path stays
+        # the original behaviour. The ``spanids_processed`` JSONField
+        # stores the processed entity ids generically — its name is
+        # historical (it once held only span ids); a future rename to
+        # ``processed_target_ids`` is intentionally deferred so this PR
+        # stays focused on dispatcher behaviour.
+        if eval_task.row_type == RowType.TRACES:
+            # A trace is in scope iff at least one of its spans matches
+            # the existing span-level filters.
+            entity_qs = Trace.objects.filter(
+                id__in=ObservationSpan.objects.filter(filters)
+                .values("trace_id")
+                .distinct()
+            )
+            dispatch = evaluate_trace_observe
+        elif eval_task.row_type == RowType.SESSIONS:
+            # A session is in scope iff any of its traces has a matching span.
+            # We resolve via two ``__in`` subqueries (spans -> trace_ids,
+            # then traces -> session_ids) so the outer queryset stays a
+            # plain SELECT; using ``traces__id__in`` here would force a JOIN
+            # that needs ``.distinct()``, and ``DISTINCT + ORDER BY random()``
+            # in the sampling step below misbehaves under PostgreSQL.
+            matching_session_ids = (
+                Trace.objects.filter(
+                    id__in=ObservationSpan.objects.filter(filters)
+                    .values("trace_id")
+                    .distinct()
+                )
+                .exclude(session__isnull=True)
+                .values("session_id")
+                .distinct()
+            )
+            entity_qs = TraceSession.objects.filter(id__in=matching_session_ids)
+            dispatch = evaluate_trace_session_observe
+        elif eval_task.row_type == RowType.SPANS:
+            entity_qs = ObservationSpan.objects.filter(filters)
+            dispatch = evaluate_observation_span_observe
+        else:
+            # Fail fast on unknown / future row types instead of silently
+            # dispatching down the span path. Catches both corrupt rows and
+            # the case where a new RowType enum value is added without
+            # updating this dispatcher.
+            raise ValueError(
+                f"Unhandled row_type {eval_task.row_type!r} on "
+                f"EvalTask {eval_task.id}"
+            )
+
         sampling_rate = eval_task.sampling_rate
         span_limit = eval_task.spans_limit
         cnt = None
-        total_spans_count = ObservationSpan.objects.filter(filters).count()
+        total_spans_count = entity_qs.count()
 
         if eval_task.run_type == RunType.HISTORICAL and span_limit is not None:
             # Use ``offset`` (dedup-set size recorded below, before the
@@ -356,44 +415,69 @@ def process_eval_task(eval_task_id: str):
                 filters = filters & Q(created_at__gte=eval_task_logger.updated_at)
 
             if len(spanids_processed) > 0:
-                spans = ObservationSpan.objects.filter(filters).exclude(
+                # ``spanids_processed`` is stored as strings; trace/session
+                # ids are UUIDs and Django coerces on ``id__in`` lookup.
+                # The field name is historical (it once held only span ids);
+                # for row_type=traces/sessions it now holds trace/session ids.
+                pending_entities = entity_qs.only("id").exclude(
                     id__in=spanids_processed
                 )
             else:
-                spans = ObservationSpan.objects.filter(filters)
+                pending_entities = entity_qs.only("id")
 
-            filtered_spans = spans
+
+            filtered_spans = pending_entities.values_list("id", flat=True)
 
             # Filter spans based on sampling rate
             if sampling_rate and sampling_rate > 0 and sampling_rate <= 100:
                 sample_size = int((sampling_rate / 100) * total_spans_count)
                 runned_spans_count = eval_task_logger.offset or 0
-                if runned_spans_count >= sample_size:
+                # CONTINUOUS tasks have no sampling cap — they run forever
+                # on incoming spans. The historical-style "stop when offset
+                # >= sample_size" check would silently no-op once the
+                # cumulative offset crosses sample_size, even though new
+                # spans keep arriving
+                is_continuous = eval_task.run_type == RunType.CONTINUOUS
+                if not is_continuous and runned_spans_count >= sample_size:
                     filtered_spans = []
                 else:
-                    max_samples = sample_size - runned_spans_count
+                    if is_continuous:
+                        # For continuous, sampling applies to the CURRENT
+                        # batch of unprocessed spans, not against accumulated
+                        # offset.
+                        max_samples = max(int((sampling_rate / 100) * pending_entities.count()), 1)
+                    else:
+                        max_samples = sample_size - runned_spans_count
                     if cnt is not None:
                         max_samples = min(max_samples, cnt)
                     # Sample at the DB level instead of materializing every
-                    # candidate span id into Python memory. ``order_by("?")``
+                    # candidate entity id into Python memory. ``order_by("?")``
                     # is backed by RANDOM() in PostgreSQL, which is sufficient
                     # here and bounded by ``LIMIT sample_count``.
-                    total_available = spans.count()
+                    total_available = pending_entities.count()
                     sample_count = min(max_samples, total_available)
                     sampled_span_ids = list(
-                        spans.order_by("?").values_list("id", flat=True)[:sample_count]
+                        pending_entities.order_by("?")
+                        .values_list("id", flat=True)[:sample_count]
                     )
-                    filtered_spans = list(spans.filter(id__in=sampled_span_ids))
-            if cnt is not None and cnt < len(filtered_spans):
-                filtered_spans = filtered_spans[:cnt]
+                    filtered_spans = sampled_span_ids
+            if cnt is not None:
+                filtered_spans = list(filtered_spans[:cnt])
 
             # Cap ``spanids_processed`` so the JSONField doesn't grow unbounded
             # for long-running tasks. Record the dedup-set size in ``offset``
             # BEFORE truncation so completion checks reflect actual progress
             # (the in-DB list only retains the most recent ids for future
             # dedup).
+            #
+            # Stringify the entity ids before storing. ObservationSpan.id is
+            # already a CharField (str), but Trace.id and TraceSession.id are
+            # UUIDField — psycopg's JSONField adapter can't serialize raw
+            # UUID objects, so we coerce here. Existing entries from
+            # span-only tasks are already strings, so the coercion is
+            # idempotent.
             MAX_STORED_IDS = 10000
-            new_ids = [span.id for span in filtered_spans]
+            new_ids = [str(eid) for eid in filtered_spans]
             updated_spanids_processed = list(set(spanids_processed + new_ids))
             eval_task_logger.offset = len(updated_spanids_processed)
             if len(updated_spanids_processed) > MAX_STORED_IDS:
@@ -407,10 +491,10 @@ def process_eval_task(eval_task_id: str):
 
         evals = eval_task.evals.all()
 
-        for span in filtered_spans:
+        for entity_id in filtered_spans:
             for eval_config in evals:
-                evaluate_observation_span_observe.delay(
-                    str(span.id),
+                dispatch.delay(
+                    str(entity_id),
                     str(eval_config.id),
                     str(eval_task.id),
                 )

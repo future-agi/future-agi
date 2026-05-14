@@ -25,6 +25,7 @@ const RequestBody = ({
   control,
   contentFieldName,
   allColumns,
+  jsonSchemas = {},
   placeholder,
   showHelper = true,
   multiline = true,
@@ -55,11 +56,16 @@ const RequestBody = ({
   const errorMessage = _.get(errors, `${contentFieldName}.message`) || "";
   const isError = !!errorMessage;
 
-  // Valid column names for highlighting
-  const columnNameSet = useMemo(
-    () => new Set(allColumns.map((c) => c.headerName)),
-    [allColumns],
-  );
+  // Valid column names (including JSON paths) for highlighting
+  const columnNameSet = useMemo(() => {
+    const names = new Set(allColumns.map((c) => c.headerName));
+    allColumns.forEach((col) => {
+      jsonSchemas?.[col?.field]?.keys?.forEach((path) => {
+        names.add(`${col.headerName}.${path}`);
+      });
+    });
+    return names;
+  }, [allColumns, jsonSchemas]);
 
   // Highlighted text: green for valid variables, red for invalid/incomplete
   const highlightedContent = useMemo(() => {
@@ -100,22 +106,29 @@ const RequestBody = ({
     return textBeforeCursor.substring(idx + 2, selectionStart);
   }, [value]);
 
-  // Filtered column options for dropdown
+  // Filtered column options for dropdown (including JSON dot-notation paths)
   const columnOptions = useMemo(() => {
-    return allColumns.reduce((filtered, column) => {
-      if (
-        column?.headerName
-          ?.toLowerCase()
-          .startsWith(searchText.toLowerCase())
-      ) {
-        filtered.push({
-          label: column.headerName,
-          value: `{{${column.headerName}}}`,
-        });
+    const options = [];
+    const lower = searchText.toLowerCase();
+
+    allColumns.forEach((column) => {
+      const name = column?.headerName;
+      if (!name) return;
+
+      if (name.toLowerCase().startsWith(lower)) {
+        options.push({ label: name, value: `{{${name}}}` });
       }
-      return filtered;
-    }, []);
-  }, [allColumns, searchText]);
+
+      jsonSchemas?.[column?.field]?.keys?.forEach((path) => {
+        const fullPath = `${name}.${path}`;
+        if (fullPath.toLowerCase().startsWith(lower)) {
+          options.push({ label: fullPath, value: `{{${fullPath}}}`, isJsonPath: true });
+        }
+      });
+    });
+
+    return options;
+  }, [allColumns, jsonSchemas, searchText]);
 
   const onCloseDropdown = useCallback(() => {
     setShowDropdown(false);
@@ -129,8 +142,8 @@ const RequestBody = ({
     const rect = el.getBoundingClientRect();
 
     if (!multiline) {
-      // Single-line: just below the input
-      setDropdownPosition({ x: rect.left, y: rect.bottom + 2 });
+      // Single-line: just below the input, store right edge for right-aligned dropdown
+      setDropdownPosition({ x: rect.right, y: rect.bottom + 2 });
       return;
     }
 
@@ -194,6 +207,27 @@ const RequestBody = ({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [setDropDownPos, showDropdown]);
+
+  // Scroll selected item into view when navigating with arrow keys
+  useEffect(() => {
+    if (showDropdown && dropdownRef.current) {
+      const items = dropdownRef.current.querySelectorAll('[role="menuitem"]');
+      if (items[selectedIndex]) {
+        items[selectedIndex].scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [selectedIndex, showDropdown]);
+
+  // Close dropdown when anything outside it scrolls
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handler = (e) => {
+      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+      onCloseDropdown();
+    };
+    window.addEventListener("scroll", handler, true);
+    return () => window.removeEventListener("scroll", handler, true);
+  }, [showDropdown, onCloseDropdown]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -289,6 +323,7 @@ const RequestBody = ({
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
+        ...(!multiline && { flex: 1, minWidth: 120 }),
       }}
     >
       {label && (
@@ -370,15 +405,20 @@ const RequestBody = ({
         createPortal(
           <Paper
             ref={dropdownRef}
-            elevation={3}
+            elevation={8}
             sx={{
               position: "fixed",
               top: dropdownPosition.y,
-              left: dropdownPosition.x,
+              ...(multiline
+                ? { left: dropdownPosition.x }
+                : { right: `calc(100vw - ${dropdownPosition.x}px)` }),
               zIndex: 9999,
-              p: 0.5,
-              maxHeight: 150,
+              py: 0.5,
+              maxHeight: 220,
               overflow: "auto",
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
             }}
             role="listbox"
           >
@@ -388,10 +428,16 @@ const RequestBody = ({
                 onClick={() => handleVariableSelect(variable)}
                 selected={index === selectedIndex}
                 sx={{
-                  minWidth: 150,
+                  py: 0.75,
+                  px: 1.5,
+                  fontSize: "13px",
+                  fontFamily: "monospace",
+                  borderRadius: "4px",
+                  mx: 0.5,
+                  color: variable.isJsonPath ? "primary.main" : "text.primary",
                   backgroundColor:
                     index === selectedIndex
-                      ? "background.neutral"
+                      ? "action.selected"
                       : "inherit",
                   "&:hover": { backgroundColor: "action.hover" },
                   "&:focus": { outline: "none" },
@@ -413,8 +459,8 @@ const RequestBody = ({
           to access variables
         </Typography>
       )}
-      {!!isError && (
-        <FormHelperText sx={{ paddingLeft: 1, marginTop: 0 }} error={!!isError}>
+      {!!errorMessage.trim() && (
+        <FormHelperText sx={{ paddingLeft: 1, marginTop: 0 }} error>
           {errorMessage}
         </FormHelperText>
       )}
@@ -426,6 +472,7 @@ RequestBody.propTypes = {
   control: PropTypes.object,
   contentFieldName: PropTypes.string,
   allColumns: PropTypes.array,
+  jsonSchemas: PropTypes.object,
   placeholder: PropTypes.string,
   showHelper: PropTypes.bool,
   multiline: PropTypes.bool,

@@ -830,12 +830,10 @@ def _create_skipped_eval_cells(
 
     from model_hub.models.choices import CellStatus, SourceChoices
     from model_hub.models.develop_dataset import Column, Row
+    from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
     from model_hub.views.eval_runner import bulk_update_or_create_cells
 
-    output_type = user_eval_metric.template.config.get("output", "boolean")
-    data_type = {"reason": "text", "score": "float", "choices": "array"}.get(
-        output_type, "boolean"
-    )
+    data_type = infer_eval_result_column_data_type(user_eval_metric.template)
 
     eval_column, _ = Column.objects.get_or_create(
         name=user_eval_metric.name,
@@ -2077,19 +2075,20 @@ def _create_error_eval_cells_sync(
                     reason_column = runner._create_reason_column(
                         dataset, reason_column_name, parent_column=eval_column
                     )
-                    reason_cells = [
-                        Cell(
-                            dataset=dataset,
-                            column=reason_column,
-                            row=row,
-                            value=error_message,
-                            status=CellStatus.ERROR.value,
-                            value_infos=json.dumps({"reason": error_message}),
-                        )
-                        for row in row_map.values()
-                    ]
-                    if reason_cells:
-                        Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
+                    if reason_column is not None:
+                        reason_cells = [
+                            Cell(
+                                dataset=dataset,
+                                column=reason_column,
+                                row=row,
+                                value=error_message,
+                                status=CellStatus.ERROR.value,
+                                value_infos=json.dumps({"reason": error_message}),
+                            )
+                            for row in row_map.values()
+                        ]
+                        if reason_cells:
+                            Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
 
             except Exception as e:
                 activity.logger.exception(

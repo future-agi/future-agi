@@ -808,12 +808,12 @@ export const getSelectedCallExecutionIds = () => {
   const selectedCallExecutionIdsSet = new Set();
 
   selectedFixableRecommendations.forEach((recommendation) => {
-    recommendation.call_execution_ids.forEach((callExecutionId) => {
+    recommendation.callExecutionIds.forEach((callExecutionId) => {
       selectedCallExecutionIdsSet.add(callExecutionId);
     });
   });
   selectedNonFixableRecommendations.forEach((recommendation) => {
-    recommendation.call_execution_ids.forEach((callExecutionId) => {
+    recommendation.callExecutionIds.forEach((callExecutionId) => {
       selectedCallExecutionIdsSet.add(callExecutionId);
     });
   });

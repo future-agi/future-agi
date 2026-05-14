@@ -75,30 +75,12 @@ def _log_and_deduct_cost_for_standalone_eval(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
-    # Dual-write: emit usage event for new billing system
-    try:
-        try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
-
-        emit(
-            UsageEvent(
-                org_id=str(user.organization.id),
-                event_type=api_call_type,
-                properties={
-                    "source": "standalone_v2",
-                    "source_id": str(eval_template.id),
-                },
-            )
-        )
-    except Exception:
-        pass  # Metering failure must not break the action
-
+    # NOTE: No pre-eval UsageEvent emission. The cost isn't known until the
+    # eval finishes, and UsageEvent.amount defaults to 1 — emitting here
+    # would charge a flat 1 credit on every call (and double-bill on success
+    # alongside the post-eval cost-based emit in `_run_eval`). The UI path
+    # in `model_hub/views/utils/evals.py` follows the same pattern: only the
+    # post-eval cost-based event is emitted to the new billing system.
     return api_call_log_row
 
 
@@ -139,6 +121,31 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         raise ValueError(
             f"eval_type_id not found in EvalTemplate config for {eval_template.name}"
         )
+    # The SDK wraps user eval_config in {"params": {...}} (see
+    # ConfigureEvaluationsSerializer / normalize_eval_runtime_config), so look
+    # in both the top level (legacy/internal callers) and inside ``params``
+    # (SDK callers).
+    _params = (eval_config or {}).get("params") or {}
+    kb_id = (
+        (eval_config or {}).get("kb_id")
+        or (eval_config or {}).get("knowledge_base_id")
+        or _params.get("kb_id")
+        or _params.get("knowledge_base_id")
+    )
+
+    # Build the runtime_config that is forwarded to the engine. Downstream
+    # consumers (``create_eval_instance``) look at top-level keys like
+    # ``run_config`` for AgentEvaluator overrides, but the SDK wraps user
+    # input in ``params``. Lift any non-schema keys from ``params`` to the
+    # top level so multi-KB (``knowledge_bases``) and other runtime overrides
+    # work over the SDK as well.
+    if isinstance(_params, dict) and _params:
+        _engine_runtime_config = {
+            **(eval_config or {}),
+            **{k: v for k, v in _params.items() if k not in ("params",)},
+        }
+    else:
+        _engine_runtime_config = eval_config
 
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -186,6 +193,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         futureagi_eval,
         gt_inputs,
         model=model,
+        kb_id=kb_id,
         workspace=workspace,
     )
 
@@ -196,7 +204,8 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                 eval_template=eval_template,
                 inputs=gt_inputs,
                 model=model,
-                runtime_config=eval_config,
+                kb_id=kb_id,
+                runtime_config=_engine_runtime_config,
                 organization_id=str(user.organization.id),
                 workspace_id=str(workspace.id) if workspace else None,
             )
@@ -242,6 +251,48 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     api_call_log_row.config = json.dumps(config_dict)
     api_call_log_row.status = APICallStatusChoices.SUCCESS.value
     api_call_log_row.save()
+
+    # Dual-write: emit cost-based usage event for new billing system.
+    # The pre-eval emit in _log_and_deduct_cost_for_standalone_eval has no
+    # amount (cost is unknown until the eval runs), so without this post-eval
+    # emit SDK/API-key evals never produce a billable UsageEvent. (TH-3402)
+    try:
+        try:
+            from ee.usage.schemas.events import UsageEvent
+        except ImportError:
+            UsageEvent = None
+        try:
+            from ee.usage.services.config import BillingConfig
+        except ImportError:
+            BillingConfig = None
+        try:
+            from ee.usage.services.emitter import emit
+        except ImportError:
+            emit = None
+
+        billing_config = BillingConfig.get()
+        eval_cost = result.cost or {}
+        llm_cost = eval_cost.get("total_cost", 0)
+        per_run_fee = billing_config.get_eval_per_run_fee()
+        actual_cost = llm_cost + per_run_fee
+        credits = billing_config.calculate_ai_credits(actual_cost)
+
+        api_call_type = _get_api_call_type(model)
+        emit(
+            UsageEvent(
+                org_id=str(user.organization.id),
+                event_type=api_call_type,
+                amount=credits,
+                properties={
+                    "source": "standalone_v2",
+                    "source_id": str(eval_template.id),
+                    "raw_cost_usd": str(actual_cost),
+                    "log_id": str(api_call_log_row.log_id),
+                },
+            )
+        )
+    except Exception:
+        pass  # Metering failure must not break the action
 
     logger.info(f"Standalone Eval | Completed: user: {user.id}")
 
@@ -399,7 +450,9 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs, workspace=workspace
+            user, eval_template, True, protect_inputs,
+            model="protect_flash" if protect_flash else "protect",
+            workspace=workspace,
         )
 
         try:
@@ -450,6 +503,58 @@ def _run_protect(
         api_call_log_row.config = json.dumps(config_dict)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
+
+        # Emit usage event with actual cost after eval completion
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+
+            billing_config = BillingConfig.get()
+            token_usage = (result.metadata or {}).get("token_usage", {})
+            from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                calculate_total_cost,
+            )
+            # Resolve model alias for pricing lookup
+            if protect_flash:
+                protect_model = "protect_flash"
+            else:
+                try:
+                    from ee.protect.helper import ProtectHelper
+                    protect_model = ProtectHelper.resolve_alias(eval_template.name, is_flash=False)
+                except ImportError:
+                    protect_model = f"protect_{eval_template.name}"
+            cost_info = calculate_total_cost(protect_model, token_usage)
+            llm_cost = cost_info.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee()
+            actual_cost = llm_cost + per_run_fee
+            credits = billing_config.calculate_ai_credits(actual_cost)
+
+            emit(
+                UsageEvent(
+                    org_id=str(user.organization.id),
+                    event_type=_get_api_call_type(
+                        "protect_flash" if protect_flash else "protect"
+                    ),
+                    amount=credits,
+                    properties={
+                        "source": "standalone_v2",
+                        "source_id": str(eval_template.id),
+                        "raw_cost_usd": str(actual_cost),
+                    },
+                )
+            )
+        except Exception:
+            pass
 
         logger.info(f"Protect Eval | Completed: user: {user.id}")
         return formatted

@@ -36,6 +36,7 @@ from model_hub.models.develop_dataset import (
     Dataset,
     Row,
 )
+from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
 from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
@@ -905,16 +906,32 @@ class AddApiColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _resolve_cell_value(variable_id, row):
+        """Resolve a column reference (UUID, optionally followed by a JSON path) to its value."""
+        base_col_id = variable_id
+        json_path = None
+        if len(variable_id) > 36 and variable_id[36] in ('.', '['):
+            base_col_id = variable_id[:36]
+            json_path = variable_id[37:] if variable_id[36] == '.' else variable_id[36:]
+
+        cell = Cell.objects.get(column__id=base_col_id, row=row)
+        if json_path and cell.value is not None:
+            parsed, is_valid = parse_json_safely(cell.value)
+            if is_valid:
+                return resolve_json_path(parsed, json_path)
+        return cell.value
+
     def _replace_variables(self, value, row):
         """Replace variables in a string with actual cell values"""
         if isinstance(value, str) and re.search(r"\{{.*?\}}", value):
             matches = re.findall(r"\{{(.*?)\}}", value)
             for match in matches:
                 try:
-                    cell = Cell.objects.get(column__id=match, row=row)
+                    cell_value = self._resolve_cell_value(match, row)
                     value = value.replace(
                         f"{{{{{match}}}}}",
-                        str(cell.value) if cell.value is not None else "",
+                        str(cell_value) if cell_value is not None else "",
                     )
                 except Exception as e:
                     logger.error(f"Error replacing variable: {str(e)}")
@@ -934,13 +951,11 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif param_config["type"] == "Variable":
                     try:
-                        param_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                param_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_params[param_name] = param_cell.value
+                        raw_val = param_config["value"]
+                        if "{{" in raw_val:
+                            processed_params[param_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row) or ""
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
@@ -956,24 +971,31 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif header_config["type"] == "Variable":
                     try:
-                        header_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                header_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_headers[header_name] = header_cell.value
+                        raw_val = header_config["value"]
+                        if "{{" in raw_val:
+                            processed_headers[header_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_headers[header_name] = self._resolve_cell_value(raw_val, cell.row)
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
             # Process body if it exists
             body = {}
             if "body" in config:
-                for key, values in config["body"].items():
-                    if not cell:
-                        body[key] = values
-                    else:
-                        body[key] = self._replace_variables(values, cell.row)
+                raw_body = config["body"]
+                if isinstance(raw_body, str):
+                    if cell and cell.row:
+                        raw_body = self._replace_variables(raw_body, cell.row)
+                    try:
+                        body = json.loads(raw_body)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        body = raw_body
+                else:
+                    for key, values in raw_body.items():
+                        if not cell:
+                            body[key] = values
+                        else:
+                            body[key] = self._replace_variables(values, cell.row)
 
             # Process URL — apply variable substitution if a cell/row is available
             url = config["url"]
@@ -986,7 +1008,7 @@ class AddApiColumnView(APIView):
                 url=url,
                 params=processed_params,
                 headers=processed_headers,
-                json=body if isinstance(body, dict) else None,
+                json=body if isinstance(body, (dict, list)) else None,
                 data=body if isinstance(body, str) else None,
                 timeout=30,
             )
@@ -1406,6 +1428,7 @@ class ConditionalColumnView(APIView):
                     row_id=row.id,
                     col_id=None,
                     model_name=config.get("model"),
+                    template_format=config.get("configuration", {}).get("template_format"),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(
@@ -1694,9 +1717,26 @@ class RerunOperationView(APIView):
                         }
                     )
                 elif operation_type == "api_call":
+                    api_config = metadata.get("config", {})
                     existing_metadata.update(
                         {
-                            "config": metadata.get("config"),
+                            "url": api_config.get("url", existing_metadata.get("url")),
+                            "method": api_config.get(
+                                "method", existing_metadata.get("method")
+                            ),
+                            "output_type": api_config.get(
+                                "output_type",
+                                existing_metadata.get("output_type"),
+                            ),
+                            "params": api_config.get(
+                                "params", existing_metadata.get("params", {})
+                            ),
+                            "headers": api_config.get(
+                                "headers", existing_metadata.get("headers", {})
+                            ),
+                            "body": api_config.get(
+                                "body", existing_metadata.get("body", {})
+                            ),
                             "concurrency": metadata.get("concurrency", 5),
                         }
                     )
@@ -2811,8 +2851,8 @@ def add_api_column_async(
     config, dataset_id, concurrency, new_column_id, is_rerun=False
 ):
     view = AddApiColumnView()
-    # Process all rows with select_related (optimization)
-    rows = list(Row.objects.filter(dataset_id=dataset_id, deleted=False))
+    # Process all rows ordered by row order
+    rows = list(Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order"))
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -2825,14 +2865,11 @@ def add_api_column_async(
             )
         )
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
-        cells_to_update = []
-        cells_to_create = []
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_make_api_call = wrap_for_thread(view._make_api_call)
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            # Submit API calls for each row with rate limiting
             future_to_row = {}
             for row in rows:
                 existing_cell = existing_cells_map.get(str(row.id))
@@ -2842,11 +2879,25 @@ def add_api_column_async(
                     row=row,
                     value=None,
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    row
-                )
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
 
-            # Process results as they complete
+            # Flush buffers to DB in batches as results complete
+            cells_to_update = []
+            cells_to_create = []
+
+            def _flush_rerun_buffers():
+                nonlocal cells_to_update, cells_to_create
+                if cells_to_update:
+                    Cell.objects.bulk_update(
+                        cells_to_update,
+                        ["value", "value_infos", "status"],
+                        batch_size=concurrency,
+                    )
+                    cells_to_update = []
+                if cells_to_create:
+                    Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
+                    cells_to_create = []
+
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
                 try:
@@ -2862,19 +2913,19 @@ def add_api_column_async(
                         cells_to_update.append(existing_cell)
                         total_processed += 1
                     else:
-                        # Create new cell if it doesn't exist during rerun
                         cells_to_create.append(
                             Cell(
                                 dataset_id=dataset_id,
                                 column_id=new_column_id,
                                 row=row,
-                                value=None,
+                                value=value,
                                 value_infos=json.dumps(
                                     value_infos if value_infos else {}
                                 ),
                                 status=CellStatus.PASS.value,
                             )
                         )
+                        total_processed += 1
                         logger.warning(
                             f"Created new cell for row {row.id} in column {new_column_id} during rerun"
                         )
@@ -2888,48 +2939,76 @@ def add_api_column_async(
                         existing_cell.value_infos = json.dumps({"reason": str(e)})
                         existing_cell.status = CellStatus.ERROR.value
                         cells_to_update.append(existing_cell)
+                    else:
+                        cells_to_create.append(
+                            Cell(
+                                dataset_id=dataset_id,
+                                column_id=new_column_id,
+                                row=row,
+                                value=None,
+                                value_infos=json.dumps({"reason": str(e)}),
+                                status=CellStatus.ERROR.value,
+                            )
+                        )
 
-        # Bulk update and create (optimization)
-        if cells_to_update:
-            Cell.objects.bulk_update(
-                cells_to_update,
-                ["value", "value_infos", "status"],
-                batch_size=BATCH_SIZE,
-            )
-        if cells_to_create:
-            Cell.objects.bulk_create(cells_to_create, batch_size=BATCH_SIZE)
+                # Flush every `concurrency` completed results
+                if len(cells_to_update) + len(cells_to_create) >= concurrency:
+                    _flush_rerun_buffers()
+
+            # Flush any remaining results
+            _flush_rerun_buffers()
     else:
-        # Create new cells (original behavior) with rate limiting
-        new_cells = []
+        # Create new cells — flush to DB in batches as results complete
+        # Wrap function with OTel context propagation for thread safety
+        wrapped_make_api_call = wrap_for_thread(view._make_api_call)
+
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            # Wrap function with OTel context propagation for thread safety
-            wrapped_make_api_call = wrap_for_thread(view._make_api_call)
-            # Create a cell for each row and submit API calls
-            future_to_cell = {}
+            future_to_row = {}
             for row in rows:
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_cell[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    cell
-                )
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
 
-            # Process results as they complete
-            for future in as_completed(future_to_cell):
-                cell = future_to_cell[future]
+            # Flush buffer to DB in batches as results complete
+            cells_to_create = []
+
+            for future in as_completed(future_to_row):
+                row = future_to_row[future]
                 try:
                     value, value_infos = future.result()
-                    cell.value = value
-                    cell.value_infos = json.dumps(value_infos) if value_infos else None
-                    new_cells.append(cell)
+                    cells_to_create.append(
+                        Cell(
+                            dataset_id=dataset_id,
+                            column_id=new_column_id,
+                            row=row,
+                            value=value,
+                            value_infos=json.dumps(value_infos) if value_infos else None,
+                        )
+                    )
                     total_processed += 1
                 except Exception as e:
                     failed_cells += 1
                     logger.error(f"Error processing cell: {str(e)}")
+                    cells_to_create.append(
+                        Cell(
+                            dataset_id=dataset_id,
+                            column_id=new_column_id,
+                            row=row,
+                            value=None,
+                            value_infos=json.dumps({"reason": str(e)}),
+                            status=CellStatus.ERROR.value,
+                        )
+                    )
 
-        # Bulk create all cells with batch_size (optimization)
-        if new_cells:
-            Cell.objects.bulk_create(new_cells, batch_size=BATCH_SIZE)
+                # Flush every `concurrency` completed results
+                if len(cells_to_create) >= concurrency:
+                    Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
+                    cells_to_create = []
+
+            # Flush any remaining results
+            if cells_to_create:
+                Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
 
     Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
 

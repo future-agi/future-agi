@@ -22,6 +22,7 @@ import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
 
 // ── Inline stat ──
@@ -54,6 +55,8 @@ const DATE_OPTION_TO_PERIOD = {
   "7D": "7d",
   "30D": "30d",
   "3M": "90d",
+  "6M": "180d",
+  "12M": "365d",
   Custom: "30d",
 };
 
@@ -173,15 +176,22 @@ const useColumns = () =>
         header: "Input",
         meta: { flex: 2 },
         minSize: 200,
-        cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
-            sx={{ fontSize: "12px", color: "text.secondary" }}
-          >
-            {getValue() || "—"}
-          </Typography>
-        ),
+        cell: ({ getValue }) => {
+          const v = getValue();
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                fontSize: "12px",
+                color: v ? "text.secondary" : "text.disabled",
+                fontStyle: v ? "normal" : "italic",
+              }}
+            >
+              {v || "No input"}
+            </Typography>
+          );
+        },
       },
       {
         id: "reason",
@@ -382,6 +392,8 @@ const EvalUsageTab = ({
   React.useEffect(() => {
     if (detailIndex === null) return;
     const handler = (e) => {
+      if (e.repeat) return;
+      if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));

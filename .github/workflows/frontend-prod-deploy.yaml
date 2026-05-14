@@ -51,6 +51,10 @@ jobs:
           VITE_GA_ID=${{ secrets.PROD_VITE_GA_ID }}
           VITE_REDDIT_ADS_ENABLED=true
           VITE_REDDIT_PIXEL_ID=${{ secrets.PROD_VITE_REDDIT_PIXEL_ID }}
+          VITE_TWITTER_ADS_ENABLED=true
+          VITE_TWITTER_PIXEL_ID=${{ secrets.PROD_VITE_TWITTER_PIXEL_ID }}
+          VITE_AD_CONVERSION_VALUE=${{ secrets.PROD_VITE_AD_CONVERSION_VALUE }}
+          VITE_AD_CONVERSION_CURRENCY=${{ secrets.PROD_VITE_AD_CONVERSION_CURRENCY }}
           AWS_REGION=${{ secrets.PROD_AWS_REGION }}
           VITE_MIXPANEL_HOST=${{ secrets.PROD_VITE_MIXPANEL_HOST }}
           S3_BUCKET_NAME=${{ secrets.PROD_S3_BUCKET_NAME }}
@@ -67,9 +71,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.PROD_AWS_REGION }}
 
-      - name: Sync dist/ to S3
+      # Hashed assets (Vite emits content-hashed filenames in /assets/) —
+      # safe to cache forever. The --delete flag here cleans up old hashes
+      # left behind by previous deploys.
+      - name: Upload hashed assets with long-lived immutable cache
         run: |
-          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/ --delete
+          aws s3 sync dist/assets/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/assets/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
+
+      # Non-hashed files (index.html, config.js, favicons) — must NOT be
+      # cached. Browsers/CDN must re-validate on every request so a new
+      # deploy is picked up immediately. --exclude "assets/*" prevents
+      # this step from re-uploading or deleting hashed assets.
+      - name: Upload root files with no-cache
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/ \
+            --delete \
+            --exclude "assets/*" \
+            --cache-control "no-cache, must-revalidate"
 
       - name: Invalidate CloudFront cache
         run: |

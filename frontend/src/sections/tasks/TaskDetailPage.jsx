@@ -49,7 +49,7 @@ const TaskDetailPage = () => {
   });
 
   const { control, handleSubmit, getValues, setValue, reset } = useForm({
-    defaultValues: { ...getDefaultTaskValues(null, null), rowType: "spans" },
+    defaultValues: getDefaultTaskValues(null, null),
     resolver: zodResolver(NewTaskValidationSchema()),
   });
 
@@ -59,7 +59,7 @@ const TaskDetailPage = () => {
   // Populate form once task is loaded
   useEffect(() => {
     if (taskDetails) {
-      reset({ ...getDefaultTaskValues(taskDetails, null), rowType: "spans" });
+      reset(getDefaultTaskValues(taskDetails, null));
     }
   }, [taskDetails, reset]);
 
@@ -72,6 +72,7 @@ const TaskDetailPage = () => {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task updated successfully", { variant: "success" });
     },
     onError: (err) => {
@@ -85,6 +86,7 @@ const TaskDetailPage = () => {
     mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task paused", { variant: "success" });
     },
   });
@@ -93,6 +95,7 @@ const TaskDetailPage = () => {
     mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task resumed", { variant: "success" });
     },
   });
@@ -105,6 +108,7 @@ const TaskDetailPage = () => {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task renamed", { variant: "success" });
     },
   });
@@ -120,9 +124,16 @@ const TaskDetailPage = () => {
     (editType) => {
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
+      // observation_type rows may now carry an array `filterValue` (canonical
+      // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
+      // so the BE always sees a flat list of selected values.
       const observationTypes = (data.filters || [])
         .filter((f) => f.property === "observation_type")
-        .map((f) => f?.filterConfig?.filterValue);
+        .flatMap((f) => {
+          const v = f?.filterConfig?.filterValue;
+          if (Array.isArray(v)) return v;
+          return v !== undefined && v !== null && v !== "" ? [v] : [];
+        });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],

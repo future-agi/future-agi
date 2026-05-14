@@ -35,14 +35,7 @@ class UserSignupSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
-        validated_data.pop("company_name")
-        name = validated_data.pop("full_name")
-        instance.email = validated_data.get("email", instance.email)
-        instance.name = name
-        if validated_data.get("password"):
-            instance.set_password(validated_data["password"])
-        instance.save()
-        return instance
+        raise NotImplementedError("UserSignupSerializer does not support updates.")
 
 
 class UserSerializer(serializers.ModelSerializer):

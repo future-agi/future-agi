@@ -22,7 +22,12 @@ import Iconify from "src/components/iconify";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
+import { enqueueSnackbar } from "src/components/snackbar";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { objectCamelToSnake } from "src/utils/utils";
@@ -94,6 +99,7 @@ const EVAL_TYPE_META = {
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
   const theme = useTheme();
+  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
@@ -118,6 +124,8 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
     evalItem?.evalTemplate?.config?.language ||
     (isCode ? "Python" : null);
 
+  const hasError = !evalItem?.id;
+
   return (
     <Box
       sx={{
@@ -127,13 +135,13 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         p: 1.5,
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: hasError ? "error.main" : "divider",
         bgcolor:
           theme.palette.mode === "dark"
             ? "rgba(255,255,255,0.02)"
             : "rgba(0,0,0,0.01)",
         transition: "border-color 0.15s",
-        "&:hover": { borderColor: "primary.main" },
+        "&:hover": { borderColor: hasError ? "error.main" : "primary.main" },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -205,6 +213,19 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             />
           )}
         </Box>
+        {hasError && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mt: 0.5,
+              fontSize: "11px",
+              color: "error.main",
+            }}
+          >
+            Failed to save — remove and re-add this evaluation.
+          </Typography>
+        )}
         {mappedKeys.length > 0 && (
           <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
             {mappedKeys.slice(0, 4).map((key) => (
@@ -284,7 +305,13 @@ const TaskConfigPanel = ({
 
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
+  const taskFilters = useWatch({ control, name: "filters" });
   const isProjectSelected = !!project;
+  // row_type is immutable after task creation — the dispatcher, the
+  // target_type on every EvalLogger row, and the dedup index are all
+  // wired off it. The BE rejects row_type on PATCH; the FE matches by
+  // locking the picker in edit mode so the user can't try.
+  const rowTypeLocked = mode === "edit";
 
   // Fetch project details to detect voice projects (simulator source)
   const { data: projectDetails } = useGetProjectDetails(
@@ -308,6 +335,7 @@ const TaskConfigPanel = ({
     fields: configuredEvals,
     append: addEval,
     remove: removeEval,
+    replace: replaceEvals,
     update: updateEval,
   } = useFieldArray({
     name: "evalsDetails",
@@ -316,6 +344,32 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
+
+
+
+  const [pendingProject, setPendingProject] = useState(null);
+
+  const handleProjectFieldChange = useCallback(
+    (newVal) => {
+      if (!newVal || newVal === project) return;
+      if (configuredEvals.length === 0) return;
+      setPendingProject(project);
+    },
+    [project, configuredEvals.length],
+  );
+
+  const handleConfirmProjectChange = useCallback(() => {
+    replaceEvals([]);
+    setPendingProject(null);
+  }, [replaceEvals]);
+
+  const handleCancelProjectChange = useCallback(() => {
+    setValue("project", pendingProject, {
+      shouldDirty: false,
+      shouldValidate: false,
+    });
+    setPendingProject(null);
+  }, [pendingProject, setValue]);
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
@@ -337,13 +391,17 @@ const TaskConfigPanel = ({
     enabled: !projectLocked,
   });
 
-  // Eval attributes for variable mapping
+  // Eval attributes for variable mapping. Includes rowType so the picker
+  // shows the right paths per target type — span attribute keys for spans,
+  // trace fields + spans.first/last.<key> for traces, session fields +
+  // traces.{first,last}.spans.{first,last}.<key> for sessions.
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
@@ -362,58 +420,71 @@ const TaskConfigPanel = ({
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
-     
       const tplId = evalConfig.templateId || evalConfig.template_id;
-      let finalEval = { ...evalConfig, template_id: tplId };
 
       // When editing, configuredEvals[editingIndex].id is always the CustomEvalConfig id
       // (set from POST response on first add, or from the API on task load)
       const customEvalConfigId =
         editingIndex !== null ? configuredEvals[editingIndex]?.id : undefined;
 
+      const serialized = serializeEvalConfig(evalConfig);
+
+
+      const corePayload = {
+        eval_template: tplId,
+        name: evalConfig.name,
+        model: evalConfig.model || null,
+        mapping: evalConfig.mapping || {},
+        config: {
+          ...serialized.config,
+          mapping: evalConfig.mapping || {},
+        },
+        error_localizer: !!evalConfig.errorLocalizerEnabled,
+      };
+
+      let finalEval = { ...evalConfig, template_id: tplId };
       try {
         if (customEvalConfigId) {
           const { data: resp } = await axios.patch(
             endpoints.project.updateEvalTaskConfig(customEvalConfigId),
-            {
-              eval_template: tplId,
-              name: evalConfig.name,
-              model: evalConfig.model || null,
-              mapping: evalConfig.mapping,
-              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
-              error_localizer: evalConfig.errorLocalizerEnabled || false,
-            },
+            corePayload,
           );
           finalEval = {
             ...evalConfig,
             id: resp?.result?.id ?? customEvalConfigId,
             template_id: tplId,
             templateId: tplId,
+            config: {
+              ...(evalConfig.config || {}),
+              ...corePayload.config,
+            },
+            mapping: evalConfig.mapping || {},
           };
         } else {
           const { data: resp } = await axios.post(
             endpoints.project.createEvalTaskConfig(),
-            {
-              project: project,
-              eval_template: tplId,
-              name: evalConfig.name,
-              model: evalConfig.model || null,
-              mapping: evalConfig.mapping,
-              config: { ...(evalConfig.config || {}), mapping: evalConfig.mapping },
-              error_localizer: evalConfig.errorLocalizerEnabled || false,
-            },
+            { project, ...corePayload },
           );
-          // Store the custom_eval_config id separately — keep template_id intact
-          // so the eval card and test runner can still look up the template.
           finalEval = {
             ...evalConfig,
             id: resp?.result?.id,
             template_id: tplId,
             templateId: tplId,
+            config: {
+              ...(evalConfig.config || {}),
+              ...corePayload.config,
+            },
+            mapping: evalConfig.mapping || {},
           };
         }
-      } catch {
-        // Fall back to local-only entry — task create will still send it
+      } catch (error) {
+        enqueueSnackbar(
+          error?.response?.data?.result ||
+          error?.response?.data?.error ||
+          "Failed to save evaluation",
+          { variant: "error" },
+        );
+        throw error;
       }
 
       if (editingIndex !== null) {
@@ -457,8 +528,12 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId =
-      stored.templateId || stored.template_id || stored.eval_template;
+    const tplId = stored.templateId || stored.template_id || stored.eval_template;
+
+    const savedErrorLocalizer =
+      stored.error_localizer_enabled ?? stored.error_localizer;
+    const existingRunConfig =
+      stored.run_config || stored.config?.run_config || {};
     return {
       ...stored,
       id: tplId,
@@ -466,6 +541,13 @@ const TaskConfigPanel = ({
       templateId: tplId,
       // `stored.id` is always the CustomEvalConfig id (from POST response or API load)
       customEvalConfigId: stored.customEvalConfigId || stored.id,
+      run_config: {
+        ...existingRunConfig,
+        ...(stored.model && { model: stored.model }),
+        ...(savedErrorLocalizer !== undefined && {
+          error_localizer_enabled: savedErrorLocalizer,
+        }),
+      },
     };
   }, [editingIndex, configuredEvals]);
   const resolvedProjectName =
@@ -528,6 +610,7 @@ const TaskConfigPanel = ({
                     value: p.id,
                   })) || []
                 }
+                onChange={handleProjectFieldChange}
                 style={{ width: "100%" }}
                 noOptions="No projects available"
               />
@@ -545,7 +628,10 @@ const TaskConfigPanel = ({
                 </Typography>
                 <Tabs
                   value={rowType}
-                  onChange={(_, v) => setValue("rowType", v)}
+                  onChange={(_, v) => {
+                    if (rowTypeLocked) return;
+                    setValue("rowType", v);
+                  }}
                   variant="standard"
                   scrollButtons={false}
                   TabIndicatorProps={{ style: { display: "none" } }}
@@ -577,6 +663,7 @@ const TaskConfigPanel = ({
                     <Tab
                       key={t.value}
                       value={t.value}
+                      disabled={rowTypeLocked && rowType !== t.value}
                       label={
                         <Box
                           sx={{
@@ -593,16 +680,16 @@ const TaskConfigPanel = ({
                         bgcolor:
                           rowType === t.value
                             ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
+                              theme.palette.mode === "dark"
+                                ? "rgba(255,255,255,0.12)"
+                                : "background.paper"
                             : "transparent",
                         boxShadow:
                           rowType === t.value
                             ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
+                              theme.palette.mode === "dark"
+                                ? "none"
+                                : "0 1px 3px rgba(0,0,0,0.08)"
                             : "none",
                         borderRadius: "6px",
                         fontWeight: rowType === t.value ? 600 : 400,
@@ -718,6 +805,8 @@ const TaskConfigPanel = ({
                 control={control}
                 setValue={setValue}
                 projectId={project}
+                isSimulator={isVoiceProject}
+                rowType={rowType}
               />
             </FilterErrorBoundary>
           </Box>
@@ -745,6 +834,22 @@ const TaskConfigPanel = ({
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
+        sourceFilters={taskFilters}
+        onFiltersChange={(f) =>
+          setValue("filters", f || [], { shouldDirty: true })
+        }
+      />
+
+      <ModalWrapper
+        open={!!pendingProject}
+        onClose={handleCancelProjectChange}
+        onCancelBtn={handleCancelProjectChange}
+        onSubmit={handleConfirmProjectChange}
+        title="Switch project?"
+        subTitle="Switching the project will remove the evaluations you've already added to this task."
+        actionBtnTitle="Confirm"
+        cancelBtnTitle="Cancel"
+        isValid
       />
     </>
   );

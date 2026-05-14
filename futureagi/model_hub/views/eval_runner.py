@@ -26,6 +26,7 @@ from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from common.utils.data_injection import normalize as _di_normalize
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
@@ -56,6 +57,7 @@ from model_hub.serializers.eval_runner import (
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
 )
+from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import prepare_user_eval_config  # noqa: E402
 from model_hub.utils.json_path_resolver import (  # noqa: E402
     parse_json_safely,
@@ -396,12 +398,14 @@ def _resolve_prompt_chain_from_run_prompter(runner, row):
             return None
 
         col_id = runner.column.id if runner.column else None
+        rp_config = getattr(runner.run_prompter, "run_prompt_config", {}) or {}
         populated_messages = populate_placeholders(
             messages,
             runner.dataset.id,
             row.id,
             col_id,
             model_name="",
+            template_format=rp_config.get("template_format"),
         )
 
         return _format_messages_to_prompt_chain(populated_messages)
@@ -498,12 +502,17 @@ def _resolve_special_value(value, row, runner):
             from model_hub.views.run_prompt import populate_placeholders
 
             col_id = runner.column.id if runner.column else None
+            # Extract template_format from experiment prompt config if available
+            tf = None
+            if epc and hasattr(epc, "configuration"):
+                tf = (epc.configuration or {}).get("template_format")
             populated_messages = populate_placeholders(
                 messages,
                 runner.dataset.id,
                 row.id,
                 col_id,
                 model_name="",
+                template_format=tf,
             )
 
             return _format_messages_to_prompt_chain(populated_messages)
@@ -848,13 +857,7 @@ class EvaluationRunner:
         logger.info(
             " ----- INSIDE EvaluationRunner : function _get_column_config -----"
         )
-        output_type = self.eval_template.config.get("output")
-        output_type = {
-            "reason": "text",
-            "score": "float",
-            "numeric": "float",
-            "choices": "array",
-        }.get(output_type, "boolean")
+        output_type = infer_eval_result_column_data_type(self.eval_template)
 
         source = SourceChoices.EVALUATION.value
         source_id = self.user_eval_metric_id
@@ -946,6 +949,13 @@ class EvaluationRunner:
         scope) or we look it up by the experiment eval column's
         deterministic source_id.
         """
+        # Guard: if the eval was stopped or deleted while we were running,
+        # don't create a new reason column — it would be orphaned.
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        if is_user_eval_stopped(self.user_eval_metric_id):
+            return None
+
         source = SourceChoices.EVALUATION_REASON.value
         source_id = f"{self.replace_column_id}-sourceid-{self.user_eval_metric_id}"
         if self.experiment_dataset:
@@ -1031,14 +1041,15 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                self._create_reason_cell(
-                    self.dataset,
-                    reason_column,
-                    row,
-                    response,
-                    response.get("reason"),
-                    CellStatus.PASS.value,
-                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        response,
+                        response.get("reason"),
+                        CellStatus.PASS.value,
+                    )
             value = self.format_output(response, row)
 
             config_dict = json.loads(api_call_log_row.config)
@@ -1168,23 +1179,25 @@ class EvaluationRunner:
             )
             if should_run_error_localizer:
                 from model_hub.tasks.user_evaluation import (
+                    _eval_passed,
                     trigger_error_localization_for_column,
                 )
 
-                cell = Cell.objects.filter(
-                    column__id=self.replace_column_id, row=row, deleted=False
-                ).first()
+                if not _eval_passed(value):
+                    cell = Cell.objects.filter(
+                        column__id=self.replace_column_id, row=row, deleted=False
+                    ).first()
 
-                trigger_error_localization_for_column(
-                    eval_template=self.user_eval_metric.template,
-                    config=config_error,
-                    required_field=required_field_error,
-                    mapping=mapping_error,
-                    eval_result=value,
-                    response=response,
-                    cell=cell,
-                    log_id=str(api_call_log_row.log_id),
-                )
+                    trigger_error_localization_for_column(
+                        eval_template=self.user_eval_metric.template,
+                        config=config_error,
+                        required_field=required_field_error,
+                        mapping=mapping_error,
+                        eval_result=value,
+                        response=response,
+                        cell=cell,
+                        log_id=str(api_call_log_row.log_id),
+                    )
 
         except Exception as e:
             logger.exception(f"Error in evaluation of row: {str(e)}")
@@ -1207,14 +1220,15 @@ class EvaluationRunner:
                 reason_column = self._create_reason_column(
                     self.dataset, reason_column_name
                 )
-                self._create_reason_cell(
-                    self.dataset,
-                    reason_column,
-                    row,
-                    {"reason": "No reasoning available. Please rerun the evaluation."},
-                    "No reasoning available. Please rerun the evaluation.",
-                    CellStatus.ERROR.value,
-                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        {"reason": "No reasoning available. Please rerun the evaluation."},
+                        "No reasoning available. Please rerun the evaluation.",
+                        CellStatus.ERROR.value,
+                    )
 
         return response, status, value
 
@@ -1857,7 +1871,9 @@ class EvaluationRunner:
         required_field, mapping = self._prepare_mapping_data(row, mappings)
         config_copy = config.copy()
         eval_instance = self._create_eval_instance(
-            config=config, model=self.user_eval_metric.model
+            config=config,
+            model=self.user_eval_metric.model,
+            kb_id=getattr(self.user_eval_metric, "kb_id", None),
         )
 
         config_error = self._prepare_eval_config(config_copy)
@@ -1983,6 +1999,8 @@ class EvaluationRunner:
             gt_config_in_template = self.eval_template.config.get("ground_truth")
             if gt_config_in_template and gt_config_in_template.get("enabled"):
                 from model_hub.utils.ground_truth_retrieval import (
+                    format_few_shot_examples,
+                    get_ground_truth_few_shot_examples,
                     load_ground_truth_config,
                 )
 
@@ -1997,8 +2015,31 @@ class EvaluationRunner:
                         if gt_obj:
                             gt_config["embedding_status"] = gt_obj.embedding_status
                     except Exception:
-                        pass
-                    _mapped["ground_truth_config"] = gt_config
+                        gt_obj = None
+
+                    template_eval_type_id = self.eval_template.config.get(
+                        "eval_type_id", ""
+                    )
+                    if (
+                        template_eval_type_id == "CustomPromptEvaluator"
+                        and gt_obj
+                        and gt_obj.embedding_status == "completed"
+                    ):
+                        gt_examples = get_ground_truth_few_shot_examples(
+                            gt_config, _mapped
+                        )
+                        if gt_examples:
+                            injection_format = gt_config.get(
+                                "injection_format", "structured"
+                            )
+                            formatted = format_few_shot_examples(
+                                gt_examples,
+                                gt_obj.role_mapping,
+                                injection_format,
+                            )
+                            _mapped["ground_truth_few_shot"] = formatted
+                    else:
+                        _mapped["ground_truth_config"] = gt_config
 
         # For code evals, inject static user-defined params stored in the
         # UserEvalMetric config so they reach evaluate() as **kwargs.
@@ -2015,6 +2056,42 @@ class EvaluationRunner:
             from evaluations.engine.preprocessing import preprocess_inputs
 
             _mapped = preprocess_inputs(self.eval_template.name, _mapped)
+
+        # Inject row_context when full_row data injection is enabled.
+        # data_injection lives in the user's eval metric config (run_config)
+        # or the eval template config — check both.
+        _di_raw = {}
+        if self.user_eval_metric and self.user_eval_metric.config:
+            _uem_cfg = self.user_eval_metric.config
+            _di_raw = (
+                _uem_cfg.get("run_config", {}).get("data_injection", {})
+                or _uem_cfg.get("data_injection", {})
+            )
+        if not _di_raw and self.eval_template:
+            _di_raw = self.eval_template.config.get("data_injection", {})
+        _di = _di_normalize(_di_raw)
+
+        if _di["full_row"] and "row_context" not in _mapped:
+            try:
+                row_dict = {}
+                cells = Cell.objects.filter(
+                    row=row, deleted=False
+                ).select_related("column")
+                for cell in cells:
+                    col_name = cell.column.name if cell.column else None
+                    if not col_name:
+                        continue
+                    val = cell.value
+                    if isinstance(val, str):
+                        try:
+                            val = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    row_dict[col_name] = val
+                if row_dict:
+                    _mapped["row_context"] = row_dict
+            except Exception as e:
+                logger.warning("eval_runner_row_context_build_failed", error=str(e))
 
         return (
             eval_instance.run(**_mapped),
@@ -2343,8 +2420,17 @@ class EvaluationRunner:
             config["knowledge_bases"] = self.eval_template.config.get(
                 "knowledge_bases", []
             )
-            config["data_injection"] = self.eval_template.config.get(
-                "data_injection", {}
+            # data_injection: prefer user's eval metric config (run_config),
+            # fall back to the base template config. Normalize to canonical
+            # snake_case flags so downstream code never has to re-handle aliases.
+            _uem_di = {}
+            if self.user_eval_metric and self.user_eval_metric.config:
+                _uem_di = (
+                    self.user_eval_metric.config.get("run_config", {}).get("data_injection", {})
+                    or self.user_eval_metric.config.get("data_injection", {})
+                )
+            config["data_injection"] = _di_normalize(
+                _uem_di or self.eval_template.config.get("data_injection", {})
             )
             config["summary"] = self.eval_template.config.get(
                 "summary", {"type": "concise"}
@@ -2748,16 +2834,17 @@ class EvaluationRunner:
                             reason_column = self._create_reason_column(
                                 dataset, reason_column_name
                             )
-                            self._create_reason_cell(
-                                dataset,
-                                reason_column,
-                                row,
-                                {
-                                    "reason": "No reasoning available. Please rerun the evaluation."
-                                },
-                                "No reasoning available. Please rerun the evaluation.",
-                                CellStatus.ERROR.value,
-                            )
+                            if reason_column is not None:
+                                self._create_reason_cell(
+                                    dataset,
+                                    reason_column,
+                                    row,
+                                    {
+                                        "reason": "No reasoning available. Please rerun the evaluation."
+                                    },
+                                    "No reasoning available. Please rerun the evaluation.",
+                                    CellStatus.ERROR.value,
+                                )
                     except Exception as cell_error:
                         logger.error(f"Failed to update cell to ERROR: {cell_error}")
 
@@ -3069,7 +3156,7 @@ class CustomEvalTemplateCreateView(CreateAPIView):
                     multi_choice=validated_data.get("multi_choice"),
                     proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
                     visible_ui=validated_data.get("config", {}).get("visible_ui", True),
-                    model=validated_data.get("config", {}).get("model", "turing_small"),
+                    model=validated_data.get("config", {}).get("model", "turing_large"),
                 )
 
                 # Create v0 version for the new template

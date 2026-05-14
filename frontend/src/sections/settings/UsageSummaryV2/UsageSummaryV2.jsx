@@ -628,6 +628,7 @@ export default function UsageSummaryV2() {
   }, [overview]);
 
   const daysRemaining = useMemo(() => {
+    if (overview?.plan === "free") return null;
     if (!overview?.billing_period_end) return null;
     const end = new Date(overview.billing_period_end);
     const now = new Date();
@@ -936,7 +937,8 @@ export default function UsageSummaryV2() {
       {overview?.dimensions?.length > 0 && (
         <DimensionDetail
           dimensions={overview.dimensions}
-          period={overview.period}
+          period={periodParams.period}
+          periodEnd={periodParams.period_end}
         />
       )}
     </Box>
@@ -948,9 +950,10 @@ export default function UsageSummaryV2() {
 DimensionDetail.propTypes = {
   dimensions: PropTypes.arrayOf(dimensionPropType).isRequired,
   period: PropTypes.string,
+  periodEnd: PropTypes.string,
 };
 
-function DimensionDetail({ dimensions, period }) {
+function DimensionDetail({ dimensions, period, periodEnd }) {
   const theme = useTheme();
   const [selectedDim, setSelectedDim] = useState(dimensions[0]?.key || "");
 
@@ -1018,6 +1021,7 @@ function DimensionDetail({ dimensions, period }) {
         <UsageChart
           dimension={selectedDim}
           period={period}
+          periodEnd={periodEnd}
           freeAllowance={selected.free_allowance}
           displayUnit={selected.display_unit}
         />
@@ -1031,6 +1035,7 @@ function DimensionDetail({ dimensions, period }) {
         <WorkspaceBreakdown
           dimension={selectedDim}
           period={period}
+          periodEnd={periodEnd}
           displayUnit={selected.display_unit}
         />
       </Paper>
