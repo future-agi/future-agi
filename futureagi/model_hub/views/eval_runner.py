@@ -3156,7 +3156,7 @@ class CustomEvalTemplateCreateView(CreateAPIView):
                     multi_choice=validated_data.get("multi_choice"),
                     proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
                     visible_ui=validated_data.get("config", {}).get("visible_ui", True),
-                    model=validated_data.get("config", {}).get("model", "turing_small"),
+                    model=validated_data.get("config", {}).get("model", "turing_large"),
                 )
 
                 # Create v0 version for the new template
