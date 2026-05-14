@@ -30,7 +30,6 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -581,9 +580,9 @@ function PropertyPicker({
                   No properties found
                 </Typography>
               )}
-              {filtered.map((prop) => (
+              {filtered.map((prop, idx) => (
                 <Box
-                  key={prop.id}
+                  key={`${prop.category}:${prop.id}:${idx}`}
                   onClick={() => {
                     onSelect(prop);
                     onClose();
