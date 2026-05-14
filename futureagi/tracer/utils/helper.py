@@ -10,6 +10,12 @@ from rest_framework import serializers
 from model_hub.models.choices import AnnotationTypeChoices, DataTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.utils.constants import (
+    LIST_OPS,
+    NO_VALUE_OPS,
+    RANGE_OPS,
+    SPAN_ATTR_ALLOWED_OPS,
+)
 
 
 @dataclass
@@ -316,6 +322,68 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
+def _validate_span_attribute_filter(column_id, filter_config):
+    """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
+    ftype = (filter_config.get("filter_type") or "").lower()
+    fop = filter_config.get("filter_op")
+    fval = filter_config.get("filter_value")
+
+    if ftype not in SPAN_ATTR_ALLOWED_OPS:
+        raise serializers.ValidationError(
+            f"Filter {column_id!r}: unsupported filter_type {ftype!r} "
+            f"for SPAN_ATTRIBUTE (expected one of {sorted(SPAN_ATTR_ALLOWED_OPS)})."
+        )
+
+    allowed = SPAN_ATTR_ALLOWED_OPS[ftype]
+    if fop not in allowed:
+        raise serializers.ValidationError(
+            f"Filter {column_id!r}: filter_op {fop!r} is not valid for "
+            f"filter_type {ftype!r}. Allowed: {sorted(allowed)}."
+        )
+
+    if fop in NO_VALUE_OPS:
+        return
+
+    if fop in RANGE_OPS:
+        if not isinstance(fval, list) or len(fval) != 2:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a 2-element list, "
+                f"got {fval!r}."
+            )
+        values_to_check = fval
+    elif fop in LIST_OPS:
+        if not isinstance(fval, list) or not fval:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a non-empty list, "
+                f"got {fval!r}."
+            )
+        values_to_check = fval
+    else:
+        if fval is None:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a value."
+            )
+        values_to_check = [fval]
+
+    if ftype == "number":
+        for v in values_to_check:
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"Filter {column_id!r}: numeric filter_value must be "
+                    f"coercible to float, got {v!r}."
+                )
+    elif ftype == "boolean":
+        # Strict native bool only.
+        for v in values_to_check:
+            if not isinstance(v, bool):
+                raise serializers.ValidationError(
+                    f"Filter {column_id!r}: boolean filter_value must be a "
+                    f"native true/false, got {v!r}."
+                )
+
+
 def validate_filters_helper(value):
     if not value:
         return []
@@ -341,6 +409,12 @@ def validate_filters_helper(value):
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
+            )
+
+        col_type = filter_config.get("col_type") or filter_config.get("colType")
+        if col_type == "SPAN_ATTRIBUTE":
+            _validate_span_attribute_filter(
+                filter_item.get("column_id"), filter_config
             )
 
     return value

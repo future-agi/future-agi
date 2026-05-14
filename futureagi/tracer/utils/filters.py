@@ -39,7 +39,7 @@ _CREATED_AT_OP_MAP = {
         if isinstance(val, (list, tuple)) and len(val) == 2
         else qs
     ),
-    "not_in_between": lambda qs, val: (
+    "not_between": lambda qs, val: (
         qs.exclude(created_at__gte=val[0], created_at__lte=val[1])
         if isinstance(val, (list, tuple)) and len(val) == 2
         else qs
@@ -197,19 +197,22 @@ class FilterEngine:
         Returns:
             tuple: (is_valid, converted_value)
         """
-        filter_op = normalize_filter_op(filter_op)
         try:
             if filter_type == "number":
-                if filter_op in ["between", "not_in_between"]:
+                if filter_op in ["between", "not_between"]:
                     if not (isinstance(filter_value, list) and len(filter_value) == 2):
                         return False, None
                     return True, [float(filter_value[0]), float(filter_value[1])]
-                else:
-                    return True, float(filter_value)
+                if filter_op in ("is_null", "is_not_null"):
+                    return True, None
+                return True, float(filter_value)
             elif filter_type == "boolean":
-                if isinstance(filter_value, str):
-                    return True, filter_value.lower() == "true"
-                return True, bool(filter_value)
+                if filter_op in ("is_null", "is_not_null"):
+                    return True, None
+                # Strict native bool only (matches CH builder).
+                if isinstance(filter_value, bool):
+                    return True, filter_value
+                return False, None
             elif filter_type in ["text", "array"]:
                 return True, filter_value
             else:
@@ -249,7 +252,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             if filter_type == "number":
                 filtered_objects = self._filter_number(
@@ -261,7 +264,7 @@ class FilterEngine:
                 )
             elif filter_type == "boolean":
                 filtered_objects = self._filter_boolean(
-                    filtered_objects, column_id, filter_value, col_type
+                    filtered_objects, column_id, filter_value, col_type, filter_op
                 )
             elif filter_type == "datetime":
                 filtered_objects = self._filter_datetime(
@@ -277,7 +280,15 @@ class FilterEngine:
         return filtered_objects
 
     def _filter_number(self, objects, column_id, filter_op, filter_value, col_type):
-        filter_op = normalize_filter_op(filter_op)
+        if filter_op in ("is_null", "is_not_null"):
+            def _missing(obj):
+                if col_type == ColType.EVAL_METRIC:
+                    return obj.get("evals_metrics", {}).get(column_id, {}).get("score") is None
+                if col_type == ColType.SYSTEM_METRIC:
+                    return obj.get("system_metrics", {}).get(column_id) is None
+                return obj.get(column_id) is None
+            return [obj for obj in objects if _missing(obj) == (filter_op == "is_null")]
+
         operator_map = {
             "greater_than": lambda x, y: x > y,
             "less_than": lambda x, y: x < y,
@@ -286,7 +297,7 @@ class FilterEngine:
             "greater_than_or_equal": lambda x, y: x >= y,
             "less_than_or_equal": lambda x, y: x <= y,
             "between": lambda x, y: y[0] <= x <= y[1],
-            "not_in_between": lambda x, y: x < y[0] or x > y[1],
+            "not_between": lambda x, y: x < y[0] or x > y[1],
         }
 
         if filter_op not in operator_map:
@@ -321,18 +332,38 @@ class FilterEngine:
         return result
 
     def _filter_text(self, objects, column_id, filter_op, filter_value, col_type):
-        filter_op = normalize_filter_op(filter_op)
-        filter_value = filter_value.lower()
-        text_ops = {
-            "contains": lambda x: filter_value in x.lower(),
-            "not_contains": lambda x: filter_value not in x.lower(),
-            "equals": lambda x: x.lower() == filter_value,
-            "not_equals": lambda x: x.lower() != filter_value,
-            "starts_with": lambda x: x.lower().startswith(filter_value),
-            "ends_with": lambda x: x.lower().endswith(filter_value),
-            "in": lambda x: x.lower() in filter_value,
-            "not_in": lambda x: x.lower() not in filter_value,
-        }
+        if filter_op in ("is_null", "is_not_null"):
+            def _missing(obj):
+                if col_type == ColType.EVAL_METRIC:
+                    v = obj.get("evals_metrics", {}).get(str(column_id), {}).get("score")
+                elif col_type == ColType.SYSTEM_METRIC:
+                    v = obj.get("system_metrics", {}).get(column_id)
+                else:
+                    v = obj.get(column_id)
+                return v is None or v == ""
+            return [obj for obj in objects if _missing(obj) == (filter_op == "is_null")]
+
+        # Set-membership ops (in/not_in): filter_value is a list of values.
+        # Other ops: filter_value is a single string.
+        if filter_op in ("in", "not_in"):
+            if isinstance(filter_value, list):
+                values = [str(v).lower() for v in filter_value]
+            else:
+                values = [v.strip().lower() for v in str(filter_value).split(",") if v.strip()]
+            text_ops = {
+                "in":     lambda x: x in values,
+                "not_in": lambda x: x not in values,
+            }
+        else:
+            fv = (filter_value if isinstance(filter_value, str) else str(filter_value)).lower()
+            text_ops = {
+                "contains":     lambda x: fv in x,
+                "not_contains": lambda x: fv not in x,
+                "equals":       lambda x: x == fv,
+                "not_equals":   lambda x: x != fv,
+                "starts_with":  lambda x: x.startswith(fv),
+                "ends_with":    lambda x: x.endswith(fv),
+            }
 
         if filter_op not in text_ops:
             raise ValueError(f"Invalid filter operation: {filter_op}")
@@ -355,16 +386,27 @@ class FilterEngine:
                     result.append(obj)
         return result
 
-    def _filter_boolean(self, objects, column_id, filter_value, col_type):
-        filter_value = filter_value.lower()
-        if filter_value not in ["true", "false"]:
-            raise ValueError("Invalid filter value. Allowed values are: true, false")
+    def _filter_boolean(self, objects, column_id, filter_value, col_type, filter_op=None):
+        filter_op = filter_op or "equals"
 
-        return [
-            obj
-            for obj in objects
-            if (obj.get(column_id, "").lower() == "true") == (filter_value == "true")
-        ]
+        if filter_op in ("is_null", "is_not_null"):
+            return [
+                obj for obj in objects
+                if (obj.get(column_id) is None) == (filter_op == "is_null")
+            ]
+
+        # Strict native bool only (matches CH builder + serializer validator).
+        if not isinstance(filter_value, bool):
+            raise ValueError(
+                f"Invalid filter value: {filter_value!r} (expected native true/false)"
+            )
+
+        matches = (
+            (lambda x: x is filter_value)
+            if filter_op == "equals"
+            else (lambda x: x is not filter_value)
+        )
+        return [obj for obj in objects if matches(obj.get(column_id))]
 
     def _filter_datetime(self, objects, column_id, filter_op, filter_value, col_type):
         filter_op = normalize_filter_op(filter_op)
@@ -384,7 +426,7 @@ class FilterEngine:
             "greater_than_or_equal": lambda x, y: x >= y,
             "less_than_or_equal": lambda x, y: x <= y,
             "between": lambda x, y: y[0] <= x <= y[1],
-            "not_in_between": lambda x, y: x < y[0] or x > y[1],
+            "not_between": lambda x, y: x < y[0] or x > y[1],
         }
 
         if filter_op not in operator_map:
@@ -535,7 +577,7 @@ class FilterEngine:
             "greater_than_or_equal": "gte",
             "less_than_or_equal": "lte",
             "between": "range",
-            "not_in_between": "exclude",
+            "not_between": "exclude",
             "contains": "icontains",
         }
 
@@ -611,7 +653,7 @@ class FilterEngine:
             if filter_type == "datetime":
                 # Extract date from filter_value
                 if isinstance(filter_value, (list, tuple)):
-                    # For between/not_in_between operations
+                    # For between/not_between operations
                     date_values = [extract_date(v) for v in filter_value]
                     if None in date_values:
                         continue  # Skip invalid date values
@@ -635,7 +677,7 @@ class FilterEngine:
                         Q(**{f"{field_name}__gte": filter_value[0]})
                         & Q(**{f"{field_name}__lte": filter_value[1]})
                     )
-            elif filter_op == "not_in_between":
+            elif filter_op == "not_between":
                 if isinstance(filter_value, list | tuple) and len(filter_value) == 2:
                     q_objects.append(
                         ~(
@@ -705,7 +747,7 @@ class FilterEngine:
             "greater_than_or_equal": "gte",
             "less_than_or_equal": "lte",
             "between": "range",
-            "not_in_between": "exclude",
+            "not_between": "exclude",
         }
 
         annotations = {}
@@ -782,7 +824,7 @@ class FilterEngine:
                         Q(**{f"{field_name}__gte": filter_value[0]})
                         & Q(**{f"{field_name}__lte": filter_value[1]})
                     )
-            elif filter_op == "not_in_between":
+            elif filter_op == "not_between":
                 if isinstance(filter_value, (list, tuple)) and len(filter_value) == 2:
                     q_objects.append(
                         ~(
@@ -818,7 +860,7 @@ class FilterEngine:
             "greater_than_or_equal": ">=",
             "less_than_or_equal": "<=",
             "between": "BETWEEN",
-            "not_in_between": "NOT BETWEEN",
+            "not_between": "NOT BETWEEN",
             "contains": "ILIKE",
         }
 
@@ -874,7 +916,7 @@ class FilterEngine:
             ]:
                 conditions.append(f"{sql_column} {sql_operator} '{filter_value}'")
             elif (
-                filter_op in ["between", "not_in_between"]
+                filter_op in ["between", "not_between"]
                 and isinstance(filter_value, list)
                 and len(filter_value) == 2
             ):
@@ -910,7 +952,7 @@ class FilterEngine:
             "greater_than_or_equal": ">=",
             "less_than_or_equal": "<=",
             "between": "BETWEEN",
-            "not_in_between": "NOT BETWEEN",
+            "not_between": "NOT BETWEEN",
             "contains": "ILIKE",
         }
 
@@ -988,7 +1030,7 @@ class FilterEngine:
                 having_conditions.append(f"{sql_column} BETWEEN %s AND %s")
                 params.extend(converted_value)
             elif (
-                filter_op == "not_in_between"
+                filter_op == "not_between"
                 and isinstance(converted_value, list)
                 and len(converted_value) == 2
             ):
@@ -1024,7 +1066,7 @@ class FilterEngine:
             "greater_than_or_equal": ">=",
             "less_than_or_equal": "<=",
             "between": "BETWEEN",
-            "not_in_between": "NOT BETWEEN",
+            "not_between": "NOT BETWEEN",
         }
 
         conditions = []
@@ -1110,7 +1152,7 @@ class FilterEngine:
                         conditions.append(f"{metric_column} BETWEEN %s AND %s")
                         params.extend([choice_part] + converted_value)
                     elif (
-                        filter_op == "not_in_between"
+                        filter_op == "not_between"
                         and isinstance(converted_value, list)
                         and len(converted_value) == 2
                     ):
@@ -1141,7 +1183,7 @@ class FilterEngine:
                         conditions.append(f"{metric_column} BETWEEN %s AND %s")
                         params.extend(converted_value)
                     elif (
-                        filter_op == "not_in_between"
+                        filter_op == "not_between"
                         and isinstance(converted_value, list)
                         and len(converted_value) == 2
                     ):
@@ -1247,7 +1289,7 @@ class FilterEngine:
                             f"({metric_column_id})::numeric BETWEEN {filter_value[0]} AND {filter_value[1]}"
                         )
                 elif (
-                    filter_op == "not_in_between"
+                    filter_op == "not_between"
                     and isinstance(filter_value, list | tuple)
                     and len(filter_value) == 2
                 ):
@@ -1419,7 +1461,7 @@ class FilterEngine:
                         }
                     )
                 elif (
-                    filter_op == "not_in_between"
+                    filter_op == "not_between"
                     and isinstance(filter_value, list | tuple)
                     and len(filter_value) == 2
                 ):
@@ -1716,7 +1758,7 @@ class FilterEngine:
                         }
                     )
                 elif (
-                    filter_op == "not_in_between"
+                    filter_op == "not_between"
                     and isinstance(filter_value, list)
                     and len(filter_value) == 2
                 ):
@@ -2105,26 +2147,46 @@ class FilterEngine:
         if not filters:
             return Q()
 
-        # Use span_attributes (canonical) for all filters - eval_attributes is deprecated
+        # Use span_attributes (canonical) for all filters - eval_attributes is deprecated.
+        # Vocabulary mirrors `SPAN_ATTR_ALLOWED_OPS` in `tracer.utils.constants`.
+        _null_q = lambda col: (
+            ~Q(span_attributes__has_key=col)
+            | Q(span_attributes__contains={col: None})
+        )
+        _not_null_q = lambda col: (
+            Q(span_attributes__has_key=col)
+            & ~Q(span_attributes__contains={col: None})
+        )
+
         text_operator_map = {
+            "equals": lambda col, val: Q(span_attributes__contains={col: val}),
+            "not_equals": lambda col, val: ~Q(span_attributes__contains={col: val}),
+            "in": lambda col, val: Q(
+                **{
+                    f"span_attributes__{col}__in":
+                        val if isinstance(val, list) else [val]
+                }
+            ),
+            "not_in": lambda col, val: ~Q(
+                **{
+                    f"span_attributes__{col}__in":
+                        val if isinstance(val, list) else [val]
+                }
+            ),
             "contains": lambda col, val: Q(
                 **{f"span_attributes__{col}__icontains": val}
             ),
             "not_contains": lambda col, val: ~Q(
                 **{f"span_attributes__{col}__icontains": val}
             ),
-            "equals": lambda col, val: Q(span_attributes__contains={col: val}),
-            "not_equals": lambda col, val: ~Q(span_attributes__contains={col: val}),
             "starts_with": lambda col, val: Q(
                 **{f"span_attributes__{col}__startswith": val}
             ),
             "ends_with": lambda col, val: Q(
                 **{f"span_attributes__{col}__endswith": val}
             ),
-            "is_null": lambda col, _: ~Q(span_attributes__has_key=col)
-            | Q(span_attributes__contains={col: None}),
-            "is_not_null": lambda col, _: Q(span_attributes__has_key=col)
-            & ~Q(span_attributes__contains={col: None}),
+            "is_null": lambda col, _: _null_q(col),
+            "is_not_null": lambda col, _: _not_null_q(col),
         }
 
         number_operator_map = {
@@ -2140,23 +2202,22 @@ class FilterEngine:
             ),
             "between": lambda col, val: Q(**{f"span_attributes__{col}__gte": val[0]})
             & Q(**{f"span_attributes__{col}__lte": val[1]}),
-            "not_in_between": lambda col, val: ~(
+            "not_between": lambda col, val: ~(
                 Q(**{f"span_attributes__{col}__gte": val[0]})
                 & Q(**{f"span_attributes__{col}__lte": val[1]})
             ),
+            "is_null": lambda col, _: _null_q(col),
+            "is_not_null": lambda col, _: _not_null_q(col),
         }
 
+        # Strict native bool only (matches CH builder).
         boolean_operator_map = {
-            "equals": lambda col, val: Q(
-                span_attributes__contains={
-                    col: val.lower() == "true" if isinstance(val, str) else bool(val)
-                }
-            ),
+            "equals": lambda col, val: Q(span_attributes__contains={col: bool(val)}),
             "not_equals": lambda col, val: ~Q(
-                span_attributes__contains={
-                    col: val.lower() == "true" if isinstance(val, str) else bool(val)
-                }
+                span_attributes__contains={col: bool(val)}
             ),
+            "is_null": lambda col, _: _null_q(col),
+            "is_not_null": lambda col, _: _not_null_q(col),
         }
 
         span_attribute_filter_conditions = Q()
@@ -2181,7 +2242,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value", None)
 
             if filter_op not in ["is_null", "is_not_null"] and filter_value is None:

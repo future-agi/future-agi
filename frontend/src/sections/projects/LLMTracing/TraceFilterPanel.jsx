@@ -122,23 +122,30 @@ function mapCategory(raw) {
   return "system";
 }
 
+// `value` is the canonical backend op name; `label` is the dropdown text.
+// For strings/text: "equals"/"not equals" send `in`/`not_in` (`IN (x)` ≡ `= x`).
 const STRING_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
+  { value: "ends_with", label: "ends with" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const NUMBER_OPS = [
-  { value: "equal_to", label: "equals" },
-  { value: "not_equal_to", label: "not equal" },
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
   { value: "greater_than", label: "greater than" },
   { value: "greater_than_or_equal", label: "greater than or equals" },
   { value: "less_than", label: "less than" },
   { value: "less_than_or_equal", label: "less than or equals" },
   { value: "between", label: "between", range: true },
   { value: "not_between", label: "not between", range: true },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const DATE_OPS = [
@@ -149,7 +156,12 @@ const DATE_OPS = [
   { value: "not_between", label: "not between", range: true },
 ];
 
-const BOOLEAN_OPS = [{ value: "is", label: "is" }];
+const BOOLEAN_OPS = [
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
+];
 
 // thumbs_up_down annotations: 2 fixed display choices ("Thumbs Up"/"Thumbs Down").
 // Distinct from CATEGORICAL_OPS — we don't expose contains/not_contains for a
@@ -182,25 +194,26 @@ const CATEGORICAL_OPS = [
 ];
 
 const TEXT_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
   { value: "starts_with", label: "starts with" },
   { value: "ends_with", label: "ends with" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
-// Map QueryInput operator keys → Basic tab operator keys
+// Identity maps; kept for the QueryInput integration call sites.
 const QUERY_TO_BASIC_OP = {
-  equals: "is",
-  not_equals: "is_not",
+  equals: "equals",
+  not_equals: "not_equals",
   starts_with: "starts_with",
 };
 
-// Reverse: Basic tab operator keys → QueryInput operator keys
 const BASIC_TO_QUERY_OP = {
-  is: "equals",
-  is_not: "not_equals",
+  equals: "equals",
+  not_equals: "not_equals",
   starts_with: "starts_with",
 };
 
@@ -262,13 +275,13 @@ const getDefaultOperatorForFilter = (filter, ops) => {
 
 const getPanelOperatorAlias = (operator, filter) => {
   const normalizedType = normalizeFieldType(filter?.fieldType);
+  if (operator === "equal_to") return "equals";
+  if (operator === "not_equal_to") return "not_equals";
   if (operator === "in" || operator === "equals") {
-    if (normalizedType === "number") return "equal_to";
     if (normalizedType === "date") return "on";
     return "is";
   }
   if (operator === "not_in" || operator === "not_equals") {
-    if (normalizedType === "number") return "not_equal_to";
     return "is_not";
   }
   if (operator === "not_in_between") return "not_between";
@@ -289,16 +302,19 @@ export const normalizeFilterRowOperator = (filter) => {
 };
 
 const DEFAULT_OP_FOR_TYPE = {
-  number: "equal_to",
+  number: "equals",
   date: "on",
-  boolean: "is",
+  boolean: "equals",
   array: "contains",
-  string: "is",
+  string: "in",
   categorical: "is",
   thumbs: "is",
-  text: "is",
+  text: "in",
   annotator: "is",
 };
+
+// Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
+const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 const NO_VALUE_OPS = new Set([
   "is_empty",
@@ -306,6 +322,19 @@ const NO_VALUE_OPS = new Set([
   "is_null",
   "is_not_null",
 ]);
+
+// Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
+const SINGLE_VALUE_OPS = new Set([
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "ends_with",
+]);
+
+// List ops — multi-select picker.
+const LIST_VALUE_OPS = new Set(["in", "not_in"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -1175,7 +1204,7 @@ function FilterRow({
         prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "is";
+      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1206,6 +1235,17 @@ function FilterRow({
         else if (!newDef?.range && oldDef?.range) newVal = "";
       }
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
+      // Multi → single: drop stale extra picks.
+      if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
+        newVal = [newVal[0]];
+      }
+      // Single → list: picker expects an array.
+      if (LIST_VALUE_OPS.has(newOp) && !Array.isArray(newVal)) {
+        newVal =
+          newVal === "" || newVal === null || newVal === undefined
+            ? []
+            : [newVal];
+      }
       onChange(index, { ...filter, operator: newOp, value: newVal });
     },
     [index, filter, safeOperator, isNumber, isDate, onChange],
@@ -1420,7 +1460,10 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={ID_ONLY_FIELDS.has(filter.field)}
+        singleSelect={
+          ID_ONLY_FIELDS.has(filter.field) ||
+          SINGLE_VALUE_OPS.has(safeOperator)
+        }
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1518,7 +1561,7 @@ function FilterRow({
 const DEFAULT_ROW = {
   field: "",
   fieldCategory: "system",
-  operator: "is",
+  operator: "in",
   value: [],
 };
 
@@ -1668,12 +1711,36 @@ const TraceFilterPanel = ({
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
+          const fieldType = f.fieldType || prop?.type || "string";
+          // ID-only fields (trace_id / span_id) bypass the string-op
+          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
+          // than "is" renders blank in the operator Select.
+          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
+            ? "is"
+            : (fieldType === "string" || fieldType === "text") &&
+                HYDRATE_STRING_OP[f.operator]
+              ? HYDRATE_STRING_OP[f.operator]
+              : f.operator;
+          // Scalar legacy `equals` value → array for the multi-select picker.
+          let value = f.value;
+          if (
+            hydratedOp !== f.operator &&
+            LIST_VALUE_OPS.has(hydratedOp) &&
+            !Array.isArray(value)
+          ) {
+            value =
+              value === "" || value === null || value === undefined
+                ? []
+                : [value];
+          }
           return normalizeFilterRowOperator({
             ...f,
             fieldCategory: f.fieldCategory || prop?.category || "system",
             fieldName: f.fieldName || prop?.name,
-            fieldType: f.fieldType || prop?.type || "string",
+            fieldType,
             apiColType: f.apiColType || prop?.apiColType,
+            operator: hydratedOp,
+            value,
           });
         });
         setRows(enriched);
@@ -1751,12 +1818,13 @@ const TraceFilterPanel = ({
     if (aiFilters.length > 0) {
       const converted = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
+        const fieldType = prop?.type || "string";
         return {
           field: f.field,
           fieldCategory: prop?.category || "system",
-          fieldType: prop?.type || "string",
+          fieldType,
           apiColType: prop?.apiColType,
-          operator: f.operator || "is",
+          operator: f.operator || DEFAULT_OP_FOR_TYPE[fieldType] || "equals",
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });

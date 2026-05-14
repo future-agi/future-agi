@@ -150,9 +150,9 @@ class TestVoiceCallAnnotationNumberFilters:
         )
         assert result != Q()
 
-    def test_not_in_between(self):
+    def test_not_between(self):
         uid = str(uuid.uuid4())
-        filters = [_make_annotation_filter(uid, "number", "not_in_between", [2.0, 8.0])]
+        filters = [_make_annotation_filter(uid, "number", "not_between", [2.0, 8.0])]
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
             filters
         )
@@ -229,11 +229,11 @@ class TestVoiceCallAnnotationSubFieldNumberFilters:
         )
         assert result != Q()
 
-    def test_sub_field_not_in_between(self):
+    def test_sub_field_not_between(self):
         uid = str(uuid.uuid4())
         filters = [
             _make_annotation_filter(
-                f"{uid}**thumbs_up", "number", "not_in_between", [0, 1]
+                f"{uid}**thumbs_up", "number", "not_between", [0, 1]
             )
         ]
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(

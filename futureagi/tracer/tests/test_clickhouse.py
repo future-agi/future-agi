@@ -464,7 +464,7 @@ class TestClickHouseFilterBuilder:
                 "filter_config": {
                     "filter_type": "boolean",
                     "filter_op": "equals",
-                    "filter_value": 1,
+                    "filter_value": True,
                     "col_type": "SPAN_ATTRIBUTE",
                 },
             }
@@ -3966,8 +3966,9 @@ class TestFilterBuilderEdgeCases:
             for v in params.values()
         )
 
-    def test_not_in_between_filter(self):
-        """not_in_between should produce NOT BETWEEN clause."""
+    def test_not_between_filter(self):
+        """not_between should produce NOT BETWEEN clause. (Canonical op
+        name; `not_in_between` is the retired legacy alias.)"""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -3978,7 +3979,7 @@ class TestFilterBuilderEdgeCases:
                 "column_id": "cost",
                 "filter_config": {
                     "filter_type": "number",
-                    "filter_op": "not_in_between",
+                    "filter_op": "not_between",
                     "filter_value": [0.1, 1.0],
                     "col_type": "SYSTEM_METRIC",
                 },
@@ -6226,3 +6227,399 @@ class TestNewQueryTypeRoutingSettings:
         assert "AnnotationGraphQueryBuilder" in pkg.__all__
         assert "MonitorMetricsQueryBuilder" in pkg.__all__
         assert "SessionAnalyticsQueryBuilder" in pkg.__all__
+
+
+# ============================================================================
+# SPAN_ATTRIBUTE filter contract — exhaustive per-type / per-op coverage
+# ============================================================================
+
+
+def _span_attr_filter(col_id, *, filter_type, filter_op, filter_value=None):
+    """Build a single SPAN_ATTRIBUTE filter dict in the API shape."""
+    return {
+        "column_id": col_id,
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
+def _translate_one(filter_dict, *, query_mode="trace"):
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+    )
+
+    builder = ClickHouseFilterBuilder(query_mode=query_mode)
+    where, params = builder.translate([filter_dict])
+    return where, params
+
+
+class TestSpanAttrConditionContract:
+    """End-to-end contract tests for _build_span_attr_condition.
+
+    These tests assert on the generated SQL string and the parameter dict
+    (matching the existing TestClickHouseFilterBuilder pattern) — no
+    ClickHouse connection required.
+    """
+
+    # ------------------------------------------------------------------
+    # text type — happy paths
+    # ------------------------------------------------------------------
+    def test_text_equals(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            )
+        )
+        assert "span_attr_str" in where
+        assert "mapContains(span_attr_str, 'k')" in where
+        assert "= %(" in where
+        assert "v" in params.values()
+
+    def test_text_not_equals_uses_exists_and(self):
+        """not_equals must require key present (exists AND ...), not the
+        legacy NOT exists OR ... shape that leaked rows past the filter."""
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="not_equals", filter_value="v"
+            )
+        )
+        assert "AND span_attr_str['k'] != " in where
+        assert "NOT mapContains" not in where
+
+    def test_text_in(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="in", filter_value=["a", "b"]
+            )
+        )
+        assert "span_attr_str['k'] IN" in where
+        assert ("a", "b") in params.values()
+
+    def test_text_not_in_uses_exists_and(self):
+        """Regression for the voice-call ended_reason no-op bug.
+        not_in must require key present, NOT use 'NOT exists OR ...'."""
+        where, params = _translate_one(
+            _span_attr_filter(
+                "ended_reason",
+                filter_type="text",
+                filter_op="not_in",
+                filter_value=["voicemail", "assistant-ended-call"],
+            )
+        )
+        assert "mapContains(span_attr_str, 'ended_reason')" in where
+        assert "AND span_attr_str['ended_reason'] NOT IN" in where
+        assert "NOT mapContains" not in where
+        assert ("voicemail", "assistant-ended-call") in params.values()
+
+    def test_text_contains_wildcard(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="contains", filter_value="abc"
+            )
+        )
+        assert "LIKE" in where
+        assert "%abc%" in params.values()
+
+    def test_text_not_contains_uses_exists_and(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="not_contains", filter_value="abc"
+            )
+        )
+        assert "AND span_attr_str['k'] NOT LIKE" in where
+        assert "NOT mapContains" not in where
+        assert "%abc%" in params.values()
+
+    def test_text_starts_with(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="starts_with", filter_value="abc"
+            )
+        )
+        assert "abc%" in params.values()
+
+    def test_text_ends_with(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="ends_with", filter_value="abc"
+            )
+        )
+        assert "%abc" in params.values()
+
+    def test_text_is_null(self):
+        where, _ = _translate_one(
+            _span_attr_filter("k", filter_type="text", filter_op="is_null")
+        )
+        assert "NOT mapContains(span_attr_str, 'k')" in where
+
+    def test_text_is_not_null(self):
+        where, _ = _translate_one(
+            _span_attr_filter("k", filter_type="text", filter_op="is_not_null")
+        )
+        assert "mapContains(span_attr_str, 'k')" in where
+        assert "NOT mapContains" not in where
+
+    # ------------------------------------------------------------------
+    # number type — happy paths + coercion
+    # ------------------------------------------------------------------
+    def test_number_equals_coerces_string_to_float(self):
+        """FE always ships numerics as strings; backend must coerce to
+        float so CH does numeric (not lexical) comparison."""
+        _, params = _translate_one(
+            _span_attr_filter(
+                "n", filter_type="number", filter_op="equals", filter_value="42"
+            )
+        )
+        assert 42.0 in params.values()
+        assert "42" not in [v for v in params.values() if isinstance(v, str)]
+
+    def test_number_greater_than(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="greater_than",
+                filter_value="100",
+            )
+        )
+        assert "span_attr_num" in where
+        assert "> %(" in where
+        assert 100.0 in params.values()
+
+    def test_number_between_coerces_each_bound(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="between",
+                filter_value=["10", "50"],
+            )
+        )
+        assert "BETWEEN" in where
+        assert 10.0 in params.values()
+        assert 50.0 in params.values()
+
+    def test_number_not_between_uses_exists_and(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "n",
+                filter_type="number",
+                filter_op="not_between",
+                filter_value=["10", "50"],
+            )
+        )
+        assert "AND span_attr_num['n'] NOT BETWEEN" in where
+        assert "NOT mapContains" not in where
+
+    def test_number_legacy_not_in_between_is_rejected(self):
+        """`not_in_between` is the retired alias. Builder must raise."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="not_in_between",
+                    filter_value=["10", "50"],
+                )
+            )
+
+    def test_number_between_with_single_element_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="between",
+                    filter_value=["10"],
+                )
+            )
+
+    def test_number_between_with_non_list_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="between",
+                    filter_value="10",
+                )
+            )
+
+    def test_number_greater_than_with_non_numeric_raises(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="greater_than",
+                    filter_value="abc",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # boolean type — strict native bool only
+    # ------------------------------------------------------------------
+    def test_boolean_equals_true(self):
+        where, params = _translate_one(
+            _span_attr_filter(
+                "b", filter_type="boolean", filter_op="equals", filter_value=True
+            )
+        )
+        assert "span_attr_bool" in where
+        assert 1 in params.values()
+
+    def test_boolean_equals_false(self):
+        _, params = _translate_one(
+            _span_attr_filter(
+                "b", filter_type="boolean", filter_op="equals", filter_value=False
+            )
+        )
+        assert 0 in params.values()
+
+    def test_boolean_string_true_rejected(self):
+        """Strict: only native true/false. `'true'` strings must be rejected."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b",
+                    filter_type="boolean",
+                    filter_op="equals",
+                    filter_value="true",
+                )
+            )
+
+    def test_boolean_int_one_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b", filter_type="boolean", filter_op="equals", filter_value=1
+                )
+            )
+
+    def test_boolean_greater_than_rejected_by_contract(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "b",
+                    filter_type="boolean",
+                    filter_op="greater_than",
+                    filter_value=True,
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # type ↔ op contract violations
+    # ------------------------------------------------------------------
+    def test_contains_on_number_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="contains",
+                    filter_value="abc",
+                )
+            )
+
+    def test_unknown_op_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k",
+                    filter_type="text",
+                    filter_op="somethingelse",
+                    filter_value="v",
+                )
+            )
+
+    def test_unknown_filter_type_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k",
+                    filter_type="json",
+                    filter_op="equals",
+                    filter_value="v",
+                )
+            )
+
+    def test_in_with_empty_list_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="in", filter_value=[]
+                )
+            )
+
+    def test_in_with_non_list_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="in", filter_value="a"
+                )
+            )
+
+    def test_equals_with_none_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="equals", filter_value=None
+                )
+            )
+
+    def test_legacy_equal_to_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "n",
+                    filter_type="number",
+                    filter_op="equal_to",
+                    filter_value="42",
+                )
+            )
+
+    def test_legacy_is_op_rejected(self):
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k", filter_type="text", filter_op="is", filter_value="v"
+                )
+            )
+
+    def test_sql_injection_via_key_raises(self):
+        """Key sanitizer must reject anything outside [a-zA-Z0-9._-]."""
+        with pytest.raises(ValueError):
+            _translate_one(
+                _span_attr_filter(
+                    "k'; DROP TABLE spans; --",
+                    filter_type="text",
+                    filter_op="equals",
+                    filter_value="v",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # trace-mode wrap vs span-mode bare
+    # ------------------------------------------------------------------
+    def test_trace_mode_wraps_predicate(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            ),
+            query_mode="trace",
+        )
+        assert "trace_id IN (SELECT trace_id FROM" in where
+
+    def test_span_mode_returns_bare_predicate(self):
+        where, _ = _translate_one(
+            _span_attr_filter(
+                "k", filter_type="text", filter_op="equals", filter_value="v"
+            ),
+            query_mode="span",
+        )
+        assert "trace_id IN (" not in where
+        assert "mapContains" in where

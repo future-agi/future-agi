@@ -8,7 +8,14 @@ Django ORM querysets.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from tracer.utils.constants import (
+    LIST_OPS,
+    NO_VALUE_OPS,
+    RANGE_OPS,
+    SPAN_ATTR_ALLOWED_OPS,
+)
 
 from tracer.utils.filter_operators import normalize_filter_op
 
@@ -21,6 +28,21 @@ def _sanitize_key(key: str) -> str:
         raise ValueError(f"Invalid attribute key: {key!r}")
     return key
 
+
+def _coerce_strict_bool(v: Any) -> int:
+    """Native bool only; reject strings and ints."""
+    if isinstance(v, bool):
+        return 1 if v else 0
+    raise ValueError(
+        f"Invalid boolean filter value: {v!r} (expected native true/false)"
+    )
+
+
+_SPAN_ATTR_TYPE_META: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
+    "text":    ("span_attr_str",  lambda v: v if isinstance(v, str) else str(v)),
+    "number":  ("span_attr_num",  lambda v: float(v)),
+    "boolean": ("span_attr_bool", _coerce_strict_bool),
+}
 
 class ClickHouseFilterBuilder:
     """Translates frontend filter format to ClickHouse WHERE clauses.
@@ -303,7 +325,6 @@ class ClickHouseFilterBuilder:
 
             filter_type = config.get("filter_type") or config.get("filterType")
             filter_op = config.get("filter_op") or config.get("filterOp")
-            filter_op = normalize_filter_op(filter_op)
             filter_value = config.get("filter_value", config.get("filterValue"))
 
             # Skip date filters (handled by BaseQueryBuilder.parse_time_range)
@@ -404,7 +425,8 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> Optional[str]:
         """Dispatch to the appropriate condition builder based on column type."""
-        filter_op = normalize_filter_op(filter_op)
+        if col_type != self.SPAN_ATTRIBUTE:
+            filter_op = normalize_filter_op(filter_op)
 
         # The dashboard/metrics + get_span_attributes_list endpoints can
         # surface the same logical metric (e.g. ``gen_ai.usage.total_tokens``)
@@ -591,102 +613,185 @@ class ClickHouseFilterBuilder:
 
     def _build_span_attr_condition(
         self,
-        key: str,
+        attribute_key: str,
         filter_type: Optional[str],
         filter_op: Optional[str],
         filter_value: Any,
     ) -> Optional[str]:
-        """Build a condition for Map-column span attributes.
+        """Build a SPAN_ATTRIBUTE predicate; raises ValueError on contract violations.
 
-        The denormalized ``spans`` table stores typed attributes in Map
-        columns: ``span_attr_str``, ``span_attr_num``, ``span_attr_bool``.
-
-        Uses a ``trace_id IN (SELECT ...)`` subquery so the filter matches
-        the *trace* if ANY of its spans has the attribute — not just the
-        root span.  This is critical for voice call lists where filters
-        like ``llm.model_name`` live on child LLM spans, not the root
-        conversation span.
+        Negation ops use ``exists AND value NOT …`` so MV-gap rows are excluded.
         """
-        # Sanitize key to prevent SQL injection via map access
-        key = _sanitize_key(key)
+        attribute_key = _sanitize_key(attribute_key)
 
-        # Determine map column based on filter_type
-        if filter_type == "number":
-            map_col = "span_attr_num"
-        elif filter_type == "boolean":
-            map_col = "span_attr_bool"
-        else:
-            map_col = "span_attr_str"
+        normalized_filter_type, map_column, value_coercer = (
+            self._resolve_span_attr_type(filter_type)
+        )
+        self._require_op_allowed_for_type(normalized_filter_type, filter_op)
 
-        param = self._next_param("attr")
-        exists = f"mapContains({map_col}, '{key}')"
+        normalized_value = self._normalize_span_attr_value(
+            filter_op, value_coercer, filter_value
+        )
+        exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+        inner_predicate = self._span_attr_inner(
+            map_column,
+            attribute_key,
+            exists_predicate,
+            filter_op,
+            normalized_value,
+        )
+        if not inner_predicate:
+            return None
 
-        # Build the inner condition on the Map column
-        if filter_op == "is_null":
-            inner = f"NOT {exists}"
-        elif filter_op == "is_not_null":
-            inner = exists
-        elif filter_op == "contains":
-            self._params[param] = f"%{filter_value}%"
-            inner = f"{exists} AND {map_col}['{key}'] LIKE %({param})s"
-        elif filter_op == "not_contains":
-            self._params[param] = f"%{filter_value}%"
-            inner = f"(NOT {exists} OR {map_col}['{key}'] NOT LIKE %({param})s)"
-        elif filter_op == "starts_with":
-            self._params[param] = f"{filter_value}%"
-            inner = f"{exists} AND {map_col}['{key}'] LIKE %({param})s"
-        elif filter_op == "ends_with":
-            self._params[param] = f"%{filter_value}"
-            inner = f"{exists} AND {map_col}['{key}'] LIKE %({param})s"
-        elif filter_op == "between" and isinstance(filter_value, list):
-            p_lo = self._next_param("lo")
-            p_hi = self._next_param("hi")
-            self._params[p_lo] = filter_value[0]
-            self._params[p_hi] = filter_value[1]
-            inner = f"{exists} AND {map_col}['{key}'] BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
-            p_lo = self._next_param("lo")
-            p_hi = self._next_param("hi")
-            self._params[p_lo] = filter_value[0]
-            self._params[p_hi] = filter_value[1]
-            inner = f"({exists} AND {map_col}['{key}'] NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
-        elif filter_op == "in" and isinstance(filter_value, list):
-            # ClickHouse rejects IN (). Keep empty-set semantics explicit:
-            # value IN [] matches nothing.
-            if not filter_value:
-                inner = "0 = 1"
-            else:
-                self._params[param] = tuple(filter_value)
-                inner = f"{exists} AND {map_col}['{key}'] IN %({param})s"
-        elif filter_op == "not_in" and isinstance(filter_value, list):
-            # value NOT IN [] should not restrict results.
-            if not filter_value:
-                inner = "1 = 1"
-            else:
-                self._params[param] = tuple(filter_value)
-                inner = f"(NOT {exists} OR {map_col}['{key}'] NOT IN %({param})s)"
-        else:
-            op = self._sql_op(filter_op)
-            if op is None:
-                inner = "0 = 1"
-            else:
-                self._params[param] = filter_value
-                inner = f"{exists} AND {map_col}['{key}'] {op} %({param})s"
-
-        # In span-list mode the caller wants the filter to apply to
-        # each span row directly — return the inner condition unwrapped.
         if self.query_mode == self.QUERY_MODE_SPAN:
-            return inner
-
-        # Trace-list mode: wrap in a trace_id subquery so the filter
-        # matches the trace if ANY span has the attribute, not just the
-        # queried span.
+            return inner_predicate
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
-            f"AND {inner})"
+            f"AND {inner_predicate})"
         )
+
+    @staticmethod
+    def _resolve_span_attr_type(
+        filter_type: Optional[str],
+    ) -> Tuple[str, str, Callable[[Any], Any]]:
+        """Resolve filter_type to (normalized_type, map_col, coerce_fn)."""
+        normalized_filter_type = (filter_type or "").strip().lower()
+        if normalized_filter_type not in _SPAN_ATTR_TYPE_META:
+            raise ValueError(
+                f"Unsupported span_attr filter_type: {filter_type!r}. "
+                f"Expected one of {sorted(_SPAN_ATTR_TYPE_META)}."
+            )
+        map_column, value_coercer = _SPAN_ATTR_TYPE_META[normalized_filter_type]
+        return normalized_filter_type, map_column, value_coercer
+
+    @staticmethod
+    def _require_op_allowed_for_type(
+        normalized_filter_type: str, filter_op: Optional[str]
+    ) -> None:
+        """Reject filter_ops not allowed for the resolved filter_type."""
+        allowed_ops = SPAN_ATTR_ALLOWED_OPS[normalized_filter_type]
+        if filter_op not in allowed_ops:
+            raise ValueError(
+                f"filter_op {filter_op!r} not allowed for filter_type "
+                f"{normalized_filter_type!r}. Allowed: {sorted(allowed_ops)}."
+            )
+
+    @staticmethod
+    def _normalize_span_attr_value(
+        filter_op: str,
+        value_coercer: Callable[[Any], Any],
+        filter_value: Any,
+    ) -> Any:
+        """Validate value shape per op and coerce each scalar."""
+        if filter_op in NO_VALUE_OPS:
+            return None
+
+        if filter_op in RANGE_OPS:
+            if not isinstance(filter_value, list) or len(filter_value) != 2:
+                raise ValueError(
+                    f"{filter_op!r} requires a 2-element list, got {filter_value!r}"
+                )
+            return [value_coercer(filter_value[0]), value_coercer(filter_value[1])]
+
+        if filter_op in LIST_OPS:
+            if not isinstance(filter_value, list) or not filter_value:
+                raise ValueError(
+                    f"{filter_op!r} requires a non-empty list, got {filter_value!r}"
+                )
+            return [value_coercer(v) for v in filter_value]
+
+        if filter_value is None:
+            raise ValueError(f"{filter_op!r} requires a value, got None")
+        return value_coercer(filter_value)
+
+    def _span_attr_inner(
+        self,
+        map_column: str,
+        attribute_key: str,
+        exists_predicate: str,
+        filter_op: str,
+        normalized_value: Any,
+    ) -> Optional[str]:
+        """Emit the row-level predicate; negation ops require key present."""
+        column_access = f"{map_column}['{attribute_key}']"
+
+        if filter_op == "is_null":
+            return f"NOT {exists_predicate}"
+        if filter_op == "is_not_null":
+            return exists_predicate
+
+        if filter_op == "equals":
+            param = self._next_param("attr")
+            self._params[param] = normalized_value
+            return f"{exists_predicate} AND {column_access} = %({param})s"
+        if filter_op == "not_equals":
+            param = self._next_param("attr")
+            self._params[param] = normalized_value
+            return f"{exists_predicate} AND {column_access} != %({param})s"
+
+        if filter_op == "in":
+            param = self._next_param("attr")
+            self._params[param] = tuple(normalized_value)
+            return f"{exists_predicate} AND {column_access} IN %({param})s"
+        if filter_op == "not_in":
+            param = self._next_param("attr")
+            self._params[param] = tuple(normalized_value)
+            return f"{exists_predicate} AND {column_access} NOT IN %({param})s"
+
+        if filter_op == "contains":
+            param = self._next_param("attr")
+            self._params[param] = f"%{normalized_value}%"
+            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+        if filter_op == "not_contains":
+            param = self._next_param("attr")
+            self._params[param] = f"%{normalized_value}%"
+            return f"{exists_predicate} AND {column_access} NOT LIKE %({param})s"
+        if filter_op == "starts_with":
+            param = self._next_param("attr")
+            self._params[param] = f"{normalized_value}%"
+            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+        if filter_op == "ends_with":
+            param = self._next_param("attr")
+            self._params[param] = f"%{normalized_value}"
+            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+
+        if filter_op == "between":
+            param_lo = self._next_param("lo")
+            param_hi = self._next_param("hi")
+            self._params[param_lo] = normalized_value[0]
+            self._params[param_hi] = normalized_value[1]
+            return (
+                f"{exists_predicate} AND {column_access} "
+                f"BETWEEN %({param_lo})s AND %({param_hi})s"
+            )
+        if filter_op == "not_between":
+            param_lo = self._next_param("lo")
+            param_hi = self._next_param("hi")
+            self._params[param_lo] = normalized_value[0]
+            self._params[param_hi] = normalized_value[1]
+            return (
+                f"{exists_predicate} AND {column_access} "
+                f"NOT BETWEEN %({param_lo})s AND %({param_hi})s"
+            )
+
+        # Comparison ops (number-only by contract).
+        comparison_sql_op = {
+            "greater_than": ">",
+            "greater_than_or_equal": ">=",
+            "less_than": "<",
+            "less_than_or_equal": "<=",
+        }.get(filter_op)
+        if comparison_sql_op is not None:
+            param = self._next_param("attr")
+            self._params[param] = normalized_value
+            return (
+                f"{exists_predicate} AND {column_access} "
+                f"{comparison_sql_op} %({param})s"
+            )
+
+        raise ValueError(f"Unhandled filter_op {filter_op!r}")
 
     # Columns whose stored values vary in case across ingest paths — OTel
     # writes lowercase ('ok'/'error'/'unset'), older provider integrations
@@ -727,7 +832,7 @@ class ClickHouseFilterBuilder:
             self._params[p_lo] = filter_value[0]
             self._params[p_hi] = filter_value[1]
             return f"{column} BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
+        elif filter_op == "not_between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -790,7 +895,7 @@ class ClickHouseFilterBuilder:
             self._params[p_lo] = filter_value[0]
             self._params[p_hi] = filter_value[1]
             return f"({expr}) BETWEEN %({p_lo})s AND %({p_hi})s"
-        elif filter_op == "not_in_between" and isinstance(filter_value, list):
+        elif filter_op == "not_between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
             self._params[p_lo] = filter_value[0]
@@ -1028,7 +1133,7 @@ class ClickHouseFilterBuilder:
                     f"JSONExtractFloat({score_value}, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
                 )
             elif (
-                filter_op == "not_in_between"
+                filter_op == "not_between"
                 and isinstance(filter_value, list)
                 and len(filter_value) == 2
             ):

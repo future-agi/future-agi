@@ -120,9 +120,16 @@ const TaskDetailPage = () => {
     (editType) => {
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
+      // observation_type rows may now carry an array `filterValue` (canonical
+      // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
+      // so the BE always sees a flat list of selected values.
       const observationTypes = (data.filters || [])
         .filter((f) => f.property === "observation_type")
-        .map((f) => f?.filterConfig?.filterValue);
+        .flatMap((f) => {
+          const v = f?.filterConfig?.filterValue;
+          if (Array.isArray(v)) return v;
+          return v !== undefined && v !== null && v !== "" ? [v] : [];
+        });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],

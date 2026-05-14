@@ -1,9 +1,9 @@
 """Shared filter operator helpers.
 
-Frontend panels have historically used display-oriented operator names such as
-``equal_to`` and ``not_between``. Backend filter builders should use the
-canonical API contract names below. The aliases remain only for saved filters
-and older clients.
+Some older clients used display-oriented operator names such as ``equal_to``.
+Backend filter builders should use the canonical API contract names below. The
+aliases remain only for non-span legacy filter surfaces; canonical-only paths
+must validate the raw operator directly.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ FILTER_OP_ALIASES = {
     "is_not": "not_equals",
     "equal_to": "equals",
     "not_equal_to": "not_equals",
-    "not_between": "not_in_between",
+    "not_in_between": "not_between",
     "inBetween": "between",
 }
 

@@ -24,7 +24,6 @@ import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { panelFiltersToApiFilters } from "./filterTransforms";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -192,40 +191,31 @@ const ObserveToolbar = ({
       setPanelFilters(null);
       return;
     }
-    const opReverseMap = {
-      equals: "is",
-      not_equals: "is_not",
-      // Multi-value picks become `in`/`not_in` on the apply path; reverse
-      // them back to `is`/`is_not` so the Basic-tab operator dropdown still
-      // matches a known option (otherwise MUI Select renders blank).
-      in: "is",
-      not_in: "is_not",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-    };
-    const NUMBER_OP_SET = new Set([
-      "equal_to",
-      "not_equal_to",
-      "greater_than",
-      "greater_than_or_equal",
-      "less_than",
-      "less_than_or_equal",
-      "between",
-      "not_between",
-    ]);
     const RANGE_OPS = new Set(["between", "not_between"]);
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
-      const isNumberOp = NUMBER_OP_SET.has(rawOp);
+      const rawType = gf.filter_config?.filter_type;
+      // Trust explicit `filter_type` only; ops are shared across types.
+      const isNumberType = rawType === "number";
+      const isBooleanType = rawType === "boolean";
       const isRange = RANGE_OPS.has(rawOp);
       const rawVal = gf.filter_config?.filter_value;
       let value;
-      if (isRange && rawVal) {
-        value = String(rawVal)
-          .split(",")
-          .map((v) => v.trim());
-      } else if (isNumberOp) {
+      if (isRange) {
+        // Normalize to a 2-element string array for the TextField pair.
+        if (Array.isArray(rawVal)) {
+          value = rawVal.map((v) => (v == null ? "" : String(v)));
+        } else if (rawVal != null) {
+          value = String(rawVal)
+            .split(",")
+            .map((v) => v.trim());
+        } else {
+          value = ["", ""];
+        }
+      } else if (isBooleanType) {
+        // MUI Select needs "true"/"false" strings; backend uses native bool.
+        value = rawVal === true || rawVal === "true" ? "true" : "false";
+      } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
       } else {
         value = rawVal
@@ -267,7 +257,9 @@ const ObserveToolbar = ({
           : colTypeReverseMap[rawColType] || "system",
         fieldType: isGlobalAnnotatorFilter
           ? "annotator"
-          : isNumberOp
+          : isBooleanType
+          ? "boolean"
+          : isNumberType
             ? "number"
             : rawFilterType === "number"
               ? "number"
@@ -279,7 +271,7 @@ const ObserveToolbar = ({
                     ? "text"
                     : "string",
         apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
-        operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
+        operator: rawOp,
         value,
       };
     });
@@ -437,7 +429,87 @@ const ObserveToolbar = ({
                 }
                 return;
               }
-              const apiFilters = panelFiltersToApiFilters(newFilters);
+              // Panel and backend share canonical op names — no translation.
+              const typeMap = {
+                string: "text",
+                number: "number",
+                boolean: "boolean",
+                categorical: "categorical",
+                thumbs: "thumbs",
+                text: "text",
+                annotator: "text",
+              };
+              const colTypeMap = {
+                attribute: "SPAN_ATTRIBUTE",
+                system: "SYSTEM_METRIC",
+                eval: "EVAL_METRIC",
+                annotation: "ANNOTATION",
+              };
+              const RANGE_OPS = new Set(["between", "not_between"]);
+              const LIST_OPS = new Set(["in", "not_in"]);
+              // Legacy panel ops emitted by THUMBS_OPS / CATEGORICAL_OPS /
+              // ID_ONLY_OPS — translate to canonical so BE accepts them.
+              const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
+              const apiFilters = newFilters.map((f) => {
+                const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
+                const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
+                let filterValue = f.value;
+                if (Array.isArray(filterValue)) {
+                  if (RANGE_OPS.has(filterOp)) {
+                    // Coerce numeric range bounds.
+                    filterValue = filterValue.map((v) =>
+                      f.fieldType === "number" && v !== "" && v !== null
+                        ? Number(v)
+                        : v,
+                    );
+                  } else if (LIST_OPS.has(filterOp)) {
+                    filterValue = filterValue.filter(
+                      (v) => v !== "" && v !== null && v !== undefined,
+                    );
+                  } else if (filterValue.length === 1) {
+                    filterValue = filterValue[0];
+                  }
+                } else if (LIST_OPS.has(filterOp)) {
+                  // Scalar handed to a list op; wrap as 1-element list.
+                  filterValue =
+                    filterValue === "" ||
+                    filterValue === null ||
+                    filterValue === undefined
+                      ? []
+                      : [filterValue];
+                }
+                // Coerce TextField string to Number for the wire.
+                if (
+                  f.fieldType === "number" &&
+                  !Array.isArray(filterValue) &&
+                  filterValue !== "" &&
+                  filterValue !== null &&
+                  filterValue !== undefined
+                ) {
+                  const n = Number(filterValue);
+                  if (!Number.isNaN(n)) filterValue = n;
+                }
+                // Coerce MUI Select "true"/"false" string to native bool.
+                if (f.fieldType === "boolean") {
+                  if (filterValue === "true" || filterValue === true) {
+                    filterValue = true;
+                  } else if (filterValue === "false" || filterValue === false) {
+                    filterValue = false;
+                  }
+                }
+                return {
+                  column_id: f.field,
+                  ...(f.fieldName && { display_name: f.fieldName }),
+                  filter_config: {
+                    filter_type: typeMap[f.fieldType] || "text",
+                    filter_op: filterOp,
+                    filter_value: filterValue,
+                    ...(apiColType && {
+                      col_type: apiColType,
+                    }),
+                  },
+                };
+              });
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
                 onApplyCompareExtraFilters(apiFilters);
