@@ -1864,6 +1864,7 @@ TestPlayground.propTypes = {
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
+  isSystemEval: PropTypes.bool,
 };
 
 export default TestPlayground;
