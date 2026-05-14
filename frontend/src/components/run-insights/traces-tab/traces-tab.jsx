@@ -64,17 +64,24 @@ const TraceTab = React.forwardRef(
           const res = await axios.get(endpoints.project.spanAttributeKeys(), {
             params: { project_id: projectId },
           });
-          return res;
+          return res.data?.result;
         } catch {
-          // Fallback to legacy API when ClickHouse is unavailable
-          return axios.get(endpoints.project.getEvalAttributeList(), {
-            params: {
-              filters: JSON.stringify({ project_id: projectId }),
+          // Fallback to the eval-attributes endpoint when the CH-backed
+          // span-attribute-keys API is unavailable. The eval-attrs endpoint
+          // wraps its list in a paginated envelope; we drain the first
+          // page (capped to 200) so the filter definition can still render.
+          const res = await axios.get(
+            endpoints.project.getEvalAttributeList(),
+            {
+              params: {
+                filters: JSON.stringify({ project_id: projectId }),
+                page_size: 200,
+              },
             },
-          });
+          );
+          return res.data?.result?.items || [];
         }
       },
-      select: (data) => data.data?.result,
     });
 
     const [filterDefinition, setFilterDefinition] = useState(() => {

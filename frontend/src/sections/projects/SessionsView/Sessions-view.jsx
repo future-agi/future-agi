@@ -17,7 +17,7 @@ import React, {
   useState,
 } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { Helmet } from "react-helmet-async";
 import { formatDate } from "src/utils/report-utils";
@@ -903,17 +903,6 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const pendingCustomColumnsRef = useRef([]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify({ project_id: observeId }) },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
-  });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
-
   const handleAddCustomColumns = useCallback((newCols) => {
     setSessionColumns((prev) => {
       const existingIds = new Set((prev || []).map((c) => c.id));
@@ -1128,7 +1117,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       <CustomColumnDialog
         open={openCustomColumn}
         onClose={() => setOpenCustomColumn(false)}
-        attributes={attributes}
+        projectId={observeId}
         existingColumns={sessionColumns}
         onAddColumns={handleAddCustomColumns}
         onRemoveColumns={handleRemoveCustomColumns}

@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import TraceGrid from "../../LLMTracing/TraceGrid";
@@ -107,19 +105,6 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     return base;
   }, [userId, dateFilter]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", projectId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: projectId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(projectId),
-  });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
-
   const handleAddCustomColumns = (newCols) => {
     setColumns((prev) => {
       const existingIds = new Set((prev || []).map((c) => c.id));
@@ -218,7 +203,7 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       <CustomColumnDialog
         open={openCustomColumn}
         onClose={() => setOpenCustomColumn(false)}
-        attributes={attributes}
+        projectId={projectId}
         existingColumns={columns}
         onAddColumns={handleAddCustomColumns}
         onRemoveColumns={handleRemoveCustomColumns}

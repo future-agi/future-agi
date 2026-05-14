@@ -23,6 +23,7 @@ import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterCo
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
 import { useQuery } from "@tanstack/react-query";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import { objectCamelToSnake } from "src/utils/utils";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
@@ -70,15 +71,9 @@ const SpanTab = React.forwardRef(
       { ...defaultFilter, id: getRandomId() },
     ]);
 
-    const { data: evalAttributes } = useQuery({
-      queryKey: ["eval-attributes", projectId],
-      queryFn: () =>
-        axios.get(endpoints.project.getEvalAttributeList(), {
-          params: {
-            filters: JSON.stringify({ project_id: projectId }),
-          },
-        }),
-      select: (data) => data.data?.result,
+    const { items: evalAttributes } = useEvalAttributesPage({
+      projectId,
+      enabled: Boolean(projectId),
     });
 
     const [filterDefinition, setFilterDefinition] = useState(() => {

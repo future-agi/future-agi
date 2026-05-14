@@ -55,6 +55,8 @@ import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import AttributePathAutocomplete from "src/components/AttributePathAutocomplete";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -830,14 +832,28 @@ const TracingTestMode = React.forwardRef(
       return flattened;
     }, [spanDetail]);
 
-    // Mapping-dropdown source. For Session / Trace row types when the
-    // parent picker passed in a precomputed list (TaskConfigPanel does
-    // this with the get_eval_attributes_list result), use it directly so
-    // users see every candidate path the moment they pick the row-type
-    // tab — no drill-in required. Span row type and any caller that
-    // doesn't pass pickerSourceColumns falls back to walking the loaded
-    // detail (existing behaviour).
+    // Trace / Session use the server-search Autocomplete. Span /
+    // VoiceCall keep the walked-detail Autocomplete — spans don't have
+    // an aligned-paths endpoint, and walking the loaded row works there.
+    const beRowType = useMemo(() => {
+      if (rowType === "Trace") return "traces";
+      if (rowType === "Session") return "sessions";
+      return null;
+    }, [rowType]);
+    const useServerAttrPicker = Boolean(beRowType && selectedProjectId);
+
+    // First-page seed for auto-mapping; the dropdown itself does its
+    // own server search via AttributePathAutocomplete.
+    const { items: serverFirstPagePaths } = useEvalAttributesPage({
+      projectId: selectedProjectId,
+      rowType: beRowType,
+      enabled: useServerAttrPicker,
+    });
+
     const fieldNames = useMemo(() => {
+      if (useServerAttrPicker && serverFirstPagePaths?.length) {
+        return serverFirstPagePaths;
+      }
       const usePrecomputed =
         Array.isArray(pickerSourceColumns) &&
         pickerSourceColumns.length > 0 &&
@@ -848,7 +864,14 @@ const TracingTestMode = React.forwardRef(
           .filter(Boolean);
       }
       return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
-    }, [pickerSourceColumns, rowType, walkedFromDetail, rowFields]);
+    }, [
+      useServerAttrPicker,
+      serverFirstPagePaths,
+      pickerSourceColumns,
+      rowType,
+      walkedFromDetail,
+      rowFields,
+    ]);
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -1753,72 +1776,89 @@ const TracingTestMode = React.forwardRef(
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
-                  <Autocomplete
-                    size="small"
-                    options={
-                      mapping[variable] &&
-                      !fieldNames.includes(mapping[variable])
-                        ? [mapping[variable], ...fieldNames]
-                        : fieldNames
-                    }
-                    value={mapping[variable] || null}
-                    onChange={(_, val) =>
-                      setMapping((prev) => ({
-                        ...prev,
-                        [variable]: val || "",
-                      }))
-                    }
-                    openOnFocus
-                    autoHighlight
-                    selectOnFocus
-                    handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt === val}
-                    sx={{ flex: 1 }}
-                    ListboxProps={{ style: { maxHeight: 260 } }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
+                  {useServerAttrPicker ? (
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <AttributePathAutocomplete
+                        projectId={selectedProjectId}
+                        rowType={beRowType}
+                        value={mapping[variable] || ""}
+                        onChange={(val) =>
+                          setMapping((prev) => ({
+                            ...prev,
+                            [variable]: val || "",
+                          }))
+                        }
                         placeholder="Search column..."
-                        InputProps={{
-                          ...params.InputProps,
-                          sx: {
-                            ...params.InputProps.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            height: 28,
-                            py: 0,
-                          },
-                        }}
                       />
-                    )}
-                    renderOption={(props, col) => {
-                      const { key, ...rest } = props;
-                      return (
-                        <Box
-                          component="li"
-                          key={key}
-                          {...rest}
-                          title={col}
-                          sx={{
-                            ...rest.sx,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            pl: col.includes(".")
-                              ? `${12 + (col.split(".").length - 1) * 12}px`
-                              : undefined,
-                            color: col.includes(".")
-                              ? "primary.main"
-                              : "text.primary",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                    </Box>
+                  ) : (
+                    <Autocomplete
+                      size="small"
+                      options={
+                        mapping[variable] &&
+                        !fieldNames.includes(mapping[variable])
+                          ? [mapping[variable], ...fieldNames]
+                          : fieldNames
+                      }
+                      value={mapping[variable] || null}
+                      onChange={(_, val) =>
+                        setMapping((prev) => ({
+                          ...prev,
+                          [variable]: val || "",
+                        }))
+                      }
+                      openOnFocus
+                      autoHighlight
+                      selectOnFocus
+                      handleHomeEndKeys
+                      isOptionEqualToValue={(opt, val) => opt === val}
+                      sx={{ flex: 1 }}
+                      ListboxProps={{ style: { maxHeight: 260 } }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          placeholder="Search column..."
+                          InputProps={{
+                            ...params.InputProps,
+                            sx: {
+                              ...params.InputProps.sx,
+                              fontSize: "12px",
+                              fontFamily: "monospace",
+                              height: 28,
+                              py: 0,
+                            },
                           }}
-                        >
-                          {col}
-                        </Box>
-                      );
-                    }}
-                  />
+                        />
+                      )}
+                      renderOption={(props, col) => {
+                        const { key, ...rest } = props;
+                        return (
+                          <Box
+                            component="li"
+                            key={key}
+                            {...rest}
+                            title={col}
+                            sx={{
+                              ...rest.sx,
+                              fontSize: "12px",
+                              fontFamily: "monospace",
+                              pl: col.includes(".")
+                                ? `${12 + (col.split(".").length - 1) * 12}px`
+                                : undefined,
+                              color: col.includes(".")
+                                ? "primary.main"
+                                : "text.primary",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {col}
+                          </Box>
+                        );
+                      }}
+                    />
+                  )}
                 </Box>
               ))}
             </Box>

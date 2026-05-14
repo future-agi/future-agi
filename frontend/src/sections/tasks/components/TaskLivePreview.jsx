@@ -1083,12 +1083,12 @@ const VariableMappingView = ({
 }) => {
   const fieldSet = useMemo(() => new Set(fieldNames), [fieldNames]);
   const hasEvals = evalsDetails.length > 0;
-  // For sessions the lazy fetch only covers `traces[0].spans`, so the
-  // walker over the preview detail can't witness paths into other traces
-  // or beyond the first trace's loaded spans. The `(not in row)` chip
-  // becomes misinformation in that regime — the BE is the authoritative
-  // resolver at test time. Suppress the check entirely for sessions.
-  const skipRowCheck = rowType === "sessions";
+  // Trace + session pickers emit `spans.<n>.<key>` / `traces.<i>.…` paths
+  // that the local row walker can't replicate — and the aligned picker
+  // may surface paths realised on a different sampled row. The BE
+  // resolver is the source of truth at test time; the chip would only
+  // lie here. Skip for both row types (sessions already skipped).
+  const skipRowCheck = rowType === "sessions" || rowType === "traces";
 
   if (!hasEvals) return null;
 

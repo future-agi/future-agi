@@ -41,6 +41,7 @@ import {
 } from "../NewTaskDrawer/validation";
 import ConfiguredEvaluationType from "src/sections/develop-detail/Common/ConfiguredEvaluationType/ConfiguredEvaluationType";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -201,16 +202,11 @@ const DetailsEdit = ({
     replace(configuredEvalList);
   }, [configuredEvalList]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
-        },
-      }),
-    select: (data) => data.data?.result,
+  const { items: evalAttributes } = useEvalAttributesPage({
+    projectId: project,
+    rowType,
+    filters: objectCamelToSnake(filters),
+    enabled: !!project,
   });
 
   const { data: projectsList } = useQuery({

@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -14,23 +15,38 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import { useDebounce } from "src/hooks/use-debounce";
+import { useScrollEnd } from "src/hooks/use-scroll-end";
+import { useEvalAttributesInfinite } from "src/hooks/use-eval-attributes";
 
-// Normalize an attribute entry to a string key.
-// The API may return plain strings OR objects like {key, type}.
+// API may return strings or `{key, type}` dicts; unwrap to a string key.
 const attrKey = (attr) =>
   typeof attr === "string" ? attr : attr?.key ?? String(attr);
 
 const CustomColumnDialog = ({
   open,
   onClose,
-  attributes,
+  projectId,
   existingColumns,
   onAddColumns,
   onRemoveColumns,
 }) => {
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 250);
 
-  // IDs of custom columns already added to the grid
+  const {
+    items,
+    isLoading,
+    isFetching,
+    hasMore,
+    fetchMore,
+  } = useEvalAttributesInfinite({
+    projectId,
+    search: debouncedSearch,
+    pageSize: 100,
+    enabled: open && Boolean(projectId),
+  });
+
   const existingCustomIds = useMemo(
     () =>
       new Set(
@@ -41,10 +57,8 @@ const CustomColumnDialog = ({
     [existingColumns],
   );
 
-  // Track checked state — starts from existing custom columns
   const [checked, setChecked] = useState(new Set());
 
-  // Sync checked state when dialog opens
   useEffect(() => {
     if (open) {
       setChecked(new Set(existingCustomIds));
@@ -52,37 +66,39 @@ const CustomColumnDialog = ({
     }
   }, [open, existingCustomIds]);
 
-  const filteredAttributes = useMemo(() => {
-    const allAttrs = attributes || [];
-    // Exclude attributes that are standard (non-custom) columns
+  const displayedAttributes = useMemo(() => {
     const standardIds = new Set(
       (existingColumns || [])
         .filter((c) => c.groupBy !== "Custom Columns")
         .map((c) => c.id),
     );
-    // Build the union of API-surfaced attributes and currently-added
-    // custom column ids. A custom column whose source attribute is no
-    // longer returned by the API (restored from a saved view, or the
-    // span attribute roll-up has rotated out the key) must still appear
-    // here — otherwise it stays in state, invisibly checked, and the
-    // panel's "X added" badge drifts above the user's selection (TH-4139).
     const seen = new Set();
     const merged = [];
-    for (const attr of allAttrs) {
+    for (const attr of items || []) {
       const key = attrKey(attr);
       if (standardIds.has(key) || seen.has(key)) continue;
       seen.add(key);
       merged.push(attr);
     }
-    for (const c of existingColumns || []) {
-      if (c.groupBy !== "Custom Columns" || seen.has(c.id)) continue;
-      seen.add(c.id);
-      merged.push(c.id);
+    // Stale custom columns (rotated out of the API sample or restored
+    // from a saved view) stay visible when not searching so they remain
+    // unchecked-able. TH-4139.
+    if (!debouncedSearch) {
+      for (const c of existingColumns || []) {
+        if (c.groupBy !== "Custom Columns" || seen.has(c.id)) continue;
+        seen.add(c.id);
+        merged.push(c.id);
+      }
     }
-    if (!search.trim()) return merged;
-    const q = search.toLowerCase();
-    return merged.filter((attr) => attrKey(attr).toLowerCase().includes(q));
-  }, [attributes, existingColumns, search]);
+    return merged;
+  }, [items, existingColumns, debouncedSearch]);
+
+  const scrollRef = useScrollEnd(
+    () => {
+      if (hasMore && !isFetching) fetchMore();
+    },
+    [hasMore, isFetching, fetchMore],
+  );
 
   const handleToggle = (key) => {
     setChecked((prev) => {
@@ -146,6 +162,9 @@ const CustomColumnDialog = ({
     return false;
   }, [checked, existingCustomIds]);
 
+  const showEmpty =
+    !isLoading && displayedAttributes.length === 0;
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle sx={{ pb: 1 }}>
@@ -178,6 +197,7 @@ const CustomColumnDialog = ({
           }}
         />
         <Box
+          ref={scrollRef}
           sx={{
             maxHeight: 300,
             overflowY: "auto",
@@ -186,43 +206,54 @@ const CustomColumnDialog = ({
             borderRadius: 1,
           }}
         >
-          {filteredAttributes.length === 0 ? (
+          {isLoading ? (
+            <Box sx={{ p: 2, textAlign: "center" }}>
+              <CircularProgress size={20} />
+            </Box>
+          ) : showEmpty ? (
             <Box sx={{ p: 2, textAlign: "center" }}>
               <Typography variant="body2" color="text.disabled">
-                {attributes?.length === 0
-                  ? "No attributes found for this project"
-                  : "No matching attributes"}
+                {debouncedSearch
+                  ? "No matching attributes"
+                  : "No attributes found for this project"}
               </Typography>
             </Box>
           ) : (
-            filteredAttributes.map((attr) => {
-              const key = attrKey(attr);
-              return (
-                <FormControlLabel
-                  key={key}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={checked.has(key)}
-                      onChange={() => handleToggle(key)}
-                      sx={{ p: 0.5 }}
-                    />
-                  }
-                  label={
-                    <Typography variant="body2" sx={{ fontSize: 13 }}>
-                      {key}
-                    </Typography>
-                  }
-                  sx={{
-                    mx: 0,
-                    px: 1.5,
-                    py: 0.25,
-                    width: "100%",
-                    "&:hover": { bgcolor: "action.hover" },
-                  }}
-                />
-              );
-            })
+            <>
+              {displayedAttributes.map((attr) => {
+                const key = attrKey(attr);
+                return (
+                  <FormControlLabel
+                    key={key}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={checked.has(key)}
+                        onChange={() => handleToggle(key)}
+                        sx={{ p: 0.5 }}
+                      />
+                    }
+                    label={
+                      <Typography variant="body2" sx={{ fontSize: 13 }}>
+                        {key}
+                      </Typography>
+                    }
+                    sx={{
+                      mx: 0,
+                      px: 1.5,
+                      py: 0.25,
+                      width: "100%",
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                  />
+                );
+              })}
+              {isFetching && !isLoading ? (
+                <Box sx={{ py: 1, textAlign: "center" }}>
+                  <CircularProgress size={16} />
+                </Box>
+              ) : null}
+            </>
           )}
         </Box>
       </DialogContent>
@@ -246,7 +277,7 @@ const CustomColumnDialog = ({
 CustomColumnDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
-  attributes: PropTypes.array,
+  projectId: PropTypes.string,
   existingColumns: PropTypes.array,
   onAddColumns: PropTypes.func,
   onRemoveColumns: PropTypes.func,
