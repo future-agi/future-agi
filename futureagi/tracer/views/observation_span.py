@@ -3011,6 +3011,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         )
         return agg["max_count"] or 0
 
+    _SPAN_PUBLIC_FIELDS = (
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost",
+        "response_time",
+        "model",
+        "name",
+        "observation_type",
+        "status",
+        "status_message",
+        "provider",
+    )
+
     def _build_trace_attribute_paths(
         self, project_id: str, span_attribute_keys: list
     ) -> list:
@@ -3019,6 +3034,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         paths = list(self._TRACE_PUBLIC_FIELDS)
         max_spans = self._max_spans_per_trace(project_id)
         for i in range(max_spans):
+            for field in self._SPAN_PUBLIC_FIELDS:
+                paths.append(f"spans.{i}.{field}")
             for key in span_attribute_keys:
                 paths.append(f"spans.{i}.{key}")
         return paths
@@ -3036,6 +3053,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             for trace_field in self._TRACE_PUBLIC_FIELDS:
                 paths.append(f"traces.{i}.{trace_field}")
             for j in range(max_spans):
+                for field in self._SPAN_PUBLIC_FIELDS:
+                    paths.append(f"traces.{i}.spans.{j}.{field}")
                 for key in span_attribute_keys:
                     paths.append(f"traces.{i}.spans.{j}.{key}")
         return paths
