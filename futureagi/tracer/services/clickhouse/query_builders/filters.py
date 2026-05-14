@@ -137,6 +137,7 @@ class ClickHouseFilterBuilder:
         "observation_type": "observation_type",
         "span_kind": "observation_type",
         "node_type": "observation_type",
+        "span_id": "id",
         "user": "end_user_id",
         "name": "name",
         "trace_name": "trace_name",
