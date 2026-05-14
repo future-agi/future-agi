@@ -5727,11 +5727,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.bad_request("Feedback is required when requesting changes.")
         if review_action == QueueItemReviewComment.ACTION_COMMENT and not has_feedback:
             return self._gm.bad_request("Comment text is required.")
-        if review_action != QueueItemReviewComment.ACTION_COMMENT:
-            if not item_scores.exists():
-                return self._gm.bad_request(
-                    "Review requires at least one submitted annotation."
-                )
+        if not item_scores.exists():
+            return self._gm.bad_request(
+                "Review requires at least one submitted annotation."
+            )
 
         now = timezone.now()
         workspace = getattr(request, "workspace", None)

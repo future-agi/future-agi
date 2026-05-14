@@ -404,6 +404,7 @@ function buildFeedbackTarget({
   const annotator = annotatorById.get(String(annotatorId));
   if (!label || !annotator) return null;
   const ann = annotationMap.get(`${annotatorId}:${labelId}`);
+  if (!ann) return null;
   return {
     key: feedbackKey,
     labelId,
@@ -1536,7 +1537,17 @@ export default function AnnotationComparisonPanel({
     () => buildAnnotationMap(annotations),
     [annotations],
   );
-  const hasSubmittedAnnotations = (annotations || []).length > 0;
+  const visibleSubmittedAnnotations = useMemo(
+    () =>
+      selectedAnnotator
+        ? (annotations || []).filter(
+            (annotation) =>
+              String(annotation?.annotator) === String(selectedAnnotator.id),
+          )
+        : annotations || [],
+    [annotations, selectedAnnotator],
+  );
+  const hasSubmittedAnnotations = visibleSubmittedAnnotations.length > 0;
   const canReviewSubmittedAnnotations =
     showReviewActions && hasSubmittedAnnotations;
   const labelById = useMemo(
@@ -1648,7 +1659,12 @@ export default function AnnotationComparisonPanel({
     hasRequestFeedback ||
     openBlockingFeedback.length > 0;
   const reviewActionHint = !hasSubmittedAnnotations
-    ? "Review actions are available after at least one annotation is submitted."
+    ? selectedAnnotator
+      ? `${annotatorDisplayName(
+          selectedAnnotator,
+          currentUserId,
+        )} has not submitted annotations for this item yet.`
+      : "Review actions are available after at least one annotation is submitted."
     : openBlockingFeedback.length
       ? "Resolve open requested changes before approving."
       : hasRequestFeedback
@@ -1660,13 +1676,14 @@ export default function AnnotationComparisonPanel({
     labelComments: Object.entries(labelFeedback)
       .map(([key, comment]) => {
         const [labelId, targetAnnotatorId] = key.split(":");
+        if (!annotationMap.has(`${targetAnnotatorId}:${labelId}`)) return null;
         return {
           label_id: labelId,
           target_annotator_id: targetAnnotatorId,
           comment: String(comment || "").trim(),
         };
       })
-      .filter((entry) => entry.comment),
+      .filter((entry) => entry?.comment),
   });
 
   const handleLabelFeedbackChange = (feedbackKey, value) => {
@@ -1865,6 +1882,14 @@ export default function AnnotationComparisonPanel({
           </Typography>
         </Alert>
       ) : null}
+
+      {showReviewActions && selectedAnnotator && !hasSubmittedAnnotations && (
+        <Alert severity="info" icon={false} sx={{ mb: 2 }}>
+          {annotatorDisplayName(selectedAnnotator, currentUserId)} has not
+          submitted annotations for this item yet. Review feedback is available
+          only after an annotator submits at least one score.
+        </Alert>
+      )}
 
       {canReviewSubmittedAnnotations && (
         <Box

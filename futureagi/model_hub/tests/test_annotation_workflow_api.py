@@ -1245,6 +1245,24 @@ class TestReviewItem:
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         assert "at least one submitted annotation" in _result(resp)
 
+    def test_review_comment_rejects_item_without_submitted_annotations(
+        self, auth_client, queue_with_items
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+
+        resp = auth_client.post(
+            review_url(queue_id, item_ids[0]),
+            {"action": "comment", "notes": "Nothing to review yet."},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "at least one submitted annotation" in _result(resp)
+
     def test_label_feedback_requires_target_annotator_submission(
         self,
         auth_client,

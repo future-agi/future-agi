@@ -1899,6 +1899,44 @@ describe("AnnotationComparisonPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides reviewer actions when the selected annotator has no submitted scores", () => {
+    render(
+      <AnnotationComparisonPanel
+        labels={labels}
+        annotators={annotators}
+        annotations={[
+          {
+            id: "ann-review-only-current",
+            annotator: "user-1",
+            annotator_name: "Kartik",
+            annotator_email: "kartik.nvj@futureagi.com",
+            label_id: "label-2",
+            label_type: "categorical",
+            value: ["1"],
+          },
+        ]}
+        currentUserId="user-1"
+        viewingAnnotatorId="user-2"
+        queueId="queue-1"
+        itemId="item-1"
+        showReviewActions
+      />,
+    );
+
+    expect(
+      screen.getByText(/Narda has not submitted annotations/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Whole item feedback"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /request changes/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /approve/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("reports reviewer draft dirty state to the workspace", async () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
