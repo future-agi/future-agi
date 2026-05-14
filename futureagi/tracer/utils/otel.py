@@ -35,6 +35,7 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
+
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
@@ -824,23 +825,18 @@ def convert_otel_span_to_observation_span(
         session_name = attributes.get(SpanAttributes.SESSION_ID)
 
         attributes[SpanAttributes.RESPONSE] = decoder.parse_json_string(
-            attributes.get("fi.llm.output")
-            or attributes.get(SpanAttributes.OUTPUT_VALUE, "")
+            get_attribute(attributes, "output_value", "")
         )
 
         # Process input value
-        input_val = attributes.get("fi.llm.input", None) or attributes.get(
-            SpanAttributes.INPUT_VALUE, None
-        )
+        input_val = get_attribute(attributes, "input_value")
         if input_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_INPUT) is not None:
                 input_val = attributes.get(SpanAttributes.RAW_INPUT, None)
         input_val = decoder.parse_nested_json(input_val) if input_val else None
 
         # Process output value
-        output_val = attributes.get("fi.llm.output", None) or attributes.get(
-            SpanAttributes.OUTPUT_VALUE, None
-        )
+        output_val = get_attribute(attributes, "output_value")
         if output_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_OUTPUT) is not None:
                 output_val = attributes.get(SpanAttributes.RAW_OUTPUT, None)
@@ -1463,9 +1459,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         raise Exception(f"Project not found for version data: {version_key}")
 
     # Process Input/Output
-    input_val = attributes.get("fi.llm.input") or attributes.get(
-        SpanAttributes.INPUT_VALUE
-    )
+    input_val = get_attribute(attributes, "input_value")
     if (
         input_val in [None, "", "[]", []]
         and attributes.get(SpanAttributes.RAW_INPUT) is not None
@@ -1473,9 +1467,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         input_val = attributes.get(SpanAttributes.RAW_INPUT)
     input_val = DECODER.parse_nested_json(input_val) if input_val else None
 
-    output_val = attributes.get("fi.llm.output") or attributes.get(
-        SpanAttributes.OUTPUT_VALUE
-    )
+    output_val = get_attribute(attributes, "output_value")
     if (
         output_val in [None, "", "[]", []]
         and attributes.get(SpanAttributes.RAW_OUTPUT) is not None

@@ -280,7 +280,10 @@ class TestOpenLLMetryStripping:
         result = adapter.normalize(openllmetry_llm_attrs)
         # gen_ai.span.kind is set by the adapter after stripping; all other gen_ai.* keys should be gone
         remaining_gen_ai = [
-            k for k in result if k.startswith("gen_ai.") and k != "gen_ai.span.kind"
+            k
+            for k in result
+            if k.startswith("gen_ai.")
+            and k not in ("gen_ai.span.kind", "gen_ai.trace.source")
         ]
         assert not remaining_gen_ai
 
@@ -334,7 +337,7 @@ class TestOpenLLMetryMetadataPrompt:
 class TestOpenLLMetryTraceSource:
     def test_sets_trace_source(self, adapter, openllmetry_llm_attrs):
         result = adapter.normalize(openllmetry_llm_attrs)
-        assert result["fi.trace.source"] == "openllmetry"
+        assert result["gen_ai.trace.source"] == "openllmetry"
 
     def test_source_name(self, adapter):
         assert adapter.source_name == "openllmetry"

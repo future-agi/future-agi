@@ -229,3 +229,33 @@ def fi_native_llm_attrs(llm_call_data):
         "output.value": json.dumps(d["output_message"]),
         "output.mime_type": "application/json",
     }
+
+
+@pytest.fixture
+def fi_native_chain_attrs():
+    """FI-native attributes for a CHAIN span with input/output."""
+    return {
+        "fi.span.kind": "CHAIN",
+        "input.value": json.dumps({"query": "hello world"}),
+        "input.mime_type": "application/json",
+        "output.value": json.dumps({"answer": "hi there"}),
+        "output.mime_type": "application/json",
+    }
+
+
+@pytest.fixture
+def fi_native_chain_no_io_attrs():
+    """FI-native CHAIN span without input/output (manual instrumentation)."""
+    return {
+        "fi.span.kind": "CHAIN",
+    }
+
+
+@pytest.fixture
+def fi_native_legacy_io_attrs():
+    """FI-native span using legacy fi.llm.input/fi.llm.output keys."""
+    return {
+        "fi.span.kind": "CHAIN",
+        "fi.llm.input": json.dumps({"query": "test input"}),
+        "fi.llm.output": json.dumps({"result": "test output"}),
+    }
