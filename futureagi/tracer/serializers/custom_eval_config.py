@@ -7,6 +7,24 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 
 
+def is_rule_prompt_customized(custom_eval_config):
+    """Return True when CustomEvalConfig.config.rule_prompt overrides the eval template default.
+
+    Empty / whitespace-only overrides are treated as not-customized so the runtime falls back to
+    the template. Comparison against both `eval_template.config.rule_prompt` and
+    `eval_template.criteria` (the deterministic-eval slot) so saved-without-edit attachments
+    don't trip the flag.
+    """
+    config = getattr(custom_eval_config, "config", None) or {}
+    saved = (config.get("rule_prompt") or "").strip()
+    if not saved:
+        return False
+    tpl = custom_eval_config.eval_template
+    tpl_prompt = ((tpl.config or {}).get("rule_prompt") or "").strip()
+    tpl_criteria = (tpl.criteria or "").strip()
+    return saved != tpl_prompt and saved != tpl_criteria
+
+
 class CustomEvalConfigSerializer(serializers.ModelSerializer):
     eval_template = serializers.PrimaryKeyRelatedField(
         queryset=EvalTemplate.objects.all(), many=False
@@ -22,6 +40,7 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
     )
 
     eval_group = serializers.SerializerMethodField()
+    is_customized = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomEvalConfig
@@ -37,12 +56,16 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
             "kb_id",
             "model",
             "eval_group",
+            "is_customized",
         ]
 
     def get_eval_group(self, obj):
         if obj.eval_group:
             return obj.eval_group.name
         return None
+
+    def get_is_customized(self, obj):
+        return is_rule_prompt_customized(obj)
 
     def validate(self, attrs):
         eval_template = attrs.get("eval_template") or getattr(

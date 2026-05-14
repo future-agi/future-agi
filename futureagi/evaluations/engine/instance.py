@@ -404,6 +404,14 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
+    # Per-attachment rule_prompt override wins over template + version.
+    # `runtime_config` is UserEvalMetric.config (dataset path) or
+    # CustomEvalConfig.config (tracer path). If the user has set their
+    # own `rule_prompt` on the attachment, honor it. Empty string falls
+    # back via the `or` short-circuit.
+    if runtime_config and (runtime_config.get("rule_prompt") or None):
+        config["rule_prompt"] = runtime_config["rule_prompt"]
+
     # Runtime override merge.
     #
     # Priority (lowest to highest): template default → UserEvalMetric.run_config

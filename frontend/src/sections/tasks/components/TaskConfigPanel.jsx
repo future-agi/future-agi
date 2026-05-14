@@ -126,6 +126,8 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
 
   const hasError = !evalItem?.id;
 
+  const isCustomized = Boolean(evalItem?.is_customized);
+
   return (
     <Box
       sx={{
@@ -166,6 +168,24 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
           >
             {name}
           </Typography>
+
+          {isCustomized && (
+            <Tooltip title="This evaluation runs a custom prompt for this task — the template default is different.">
+              <Chip
+                label="Customized"
+                size="small"
+                variant="outlined"
+                sx={{
+                  height: 18,
+                  fontSize: "10px",
+                  fontWeight: 500,
+                  borderColor: "divider",
+                  color: "text.secondary",
+                  "& .MuiChip-label": { px: 0.75 },
+                }}
+              />
+            </Tooltip>
+          )}
 
           {/* Type-specific metadata — code shows language, llm/agent
               show model. Output type is always informative. */}
@@ -459,6 +479,7 @@ const TaskConfigPanel = ({
               ...corePayload.config,
             },
             mapping: evalConfig.mapping || {},
+            is_customized: resp?.result?.is_customized ?? false,
           };
         } else {
           const { data: resp } = await axios.post(
