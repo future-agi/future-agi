@@ -445,7 +445,7 @@ def process_eval_task(eval_task_id: str):
                         # For continuous, sampling applies to the CURRENT
                         # batch of unprocessed spans, not against accumulated
                         # offset.
-                        max_samples = max(int((sampling_rate / 100) * spans.count()), 1)
+                        max_samples = max(int((sampling_rate / 100) * pending_entities.count()), 1)
                     else:
                         max_samples = sample_size - runned_spans_count
                     if cnt is not None:
