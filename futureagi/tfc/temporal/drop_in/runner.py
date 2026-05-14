@@ -129,7 +129,10 @@ async def _start_activity_async(
     from temporalio.client import Client
 
     from tfc.temporal.common.client import get_client
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
     from tfc.temporal.drop_in.workflow import TaskRunnerInput, TaskRunnerWorkflow
+
+    activity_metadata = _ACTIVITY_REGISTRY.get(activity_name, {})
 
     logger.info(
         "start_activity_async_called",
@@ -185,6 +188,8 @@ async def _start_activity_async(
                 args=safe_args,
                 kwargs=safe_kwargs,
                 queue=queue,
+                max_retries=activity_metadata.get("max_retries"),
+                retry_delay=activity_metadata.get("retry_delay"),
             ),
             id=workflow_id,
             task_queue=queue,

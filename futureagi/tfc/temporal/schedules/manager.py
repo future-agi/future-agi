@@ -248,6 +248,9 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
             task_queue=config.queue,
         )
     else:
+        from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+
+        activity_metadata = _ACTIVITY_REGISTRY.get(config.activity_name, {})
         action = ScheduleActionStartWorkflow(
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
@@ -255,6 +258,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
                 args=[],
                 kwargs={},
                 queue=config.queue,
+                max_retries=activity_metadata.get("max_retries"),
+                retry_delay=activity_metadata.get("retry_delay"),
             ),
             id=f"scheduled-{config.schedule_id}",
             task_queue=config.queue,
@@ -337,6 +342,10 @@ async def a_register_schedules(
         schedules: List of schedule configs to register
         cleanup_orphans: If True, delete schedules not in the provided list (default: True)
     """
+    from tfc.temporal.common.registry import _import_temporal_activity_modules
+
+    _import_temporal_activity_modules()
+
     logger.info("registering_schedules", count=len(schedules))
 
     # Cleanup orphaned schedules first
