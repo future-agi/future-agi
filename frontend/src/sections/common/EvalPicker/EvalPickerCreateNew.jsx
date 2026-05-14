@@ -1157,6 +1157,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
                     onRowTypeChange={handleSourceRowTypeChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
@@ -1171,6 +1172,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
