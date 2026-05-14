@@ -314,6 +314,40 @@ describe("AnnotationQueueTable", () => {
       expect(screen.getByText("Archive")).toBeInTheDocument();
     });
 
+    it("uses viewer roles to show manager actions for workspace/org admins", async () => {
+      const user = userEvent.setup();
+      render(
+        <AnnotationQueueTable
+          {...defaultProps}
+          data={[
+            {
+              ...MOCK_QUEUES[0],
+              annotators: [
+                {
+                  id: "a2",
+                  user_id: "user-2",
+                  name: "Bob",
+                  role: "annotator",
+                },
+              ],
+              viewer_role: "manager",
+              viewer_roles: ["manager", "reviewer", "annotator"],
+            },
+          ]}
+        />,
+      );
+
+      const moreButtons = screen
+        .getAllByTestId("iconify")
+        .filter(
+          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+        );
+      await user.click(moreButtons[0].closest("button"));
+
+      expect(screen.getByText("Edit")).toBeInTheDocument();
+      expect(screen.getByText("Archive")).toBeInTheDocument();
+    });
+
     it("shows status transition for draft queue (Activate)", async () => {
       const user = userEvent.setup();
       render(<AnnotationQueueTable {...defaultProps} />);

@@ -43,6 +43,7 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { getRandomId, objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import {
   apiFilterHasValue,
   apiOpToPanel,
@@ -51,6 +52,7 @@ import {
   normalizeApiFilterOp,
   panelOperatorAndValueToApi,
 } from "src/sections/annotations/queues/utils/filter-operators";
+import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
 
 export const SOURCE_OPTIONS = [
   { value: "dataset_row", label: "Dataset Row" },
@@ -87,12 +89,7 @@ const SIMULATION_RULE_FILTER_FIELDS = [
     type: "categorical",
     choices: ["completed", "failed", "in_progress", "pending", "cancelled"],
   },
-  {
-    id: "persona",
-    name: "Persona",
-    category: "system",
-    type: "text",
-  },
+  ...SIMULATION_PERSONA_FILTER_FIELDS,
   {
     id: "agent_definition",
     name: "Agent Definition",
@@ -135,6 +132,7 @@ const SIMULATION_RULE_FILTER_FIELDS = [
 const SIMPLE_FILTER_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
   { key: "system", label: "System", icon: "mdi:tune-variant" },
+  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
 ];
 
 const SESSION_RULE_FILTER_FIELDS = [
@@ -410,7 +408,7 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       nextScope.is_voice_call = !!scope.is_voice_call;
       nextScope.remove_simulation_calls = !!scope.remove_simulation_calls;
     }
-    const apiFilters = toApiFilters(filters);
+    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
     return {
       operator: "and",
       rules: toRuleRows(apiFilters),
@@ -426,7 +424,7 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       scope.project_id,
     );
     if (projectId) nextScope.project_id = projectId;
-    const apiFilters = toApiFilters(filters);
+    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
     return {
       operator: "and",
       rules: toRuleRows(apiFilters),
@@ -438,7 +436,7 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   if (sourceType === "call_execution") {
     const agentId = resolveRuleScopeId(queue, queueAgentId, scope.project_id);
     if (agentId) nextScope.project_id = agentId;
-    const apiFilters = toApiFilters(filters);
+    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
     return {
       operator: "and",
       rules: toRuleRows(apiFilters),

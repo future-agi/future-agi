@@ -144,19 +144,39 @@ class TestAddItems:
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
     def test_add_items_requires_queue_manager(
-        self, auth_client, queue, dataset_with_rows, user
+        self, queue, dataset_with_rows, organization, workspace
     ):
         """Annotators can work items, but only managers can add items."""
-        _, rows = dataset_with_rows
-        demote_queue_creator_to_annotator(queue, user)
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
 
-        resp = auth_client.post(
+        _, rows = dataset_with_rows
+        annotator_user = User.objects.create_user(
+            email=f"queue-add-annotator-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Add Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+        resp = annotator_client.post(
             add_items_url(queue),
             {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
             format="json",
         )
 
         assert resp.status_code == status.HTTP_403_FORBIDDEN
+        annotator_client.stop_workspace_injection()
 
     def test_add_call_execution_with_agent_workspace_fallback(
         self, auth_client, queue, organization, workspace
@@ -370,20 +390,40 @@ class TestRemoveItems:
         assert list_resp.data["count"] == 1
 
     def test_annotator_can_self_claim_unassigned_item_but_not_manage_items(
-        self, auth_client, queue, dataset_with_rows, user
+        self, auth_client, queue, dataset_with_rows, organization, workspace
     ):
         """Annotators can self-claim unassigned items, but cannot manage items."""
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
         _, rows = dataset_with_rows
         item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
-        demote_queue_creator_to_annotator(queue, user)
+        annotator_user = User.objects.create_user(
+            email=f"queue-self-claim-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Self Claim Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
 
-        delete_resp = auth_client.delete(item_detail_url(queue, item_ids[0]))
-        bulk_resp = auth_client.post(
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+
+        delete_resp = annotator_client.delete(item_detail_url(queue, item_ids[0]))
+        bulk_resp = annotator_client.post(
             bulk_remove_url(queue),
             {"item_ids": item_ids[:1]},
             format="json",
         )
-        assign_other_resp = auth_client.post(
+        assign_other_resp = annotator_client.post(
             assign_items_url(queue),
             {
                 "item_ids": item_ids[:1],
@@ -392,11 +432,11 @@ class TestRemoveItems:
             },
             format="json",
         )
-        self_assign_resp = auth_client.post(
+        self_assign_resp = annotator_client.post(
             assign_items_url(queue),
             {
                 "item_ids": item_ids[:1],
-                "user_ids": [str(user.id)],
+                "user_ids": [str(annotator_user.id)],
                 "action": "set",
             },
             format="json",
@@ -407,28 +447,43 @@ class TestRemoveItems:
         assert assign_other_resp.status_code == status.HTTP_403_FORBIDDEN
         assert self_assign_resp.status_code == status.HTTP_200_OK
         item = QueueItem.objects.get(pk=item_ids[0])
-        assert item.assigned_to_id == user.id
+        assert item.assigned_to_id == annotator_user.id
         assert QueueItemAssignment.objects.filter(
             queue_item_id=item_ids[0],
-            user=user,
+            user=annotator_user,
             deleted=False,
         ).exists()
+        annotator_client.stop_workspace_injection()
 
     def test_annotator_cannot_self_assign_item_owned_by_another_user(
-        self, auth_client, queue, dataset_with_rows, user, organization
+        self, auth_client, queue, dataset_with_rows, organization, workspace
     ):
         """Self-claim is only for unassigned items; managers handle reassignment."""
         from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
         from tfc.constants.roles import OrganizationRoles
 
         _, rows = dataset_with_rows
         item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
+        annotator_user = User.objects.create_user(
+            email=f"queue-claim-denied-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Claim Denied Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
         other_user = User.objects.create_user(
             email=f"queue-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
             password="testpassword123",
             name="Queue Owner",
             organization=organization,
             organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
         )
         AnnotationQueueAnnotator.objects.create(
             queue_id=queue,
@@ -441,13 +496,15 @@ class TestRemoveItems:
             user=other_user,
         )
         QueueItem.objects.filter(pk=item_ids[0]).update(assigned_to=other_user)
-        demote_queue_creator_to_annotator(queue, user)
 
-        resp = auth_client.post(
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+        resp = annotator_client.post(
             assign_items_url(queue),
             {
                 "item_ids": item_ids[:1],
-                "user_ids": [str(user.id)],
+                "user_ids": [str(annotator_user.id)],
                 "action": "add",
             },
             format="json",
@@ -456,9 +513,10 @@ class TestRemoveItems:
         assert resp.status_code == status.HTTP_403_FORBIDDEN
         assert not QueueItemAssignment.objects.filter(
             queue_item_id=item_ids[0],
-            user=user,
+            user=annotator_user,
             deleted=False,
         ).exists()
+        annotator_client.stop_workspace_injection()
 
 
 # ---------------------------------------------------------------------------

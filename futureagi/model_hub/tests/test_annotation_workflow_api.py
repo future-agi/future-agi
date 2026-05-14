@@ -23,6 +23,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.core import mail
 from django.utils import timezone
 from rest_framework import status
 
@@ -388,12 +389,13 @@ class TestSubmitAnnotations:
 
     def test_submit_rejects_rework_targeted_to_another_annotator(
         self,
-        auth_client,
+        api_client,
         queue_with_items,
         user,
         second_user,
         label,
         organization,
+        workspace,
     ):
         """A per-score review rejection can only be reworked by its target."""
         queue_id, item_ids, _ = queue_with_items
@@ -418,13 +420,15 @@ class TestSubmitAnnotations:
             queue_item=item,
             reviewer=user,
             label=label,
-            target_annotator=second_user,
+            target_annotator=user,
             action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
-            comment="Only the second annotator should fix this score.",
+            comment="Only the target annotator should fix this score.",
             organization=organization,
         )
 
-        resp = auth_client.post(
+        api_client.force_authenticate(user=second_user)
+        api_client.set_workspace(workspace)
+        resp = api_client.post(
             submit_annotations_url(queue_id, item_ids[0]),
             {"annotations": [{"label_id": str(label.id), "value": "negative"}]},
             format="json",
@@ -1712,11 +1716,7 @@ class TestQueueItemDiscussion:
 
         assert resp.status_code == status.HTTP_200_OK
         assert on_commit.call_count == 2
-        send_message_to_channel.assert_called_once()
-        _, socket_payload = send_message_to_channel.call_args.args
-        assert socket_payload["type"] == "annotation_discussion_updated"
-        assert socket_payload["data"]["queue_id"] == str(queue_id)
-        assert socket_payload["data"]["item_id"] == str(item_ids[0])
+        send_message_to_channel.assert_not_called()
         email_helper.assert_called_once()
         subject, template, context, recipients = email_helper.call_args.args
         assert "added a comment" in subject
@@ -1725,6 +1725,604 @@ class TestQueueItemDiscussion:
         assert context["item_url"].endswith(
             f"/dashboard/annotations/queues/{queue_id}/annotate?itemId={item_ids[0]}"
         )
+
+    def test_discussion_comment_does_not_run_websocket_broadcast_inline(
+        self,
+        auth_client,
+        queue_with_items,
+        settings,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        settings.ANNOTATION_DISCUSSION_NOTIFICATIONS_ASYNC = True
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper"),
+            patch("model_hub.views.annotation_queues.threading.Thread") as thread_cls,
+            patch(
+                "model_hub.views.annotation_queues.send_message_to_channel"
+            ) as send_message_to_channel,
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {"comment": "Realtime delivery should not block the POST."},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert QueueItemReviewComment.objects.filter(
+            queue_item_id=item_ids[0],
+            comment="Realtime delivery should not block the POST.",
+        ).exists()
+        send_message_to_channel.assert_not_called()
+        assert thread_cls.return_value.start.call_count == 1
+
+    def test_discussion_comment_emails_typed_email_mention_without_payload_ids(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch(
+                "model_hub.views.annotation_queues.send_message_to_channel"
+            ) as send_message_to_channel,
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {"comment": f"Please check this @{second_user.email}."},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert created["mentioned_users"] == [
+            {
+                "id": str(second_user.id),
+                "name": second_user.name,
+                "email": second_user.email,
+            }
+        ]
+        comment = QueueItemReviewComment.objects.get(id=created["id"])
+        assert list(comment.mentioned_users.values_list("id", flat=True)) == [
+            second_user.id
+        ]
+        assert on_commit.call_count == 2
+        send_message_to_channel.assert_not_called()
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_emails_payload_email_mention(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": "Please check this from the payload mention.",
+                    "mentioned_user_ids": [f"@{second_user.email.upper()}"],
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert [user["email"] for user in created["mentioned_users"]] == [
+            second_user.email
+        ]
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_accepts_legacy_mentions_string_email(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": "Please check this legacy mention payload.",
+                    "mentions": f"@{second_user.email}",
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert [user["email"] for user in created["mentioned_users"]] == [
+            second_user.email
+        ]
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_emails_rich_mention_without_payload_ids(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": (
+                        "Please check this "
+                        f"@[Annotator Two](user:{second_user.id})."
+                    ),
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert [user["email"] for user in created["mentioned_users"]] == [
+            second_user.email
+        ]
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_email_resolves_case_insensitive_typed_email(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": (
+                        f"Please check this @{second_user.email.upper()}, thanks."
+                    ),
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert [user["email"] for user in created["mentioned_users"]] == [
+            second_user.email
+        ]
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_dedupes_mentions_and_suppresses_actor_email(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        third_user,
+        user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        for member in (second_user, third_user):
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue_id=queue_id,
+                user=member,
+                defaults={
+                    "role": AnnotatorRole.ANNOTATOR.value,
+                    "roles": [AnnotatorRole.ANNOTATOR.value],
+                },
+            )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": (
+                        f"Looping @{second_user.email} @{second_user.email} "
+                        f"@{third_user.email} @{user.email}."
+                    ),
+                    "mentioned_user_ids": [str(second_user.id), str(third_user.id)],
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert {member["email"] for member in created["mentioned_users"]} == {
+            second_user.email,
+            third_user.email,
+            user.email,
+        }
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert set(recipients) == {second_user.email, third_user.email}
+        assert user.email not in recipients
+
+    def test_discussion_comment_self_mention_does_not_email_actor(
+        self,
+        auth_client,
+        queue_with_items,
+        user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {"comment": f"Reminder for myself @{user.email}."},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert [member["email"] for member in created["mentioned_users"]] == [
+            user.email
+        ]
+        email_helper.assert_not_called()
+
+    def test_discussion_comment_ignores_unknown_typed_email_mention(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {"comment": "Can @missing.person@example.com check this?"},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert created["mentioned_users"] == []
+        email_helper.assert_not_called()
+
+    def test_discussion_comment_rejects_invalid_mention_payload(
+        self,
+        auth_client,
+        queue_with_items,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "Invalid mention payload.",
+                "mentioned_user_ids": ["not-a-user-or-email"],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid mentioned user" in str(resp.data)
+
+    def test_discussion_comment_rejects_non_list_mention_payload(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "Invalid mention payload shape.",
+                "mentioned_user_ids": {"id": str(second_user.id)},
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "mentioned_user_ids must be a list" in str(resp.data)
+
+    def test_discussion_comment_rejects_non_member_uuid_mention(
+        self,
+        auth_client,
+        queue_with_items,
+        third_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+
+        resp = auth_client.post(
+            discussion_url(queue_id, item_ids[0]),
+            {
+                "comment": "This user exists but is not a queue member.",
+                "mentioned_user_ids": [str(third_user.id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Mentioned users must be members of this queue" in str(resp.data)
+
+    def test_discussion_comment_rejects_too_many_mentions(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        third_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        for member in (second_user, third_user):
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue_id=queue_id,
+                user=member,
+                defaults={
+                    "role": AnnotatorRole.ANNOTATOR.value,
+                    "roles": [AnnotatorRole.ANNOTATOR.value],
+                },
+            )
+
+        with patch(
+            "model_hub.views.annotation_queues.MAX_MENTIONED_USERS_PER_COMMENT",
+            1,
+        ):
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": "Too many people mentioned.",
+                    "mentioned_user_ids": [str(second_user.id), str(third_user.id)],
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "At most 1 users can be mentioned" in str(resp.data)
+
+    def test_discussion_comment_emails_target_annotator_without_inline_mention(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": "This feedback is for this annotator.",
+                    "target_annotator_id": str(second_user.id),
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        created = _result(resp)["comment"]
+        assert created["target_annotator_id"] == str(second_user.id)
+        assert [user["email"] for user in created["mentioned_users"]] == [
+            second_user.email
+        ]
+        email_helper.assert_called_once()
+        *_, recipients = email_helper.call_args.args
+        assert recipients == [second_user.email]
+
+    def test_discussion_comment_sends_rendered_email_with_locmem_backend(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        mail.outbox = []
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.send_message_to_channel"),
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {"comment": f"Rendered email check @{second_user.email}."},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert len(mail.outbox) == 1
+        message = mail.outbox[0]
+        assert message.to == [second_user.email]
+        assert "added a comment" in message.subject
+        assert "Rendered email check" in message.body
+        html_body = (
+            message.alternatives[0].content
+            if hasattr(message.alternatives[0], "content")
+            else message.alternatives[0][0]
+        )
+        assert (
+            f"/dashboard/annotations/queues/{queue_id}/annotate?itemId={item_ids[0]}"
+            in html_body
+        )
+
+    def test_discussion_email_delivery_does_not_block_real_email_backends(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        settings,
+    ):
+        queue_id, item_ids, _ = queue_with_items
+        settings.EMAIL_BACKEND = "anymail.backends.mailgun.EmailBackend"
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+
+        with (
+            patch(
+                "model_hub.views.annotation_queues.transaction.on_commit"
+            ) as on_commit,
+            patch("model_hub.views.annotation_queues.email_helper") as email_helper,
+            patch("model_hub.views.annotation_queues.threading.Thread") as thread_cls,
+            patch(
+                "model_hub.views.annotation_queues.send_message_to_channel"
+            ) as send_message_to_channel,
+        ):
+            on_commit.side_effect = lambda callback: callback()
+            resp = auth_client.post(
+                discussion_url(queue_id, item_ids[0]),
+                {
+                    "comment": f"Please check this @[Narda](user:{second_user.id}).",
+                    "mentioned_user_ids": [str(second_user.id)],
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        email_helper.assert_not_called()
+        send_message_to_channel.assert_not_called()
+        assert thread_cls.call_count == 2
+        thread_names = {call.kwargs["name"] for call in thread_cls.call_args_list}
+        assert any(
+            name.startswith("annotation-discussion-broadcast-")
+            for name in thread_names
+        )
+        assert any(
+            name.startswith("annotation-discussion-email-") for name in thread_names
+        )
+        for call in thread_cls.call_args_list:
+            assert call.kwargs["daemon"] is True
+        assert thread_cls.return_value.start.call_count == 2
 
     def test_item_level_comment_emails_reviewers_and_managers_not_all_annotators(
         self,
@@ -2516,6 +3114,7 @@ class TestNextItem:
         queue_with_items,
         user,
         second_user,
+        third_user,
         workspace,
         label,
         organization,
@@ -2538,6 +3137,11 @@ class TestNextItem:
             user=second_user,
             defaults={"role": AnnotatorRole.ANNOTATOR.value},
         )
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={"role": AnnotatorRole.ANNOTATOR.value},
+        )
         QueueItemReviewComment.objects.create(
             queue_item=item,
             reviewer=user,
@@ -2548,9 +3152,12 @@ class TestNextItem:
             organization=organization,
         )
 
-        non_target_resp = auth_client.get(next_item_url(queue_id))
-
         from conftest import WorkspaceAwareAPIClient
+
+        third_client = WorkspaceAwareAPIClient()
+        third_client.force_authenticate(user=third_user)
+        third_client.set_workspace(workspace)
+        non_target_resp = third_client.get(next_item_url(queue_id))
 
         second_client = WorkspaceAwareAPIClient()
         second_client.force_authenticate(user=second_user)
@@ -2561,6 +3168,7 @@ class TestNextItem:
         assert _result(non_target_resp)["item"]["id"] == str(item_ids[2])
         assert target_resp.status_code == status.HTTP_200_OK
         assert _result(target_resp)["item"]["id"] == str(item_ids[0])
+        third_client.stop_workspace_injection()
         second_client.stop_workspace_injection()
 
     def test_next_keeps_global_rework_visible_when_targeted_rework_coexists(
@@ -2859,6 +3467,379 @@ class TestAnnotateDetail:
         assert str(annotate_values[0]["annotator"]) == str(user.id)
         assert review_resp.status_code == status.HTTP_200_OK
         assert len(_result(review_resp)["annotations"]) == 2
+
+    def test_manager_review_view_can_see_all_annotations_without_review_required(
+        self,
+        queue_with_items,
+        user,
+        second_user,
+        third_user,
+        organization,
+        workspace,
+    ):
+        """Managers need an explicit comparison mode even on non-review queues."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        assert queue.requires_review is False
+        item = QueueItem.objects.get(pk=item_ids[0])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
+        )
+        _create_score_for_item(item, label, user, organization, value="positive")
+        _create_score_for_item(item, label, second_user, organization, value="negative")
+
+        manager_client = WorkspaceAwareAPIClient()
+        manager_client.force_authenticate(user=third_user)
+        manager_client.set_workspace(workspace)
+
+        own_resp = manager_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        review_resp = manager_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"view_mode": "review"},
+        )
+        scoped_resp = manager_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"view_mode": "review", "annotator_id": str(second_user.id)},
+        )
+
+        assert own_resp.status_code == status.HTTP_200_OK
+        assert _result(own_resp)["annotations"] == []
+        assert review_resp.status_code == status.HTTP_200_OK
+        assert {ann["value"] for ann in _result(review_resp)["annotations"]} == {
+            "positive",
+            "negative",
+        }
+        assert scoped_resp.status_code == status.HTTP_200_OK
+        scoped_annotations = _result(scoped_resp)["annotations"]
+        assert len(scoped_annotations) == 1
+        assert scoped_annotations[0]["value"] == "negative"
+        manager_client.stop_workspace_injection()
+
+    def test_reviewer_review_view_can_see_all_annotations_without_review_required(
+        self,
+        queue_with_items,
+        user,
+        second_user,
+        third_user,
+        organization,
+        workspace,
+    ):
+        """Reviewer-only users can compare submissions on non-review queues."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        assert queue.requires_review is False
+        item = QueueItem.objects.get(pk=item_ids[0])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.REVIEWER.value,
+                "roles": [AnnotatorRole.REVIEWER.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        _create_score_for_item(item, label, user, organization, value="positive")
+        _create_score_for_item(item, label, third_user, organization, value="negative")
+
+        reviewer_client = WorkspaceAwareAPIClient()
+        reviewer_client.force_authenticate(user=second_user)
+        reviewer_client.set_workspace(workspace)
+
+        own_resp = reviewer_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        review_resp = reviewer_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"view_mode": "review"},
+        )
+        legacy_alias_resp = reviewer_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"mode": "submissions"},
+        )
+        include_all_resp = reviewer_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"include_all_annotations": "true"},
+        )
+
+        assert own_resp.status_code == status.HTTP_200_OK
+        assert _result(own_resp)["annotations"] == []
+        for resp in (review_resp, legacy_alias_resp, include_all_resp):
+            assert resp.status_code == status.HTTP_200_OK
+            assert {ann["value"] for ann in _result(resp)["annotations"]} == {
+                "positive",
+                "negative",
+            }
+        reviewer_client.stop_workspace_injection()
+
+    def test_annotator_cannot_force_review_view_to_see_other_annotations(
+        self,
+        queue_with_items,
+        user,
+        second_user,
+        organization,
+        workspace,
+    ):
+        """Annotators cannot bypass own-draft scoping with review query params."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, label = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        _create_score_for_item(item, label, user, organization, value="positive")
+        _create_score_for_item(item, label, second_user, organization, value="negative")
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=second_user)
+        annotator_client.set_workspace(workspace)
+
+        forced_review_resp = annotator_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {
+                "view_mode": "review",
+                "include_all_annotations": "true",
+                "annotator_id": str(user.id),
+            },
+        )
+
+        assert forced_review_resp.status_code == status.HTTP_200_OK
+        annotations = _result(forced_review_resp)["annotations"]
+        assert len(annotations) == 1
+        assert annotations[0]["value"] == "negative"
+        assert str(annotations[0]["annotator"]) == str(second_user.id)
+        annotator_client.stop_workspace_injection()
+
+    def test_reviewer_pending_review_detail_can_see_all_annotations(
+        self,
+        queue_with_items,
+        user,
+        second_user,
+        third_user,
+        organization,
+        workspace,
+    ):
+        """The existing review_status=pending_review path still compares all."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        queue.requires_review = True
+        queue.save(update_fields=["requires_review", "updated_at"])
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.REVIEWER.value,
+                "roles": [AnnotatorRole.REVIEWER.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        _create_score_for_item(item, label, user, organization, value="positive")
+        _create_score_for_item(item, label, third_user, organization, value="negative")
+
+        reviewer_client = WorkspaceAwareAPIClient()
+        reviewer_client.force_authenticate(user=second_user)
+        reviewer_client.set_workspace(workspace)
+
+        resp = reviewer_client.get(
+            annotate_detail_url(queue_id, item_ids[0]),
+            {"review_status": "pending_review"},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert {ann["value"] for ann in _result(resp)["annotations"]} == {
+            "positive",
+            "negative",
+        }
+        reviewer_client.stop_workspace_injection()
+
+    def test_manager_submission_navigation_can_browse_assigned_completed_items(
+        self,
+        queue_with_items,
+        second_user,
+        third_user,
+        workspace,
+    ):
+        """View-submissions navigation is full-queue, not manager's own assignment."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
+        )
+        items = QueueItem.objects.filter(pk__in=item_ids)
+        items.update(status=QueueItemStatus.COMPLETED.value)
+        for item in items:
+            QueueItemAssignment.objects.get_or_create(
+                queue_item=item,
+                user=second_user,
+            )
+
+        manager_client = WorkspaceAwareAPIClient()
+        manager_client.force_authenticate(user=third_user)
+        manager_client.set_workspace(workspace)
+
+        default_resp = manager_client.get(
+            next_item_url(queue_id),
+            {"include_completed": "true"},
+        )
+        review_resp = manager_client.get(
+            next_item_url(queue_id),
+            {"view_mode": "review", "include_completed": "true"},
+        )
+
+        assert default_resp.status_code == status.HTTP_200_OK
+        assert _result(default_resp)["item"] is None
+        assert review_resp.status_code == status.HTTP_200_OK
+        assert _result(review_resp)["item"]["id"] in {
+            str(item_id) for item_id in item_ids
+        }
+        manager_client.stop_workspace_injection()
+
+    def test_reviewer_submission_navigation_can_browse_assigned_review_items(
+        self,
+        queue_with_items,
+        second_user,
+        third_user,
+        workspace,
+    ):
+        """Reviewer navigation is not scoped to the reviewer's assignments."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, _ = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        queue.requires_review = True
+        queue.save(update_fields=["requires_review", "updated_at"])
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=third_user,
+            defaults={
+                "role": AnnotatorRole.REVIEWER.value,
+                "roles": [AnnotatorRole.REVIEWER.value],
+            },
+        )
+        QueueItemAssignment.objects.get_or_create(
+            queue_item=item,
+            user=second_user,
+        )
+
+        reviewer_client = WorkspaceAwareAPIClient()
+        reviewer_client.force_authenticate(user=third_user)
+        reviewer_client.set_workspace(workspace)
+
+        resp = reviewer_client.get(
+            next_item_url(queue_id),
+            {"view_mode": "review", "review_status": "pending_review"},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"]["id"] == str(item.id)
+        reviewer_client.stop_workspace_injection()
+
+    def test_annotator_cannot_use_review_navigation_to_browse_others_items(
+        self,
+        queue_with_items,
+        user,
+        second_user,
+        workspace,
+    ):
+        """Non-reviewers stay assignment-scoped even with review query params."""
+        from conftest import WorkspaceAwareAPIClient
+
+        queue_id, item_ids, _ = queue_with_items
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        items = QueueItem.objects.filter(pk__in=item_ids)
+        items.update(status=QueueItemStatus.COMPLETED.value)
+        for item in items:
+            QueueItemAssignment.objects.get_or_create(queue_item=item, user=user)
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=second_user)
+        annotator_client.set_workspace(workspace)
+
+        resp = annotator_client.get(
+            next_item_url(queue_id),
+            {
+                "view_mode": "review",
+                "include_completed": "true",
+                "include_all_annotations": "true",
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"] is None
+        annotator_client.stop_workspace_injection()
 
     def test_reviewer_annotate_detail_rejects_invalid_annotator_selection(
         self, auth_client, queue_with_items
@@ -3425,6 +4406,11 @@ class TestFullAnnotationWorkflow:
     def test_end_to_end_flow(self, auth_client, queue_with_items):
         """Full flow: annotate detail -> submit -> complete -> next -> skip."""
         queue_id, item_ids, label = queue_with_items
+        base_time = timezone.now()
+        for index, item_id in enumerate(item_ids):
+            QueueItem.objects.filter(pk=item_id).update(
+                created_at=base_time + timedelta(minutes=len(item_ids) - index)
+            )
 
         # 1. Open annotate detail for first item
         resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))

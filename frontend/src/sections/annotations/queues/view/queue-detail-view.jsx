@@ -54,6 +54,10 @@ import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
+import {
+  canOpenSubmissionWorkspace,
+  resolveQueueItemWorkspaceMode,
+} from "../annotate/annotation-view-mode";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -131,9 +135,21 @@ export default function QueueDetailView() {
   const items = useMemo(() => itemsData?.results || [], [itemsData?.results]);
   const totalCount = itemsData?.count || 0;
 
-  const currentUserId = String(user?.id || user?.pk || user?.user_id || "");
+  const currentUserId = String(
+    user?.id ||
+      user?.pk ||
+      user?.user_id ||
+      user?.userId ||
+      (typeof window !== "undefined"
+        ? window.sessionStorage.getItem("currentUserId")
+        : "") ||
+      "",
+  );
   const myQueueMembership = useMemo(() => {
     if (!queue || !user) return null;
+    if (Array.isArray(queue.viewer_roles) && queue.viewer_roles.length > 0) {
+      return { role: queue.viewer_role, roles: queue.viewer_roles };
+    }
     const annotators = queue.annotators || [];
     return annotators.find((a) => String(a.user_id) === currentUserId) || null;
   }, [queue, user, currentUserId]);
@@ -141,9 +157,8 @@ export default function QueueDetailView() {
   const isManager = hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
   const canAnnotateQueue =
     hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) || isManager;
-  const canReviewQueue =
-    queue?.requires_review &&
-    (hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) || isManager);
+  const canViewSubmissions =
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) || isManager;
 
   const queueAnnotators = useMemo(
     () =>
@@ -158,6 +173,11 @@ export default function QueueDetailView() {
     queueItemCount > 0 &&
     (queue?.status === "active" ||
       (queue?.status === "completed" && (progress?.skipped || 0) > 0));
+  const canOpenSubmissions = canOpenSubmissionWorkspace({
+    itemCount: queueItemCount,
+    canViewSubmissions,
+    queueStatus: queue?.status,
+  });
 
   // Ordered tab labels based on role — items is always 0
   const tabLabels = useMemo(
@@ -216,9 +236,16 @@ export default function QueueDetailView() {
 
   const handleAssign = useCallback(
     ({ itemIds, userId, userIds, action }) => {
-      assignItems({ queueId, itemIds, userId, userIds, action });
+      assignItems({
+        queueId,
+        itemIds,
+        userId,
+        userIds,
+        action,
+        assignees: queueAnnotators,
+      });
     },
-    [queueId, assignItems],
+    [queueId, assignItems, queueAnnotators],
   );
 
   const handleOpenBulkAssign = useCallback(() => {
@@ -273,6 +300,7 @@ export default function QueueDetailView() {
         itemIds: Array.from(selectedIds),
         userIds: Array.from(bulkAssignUserIds),
         action: "set",
+        assignees: queueAnnotators,
       },
       {
         onSuccess: () => {
@@ -287,7 +315,7 @@ export default function QueueDetailView() {
     queueId,
     selectedIds,
     bulkAssignUserIds,
-    queueAnnotators.length,
+    queueAnnotators,
     isAssigningItems,
     clearSelectedItems,
   ]);
@@ -363,14 +391,14 @@ export default function QueueDetailView() {
             Export to Dataset
           </MenuItem>
         </Menu>
-        {canStartWork && canReviewQueue && (
+        {canOpenSubmissions && (
           <Button
             variant={canAnnotateQueue ? "outlined" : "contained"}
             color="primary"
             startIcon={<Iconify icon="solar:checklist-bold" />}
             onClick={() => handleOpenAnnotationWorkspace("review")}
           >
-            Review Items
+            {queue?.requires_review ? "Review Items" : "View Submissions"}
           </Button>
         )}
         {canStartWork && canAnnotateQueue && (
@@ -670,13 +698,15 @@ export default function QueueDetailView() {
               onSelectAll={handleSelectAll}
               onRemove={isManager ? handleRemove : undefined}
               onItemClick={(item) => {
-                if (queue?.status === "active") {
-                  const mode =
-                    item.review_status === "pending_review" && canReviewQueue
-                      ? "review"
-                      : canAnnotateQueue
-                        ? "annotate"
-                        : "review";
+                if (
+                  queue?.status === "active" ||
+                  queue?.status === "completed"
+                ) {
+                  const mode = resolveQueueItemWorkspaceMode({
+                    item,
+                    canViewSubmissions,
+                    canAnnotate: canAnnotateQueue,
+                  });
                   navigate(
                     `${paths.dashboard.annotations.annotate(queueId)}?itemId=${item.id}&mode=${mode}`,
                   );

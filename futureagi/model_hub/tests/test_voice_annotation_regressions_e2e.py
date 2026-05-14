@@ -1489,3 +1489,134 @@ class TestVoiceAnnotationRegressionE2E:
         assert complete_resp.status_code == status.HTTP_200_OK, complete_resp.data
         item.refresh_from_db()
         assert item.status == QueueItemStatus.IN_PROGRESS.value
+
+    def test_export_slots_prioritize_queue_scores_over_older_inline_scores(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        queue = _queue(
+            "Queue score slot export order",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+            annotations_required=2,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.COMPLETED.value,
+            order=1,
+        )
+        inline_annotator = User.objects.create_user(
+            email=f"older-inline-annotator-{uuid.uuid4().hex[:8]}@example.com",
+            password="test",
+            name="Older Inline Annotator",
+            organization=organization,
+        )
+
+        older_inline_score = Score.objects.create(
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            label=thumbs_label,
+            value={"value": "down"},
+            notes="older inline source note",
+            annotator=inline_annotator,
+            organization=organization,
+            workspace=workspace,
+        )
+        older_inline_score.created_at = timezone.now() - timedelta(days=1)
+        older_inline_score.save(update_fields=["created_at"])
+
+        queue_score = Score.objects.create(
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            label=thumbs_label,
+            value={"value": "up"},
+            notes="queue label note",
+            annotator=user,
+            queue_item=item,
+            organization=organization,
+            workspace=workspace,
+        )
+        queue_score.created_at = timezone.now()
+        queue_score.save(update_fields=["created_at"])
+
+        label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
+        label_slot_1_notes_field = f"label:{thumbs_label.id}:slot:1:notes"
+        label_slot_1_annotator_field = (
+            f"label:{thumbs_label.id}:slot:1:annotator_email"
+        )
+        label_slot_2_value_field = f"label:{thumbs_label.id}:slot:2:value"
+        label_slot_2_notes_field = f"label:{thumbs_label.id}:slot:2:notes"
+
+        dataset_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
+            {
+                "dataset_name": f"Queue-first export {uuid.uuid4().hex[:8]}",
+                "status_filter": "completed",
+                "column_mapping": [
+                    {
+                        "field": "annotation_metrics",
+                        "column": "annotation_metrics",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_1_value_field,
+                        "column": "slot_1_value",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_1_notes_field,
+                        "column": "slot_1_notes",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_1_annotator_field,
+                        "column": "slot_1_annotator",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_2_value_field,
+                        "column": "slot_2_value",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_2_notes_field,
+                        "column": "slot_2_notes",
+                        "enabled": True,
+                    },
+                ],
+            },
+            format="json",
+        )
+        assert dataset_resp.status_code == status.HTTP_200_OK, dataset_resp.data
+        dataset = Dataset.objects.get(id=dataset_resp.data["result"]["dataset_id"])
+        row = Row.objects.get(dataset=dataset, deleted=False)
+        cells = {
+            cell.column.name: cell.value
+            for cell in Cell.objects.filter(row=row).select_related("column")
+        }
+        assert cells["slot_1_value"] == json.dumps({"value": "up"})
+        assert cells["slot_1_notes"] == "queue label note"
+        assert cells["slot_1_annotator"] == user.email
+        assert cells["slot_2_value"] == json.dumps({"value": "down"})
+        assert cells["slot_2_notes"] == "older inline source note"
+        metrics = json.loads(cells["annotation_metrics"])[thumbs_label.name]
+        assert [entry["notes"] for entry in metrics] == [
+            "queue label note",
+            "older inline source note",
+        ]
+        assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
+            "queue label note"
+        )

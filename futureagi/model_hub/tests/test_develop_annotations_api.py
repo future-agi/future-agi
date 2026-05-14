@@ -759,6 +759,37 @@ class TestUserViewSet:
             str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
         }
 
+    def test_workspace_member_queryset_includes_org_admin_auto_access_user(
+        self, organization, workspace
+    ):
+        """Org Admin+ users appear in queue settings even without explicit WS rows."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        admin_user = User.objects.create_user(
+            email="workspace-auto-admin@example.com",
+            password="testpassword123",
+            name="Workspace Auto Admin",
+            organization=None,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=admin_user,
+            organization=organization,
+            role=OrganizationRoles.ADMIN,
+            level=Level.ADMIN,
+            is_active=True,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        view.request = SimpleNamespace(query_params={}, workspace=workspace)
+
+        assert str(admin_user.id) in {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
+
 
 # ==================== AnnotationSummaryView Tests ====================
 

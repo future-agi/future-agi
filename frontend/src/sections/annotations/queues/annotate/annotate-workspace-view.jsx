@@ -43,15 +43,16 @@ import LabelPanel from "./label-panel";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
 import { CollaborationDrawer } from "./discussion-panel";
 import ItemAssignmentPanel from "./item-assignment-panel";
-import { ALL_ANNOTATORS } from "./annotation-view-mode";
+import {
+  ALL_ANNOTATORS,
+  WORKSPACE_MODES,
+  canUseCompletedNavigation,
+  resolveAnnotationWorkspaceMode,
+} from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 
 const MAX_HISTORY = 50;
-const WORKSPACE_MODES = {
-  ANNOTATE: "annotate",
-  REVIEW: "review",
-};
 
 function historyReducer(state, action) {
   switch (action.type) {
@@ -140,6 +141,81 @@ function commentScopeKey(labelId, targetAnnotatorId) {
   return "item";
 }
 
+function queueMembershipForUser(queueDetail, currentUserId) {
+  if (!queueDetail || !currentUserId) return null;
+  if (
+    Array.isArray(queueDetail.viewer_roles) &&
+    queueDetail.viewer_roles.length > 0
+  ) {
+    return {
+      role: queueDetail.viewer_role,
+      roles: queueDetail.viewer_roles,
+    };
+  }
+  return (queueDetail.annotators || []).find(
+    (a) => String(a.user_id) === String(currentUserId),
+  );
+}
+
+function queueRoleAccess(membership) {
+  return {
+    canReview:
+      hasQueueRole(membership, QUEUE_ROLES.REVIEWER) ||
+      hasQueueRole(membership, QUEUE_ROLES.MANAGER),
+    canAnnotate:
+      hasQueueRole(membership, QUEUE_ROLES.ANNOTATOR) ||
+      hasQueueRole(membership, QUEUE_ROLES.MANAGER),
+  };
+}
+
+function itemAssignedToOther({ queueDetail, detail, currentUserId }) {
+  const assignedUsers = detail?.item?.assigned_users || [];
+  const hasAssignments = assignedUsers.length > 0;
+  const isAssignedToMe = assignedUsers.some(
+    (a) => String(a.id) === String(currentUserId),
+  );
+  return (
+    queueDetail?.auto_assign === false && hasAssignments && !isAssignedToMe
+  );
+}
+
+function isLockedForReview({
+  detail,
+  requiresReview,
+  isReviewMode,
+  currentUserId,
+}) {
+  if (
+    isReviewMode ||
+    !requiresReview ||
+    detail?.item?.review_status !== "pending_review"
+  ) {
+    return false;
+  }
+
+  const currentUserHasAnnotations = (detail?.annotations || []).some(
+    (annotation) => String(annotation?.annotator) === String(currentUserId),
+  );
+  const hasOpenReworkForCurrentUser = (detail?.review_comments || []).some(
+    (comment) => {
+      const isOpen =
+        !comment?.thread_status ||
+        ["open", "reopened"].includes(comment.thread_status);
+      const targetsCurrentUser =
+        !comment?.target_annotator_id ||
+        String(comment.target_annotator_id) === String(currentUserId);
+      return (
+        comment?.action === "request_changes" &&
+        comment?.blocking !== false &&
+        isOpen &&
+        targetsCurrentUser
+      );
+    },
+  );
+
+  return currentUserHasAnnotations && !hasOpenReworkForCurrentUser;
+}
+
 export default function AnnotateWorkspaceView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
@@ -167,23 +243,38 @@ export default function AnnotateWorkspaceView() {
     [],
   );
 
-  const { data: progress } = useQueueProgress(queueId);
-  const { data: queueDetail } = useAnnotationQueueDetail(queueId);
-  const currentUserId = String(user?.id || user?.pk || "");
+  const { data: progress } = useQueueProgress(queueId, {
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+  });
+  const {
+    data: queueDetail,
+    isFetching: isQueueDetailFetching,
+    refetch: refetchQueueDetail,
+  } = useAnnotationQueueDetail(queueId, {
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: 15000,
+  });
+  const currentUserId = String(
+    user?.id ||
+      user?.pk ||
+      user?.user_id ||
+      user?.userId ||
+      (typeof window !== "undefined"
+        ? window.sessionStorage.getItem("currentUserId")
+        : "") ||
+      "",
+  );
 
-  const myQueueMembership = useMemo(() => {
-    if (!queueDetail?.annotators || !user) return null;
-    return queueDetail.annotators.find(
-      (a) => String(a.user_id) === currentUserId,
-    );
-  }, [queueDetail, user, currentUserId]);
+  const myQueueMembership = useMemo(
+    () => (user ? queueMembershipForUser(queueDetail, currentUserId) : null),
+    [queueDetail, user, currentUserId],
+  );
 
-  const canReview =
-    hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) ||
-    hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
-  const canAnnotate =
-    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) ||
-    hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const { canReview, canAnnotate } = queueRoleAccess(myQueueMembership);
   const canManageAssignments = hasQueueRole(
     myQueueMembership,
     QUEUE_ROLES.MANAGER,
@@ -191,21 +282,37 @@ export default function AnnotateWorkspaceView() {
   const canDiscuss = canAnnotate || canReview;
   const requiresReview = queueDetail?.requires_review === true;
   const requestedMode = searchParams.get("mode");
-  const workspaceMode =
-    requestedMode === WORKSPACE_MODES.REVIEW && canReview && requiresReview
-      ? WORKSPACE_MODES.REVIEW
-      : requestedMode === WORKSPACE_MODES.ANNOTATE && canAnnotate
-        ? WORKSPACE_MODES.ANNOTATE
-        : canReview && requiresReview && !canAnnotate
-          ? WORKSPACE_MODES.REVIEW
-          : WORKSPACE_MODES.ANNOTATE;
+  const workspaceMode = resolveAnnotationWorkspaceMode({
+    requestedMode,
+    canReview,
+    canAnnotate,
+  });
   const isReviewWorkspaceMode = workspaceMode === WORKSPACE_MODES.REVIEW;
+  const canBrowseCompletedItems = canUseCompletedNavigation({
+    isReviewMode: isReviewWorkspaceMode,
+    canAnnotate,
+    queueStatus: queueDetail?.status,
+  });
   const includeCompletedItems =
-    !isReviewWorkspaceMode && searchParams.get("includeCompleted") === "true";
+    canBrowseCompletedItems && searchParams.get("includeCompleted") === "true";
+
+  useEffect(() => {
+    if (!queueDetail || canBrowseCompletedItems) return;
+    if (searchParams.get("includeCompleted") !== "true") return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("includeCompleted");
+    setSearchParams(nextParams, { replace: true });
+  }, [canBrowseCompletedItems, queueDetail, searchParams, setSearchParams]);
   const nextItemModeFilters = useMemo(
     () =>
       isReviewWorkspaceMode
-        ? { reviewStatus: "pending_review" }
+        ? {
+            viewMode: "review",
+            ...(requiresReview
+              ? { reviewStatus: "pending_review" }
+              : { includeCompleted: true }),
+          }
         : requiresReview
           ? {
               excludeReviewStatus: "pending_review",
@@ -217,7 +324,12 @@ export default function AnnotateWorkspaceView() {
   const navigationModeParams = useMemo(
     () =>
       isReviewWorkspaceMode
-        ? { review_status: "pending_review" }
+        ? {
+            view_mode: "review",
+            ...(requiresReview
+              ? { review_status: "pending_review" }
+              : { include_completed: true }),
+          }
         : requiresReview
           ? {
               exclude_review_status: "pending_review",
@@ -324,13 +436,19 @@ export default function AnnotateWorkspaceView() {
     isLoading: detailLoading,
     isFetching: detailFetching,
     error: detailError,
+    refetch: refetchAnnotateDetail,
   } = useAnnotateDetail(queueId, currentItemId, {
     annotatorId: scopedAnnotatorId,
     includeCompleted: includeCompletedItems,
-    reviewStatus: isReviewWorkspaceMode ? "pending_review" : undefined,
+    viewMode: isReviewWorkspaceMode ? "review" : undefined,
+    reviewStatus:
+      isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     excludeReviewStatus:
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     enabled: detailEnabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
     enabled: detailEnabled,
@@ -460,32 +578,12 @@ export default function AnnotateWorkspaceView() {
     (detail?.annotations || []).length > 0;
   const showReviewActions =
     isReviewWorkspaceMode && isPendingReview && hasSubmittedAnnotations;
-  const currentUserHasAnnotations = (detail?.annotations || []).some(
-    (annotation) => String(annotation?.annotator) === String(currentUserId),
-  );
-  const hasOpenReworkForCurrentUser = (detail?.review_comments || []).some(
-    (comment) => {
-      const isOpen =
-        !comment?.thread_status ||
-        ["open", "reopened"].includes(comment.thread_status);
-      const targetsCurrentUser =
-        !comment?.target_annotator_id ||
-        String(comment.target_annotator_id) === String(currentUserId);
-      return (
-        comment?.action === "request_changes" &&
-        comment?.blocking !== false &&
-        isOpen &&
-        targetsCurrentUser
-      );
-    },
-  );
-  const canAnnotatePendingReview =
-    !currentUserHasAnnotations || hasOpenReworkForCurrentUser;
-  const isAnnotateLockedForReview =
-    !isReviewWorkspaceMode &&
-    requiresReview &&
-    isPendingReview &&
-    !canAnnotatePendingReview;
+  const isAnnotateLockedForReview = isLockedForReview({
+    detail,
+    requiresReview,
+    isReviewMode: isReviewWorkspaceMode,
+    currentUserId,
+  });
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
@@ -503,8 +601,11 @@ export default function AnnotateWorkspaceView() {
       : null;
   // Unassigned manual items are claimable. Only explicitly assigned-to-other
   // items should become read-only/blocked in the annotate workspace.
-  const cannotAnnotate =
-    isManualAssignment && hasAssignments && !isAssignedToMe;
+  const cannotAnnotate = itemAssignedToOther({
+    queueDetail,
+    detail,
+    currentUserId,
+  });
   // Reviewers/managers see assigned-to-other items in read-only mode (when
   // not actively reviewing). Other members are fully blocked.
   const isViewOnlyForReviewer =
@@ -513,6 +614,12 @@ export default function AnnotateWorkspaceView() {
     !isReviewWorkspaceMode && !canReview && cannotAnnotate;
   // Backwards-compatible flag passed to header for disabling Skip.
   const isAssignedToOther = !isReviewWorkspaceMode && cannotAnnotate;
+  const effectiveQueueStatus = detail?.queue?.status || queueDetail?.status;
+  const canUseCompletedControls = canUseCompletedNavigation({
+    isReviewMode: isReviewWorkspaceMode,
+    canAnnotate,
+    queueStatus: effectiveQueueStatus,
+  });
   const labelPanelReadOnly =
     !canAnnotate ||
     isViewOnlyForReviewer ||
@@ -590,7 +697,15 @@ export default function AnnotateWorkspaceView() {
 
   const handleIncludeCompletedChange = useCallback(
     async (event) => {
-      const nextIncludeCompleted = event.target.checked;
+      if (
+        !canUseCompletedControls ||
+        isAssignedToOther ||
+        isAnnotateLockedForReview ||
+        isAnnotatorSwitchPending
+      ) {
+        return;
+      }
+
       if (
         !confirmDiscardUnsaved(
           "You have unsaved changes. Change navigation mode anyway?",
@@ -599,6 +714,73 @@ export default function AnnotateWorkspaceView() {
         return;
       }
 
+      setIsChangingCompletedVisibility(true);
+      try {
+        const [freshQueueResult, freshDetailResult] = await Promise.all([
+          refetchQueueDetail(),
+          detailEnabled
+            ? refetchAnnotateDetail()
+            : Promise.resolve({ data: detail }),
+        ]);
+        const freshQueueDetail = freshQueueResult?.data || queueDetail;
+        const freshDetail = freshDetailResult?.data || detail;
+        const freshMembership = queueMembershipForUser(
+          freshQueueDetail,
+          currentUserId,
+        );
+        const { canReview: freshCanReview, canAnnotate: freshCanAnnotate } =
+          queueRoleAccess(freshMembership);
+        const freshMode = resolveAnnotationWorkspaceMode({
+          requestedMode,
+          canReview: freshCanReview,
+          canAnnotate: freshCanAnnotate,
+        });
+        const freshIsReviewMode = freshMode === WORKSPACE_MODES.REVIEW;
+        const freshQueueStatus =
+          freshDetail?.queue?.status || freshQueueDetail?.status;
+        const freshCanBrowseCompleted = canUseCompletedNavigation({
+          isReviewMode: freshIsReviewMode,
+          canAnnotate: freshCanAnnotate,
+          queueStatus: freshQueueStatus,
+        });
+        const freshAssignedToOther = itemAssignedToOther({
+          queueDetail: freshQueueDetail,
+          detail: freshDetail,
+          currentUserId,
+        });
+        const freshLockedForReview = isLockedForReview({
+          detail: freshDetail,
+          requiresReview: freshQueueDetail?.requires_review === true,
+          isReviewMode: freshIsReviewMode,
+          currentUserId,
+        });
+
+        if (
+          !freshCanBrowseCompleted ||
+          freshAssignedToOther ||
+          freshLockedForReview
+        ) {
+          const refreshedParams = new URLSearchParams(searchParams);
+          refreshedParams.delete("includeCompleted");
+          setSearchParams(refreshedParams, { replace: true });
+          enqueueSnackbar("Queue access changed. Refreshed navigation state.", {
+            variant: "info",
+          });
+          return;
+        }
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.detail ||
+            err?.message ||
+            "Couldn't refresh queue access before changing completed visibility.",
+          { variant: "error" },
+        );
+        return;
+      } finally {
+        setIsChangingCompletedVisibility(false);
+      }
+
+      const nextIncludeCompleted = event.target.checked;
       const nextParams = new URLSearchParams(searchParams);
       if (nextIncludeCompleted) {
         nextParams.set("includeCompleted", "true");
@@ -685,6 +867,17 @@ export default function AnnotateWorkspaceView() {
       }
     },
     [
+      canUseCompletedControls,
+      isAssignedToOther,
+      isAnnotateLockedForReview,
+      isAnnotatorSwitchPending,
+      refetchQueueDetail,
+      detailEnabled,
+      refetchAnnotateDetail,
+      detail,
+      queueDetail,
+      currentUserId,
+      requestedMode,
       searchParams,
       setSearchParams,
       confirmDiscardUnsaved,
@@ -695,6 +888,15 @@ export default function AnnotateWorkspaceView() {
       enqueueSnackbar,
     ],
   );
+
+  useEffect(() => {
+    if (!queueDetail || canUseCompletedControls) return;
+    if (searchParams.get("includeCompleted") !== "true") return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("includeCompleted");
+    setSearchParams(nextParams, { replace: true });
+  }, [canUseCompletedControls, queueDetail, searchParams, setSearchParams]);
 
   const handleSubmitAndNext = useCallback(
     ({ annotations, notes, itemNotes }) => {
@@ -1107,7 +1309,16 @@ export default function AnnotateWorkspaceView() {
   }
 
   // Queue not active — block annotation
-  const queueStatus = detail?.queue?.status;
+  const queueStatus = effectiveQueueStatus;
+  const completedToggleDisabled =
+    isChangingCompletedVisibility ||
+    isQueueDetailFetching ||
+    detailFetching ||
+    !detail ||
+    !canUseCompletedControls ||
+    isAssignedToOther ||
+    isAnnotateLockedForReview ||
+    isAnnotatorSwitchPending;
   const canResumeCompletedSkipped =
     queueStatus === "completed" && detail?.item?.status === "skipped";
   const canEditCompletedItem =
@@ -1215,10 +1426,10 @@ export default function AnnotateWorkspaceView() {
         isReviewMode={isReviewWorkspaceMode}
         isAssignedToOther={isAssignedToOther}
         isSkipDisabled={isAnnotateLockedForReview}
-        showCompletedToggle={!isReviewWorkspaceMode}
+        showCompletedToggle={canUseCompletedControls}
         includeCompleted={includeCompletedItems}
         onIncludeCompletedChange={handleIncludeCompletedChange}
-        completedToggleDisabled={isChangingCompletedVisibility}
+        completedToggleDisabled={completedToggleDisabled}
         isItemCompleted={isCurrentItemCompleted}
         completedByCurrentUser={completedByCurrentUser}
         onOpenComments={() => setCommentsOpen(true)}
@@ -1272,7 +1483,7 @@ export default function AnnotateWorkspaceView() {
               : "background.paper",
           }}
         >
-          {requiresReview && canReview && canAnnotate && (
+          {canReview && canAnnotate && (
             <Box sx={{ p: 1.5, pb: 0 }}>
               <Typography
                 variant="caption"
@@ -1294,7 +1505,7 @@ export default function AnnotateWorkspaceView() {
                   Annotate my answers
                 </ToggleButton>
                 <ToggleButton value={WORKSPACE_MODES.REVIEW}>
-                  Review submissions
+                  {requiresReview ? "Review submissions" : "View submissions"}
                 </ToggleButton>
               </ToggleButtonGroup>
             </Box>
@@ -1312,7 +1523,7 @@ export default function AnnotateWorkspaceView() {
           )}
           {isReviewWorkspaceMode ? (
             <>
-              {!isPendingReview && (
+              {requiresReview && !isPendingReview && (
                 <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
                   This item is not waiting for review. Review actions appear on
                   items submitted for review.

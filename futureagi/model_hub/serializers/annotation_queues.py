@@ -12,6 +12,7 @@ from model_hub.models.annotation_queues import (
     QueueItem,
     QueueItemReviewComment,
     QueueItemReviewThread,
+    annotation_queue_effective_roles,
     normalize_annotator_roles,
     primary_annotator_role,
 )
@@ -86,6 +87,8 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(
         source="created_by.name", read_only=True, default=None
     )
+    viewer_roles = serializers.SerializerMethodField()
+    viewer_role = serializers.SerializerMethodField()
 
     class Meta:
         model = AnnotationQueue
@@ -116,6 +119,8 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             "completed_count",
             "created_by",
             "created_by_name",
+            "viewer_role",
+            "viewer_roles",
             "created_at",
         ]
         read_only_fields = [
@@ -174,6 +179,40 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                 )
             normalized[str(user_id)] = role_list
         return normalized
+
+    def _viewer_membership(self, obj, user):
+        if not user:
+            return None
+
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get(
+            "queue_annotators"
+        )
+        if prefetched is not None:
+            for member in prefetched:
+                if str(member.user_id) == str(user.id) and not member.deleted:
+                    return member
+            return None
+
+        return (
+            obj.queue_annotators.filter(user=user, deleted=False)
+            .order_by("-updated_at")
+            .first()
+        )
+
+    def get_viewer_roles(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            return []
+        return annotation_queue_effective_roles(
+            obj,
+            user,
+            membership=self._viewer_membership(obj, user),
+        )
+
+    def get_viewer_role(self, obj):
+        roles = self.get_viewer_roles(obj)
+        return primary_annotator_role(roles) if roles else None
 
     def _sync_labels(self, queue, label_ids):
         existing = set(
@@ -462,7 +501,7 @@ class AddItemsSerializer(serializers.Serializer):
     selection = SelectionSerializer(required=False)
 
     def validate_items(self, value):
-        valid_types = {st for st in SOURCE_TYPE_FK_MAP}
+        valid_types = set(SOURCE_TYPE_FK_MAP)
         for item in value:
             if "source_type" not in item or "source_id" not in item:
                 raise serializers.ValidationError(

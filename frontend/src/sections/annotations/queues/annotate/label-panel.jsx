@@ -702,9 +702,11 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {actionableReviewComments.length > 0 && (
         <Box
+          data-testid="feedback-to-address-panel"
           sx={(theme) => {
             const tone = statusTone(theme, "warning");
             return {
+              flexShrink: 0,
               mb: 2,
               p: 1.25,
               border: "1px solid",
@@ -712,7 +714,7 @@ const LabelPanel = forwardRef(function LabelPanel(
               borderRadius: 0.75,
               bgcolor: tone.bg,
               minWidth: 0,
-              overflow: "hidden",
+              overflowX: "hidden",
             };
           }}
         >

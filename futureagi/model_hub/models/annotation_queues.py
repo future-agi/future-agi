@@ -41,6 +41,7 @@ ANNOTATOR_ROLE_PRIORITY = [
     AnnotatorRole.REVIEWER.value,
     AnnotatorRole.ANNOTATOR.value,
 ]
+FULL_ACCESS_QUEUE_ROLES = list(ANNOTATOR_ROLE_PRIORITY)
 
 
 def normalize_annotator_roles(value, default=AnnotatorRole.ANNOTATOR.value):
@@ -275,6 +276,60 @@ class AnnotationQueueAnnotator(BaseModel):
         return f"QueueAnnotator: {self.queue_id} - {self.user_id} ({self.role})"
 
 
+def user_has_annotation_queue_admin_access(queue, user):
+    """Org admins/owners and workspace admins manage queues in their scope."""
+    if not queue or not user or not getattr(user, "is_active", False):
+        return False
+
+    organization = getattr(queue, "organization", None)
+    if organization and user.has_global_workspace_access(organization):
+        return True
+
+    workspace = getattr(queue, "workspace", None)
+    if not workspace:
+        return False
+
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    membership = (
+        WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=user,
+            is_active=True,
+        )
+        .order_by("-updated_at")
+        .first()
+    )
+    return bool(
+        membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN
+    )
+
+
+def annotation_queue_effective_roles(queue, user, membership=None):
+    """Return explicit queue roles, or manager-equivalent admin roles."""
+    if not queue or not user or not getattr(user, "is_active", False):
+        return []
+
+    if user_has_annotation_queue_admin_access(queue, user):
+        return list(FULL_ACCESS_QUEUE_ROLES)
+
+    if membership is None:
+        membership = (
+            AnnotationQueueAnnotator.objects.filter(
+                queue=queue,
+                user=user,
+                deleted=False,
+            )
+            .order_by("-updated_at")
+            .first()
+        )
+    if membership:
+        return membership.normalized_roles
+
+    return []
+
+
 # Source FK field name mapping for QueueItem
 SOURCE_TYPE_FK_MAP = {
     QueueItemSourceType.DATASET_ROW.value: "dataset_row",
@@ -448,7 +503,7 @@ class QueueItem(BaseModel):
                 f"source_type '{self.source_type}' requires '{fk_field}' to be set."
             )
         # Ensure no other source FK is set
-        for st, field in SOURCE_TYPE_FK_MAP.items():
+        for _st, field in SOURCE_TYPE_FK_MAP.items():
             if field != fk_field and getattr(self, f"{field}_id") is not None:
                 raise ValidationError(
                     f"Only '{fk_field}' should be set for source_type '{self.source_type}', "

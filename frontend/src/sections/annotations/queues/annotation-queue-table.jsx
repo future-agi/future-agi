@@ -472,7 +472,11 @@ function ActionsCellRenderer({ data, context }) {
   const myEntry = annotators.find(
     (a) => String(a.user_id) === String(currentUserId),
   );
-  const isQueueManager = hasQueueRole(myEntry, QUEUE_ROLES.MANAGER);
+  const viewerEntry =
+    Array.isArray(data.viewer_roles) && data.viewer_roles.length > 0
+      ? { role: data.viewer_role, roles: data.viewer_roles }
+      : myEntry;
+  const isQueueManager = hasQueueRole(viewerEntry, QUEUE_ROLES.MANAGER);
   // Show menu only for queue managers
   if (!isQueueManager) return null;
   return (
@@ -530,7 +534,14 @@ export default function AnnotationQueueTable({
   const navigate = useNavigate();
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const { user, role } = useAuthContext();
-  const currentUserId = user?.id || user?.pk;
+  const currentUserId =
+    user?.id ||
+    user?.pk ||
+    user?.user_id ||
+    user?.userId ||
+    (typeof window !== "undefined"
+      ? window.sessionStorage.getItem("currentUserId")
+      : "");
   const canWrite = RolePermission.DATASETS[PERMISSIONS.CREATE][role];
   const gridRef = useRef(null);
   const [menuAnchor, setMenuAnchor] = useState(null);

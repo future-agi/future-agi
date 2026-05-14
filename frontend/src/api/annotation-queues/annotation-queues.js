@@ -18,11 +18,15 @@ const extractData = (d, fallback = null) =>
 
 export const extractErrorMessage = (error, fallback) => {
   const payload = error?.response?.data || error;
+  const nestedError = payload?.error;
+  const nestedErrorDetail = nestedError?.detail;
   const message =
     payload?.result ||
     payload?.detail ||
     payload?.message ||
-    payload?.error ||
+    nestedError?.message ||
+    (typeof nestedErrorDetail === "string" ? nestedErrorDetail : null) ||
+    nestedError ||
     payload?.non_field_errors ||
     fallback;
 
@@ -90,7 +94,7 @@ export const useCreateAnnotationQueue = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to create queue";
+      const msg = extractErrorMessage(error, "Failed to create queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -103,12 +107,15 @@ export const useUpdateAnnotationQueue = () => {
   return useMutation({
     mutationFn: ({ id, ...data }) =>
       axios.patch(annotationQueueEndpoints.detail(id), data),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.detail(variables.id),
+      });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to update queue";
+      const msg = extractErrorMessage(error, "Failed to update queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -205,9 +212,12 @@ export const useUpdateAnnotationQueueStatus = () => {
         },
       );
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       enqueueSnackbar("Queue status updated", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.detail(variables.id),
+      });
     },
     onError: (error) => {
       // Revert optimistic update on error
@@ -357,13 +367,13 @@ const normalizeAssignmentUser = (user, fallbackId) => {
   };
 };
 
-const optimisticAssignmentUsers = (variables) => {
+const optimisticAssignmentUsers = (variables, assignedUsers = []) => {
   const ids = (
     variables.userIds || (variables.userId ? [variables.userId] : [])
   )
     .map((id) => String(id))
     .filter(Boolean);
-  const assignees = variables.assignees || [];
+  const assignees = [...(variables.assignees || []), ...assignedUsers];
 
   return ids
     .map((id) => {
@@ -377,7 +387,7 @@ const optimisticAssignmentUsers = (variables) => {
 
 const applyOptimisticAssignment = (assignedUsers = [], variables) => {
   const action = variables.action || "add";
-  const nextUsers = optimisticAssignmentUsers(variables);
+  const nextUsers = optimisticAssignmentUsers(variables, assignedUsers);
 
   if (action === "set") return nextUsers;
 
@@ -604,6 +614,7 @@ export const useAnnotateDetail = (
   {
     annotatorId,
     includeCompleted,
+    viewMode,
     reviewStatus,
     excludeReviewStatus,
     ...options
@@ -612,6 +623,7 @@ export const useAnnotateDetail = (
   const params = {
     ...(annotatorId ? { annotator_id: annotatorId } : {}),
     ...(includeCompleted ? { include_completed: true } : {}),
+    ...(viewMode ? { view_mode: viewMode } : {}),
     ...(reviewStatus ? { review_status: reviewStatus } : {}),
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
@@ -620,6 +632,7 @@ export const useAnnotateDetail = (
   const requestOptions = Object.keys(params).length ? { params } : undefined;
   const detailFilters = {
     ...(includeCompleted ? { include_completed: true } : {}),
+    ...(viewMode ? { view_mode: viewMode } : {}),
     ...(reviewStatus ? { review_status: reviewStatus } : {}),
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
@@ -641,12 +654,14 @@ export const useAnnotateDetail = (
 
 export const useNextItem = (queueId, options = {}) => {
   const {
+    viewMode,
     reviewStatus,
     excludeReviewStatus,
     includeCompleted,
     ...queryOptions
   } = options;
   const params = {
+    ...(viewMode ? { view_mode: viewMode } : {}),
     ...(reviewStatus ? { review_status: reviewStatus } : {}),
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }

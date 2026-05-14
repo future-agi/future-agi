@@ -801,6 +801,8 @@ class TestAddItemsFilterModeCallExecution:
 
 @pytest.fixture
 def seeded_mixed_call_executions(db, organization, workspace):
+    from model_hub.models.choices import SourceChoices
+    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
     from simulate.models.agent_definition import AgentDefinition
     from simulate.models.run_test import RunTest
     from simulate.models.scenarios import Scenarios
@@ -815,29 +817,334 @@ def seeded_mixed_call_executions(db, organization, workspace):
     )
     run = RunTest.objects.create(name="ce-mixed-run", organization=organization)
     te = TestExecution.objects.create(run_test=run, agent_definition=agent_def)
+    dataset = Dataset.objects.create(
+        name="ce-mixed-scenario-dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    priority_column = Column.objects.create(
+        name="priority",
+        data_type="text",
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    attempts_column = Column.objects.create(
+        name="attempts",
+        data_type="integer",
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(priority_column.id), str(attempts_column.id)]
+    dataset.save(update_fields=["column_order"])
+    high_priority_row = Row.objects.create(dataset=dataset, order=1)
+    low_priority_row = Row.objects.create(dataset=dataset, order=2)
+    failed_row = Row.objects.create(dataset=dataset, order=3)
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=high_priority_row,
+        value="high",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=high_priority_row,
+        value="2",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=low_priority_row,
+        value="low",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=low_priority_row,
+        value="8",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=failed_row,
+        value="high",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=failed_row,
+        value="4",
+    )
     scen = Scenarios.objects.create(
         name="ce-mixed-scenario",
         source="mixed",
         organization=organization,
         workspace=workspace,
+        dataset=dataset,
     )
+    te.scenario_ids = [str(scen.id)]
+    te.execution_metadata = {
+        "Provider": True,
+        "column_order": [
+            {
+                "id": str(priority_column.id),
+                "column_name": "priority",
+                "visible": True,
+                "data_type": "text",
+                "type": "scenario_dataset_column",
+                "scenario_id": str(scen.id),
+                "dataset_id": str(dataset.id),
+            },
+            {
+                "id": str(attempts_column.id),
+                "column_name": "attempts",
+                "visible": True,
+                "data_type": "integer",
+                "type": "scenario_dataset_column",
+                "scenario_id": str(scen.id),
+                "dataset_id": str(dataset.id),
+            },
+            {
+                "id": "tool_eval_accuracy",
+                "column_name": "Tool Accuracy",
+                "visible": True,
+                "type": "tool_evaluation",
+            },
+        ],
+    }
+    te.save(update_fields=["scenario_ids", "execution_metadata"])
     completed_short = CallExecution.objects.create(
         test_execution=te, scenario=scen,
         status="completed", duration_seconds=10,
+        cost_cents=12,
+        row_id=high_priority_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Casey",
+                    "language": "English",
+                    "languages": ["English"],
+                    "communication_style": ["Direct and concise"],
+                    "age_group": ["25-32"],
+                    "multilingual": False,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
     )
     completed_long = CallExecution.objects.create(
         test_execution=te, scenario=scen,
         status="completed", duration_seconds=120,
+        customer_cost_cents=120,
+        row_id=low_priority_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Riya",
+                    "language": "Hindi",
+                    "languages": ["Hindi", "English"],
+                    "communication_style": ["Casual and friendly"],
+                    "age_group": ["32-40"],
+                    "multilingual": True,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "fail"}},
     )
     failed = CallExecution.objects.create(
         test_execution=te, scenario=scen,
         status="failed", duration_seconds=30,
+        cost_cents=56,
+        row_id=failed_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Jordan",
+                    "language": "English",
+                    "languages": ["English"],
+                    "communication_style": ["Detailed and elaborate"],
+                    "age_group": ["40-50"],
+                    "multilingual": False,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
     )
-    return agent_def, completed_short, completed_long, failed
+    return agent_def, te, completed_short, completed_long, failed, priority_column, attempts_column
 
 
 @pytest.mark.django_db
 class TestAddItemsFilterModeCallExecutionRichFilters:
+    def test_simulation_add_items_grid_endpoint_applies_rules_style_filters(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, *_ = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "status",
+                            "categorical",
+                            "equals",
+                            "completed",
+                        ),
+                        _api_filter(
+                            "duration_seconds",
+                            "number",
+                            "less_than",
+                            60,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_short.id)
+        ]
+
+    def test_simulation_add_items_grid_endpoint_filters_scenario_attributes(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        (
+            _agent_def,
+            test_execution,
+            completed_short,
+            _completed_long,
+            failed,
+            priority_column,
+            attempts_column,
+        ) = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            str(priority_column.id),
+                            "text",
+                            "equals",
+                            "high",
+                        ),
+                        _api_filter(
+                            str(attempts_column.id),
+                            "number",
+                            "less_than",
+                            5,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 2
+        assert {row["id"] for row in resp.data["results"]} == {
+            str(completed_short.id),
+            str(failed.id),
+        }
+
+    def test_simulation_add_items_grid_endpoint_filters_tool_eval_columns(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, _completed_long, failed, *_ = (
+            seeded_mixed_call_executions
+        )
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "tool_eval_accuracy",
+                            "text",
+                            "equals",
+                            "pass",
+                        )
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 2
+        assert {row["id"] for row in resp.data["results"]} == {
+            str(completed_short.id),
+            str(failed.id),
+        }
+
+    def test_simulation_add_items_grid_endpoint_filters_system_cost_metric(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, *_ = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [_api_filter("cost_cents", "number", "less_than", 20)]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_short.id)
+        ]
+
+    def test_simulation_add_items_grid_endpoint_filters_persona_fields(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, _completed_short, completed_long, *_ = (
+            seeded_mixed_call_executions
+        )
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "persona.language",
+                            "categorical",
+                            "equals",
+                            "Hindi",
+                        ),
+                        _api_filter(
+                            "persona.multilingual",
+                            "boolean",
+                            "equals",
+                            True,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_long.id)
+        ]
+
     def test_filter_mode_status_filter_narrows_result(
         self, auth_client, active_queue, seeded_mixed_call_executions
     ):
@@ -898,6 +1205,35 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
         # 10s + 30s match; 120s excluded.
         assert resp.data["result"]["added"] == 2
         assert resp.data["result"]["total_matching"] == 2
+
+    def test_filter_mode_persona_field_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "persona.communication_style",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "Direct and concise",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["total_matching"] == 1
 
     def test_filter_mode_unsupported_column_returns_400(
         self, auth_client, active_queue, seeded_mixed_call_executions

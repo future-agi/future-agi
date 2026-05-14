@@ -117,11 +117,15 @@ class ClickHouseFilterBuilder:
     # ``_build_span_attr_condition`` and matching any-span (TH-4044).
     SYSTEM_METRIC_MAP: Dict[str, str] = {
         "avg_latency": "latency_ms",
+        "latency": "latency_ms",
         "latency_ms": "latency_ms",
         "avg_cost": "cost",
         "cost": "cost",
+        "tokens": "total_tokens",
         "total_tokens": "total_tokens",
+        "input_tokens": "prompt_tokens",
         "prompt_tokens": "prompt_tokens",
+        "output_tokens": "completion_tokens",
         "completion_tokens": "completion_tokens",
         # OTel gen_ai semconv aliases
         "gen_ai.usage.total_tokens": "total_tokens",
@@ -141,6 +145,7 @@ class ClickHouseFilterBuilder:
         "node_type": "observation_type",
         "user": "end_user_id",
         "name": "name",
+        "span_name": "name",
         "trace_name": "trace_name",
         "start_time": "start_time",
         "end_time": "end_time",
@@ -221,10 +226,17 @@ class ClickHouseFilterBuilder:
         table: str = "spans",
         annotation_label_ids: Optional[List[str]] = None,
         query_mode: str = QUERY_MODE_TRACE,
+        project_id: Optional[str] = None,
+        project_ids: Optional[List[str]] = None,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
         self.query_mode = query_mode
+        self.project_ids = (
+            [str(p) for p in project_ids]
+            if project_ids
+            else ([str(project_id)] if project_id else None)
+        )
         self._param_counter: int = 0
         self._params: Dict[str, Any] = {}
 
@@ -251,6 +263,11 @@ class ClickHouseFilterBuilder:
         if not filter_op:
             return None
         return cls.OP_MAP.get(filter_op)
+
+    @staticmethod
+    def _eval_choice_array_expr() -> str:
+        """ClickHouse stores eval choices as a JSON string; parse before membership."""
+        return "JSONExtract(output_str_list, 'Array(String)')"
 
     @staticmethod
     def _score_trace_id_expr() -> str:
@@ -290,6 +307,61 @@ class ClickHouseFilterBuilder:
             f"AND {score_trace_expr} != ''"
             f"{extra_clause}"
         )
+
+    @staticmethod
+    def _score_span_id_expr() -> str:
+        """Resolve a Score row to the span id it should filter in span mode."""
+        return (
+            "if(ifNull(s.observation_span_id, '') != '', "
+            "s.observation_span_id, root_sp.id)"
+        )
+
+    def _score_span_select(
+        self,
+        extra_where: str = "",
+        *,
+        alias: str = "span_id",
+        distinct: bool = True,
+    ) -> str:
+        """Return a Score subquery scoped to the visible span row.
+
+        Span annotations match their exact ``observation_span_id``. Trace-level
+        annotations fall back to the root span only; otherwise filtering the
+        spans tab by an annotation on one trace leaks every child span from that
+        trace into the result.
+        """
+        score_span_expr = self._score_span_id_expr()
+        select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
+        extra_clause = f" {extra_where}" if extra_where else ""
+        return (
+            f"{select_keyword} {score_span_expr} AS {alias} "
+            f"FROM model_hub_score AS s FINAL "
+            f"LEFT JOIN spans AS root_sp "
+            f"ON root_sp.trace_id = toString(s.trace_id) "
+            f"AND (root_sp.parent_span_id IS NULL OR root_sp.parent_span_id = '') "
+            f"AND root_sp._peerdb_is_deleted = 0 "
+            f"WHERE s._peerdb_is_deleted = 0 "
+            f"AND s.deleted = false "
+            f"AND isNotNull({score_span_expr}) "
+            f"AND {score_span_expr} != ''"
+            f"{extra_clause}"
+        )
+
+    def _score_entity_select(
+        self,
+        extra_where: str = "",
+        *,
+        alias: str = "entity_id",
+        distinct: bool = True,
+    ) -> str:
+        if self.query_mode == self.QUERY_MODE_SPAN:
+            return self._score_span_select(
+                extra_where, alias=alias, distinct=distinct
+            )
+        return self._score_trace_select(extra_where, alias=alias, distinct=distinct)
+
+    def _score_entity_column(self) -> str:
+        return "id" if self.query_mode == self.QUERY_MODE_SPAN else "trace_id"
 
     # ------------------------------------------------------------------
     # Public API
@@ -583,7 +655,9 @@ class ClickHouseFilterBuilder:
             # ``gen_ai.usage.total_tokens``) are caught.
             mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
             is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
-                mapped_col is not None and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
+                col_id != "span_name"
+                and mapped_col is not None
+                and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
             )
             root_clause = (
                 "AND (parent_span_id IS NULL OR parent_span_id = '') "
@@ -972,6 +1046,16 @@ class ClickHouseFilterBuilder:
         param_cfg = self._next_param("eval_cfg")
         self._params[param_cfg] = tuple(config_ids)
 
+        op_aliases = {
+            "is": "equals",
+            "is_not": "not_equals",
+            "equal_to": "equals",
+            "not_equal_to": "not_equals",
+            "inBetween": "between",
+            "not_in_between": "not_between",
+        }
+        filter_op = op_aliases.get(filter_op, filter_op)
+
         _fv = filter_value
         values = (
             list(_fv)
@@ -997,6 +1081,40 @@ class ClickHouseFilterBuilder:
             outer_col = "trace_id"
             inner_col = "trace_id"
 
+        def eval_value_subquery(
+            match_condition: str,
+            *,
+            negate_outer: bool = False,
+        ) -> str:
+            outer_operator = "NOT IN" if negate_outer else "IN"
+            return (
+                f"{outer_col} {outer_operator} ("
+                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
+                f"WHERE custom_eval_config_id IN %({param_cfg})s "
+                f"AND _peerdb_is_deleted = 0 "
+                f"{error_clause} "
+                f"AND {match_condition}"
+                f")"
+            )
+
+        negative_ops = {"not_equals", "not_in", "not_contains", "ne", "!="}
+
+        if filter_op in ("is_null", "is_not_null"):
+            if output_type == "PASS_FAIL":
+                exists_condition = "output_bool IS NOT NULL"
+            elif output_type in ("CHOICE", "CHOICES"):
+                choice_array = self._eval_choice_array_expr()
+                exists_condition = (
+                    f"(notEmpty({choice_array}) "
+                    "OR (output_str IS NOT NULL AND output_str != ''))"
+                )
+            else:
+                exists_condition = "output_float IS NOT NULL"
+            return eval_value_subquery(
+                exists_condition,
+                negate_outer=(filter_op == "is_null"),
+            )
+
         if output_type == "PASS_FAIL":
             # UI sends "Passed"/"Failed" — map to output_bool.
             bool_values = []
@@ -1013,56 +1131,95 @@ class ClickHouseFilterBuilder:
             self._params[param_bool] = tuple(bool_values)
             cmp = (
                 f"output_bool NOT IN %({param_bool})s"
-                if filter_op in ("not_equals", "not_in", "ne", "!=")
+                if filter_op in negative_ops
                 else f"output_bool IN %({param_bool})s"
             )
-            return (
-                f"{outer_col} IN ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
-                f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"{error_clause} "
-                f"AND {cmp}"
-                f")"
-            )
+            return eval_value_subquery(cmp)
 
         if output_type in ("CHOICE", "CHOICES"):
-            # output_str_list is a String column containing a serialized list;
-            # output_str holds the canonical single value. Match against both.
+            # output_str_list is a JSON string column containing a serialized
+            # list; output_str holds the canonical single-value fallback.
+            # Parse output_str_list before membership checks so choice filters
+            # are exact and the CH query stays valid.
             if not values:
                 return (
                     "1 = 1"
-                    if filter_op in ("not_equals", "not_in", "not_contains")
+                    if filter_op in negative_ops
                     else "0 = 1"
                 )
+            choice_array = self._eval_choice_array_expr()
+            choice_exists = (
+                f"(notEmpty({choice_array}) "
+                "OR (output_str IS NOT NULL AND output_str != ''))"
+            )
             choice_conditions = []
             for value in values:
-                param_like = self._next_param("eval_like")
-                param_eq = self._next_param("eval_eq")
-                self._params[param_like] = f"%{value}%"
-                self._params[param_eq] = str(value)
-                choice_conditions.append(
-                    f"(output_str_list LIKE %({param_like})s "
-                    f"OR output_str = %({param_eq})s)"
-                )
+                param = self._next_param("eval_choice")
+                if filter_op in ("contains", "not_contains"):
+                    self._params[param] = f"%{value}%"
+                    choice_conditions.append(
+                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
+                        f"OR output_str ILIKE %({param})s)"
+                    )
+                elif filter_op == "starts_with":
+                    self._params[param] = f"{value}%"
+                    choice_conditions.append(
+                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
+                        f"OR output_str ILIKE %({param})s)"
+                    )
+                elif filter_op == "ends_with":
+                    self._params[param] = f"%{value}"
+                    choice_conditions.append(
+                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
+                        f"OR output_str ILIKE %({param})s)"
+                    )
+                else:
+                    self._params[param] = str(value)
+                    choice_conditions.append(
+                        f"(has({choice_array}, %({param})s) "
+                        f"OR output_str = %({param})s)"
+                    )
             combined = " OR ".join(choice_conditions)
-            if filter_op in ("not_equals", "not_in", "not_contains"):
-                combined = f"NOT ({combined})"
-            return (
-                f"{outer_col} IN ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
-                f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"{error_clause} "
-                f"AND {combined}"
-                f")"
+            if filter_op in negative_ops:
+                combined = f"{choice_exists} AND NOT ({combined})"
+            return eval_value_subquery(combined)
+
+        # SCORE (default) — numeric on output_float. UI displays scores as
+        # 0-100, raw storage is 0-1; divide user-supplied value by 100.
+        if (
+            filter_op in ("between", "not_between")
+            and isinstance(filter_value, (list, tuple))
+            and len(filter_value) == 2
+        ):
+            try:
+                lo = float(filter_value[0]) / 100.0
+                hi = float(filter_value[1]) / 100.0
+            except (ValueError, TypeError):
+                return "0 = 1"
+            p_lo = self._next_param("eval_lo")
+            p_hi = self._next_param("eval_hi")
+            self._params[p_lo] = lo
+            self._params[p_hi] = hi
+            range_op = "NOT BETWEEN" if filter_op == "not_between" else "BETWEEN"
+            return eval_value_subquery(
+                f"output_float {range_op} %({p_lo})s AND %({p_hi})s"
             )
+
+        if filter_op in ("in", "not_in"):
+            try:
+                raw_values = tuple(float(value) / 100.0 for value in values)
+            except (ValueError, TypeError):
+                return "0 = 1"
+            if not raw_values:
+                return "1 = 1" if filter_op == "not_in" else "0 = 1"
+            param = self._next_param("eval")
+            self._params[param] = raw_values
+            sql_op = "NOT IN" if filter_op == "not_in" else "IN"
+            return eval_value_subquery(f"output_float {sql_op} %({param})s")
 
         op = self._sql_op(filter_op)
         if op is None:
             return "0 = 1"
-        # SCORE (default) — numeric on output_float. UI displays scores as
-        # 0-100, raw storage is 0-1; divide user-supplied value by 100.
         param = self._next_param("eval")
         try:
             raw_val = (
@@ -1073,15 +1230,7 @@ class ClickHouseFilterBuilder:
             self._params[param] = raw_val / 100.0
         except (ValueError, TypeError):
             self._params[param] = filter_value
-        return (
-            f"{outer_col} IN ("
-            f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
-            f"WHERE custom_eval_config_id IN %({param_cfg})s "
-            f"AND _peerdb_is_deleted = 0 "
-            f"{error_clause} "
-            f"AND output_float {op} %({param})s"
-            f")"
-        )
+        return eval_value_subquery(f"output_float {op} %({param})s")
 
     def _build_annotation_condition(
         self,
@@ -1092,9 +1241,9 @@ class ClickHouseFilterBuilder:
     ) -> Optional[str]:
         """Build a condition that filters by annotation value.
 
-        Generates a ``trace_id IN (SELECT ...)`` subquery against the
-        ``model_hub_score`` CDC table.  Handles all annotation filter
-        types: number, boolean, text, array (categorical), and annotator.
+        Generates a subquery against the ``model_hub_score`` CDC table.
+        Trace and voice queries match by ``trace_id``; span queries match by
+        span ``id`` so one annotated span does not pull in sibling spans.
 
         ``col_id`` may contain a ``**`` separator for sub-field access
         (e.g. ``uuid**thumbs_up``); the base UUID is extracted as the
@@ -1108,7 +1257,8 @@ class ClickHouseFilterBuilder:
 
         param_label = self._next_param("ann_label")
         self._params[param_label] = annotation_label_id
-        base_where = self._score_trace_select(
+        target_column = self._score_entity_column()
+        base_where = self._score_entity_select(
             f"AND s.label_id = toUUID(%({param_label})s)"
         )
         score_value = "s.value"
@@ -1127,7 +1277,7 @@ class ClickHouseFilterBuilder:
                 self._params[p_lo] = filter_value[0]
                 self._params[p_hi] = filter_value[1]
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND if(JSONHas({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'value')) BETWEEN %({p_lo})s AND %({p_hi})s)"
@@ -1142,10 +1292,30 @@ class ClickHouseFilterBuilder:
                 self._params[p_lo] = filter_value[0]
                 self._params[p_hi] = filter_value[1]
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND if(JSONHas({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'value')) NOT BETWEEN %({p_lo})s AND %({p_hi})s)"
+                )
+            elif filter_op in ("in", "not_in"):
+                raw_values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
+                values = []
+                for value in raw_values:
+                    try:
+                        values.append(float(value))
+                    except (ValueError, TypeError):
+                        return "0 = 1"
+                if not values:
+                    return "1 = 1" if filter_op == "not_in" else "0 = 1"
+                self._params[param] = tuple(values)
+                sql_op = "NOT IN" if filter_op == "not_in" else "IN"
+                return (
+                    f"{target_column} IN ({base_where} "
+                    f"AND if(JSONHas({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'rating'), "
+                    f"JSONExtractFloat({score_value}, 'value')) {sql_op} %({param})s)"
                 )
             else:
                 op = self._sql_op(filter_op)
@@ -1153,7 +1323,7 @@ class ClickHouseFilterBuilder:
                     return "0 = 1"
                 self._params[param] = filter_value
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND if(JSONHas({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'rating'), "
                     f"JSONExtractFloat({score_value}, 'value')) {op} %({param})s)"
@@ -1169,7 +1339,7 @@ class ClickHouseFilterBuilder:
             else:
                 return None
             return (
-                f"trace_id IN ({base_where} "
+                f"{target_column} IN ({base_where} "
                 f"AND JSONExtractString({score_value}, 'value') = {bool_match})"
             )
 
@@ -1203,7 +1373,7 @@ class ClickHouseFilterBuilder:
             negate = filter_op in ("not_in", "not_equals")
             sql_op = "NOT IN" if negate else "IN"
             return (
-                f"trace_id IN ({base_where} "
+                f"{target_column} IN ({base_where} "
                 f"AND JSONExtractString({score_value}, 'value') {sql_op} %({param})s)"
             )
 
@@ -1213,44 +1383,62 @@ class ClickHouseFilterBuilder:
             if filter_op == "contains":
                 self._params[param] = f"%{filter_value}%"
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND {text_expr} ILIKE %({param})s)"
                 )
             elif filter_op == "not_contains":
                 self._params[param] = f"%{filter_value}%"
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND {text_expr} NOT ILIKE %({param})s)"
                 )
             elif filter_op == "equals":
                 self._params[param] = filter_value
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND lower({text_expr}) = lower(%({param})s))"
                 )
             elif filter_op == "not_equals":
                 self._params[param] = filter_value
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND lower({text_expr}) != lower(%({param})s))"
                 )
             elif filter_op == "starts_with":
                 self._params[param] = f"{filter_value}%"
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND {text_expr} ILIKE %({param})s)"
                 )
             elif filter_op == "ends_with":
                 self._params[param] = f"%{filter_value}"
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND {text_expr} ILIKE %({param})s)"
+                )
+            elif filter_op in ("in", "not_in"):
+                raw_values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
+                values = tuple(
+                    str(value).lower()
+                    for value in raw_values
+                    if value not in (None, "")
+                )
+                if not values:
+                    return "1 = 1" if filter_op == "not_in" else "0 = 1"
+                self._params[param] = values
+                sql_op = "NOT IN" if filter_op == "not_in" else "IN"
+                return (
+                    f"{target_column} IN ({base_where} "
+                    f"AND {text_expr} != '' "
+                    f"AND lower({text_expr}) {sql_op} %({param})s)"
                 )
             else:
                 op = self._sql_op(filter_op)
@@ -1258,7 +1446,8 @@ class ClickHouseFilterBuilder:
                     return "0 = 1"
                 self._params[param] = filter_value
                 return (
-                    f"trace_id IN ({base_where} " f"AND {text_expr} {op} %({param})s)"
+                    f"{target_column} IN ({base_where} "
+                    f"AND {text_expr} {op} %({param})s)"
                 )
 
         elif filter_type in ("array", "categorical"):
@@ -1307,8 +1496,8 @@ class ClickHouseFilterBuilder:
             sub_conditions = [_build_one(v) for v in values]
             combined = " OR ".join(sub_conditions)
             if filter_op in ("not_equals", "not_in", "not_contains"):
-                return f"trace_id IN ({base_where} AND NOT ({combined}))"
-            return f"trace_id IN ({base_where} AND ({combined}))"
+                return f"{target_column} IN ({base_where} AND NOT ({combined}))"
+            return f"{target_column} IN ({base_where} AND ({combined}))"
 
         elif filter_type == "annotator":
             # Per-label annotator filter: check if specific user(s) annotated
@@ -1318,14 +1507,14 @@ class ClickHouseFilterBuilder:
                 if not uuid_list:
                     return None
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {score_annotator} IN ({uuid_list}))"
                 )
             elif filter_value:
                 param = self._next_param("ann")
                 self._params[param] = str(filter_value)
                 return (
-                    f"trace_id IN ({base_where} "
+                    f"{target_column} IN ({base_where} "
                     f"AND {score_annotator} = toUUID(%({param})s))"
                 )
             return None
@@ -1333,7 +1522,7 @@ class ClickHouseFilterBuilder:
         else:
             # Fallback: existence check — trace has any annotation with
             # this label.
-            return f"trace_id IN ({base_where})"
+            return f"{target_column} IN ({base_where})"
 
     # ------------------------------------------------------------------
     # Boolean metric filter handlers (has_eval, has_annotation)
@@ -1386,13 +1575,14 @@ class ClickHouseFilterBuilder:
 
         # Common subquery: resolve trace_id from Score rows even when the
         # annotation is attached to a span instead of directly to a trace.
-        score_trace_sq = self._score_trace_select(alias="tid")
+        target_column = self._score_entity_column()
+        score_entity_sq = self._score_entity_select(alias="entity_id")
 
         label_ids = self.annotation_label_ids
         if not label_ids:
             # Fallback: simple existence check
             op = "IN" if filter_value else "NOT IN"
-            return f"trace_id {op} ({score_trace_sq})"
+            return f"{target_column} {op} ({score_entity_sq})"
 
         # Completeness check: fully annotated = has scores for ALL labels
         label_params = []
@@ -1404,15 +1594,15 @@ class ClickHouseFilterBuilder:
         total = len(label_ids)
 
         fully_annotated_sq = (
-            self._score_trace_select(
+            self._score_entity_select(
                 f"AND s.label_id IN ({label_list})",
-                alias="tid",
+                alias="entity_id",
                 distinct=False,
             )
-            + f" GROUP BY tid HAVING uniq(s.label_id) >= {total}"
+            + f" GROUP BY entity_id HAVING uniq(s.label_id) >= {total}"
         )
         op = "IN" if filter_value else "NOT IN"
-        return f"trace_id {op} ({fully_annotated_sq})"
+        return f"{target_column} {op} ({fully_annotated_sq})"
 
     # ------------------------------------------------------------------
     # Special annotation column handlers
@@ -1436,7 +1626,7 @@ class ClickHouseFilterBuilder:
         param = self._next_param("uid")
         self._params[param] = str(user_id)
         user_clause = f"AND s.annotator_id = toUUID(%({param})s)"
-        return f"trace_id IN ({self._score_trace_select(user_clause)})"
+        return f"{self._score_entity_column()} IN ({self._score_entity_select(user_clause)})"
 
     def _build_annotator_condition(
         self,
@@ -1451,9 +1641,15 @@ class ClickHouseFilterBuilder:
             if not uuid_list:
                 return None
             user_clause = f"AND s.annotator_id IN ({uuid_list})"
-            return f"trace_id IN ({self._score_trace_select(user_clause)})"
+            return (
+                f"{self._score_entity_column()} IN "
+                f"({self._score_entity_select(user_clause)})"
+            )
         else:
             param = self._next_param("uid")
             self._params[param] = str(filter_value)
             user_clause = f"AND s.annotator_id = toUUID(%({param})s)"
-            return f"trace_id IN ({self._score_trace_select(user_clause)})"
+            return (
+                f"{self._score_entity_column()} IN "
+                f"({self._score_entity_select(user_clause)})"
+            )

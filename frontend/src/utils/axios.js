@@ -233,8 +233,12 @@ axiosInstance.interceptors.response.use(
       status === RESPONSE_CODES.PAYMENT_REQUIRED &&
       error?.response?.data?.upgrade_required
     ) {
+      const upgradeError = error.response.data.error;
       enqueueSnackbar(
-        error.response.data.error || "Not available on OSS. Upgrade your plan.",
+        (typeof upgradeError === "string"
+          ? upgradeError
+          : upgradeError?.message) ||
+          "Not available on OSS. Upgrade your plan.",
         { variant: "error" },
       );
     }

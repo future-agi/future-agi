@@ -17,7 +17,14 @@ import AnnotationComparisonPanel from "../annotate/annotation-comparison-panel";
 import DiscussionPanel, {
   CollaborationDrawer,
 } from "../annotate/discussion-panel";
-import { ALL_ANNOTATORS } from "../annotate/annotation-view-mode";
+import {
+  ALL_ANNOTATORS,
+  WORKSPACE_MODES,
+  canOpenSubmissionWorkspace,
+  canUseCompletedNavigation,
+  resolveQueueItemWorkspaceMode,
+  resolveAnnotationWorkspaceMode,
+} from "../annotate/annotation-view-mode";
 import AnnotateHeader from "../annotate/annotate-header";
 import AnnotateFooter from "../annotate/annotate-footer";
 import AnnotationHistory from "../annotate/annotation-history";
@@ -52,6 +59,169 @@ vi.mock("src/components/iconify", () => ({
     return <span data-testid="iconify" data-icon={icon} {...props} />;
   },
 }));
+
+describe("resolveAnnotationWorkspaceMode", () => {
+  it("allows managers and reviewers to open submission comparison on non-review queues", () => {
+    expect(
+      resolveAnnotationWorkspaceMode({
+        requestedMode: WORKSPACE_MODES.REVIEW,
+        canReview: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.REVIEW);
+  });
+
+  it("keeps multi-role users in annotate mode unless they explicitly request review", () => {
+    expect(
+      resolveAnnotationWorkspaceMode({
+        requestedMode: null,
+        canReview: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.ANNOTATE);
+  });
+
+  it("does not allow annotators to force review mode", () => {
+    expect(
+      resolveAnnotationWorkspaceMode({
+        requestedMode: WORKSPACE_MODES.REVIEW,
+        canReview: false,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.ANNOTATE);
+  });
+
+  it("defaults reviewer-only users to review mode", () => {
+    expect(
+      resolveAnnotationWorkspaceMode({
+        requestedMode: null,
+        canReview: true,
+        canAnnotate: false,
+      }),
+    ).toBe(WORKSPACE_MODES.REVIEW);
+  });
+
+  it("honors annotate mode for multi-role users when requested", () => {
+    expect(
+      resolveAnnotationWorkspaceMode({
+        requestedMode: WORKSPACE_MODES.ANNOTATE,
+        canReview: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.ANNOTATE);
+  });
+});
+
+describe("queue detail workspace mode helpers", () => {
+  it("only enables completed-item navigation for active annotator queues", () => {
+    expect(
+      canUseCompletedNavigation({
+        isReviewMode: false,
+        canAnnotate: true,
+        queueStatus: "active",
+      }),
+    ).toBe(true);
+    expect(
+      canUseCompletedNavigation({
+        isReviewMode: false,
+        canAnnotate: true,
+        queueStatus: "completed",
+      }),
+    ).toBe(false);
+    expect(
+      canUseCompletedNavigation({
+        isReviewMode: false,
+        canAnnotate: false,
+        queueStatus: "active",
+      }),
+    ).toBe(false);
+    expect(
+      canUseCompletedNavigation({
+        isReviewMode: true,
+        canAnnotate: true,
+        queueStatus: "active",
+      }),
+    ).toBe(false);
+  });
+
+  it("allows managers and reviewers to open submissions on active or completed queues", () => {
+    expect(
+      canOpenSubmissionWorkspace({
+        itemCount: 1,
+        canViewSubmissions: true,
+        queueStatus: "active",
+      }),
+    ).toBe(true);
+    expect(
+      canOpenSubmissionWorkspace({
+        itemCount: 1,
+        canViewSubmissions: true,
+        queueStatus: "completed",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not open submissions without items, permission, or an open queue state", () => {
+    expect(
+      canOpenSubmissionWorkspace({
+        itemCount: 0,
+        canViewSubmissions: true,
+        queueStatus: "active",
+      }),
+    ).toBe(false);
+    expect(
+      canOpenSubmissionWorkspace({
+        itemCount: 1,
+        canViewSubmissions: false,
+        queueStatus: "active",
+      }),
+    ).toBe(false);
+    expect(
+      canOpenSubmissionWorkspace({
+        itemCount: 1,
+        canViewSubmissions: true,
+        queueStatus: "draft",
+      }),
+    ).toBe(false);
+  });
+
+  it("routes completed and pending-review rows to comparison mode for reviewers", () => {
+    expect(
+      resolveQueueItemWorkspaceMode({
+        item: { status: "completed", review_status: null },
+        canViewSubmissions: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.REVIEW);
+    expect(
+      resolveQueueItemWorkspaceMode({
+        item: { status: "in_progress", review_status: "pending_review" },
+        canViewSubmissions: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.REVIEW);
+  });
+
+  it("keeps multi-role users in annotate mode for editable non-review rows", () => {
+    expect(
+      resolveQueueItemWorkspaceMode({
+        item: { status: "pending", review_status: null },
+        canViewSubmissions: true,
+        canAnnotate: true,
+      }),
+    ).toBe(WORKSPACE_MODES.ANNOTATE);
+  });
+
+  it("routes reviewer-only users to comparison mode for any row", () => {
+    expect(
+      resolveQueueItemWorkspaceMode({
+        item: { status: "pending", review_status: null },
+        canViewSubmissions: true,
+        canAnnotate: false,
+      }),
+    ).toBe(WORKSPACE_MODES.REVIEW);
+  });
+});
 
 vi.mock("src/utils/format-time", () => ({
   fDateTime: () => "Jan 1, 2025 12:00",
@@ -888,6 +1058,10 @@ describe("LabelPanel", () => {
     );
 
     expect(screen.getByTitle(target)).toBeInTheDocument();
+    expect(screen.getByTestId("feedback-to-address-panel")).toHaveStyle({
+      flexShrink: "0",
+      overflowX: "hidden",
+    });
     expect(screen.getByText("Kartik")).toBeInTheDocument();
     expect(
       screen.getByText(

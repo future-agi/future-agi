@@ -32,6 +32,7 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.tasks.annotation_automation import run_due_automation_rules
 from model_hub.utils.annotation_queue_helpers import is_automation_rule_due
+from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
 
@@ -386,7 +387,7 @@ class TestAutomationRulesE2E:
         assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
 
     def test_preview_rule_requires_queue_manager(
-        self, auth_client, organization, workspace, user
+        self, auth_client, organization, workspace
     ):
         """Rule preview is a queue-management action, same as evaluate."""
         project = _create_project(organization, workspace, name="Preview ACL Project")
@@ -408,18 +409,30 @@ class TestAutomationRulesE2E:
         assert resp.status_code == status.HTTP_201_CREATED, resp.data
         rule_id = resp.data["id"]
 
-        AnnotationQueueAnnotator.objects.filter(
+        annotator_user = User.objects.create_user(
+            email=f"preview-annotator-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Preview Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
             queue_id=queue_id,
-            user=user,
-        ).update(
+            user=annotator_user,
             role=AnnotatorRole.ANNOTATOR.value,
             roles=[AnnotatorRole.ANNOTATOR.value],
         )
 
-        resp = auth_client.get(f"{_rule_detail_url(queue_id, rule_id)}preview/")
+        from conftest import WorkspaceAwareAPIClient
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+        resp = annotator_client.get(f"{_rule_detail_url(queue_id, rule_id)}preview/")
 
         assert resp.status_code == status.HTTP_403_FORBIDDEN
         assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
+        annotator_client.stop_workspace_injection()
 
     # -----------------------------------------------------------------------
     # 7. Org isolation
@@ -1611,7 +1624,7 @@ class TestAutomationRulesE2E:
 
         assert "0 = 1" not in where
         assert "custom_eval_config_id IN" in where
-        assert "output_str_list LIKE" in where
+        assert "has(JSONExtract(output_str_list, 'Array(String)')" in where
         assert tuple(params["eval_cfg_1"]) == (str(config.id),)
 
     def test_evaluate_rule_voice_trace_scope_has_no_implicit_time_window(

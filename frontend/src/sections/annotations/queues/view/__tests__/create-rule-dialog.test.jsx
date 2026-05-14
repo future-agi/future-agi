@@ -202,6 +202,29 @@ describe("create rule Observe filter serialization", () => {
     ).toBe(true);
   });
 
+  it("stores canonical system metric ids for trace rule filters", () => {
+    const conditions = buildConditionsForRule(
+      "trace",
+      [
+        {
+          id: "latency",
+          columnId: "latency",
+          filterConfig: {
+            filterType: "number",
+            filterOp: "greater_than",
+            filterValue: 500,
+            col_type: "SYSTEM_METRIC",
+          },
+        },
+      ],
+      { project_id: "project-1" },
+      {},
+    );
+
+    expect(conditions.rules[0].field).toBe("latency_ms");
+    expect(conditions.filter[0].column_id).toBe("latency_ms");
+  });
+
   it("keeps non-default queue-bound scope authoritative over stale picker values", () => {
     const filters = [
       {

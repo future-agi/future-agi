@@ -11,7 +11,9 @@ import {
   queueItemKeys,
   annotateKeys,
   automationRuleKeys,
+  extractErrorMessage,
   useCreateAutomationRule,
+  useCreateAnnotationQueue,
   useCreateDiscussionComment,
   useAnnotateDetail,
   useAssignQueueItems,
@@ -115,6 +117,52 @@ describe("Annotation Queues API", () => {
         "detail",
         "q-123",
       ]);
+    });
+  });
+
+  describe("extractErrorMessage", () => {
+    it("reads structured entitlement messages from nested backend errors", () => {
+      expect(
+        extractErrorMessage(
+          {
+            error: {
+              code: "ENTITLEMENT_LIMIT",
+              message:
+                "You've reached the 10 annotation queues limit across this organization",
+              detail: { current_usage: 10, limit: 10 },
+            },
+          },
+          "Failed",
+        ),
+      ).toBe(
+        "You've reached the 10 annotation queues limit across this organization",
+      );
+    });
+  });
+
+  describe("useCreateAnnotationQueue", () => {
+    it("surfaces structured queue limit messages in the snackbar", async () => {
+      axios.post.mockRejectedValueOnce({
+        error: {
+          code: "ENTITLEMENT_LIMIT",
+          message:
+            "You've reached the 10 annotation queues limit across this organization",
+          detail: { current_usage: 10, limit: 10 },
+        },
+      });
+
+      const { result } = renderHook(() => useCreateAnnotationQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({ name: "Limit blocked queue" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "You've reached the 10 annotation queues limit across this organization",
+          { variant: "error" },
+        );
+      });
     });
   });
 
@@ -266,6 +314,64 @@ describe("Annotation Queues API", () => {
         { params: { include_completed: true } },
       );
     });
+
+    it("passes review view mode without requiring a pending-review filter", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { annotations: [] } },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useAnnotateDetail("queue-1", "item-1", {
+            viewMode: "review",
+          }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
+        { params: { view_mode: "review" } },
+      );
+    });
+
+    it("passes review mode, selected annotator, and review status together", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { annotations: [] } },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useAnnotateDetail("queue-1", "item-1", {
+            viewMode: "review",
+            reviewStatus: "pending_review",
+            annotatorId: "user-2",
+          }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
+        {
+          params: {
+            annotator_id: "user-2",
+            view_mode: "review",
+            review_status: "pending_review",
+          },
+        },
+      );
+    });
   });
 
   describe("useNextItem", () => {
@@ -358,6 +464,58 @@ describe("Annotation Queues API", () => {
       expect(axios.get).toHaveBeenCalledWith(
         "/model-hub/annotation-queues/queue-1/items/next-item/",
         { params: { include_completed: true } },
+      );
+    });
+
+    it("passes review view mode for manager submission browsing", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1" } } },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useNextItem("queue-1", {
+            viewMode: "review",
+            includeCompleted: true,
+          }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        { params: { view_mode: "review", include_completed: true } },
+      );
+    });
+
+    it("passes review status with review view mode for review queues", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1" } } },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useNextItem("queue-1", {
+            viewMode: "review",
+            reviewStatus: "pending_review",
+          }),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        { params: { view_mode: "review", review_status: "pending_review" } },
       );
     });
   });
@@ -507,6 +665,65 @@ describe("Annotation Queues API", () => {
       });
 
       resolveRequest({ data: { result: {} } });
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+    });
+
+    it("keeps existing assignee display data when reassignment only sends user IDs", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      queryClient.setQueryData(annotateKeys.detail("queue-1", "item-1"), {
+        data: {
+          result: {
+            item: {
+              id: "item-1",
+              assigned_users: [
+                {
+                  id: "user-2",
+                  user_id: "user-2",
+                  name: "Nikhil",
+                  email: "nikhil@example.com",
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      const { result } = renderHook(() => useAssignQueueItems(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1"],
+        userIds: ["user-2"],
+        action: "set",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/assign/",
+          {
+            item_ids: ["item-1"],
+            user_ids: ["user-2"],
+            action: "set",
+          },
+        );
+        expect(
+          queryClient.getQueryData(annotateKeys.detail("queue-1", "item-1"))
+            .data.result.item.assigned_users,
+        ).toEqual([
+          {
+            id: "user-2",
+            user_id: "user-2",
+            name: "Nikhil",
+            email: "nikhil@example.com",
+          },
+        ]);
+      });
+
       await waitFor(() => {
         expect(result.current.isSuccess).toBe(true);
       });

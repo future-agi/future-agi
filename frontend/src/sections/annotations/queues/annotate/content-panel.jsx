@@ -151,7 +151,7 @@ export default function ContentPanel({ item }) {
   }
 
   return (
-    <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
+    <Box sx={{ p: 3, overflow: "auto", height: "100%", minWidth: 0 }}>
       <Chip
         label={SOURCE_LABELS[sourceType] || sourceType}
         size="small"
@@ -1607,7 +1607,7 @@ function SessionContent({ content }) {
   }
 
   return (
-    <Stack spacing={1.5} sx={{ height: "100%" }}>
+    <Stack spacing={1.5} sx={{ height: "100%", minWidth: 0 }}>
       {/* Session metadata chips */}
       {sessionMetadata && (
         <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 0.5 }}>
@@ -1639,7 +1639,10 @@ function SessionContent({ content }) {
       <Divider />
 
       {/* Session conversation history — same UI as TracesDrawer */}
-      <Box ref={scrollRef} sx={{ flex: 1, overflow: "auto" }}>
+      <Box
+        ref={scrollRef}
+        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "hidden" }}
+      >
         <SessionHistory
           traceDetail={traceDetail}
           loading={isLoading}

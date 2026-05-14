@@ -32,6 +32,7 @@ import {
   getUniqueColorPalette,
   objectCamelToSnake,
 } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -4174,37 +4175,37 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // set than the grid, leading to the bug where "N selected"
                   // under a chip/metric filter adds MORE than N to the queue.
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primarySpanValidatedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
                   ) {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   return null;
                 })()}
@@ -4551,14 +4552,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...primaryCombinedFilters,
-                      ...(extraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...primaryCombinedFilters,
+                        ...(extraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
@@ -4589,14 +4592,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...compareCombinedFilters,
-                      ...(compareExtraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...compareCombinedFilters,
+                        ...(compareExtraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}

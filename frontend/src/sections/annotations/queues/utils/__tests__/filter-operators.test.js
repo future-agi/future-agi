@@ -78,6 +78,14 @@ describe("annotation queue filter operator contract", () => {
       filterOp: "not_in",
       filterValue: ["ok", "warning"],
     });
+    expect(panelOperatorAndValueToApi("in", ["response"])).toEqual({
+      filterOp: "in",
+      filterValue: ["response"],
+    });
+    expect(panelOperatorAndValueToApi("not_in", ["response", "tool"])).toEqual({
+      filterOp: "not_in",
+      filterValue: ["response", "tool"],
+    });
     expect(panelOperatorAndValueToApi("between", [1, 5])).toEqual({
       filterOp: "between",
       filterValue: ["1", "5"],

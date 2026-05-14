@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
@@ -8,7 +9,7 @@ import structlog
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
-from django.db.models.functions import Coalesce, TruncDate
+from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -17,6 +18,7 @@ from rest_framework.response import Response
 
 from accounts.models.user import User
 from model_hub.models.annotation_queues import (
+    FULL_ACCESS_QUEUE_ROLES,
     SOURCE_TYPE_FK_MAP,
     VALID_STATUS_TRANSITIONS,
     AnnotationQueue,
@@ -28,7 +30,9 @@ from model_hub.models.annotation_queues import (
     QueueItemNote,
     QueueItemReviewComment,
     QueueItemReviewThread,
+    annotation_queue_effective_roles,
     annotation_queue_role_q,
+    user_has_annotation_queue_admin_access,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
@@ -119,7 +123,18 @@ MAX_MENTIONED_USERS_PER_COMMENT = 50
 USER_MENTION_RE = re.compile(
     r"user:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 )
+EMAIL_ADDRESS_RE = re.compile(
+    r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
+    re.IGNORECASE,
+)
+EMAIL_MENTION_RE = re.compile(
+    r"(?<![\w.+-])@"
+    r"([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})"
+    r"(?=$|[\s,;:!?\)\]}]|\.(?=$|\s))",
+    re.IGNORECASE,
+)
 MAX_DISCUSSION_REACTION_LENGTH = 16
+DEFAULT_QUEUE_FULL_ACCESS_ROLES = list(FULL_ACCESS_QUEUE_ROLES)
 
 
 def _is_supported_discussion_reaction(value):
@@ -670,6 +685,13 @@ def _send_annotation_discussion_email(*, item, comment, thread, recipient_emails
             },
             recipient_emails,
         )
+        logger.info(
+            "annotation_discussion_email_sent",
+            queue_id=str(item.queue_id),
+            item_id=str(item.id),
+            comment_id=str(comment.id),
+            recipient_count=len(recipient_emails),
+        )
     except Exception:
         logger.exception(
             "annotation_discussion_email_failed",
@@ -677,6 +699,37 @@ def _send_annotation_discussion_email(*, item, comment, thread, recipient_emails
             item_id=str(item.id),
             comment_id=str(comment.id),
         )
+
+
+def _discussion_notifications_are_async():
+    return getattr(
+        settings,
+        "ANNOTATION_DISCUSSION_NOTIFICATIONS_ASYNC",
+        settings.EMAIL_BACKEND != "django.core.mail.backends.locmem.EmailBackend",
+    )
+
+
+def _run_annotation_discussion_notification_after_commit(
+    callback, *, name, force_async=False
+):
+    def _send():
+        should_run_async = _discussion_notifications_are_async()
+        if force_async and not should_run_async:
+            if getattr(settings, "TESTING", False):
+                return
+            should_run_async = True
+
+        if not should_run_async:
+            callback()
+            return
+
+        threading.Thread(
+            target=callback,
+            name=name,
+            daemon=True,
+        ).start()
+
+    transaction.on_commit(_send)
 
 
 def _broadcast_annotation_discussion_update(item, comment, thread=None):
@@ -709,7 +762,11 @@ def _broadcast_annotation_discussion_update(item, comment, thread=None):
                 comment_id=str(comment.id),
             )
 
-    transaction.on_commit(_send)
+    _run_annotation_discussion_notification_after_commit(
+        _send,
+        name=f"annotation-discussion-broadcast-{comment.id}",
+        force_async=True,
+    )
 
 
 def _notify_annotation_discussion(item, comment, thread=None):
@@ -728,13 +785,22 @@ def _notify_annotation_discussion(item, comment, thread=None):
     if not recipient_emails:
         return
 
-    transaction.on_commit(
+    logger.info(
+        "annotation_discussion_email_queued",
+        queue_id=str(item.queue_id),
+        item_id=str(item.id),
+        comment_id=str(comment.id),
+        recipient_count=len(recipient_emails),
+        async_delivery=_discussion_notifications_are_async(),
+    )
+    _run_annotation_discussion_notification_after_commit(
         lambda: _send_annotation_discussion_email(
             item=item,
             comment=comment,
             thread=thread,
             recipient_emails=recipient_emails,
-        )
+        ),
+        name=f"annotation-discussion-email-{comment.id}",
     )
 
 
@@ -785,12 +851,28 @@ def _scores_for_queue_item(item):
     source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
     if fk_field and source_id:
         # Score is source-scoped; queue_item is provenance, not ownership. A
-        # source can appear in multiple queues, and editing it from any queue
-        # may move queue_item provenance to that latest item. History/detail for
-        # every queue item pointing at the same source still has to show it.
+        # source can appear in multiple items from this queue, and editing it
+        # may move queue_item provenance to the latest item. Keep source-level
+        # scores visible for this queue's members without leaking unrelated
+        # annotators from a different queue that happens to use the same source.
+        queue_member_ids = AnnotationQueueAnnotator.objects.filter(
+            queue_id=item.queue_id,
+            deleted=False,
+        ).values("user_id")
         base_q |= Q(
             source_type=item.source_type,
             label_id__in=label_ids,
+            queue_item__isnull=True,
+            **{f"{fk_field}_id": source_id},
+        ) | Q(
+            source_type=item.source_type,
+            label_id__in=label_ids,
+            queue_item__queue_id=item.queue_id,
+            **{f"{fk_field}_id": source_id},
+        ) | Q(
+            source_type=item.source_type,
+            label_id__in=label_ids,
+            annotator_id__in=queue_member_ids,
             **{f"{fk_field}_id": source_id},
         )
     return Score.objects.filter(base_q, deleted=False)
@@ -1127,6 +1209,16 @@ def _scores_for_queue_items(items, queue_label_ids):
         return {}
 
     item_ids = [item.id for item in items]
+    queue_ids = {item.queue_id for item in items}
+    source_score_scope = Q(queue_item__isnull=True)
+    if queue_ids:
+        queue_member_ids = AnnotationQueueAnnotator.objects.filter(
+            queue_id__in=queue_ids,
+            deleted=False,
+        ).values("user_id")
+        source_score_scope |= Q(queue_item__queue_id__in=queue_ids)
+        source_score_scope |= Q(annotator_id__in=queue_member_ids)
+
     score_filter = Q(queue_item_id__in=item_ids, label_id__in=queue_label_ids)
     source_items = {}
     for item in items:
@@ -1148,7 +1240,7 @@ def _scores_for_queue_items(items, queue_label_ids):
                 source_type=source_type,
                 label_id__in=queue_label_ids,
                 **{f"{fk_field}_id__in": source_ids},
-            )
+            ) & source_score_scope
 
     scores_by_item = {item_id: [] for item_id in item_ids}
     seen_by_item = {item_id: set() for item_id in item_ids}
@@ -1164,7 +1256,7 @@ def _scores_for_queue_items(items, queue_label_ids):
 
         fk_field = SCORE_SOURCE_FK_MAP.get(score.source_type)
         source_id = getattr(score, f"{fk_field}_id", None) if fk_field else None
-        if fk_field and source_id:
+        if score.queue_item_id is None and fk_field and source_id:
             matched_item_ids.extend(
                 source_items.get((score.source_type, str(source_id)), [])
             )
@@ -1174,6 +1266,18 @@ def _scores_for_queue_items(items, queue_label_ids):
                 continue
             seen_by_item[item_id].add(score.id)
             scores_by_item[item_id].append(score)
+
+    for item_id, item_scores in scores_by_item.items():
+        # Queue-specific submissions must fill the first export slots. Older
+        # inline/source-level annotations are still useful context, but if they
+        # sort first the value/annotator/notes columns look shifted or missing.
+        item_scores.sort(
+            key=lambda score: (
+                0 if score.queue_item_id == item_id else 1,
+                score.created_at.isoformat() if score.created_at else "",
+                str(score.id),
+            )
+        )
 
     return scores_by_item
 
@@ -2139,21 +2243,31 @@ FILTER_MODE_RESOLVERS = {
 
 
 def _is_queue_manager(queue, user):
-    return AnnotationQueueAnnotator.objects.filter(
-        annotation_queue_role_q(AnnotatorRole.MANAGER.value),
-        queue=queue,
-        user=user,
-        deleted=False,
-    ).exists()
+    return AnnotatorRole.MANAGER.value in annotation_queue_effective_roles(queue, user)
 
 
 def _has_queue_role(queue_id, user, *roles):
-    return AnnotationQueueAnnotator.objects.filter(
+    normalized_roles = set(roles)
+    if not normalized_roles:
+        return False
+
+    if AnnotationQueueAnnotator.objects.filter(
         annotation_queue_role_q(*roles),
         queue_id=queue_id,
         user=user,
         deleted=False,
-    ).exists()
+    ).exists():
+        return True
+
+    queue = (
+        AnnotationQueue.objects.select_related("organization", "workspace")
+        .filter(pk=queue_id, deleted=False)
+        .first()
+    )
+    return bool(
+        normalized_roles.intersection(FULL_ACCESS_QUEUE_ROLES)
+        and user_has_annotation_queue_admin_access(queue, user)
+    )
 
 
 def _queue_member_ids(queue_id):
@@ -2169,6 +2283,65 @@ def _queue_member_ids(queue_id):
 def _extract_mentioned_user_ids(comment):
     """Support rich-text mention payloads that embed ids as user:<uuid>."""
     return {match.group(1) for match in USER_MENTION_RE.finditer(comment or "")}
+
+
+def _extract_mentioned_emails(comment):
+    """Support typed @email mentions when the frontend did not send user ids."""
+    return {
+        match.group(1).strip().lower()
+        for match in EMAIL_MENTION_RE.finditer(comment or "")
+    }
+
+
+def _split_mention_references(raw_mentions):
+    mention_ids = set()
+    mention_emails = set()
+
+    for mention in raw_mentions:
+        normalized = str(mention).strip()
+        if not normalized:
+            continue
+
+        rich_match = USER_MENTION_RE.fullmatch(normalized)
+        if rich_match:
+            mention_ids.add(rich_match.group(1))
+            continue
+
+        try:
+            mention_ids.add(str(uuid.UUID(normalized)))
+            continue
+        except (TypeError, ValueError):
+            pass
+
+        email = normalized[1:] if normalized.startswith("@") else normalized
+        if EMAIL_ADDRESS_RE.fullmatch(email):
+            mention_emails.add(email.lower())
+            continue
+
+        mention_ids.add(normalized)
+
+    return mention_ids, mention_emails
+
+
+def _queue_member_ids_from_emails(queue_id, emails):
+    normalized_emails = {
+        str(email).strip().lower()
+        for email in emails
+        if str(email).strip()
+    }
+    if not normalized_emails:
+        return set()
+
+    return {
+        str(user_id)
+        for user_id in AnnotationQueueAnnotator.objects.filter(
+            queue_id=queue_id,
+            deleted=False,
+        )
+        .annotate(user_email_lower=Lower("user__email"))
+        .filter(user_email_lower__in=normalized_emails)
+        .values_list("user_id", flat=True)
+    }
 
 
 def _queue_members_from_ids(queue_id, user_ids):
@@ -2228,6 +2401,58 @@ def _restore_archived_default_queue(queue):
 
     AutomationRule.objects.filter(queue=queue, deleted=False).update(
         last_triggered_at=tz.now()
+    )
+
+
+def _ensure_default_queue_member_can_manage(queue, user):
+    """Default queues are project entrypoints; make active users full members.
+
+    Custom queues keep explicit membership semantics. For default queues,
+    the Observe/inline annotation path can fetch an existing queue created by
+    someone else or restored from archive. Without a membership row the user
+    can annotate via the default-queue open access path, but the queue detail
+    page hides management surfaces such as Rules and Settings. Upserting the
+    active requester keeps the role-gated API/UI behavior consistent.
+    """
+    if not queue or not user or not getattr(queue, "is_default", False):
+        return None
+
+    active = AnnotationQueueAnnotator.objects.filter(
+        queue=queue,
+        user=user,
+        deleted=False,
+    ).first()
+    if active:
+        if (
+            active.role == AnnotatorRole.MANAGER.value
+            and active.normalized_roles == DEFAULT_QUEUE_FULL_ACCESS_ROLES
+        ):
+            return active
+        active.role = AnnotatorRole.MANAGER.value
+        active.roles = DEFAULT_QUEUE_FULL_ACCESS_ROLES
+        active.save(update_fields=["role", "roles", "updated_at"])
+        return active
+
+    soft_deleted = (
+        AnnotationQueueAnnotator.all_objects.filter(queue=queue, user=user)
+        .order_by("-updated_at")
+        .first()
+    )
+    if soft_deleted:
+        soft_deleted.deleted = False
+        soft_deleted.deleted_at = None
+        soft_deleted.role = AnnotatorRole.MANAGER.value
+        soft_deleted.roles = DEFAULT_QUEUE_FULL_ACCESS_ROLES
+        soft_deleted.save(
+            update_fields=["deleted", "deleted_at", "role", "roles", "updated_at"]
+        )
+        return soft_deleted
+
+    return AnnotationQueueAnnotator.objects.create(
+        queue=queue,
+        user=user,
+        role=AnnotatorRole.MANAGER.value,
+        roles=DEFAULT_QUEUE_FULL_ACCESS_ROLES,
     )
 
 
@@ -2305,9 +2530,43 @@ def _is_truthy(value) -> bool:
     return bool(value)
 
 
-def _check_annotation_queue_create_limit(org):
+def _is_review_workspace_request(request, *, is_reviewer, review_status=None) -> bool:
+    """Whether annotate/next-item should use manager/reviewer comparison scope."""
+    if not is_reviewer:
+        return False
+    view_mode = (
+        request.query_params.get("view_mode")
+        or request.query_params.get("mode")
+        or ""
+    )
+    return (
+        review_status == "pending_review"
+        or str(view_mode).strip().lower() in {"review", "comparison", "submissions"}
+        or _is_truthy(request.query_params.get("include_all_annotations"))
+    )
+
+
+def _workspace_visible_queue_count(org, workspace):
+    queryset = AnnotationQueue.no_workspace_objects.filter(organization=org)
+    if not workspace:
+        return queryset.count()
+    if getattr(workspace, "is_default", False):
+        return queryset.filter(
+            Q(workspace=workspace)
+            | Q(workspace__is_default=True, workspace__organization=org)
+            | Q(workspace__isnull=True)
+        ).count()
+    return queryset.filter(workspace=workspace).count()
+
+
+def _check_annotation_queue_create_limit(org, workspace=None):
     """Enforce Cloud plan limits before activating a new annotation queue."""
-    from tfc.ee_gating import EEResource, check_ee_can_create, is_oss
+    from tfc.ee_gating import (
+        EEResource,
+        FeatureUnavailable,
+        check_ee_can_create,
+        is_oss,
+    )
 
     # Annotation queues are a core self-hosted/local feature. Pricing limits
     # only apply when the EE/Cloud entitlement service is available.
@@ -2320,11 +2579,35 @@ def _check_annotation_queue_create_limit(org):
     current_count = AnnotationQueue.no_workspace_objects.filter(
         organization=org,
     ).count()
-    check_ee_can_create(
-        EEResource.ANNOTATION_QUEUES,
-        org_id=str(org.id),
-        current_count=current_count,
-    )
+    try:
+        check_ee_can_create(
+            EEResource.ANNOTATION_QUEUES,
+            org_id=str(org.id),
+            current_count=current_count,
+        )
+    except FeatureUnavailable as exc:
+        workspace_count = _workspace_visible_queue_count(org, workspace)
+        if workspace and workspace_count != current_count:
+            metadata = dict(getattr(exc, "metadata", {}) or {})
+            metadata["workspace_usage"] = workspace_count
+            metadata["other_workspace_usage"] = max(current_count - workspace_count, 0)
+            limit = metadata.get("limit")
+            limit_text = f"{limit} " if limit is not None else ""
+            detail = (
+                f"You've reached the {limit_text}annotation queues limit across "
+                f"this organization ({current_count} existing queues; "
+                f"{workspace_count} in the current workspace and "
+                f"{metadata['other_workspace_usage']} in other workspaces). "
+                "Archive unused queues in another workspace or upgrade your plan."
+            )
+            raise FeatureUnavailable(
+                EEResource.ANNOTATION_QUEUES,
+                detail=detail,
+                code=getattr(exc, "error_code", None),
+                upgrade_cta=getattr(exc, "upgrade_cta", None),
+                metadata=metadata,
+            )
+        raise
 
 
 class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
@@ -2429,7 +2712,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             )
             if requires_review:
                 check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
-            _check_annotation_queue_create_limit(org)
+            _check_annotation_queue_create_limit(
+                org, getattr(request, "workspace", None)
+            )
         except serializers.ValidationError as exc:
             msg = _flatten_validation_errors(exc.detail)
             return self._gm.custom_error_response(status_code=400, result=msg)
@@ -2450,13 +2735,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def update(self, request, *args, **kwargs):
         """Only managers of the queue may update queue settings."""
         instance = self.get_object()
-        is_manager = AnnotationQueueAnnotator.objects.filter(
-            annotation_queue_role_q(AnnotatorRole.MANAGER.value),
-            queue=instance,
-            user=request.user,
-            deleted=False,
-        ).exists()
-        if not is_manager:
+        if not _is_queue_manager(instance, request.user):
             return self._gm.forbidden_response(
                 "Only queue managers can update queue settings."
             )
@@ -3275,12 +3554,16 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 .first()
             )
             if archived:
-                _check_annotation_queue_create_limit(org)
+                _check_annotation_queue_create_limit(
+                    org, getattr(request, "workspace", None)
+                )
                 _restore_archived_default_queue(archived)
                 queue = archived
                 action = "restored"
             else:
-                _check_annotation_queue_create_limit(org)
+                _check_annotation_queue_create_limit(
+                    org, getattr(request, "workspace", None)
+                )
                 queue = AnnotationQueue.objects.create(
                     is_default=True,
                     name=f"Default - {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
@@ -3293,18 +3576,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 )
                 action = "created"
 
-        # Auto-add creator with full access so default queues are immediately usable.
-        if action == "created":
-            AnnotationQueueAnnotator.objects.create(
-                queue=queue,
-                user=request.user,
-                role=AnnotatorRole.MANAGER.value,
-                roles=[
-                    AnnotatorRole.MANAGER.value,
-                    AnnotatorRole.REVIEWER.value,
-                    AnnotatorRole.ANNOTATOR.value,
-                ],
-            )
+        _ensure_default_queue_member_can_manage(queue, request.user)
 
         queue_labels = (
             queue.queue_labels.filter(deleted=False)
@@ -4198,6 +4470,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         review_status=None,
         exclude_review_status=None,
         include_completed=False,
+        review_view=False,
     ):
         """Return the next work item, keeping queue order stable.
 
@@ -4242,7 +4515,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             AnnotatorRole.REVIEWER.value,
             AnnotatorRole.MANAGER.value,
         )
-        is_review_mode = is_reviewer and review_status == "pending_review"
+        is_review_mode = is_reviewer and (
+            review_status == "pending_review" or review_view
+        )
         base_qs = _apply_review_status_filters_for_user(
             base_qs,
             review_status=review_status,
@@ -4705,6 +4980,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         review_status = request.query_params.get("review_status")
         exclude_review_status = request.query_params.get("exclude_review_status")
         include_completed = _is_truthy(request.query_params.get("include_completed"))
+        is_reviewer = _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        )
+        is_review_navigation = _is_review_workspace_request(
+            request,
+            is_reviewer=is_reviewer,
+            review_status=review_status,
+        )
         before_id = request.query_params.get("before")
         if before_id:
             try:
@@ -4722,18 +5008,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         QueueItemStatus.IN_PROGRESS.value,
                     ]
                 )
-            is_reviewer = _has_queue_role(
-                queue_id,
-                request.user,
-                AnnotatorRole.REVIEWER.value,
-                AnnotatorRole.MANAGER.value,
-            )
             prev_qs = _apply_review_status_filters_for_user(
                 prev_qs,
                 review_status=review_status,
                 exclude_review_status=exclude_review_status,
                 user=request.user,
-                is_reviewer=is_reviewer,
+                is_reviewer=is_review_navigation,
             )
             if review_status != "pending_review":
                 prev_qs = _scope_targeted_rework_items(prev_qs, request.user)
@@ -4749,6 +5029,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             review_status=review_status,
             exclude_review_status=exclude_review_status,
             include_completed=include_completed,
+            review_view=is_review_navigation,
         )
         if not item:
             return self._gm.success_response({"item": None})
@@ -4788,7 +5069,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             AnnotatorRole.REVIEWER.value,
             AnnotatorRole.MANAGER.value,
         )
-        is_review_detail = is_reviewer and review_status == "pending_review"
+        is_review_detail = _is_review_workspace_request(
+            request,
+            is_reviewer=is_reviewer,
+            review_status=review_status,
+        )
         if not is_reviewer and _targeted_rework_denies_user(item, request.user):
             return self._gm.forbidden_response(
                 "This item was sent back to a different annotator."
@@ -5409,8 +5694,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if not isinstance(raw_mentions, list):
             return self._gm.bad_request("mentioned_user_ids must be a list.")
 
-        mention_ids = {str(user_id) for user_id in raw_mentions}
+        mention_ids, mention_emails = _split_mention_references(raw_mentions)
         mention_ids.update(_extract_mentioned_user_ids(comment))
+        mention_emails.update(_extract_mentioned_emails(comment))
+        mention_ids.update(_queue_member_ids_from_emails(queue_id, mention_emails))
         if target_annotator is not None:
             mention_ids.add(str(target_annotator.id))
         try:

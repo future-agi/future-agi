@@ -47,6 +47,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import {
   getTraceListColumnDefs,
   TRACE_DEFAULT_COLUMNS,
@@ -59,6 +60,12 @@ import DateRangePill, {
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
 import { useGetProjectDetails } from "src/api/project/project-detail";
@@ -71,6 +78,7 @@ import {
   normalizeApiFilterOp,
   panelOperatorAndValueToApi,
 } from "src/sections/annotations/queues/utils/filter-operators";
+import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
 import {
   getSessionListColumnDef,
   defaultFilter as sessionDefaultFilterBase,
@@ -136,7 +144,8 @@ function panelFilterToApi(panel) {
   };
 }
 
-function apiFilterToPanel(api) {
+function apiFilterToPanel(api, propertiesById = {}) {
+  const property = propertiesById[api?.columnId];
   const rawOp = api?.filterConfig?.filterOp || "equals";
   const canonicalOp = normalizeApiFilterOp(rawOp);
   const isNumberOp = isNumberFilterOp(canonicalOp);
@@ -164,8 +173,7 @@ function apiFilterToPanel(api) {
     api?.filterConfig?.col_type ||
     api?.filterConfig?.colType ||
     api?.col_type ||
-    api?.colType ||
-    "SYSTEM_METRIC";
+    api?.colType;
   const filterType = api?.filterConfig?.filterType;
   const fieldType = isNumberOp
     ? "number"
@@ -179,15 +187,38 @@ function apiFilterToPanel(api) {
           ? "categorical"
           : filterType === "text" && rawColType === "ANNOTATION"
             ? "text"
-            : "string";
+            : property?.type || "string";
   return {
     field: api.columnId,
-    fieldName: api.displayName,
-    fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
+    fieldName: api.displayName || property?.name,
+    fieldCategory:
+      COL_TYPE_TO_PANEL_CAT[rawColType] || property?.category || "system",
     fieldType,
     operator: apiOpToPanel(canonicalOp, fieldType),
     value,
   };
+}
+
+function hasAppliedAnnotatorFilter(filters) {
+  return filters.some(
+    (filter) => filter?.columnId === "annotator" && apiFilterHasValue(filter),
+  );
+}
+
+export function buildAnnotatorFilterChipLabelMap(annotatorOptions = []) {
+  const entries = annotatorOptions
+    .map((option) => {
+      const value = String(getPickerOptionValue(option));
+      if (!value) return null;
+      const label = getPickerOptionLabel(option);
+      const email = getPickerOptionSecondaryLabel(option);
+      return [value, email ? `${label} (${email})` : label];
+    })
+    .filter(Boolean);
+
+  return entries.length > 0
+    ? { annotator: Object.fromEntries(entries) }
+    : undefined;
 }
 
 function renderProjectAutocompleteOption(props, option, state) {
@@ -266,6 +297,144 @@ const SOURCE_TYPES = [
   },
 ];
 
+const SIMULATION_FILTER_CATEGORIES = [
+  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
+  { key: "system", label: "System Metrics", icon: "mdi:tune-variant" },
+  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
+  { key: "attribute", label: "Attributes", icon: "mdi:tag-multiple-outline" },
+  { key: "eval", label: "Evals", icon: "mdi:check-decagram-outline" },
+];
+
+const SIMULATION_STATIC_FILTER_FIELDS = [
+  {
+    id: "status",
+    name: "Status",
+    category: "system",
+    type: "categorical",
+    choices: ["completed", "failed", "in_progress", "pending", "cancelled"],
+  },
+  ...SIMULATION_PERSONA_FILTER_FIELDS,
+  {
+    id: "agent_definition",
+    name: "Agent Definition",
+    category: "system",
+    type: "text",
+  },
+  {
+    id: "call_type",
+    name: "Call Type",
+    category: "system",
+    type: "categorical",
+    choices: ["voice", "text", "inbound", "outbound"],
+  },
+  {
+    id: "simulation_call_type",
+    name: "Simulation Call Type",
+    category: "system",
+    type: "text",
+  },
+  {
+    id: "duration_seconds",
+    name: "Duration",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "avg_agent_latency_ms",
+    name: "Latency",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "cost_cents",
+    name: "Cost",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "overall_score",
+    name: "Overall Score",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "created_at",
+    name: "Created At",
+    category: "system",
+    type: "date",
+  },
+];
+
+function simulationFilterTypeFromColumn(col) {
+  const rawType = String(
+    col?.data_type ||
+      col?.dataType ||
+      col?.output_type ||
+      col?.outputType ||
+      col?.eval_config?.output_type ||
+      col?.eval_config?.outputType ||
+      "",
+  ).toLowerCase();
+
+  if (
+    ["integer", "float", "number", "numeric", "decimal", "score"].some(
+      (token) => rawType.includes(token),
+    )
+  ) {
+    return "number";
+  }
+  if (rawType.includes("bool")) {
+    return "boolean";
+  }
+  if (rawType.includes("date") || rawType.includes("time")) {
+    return "datetime";
+  }
+  return "text";
+}
+
+function buildDynamicSimulationFilterField(col) {
+  if (!col?.id) return null;
+
+  const normalizedColumnId = normalizeSimulationColumnId(col.id);
+  if (SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId)) return null;
+
+  if (col.type === "scenario_dataset_column") {
+    return {
+      id: col.id,
+      name: col.column_name || col.name || col.id,
+      category: "attribute",
+      type: simulationFilterTypeFromColumn(col),
+    };
+  }
+
+  if (col.type === "evaluation" || col.type === "tool_evaluation") {
+    return {
+      id: col.id,
+      name: col.column_name || col.name || col.id,
+      category: "eval",
+      type: simulationFilterTypeFromColumn(col),
+    };
+  }
+
+  return null;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildSimulationSelectorFilterFields(columnOrder = []) {
+  const fieldsById = new Map(
+    SIMULATION_STATIC_FILTER_FIELDS.map((field) => [field.id, field]),
+  );
+
+  columnOrder.forEach((col) => {
+    const field = buildDynamicSimulationFilterField(col);
+    if (field && !fieldsById.has(field.id)) {
+      fieldsById.set(field.id, field);
+    }
+  });
+
+  return Array.from(fieldsById.values());
+}
+
 // ---------------------------------------------------------------------------
 // Fetch all row IDs from a dataset (paginating through all pages)
 // ---------------------------------------------------------------------------
@@ -325,7 +494,9 @@ async function fetchAllTraceIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(objectCamelToSnake(filters || []));
+  const serializedFilters = JSON.stringify(
+    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
+  );
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -363,7 +534,9 @@ async function fetchAllSpanIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(objectCamelToSnake(filters || []));
+  const serializedFilters = JSON.stringify(
+    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
+  );
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -462,7 +635,9 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               mode: "filter",
               source_type: sourceType,
               project_id: selectAllInfo.projectId,
-              filter: selectAllInfo.filters || [],
+              filter: canonicalizeApiFilterColumnIds(
+                objectCamelToSnake(selectAllInfo.filters || []),
+              ),
               exclude_ids: Array.from(selectAllInfo.excludedIds || []),
               ...(sourceType === "trace" && isVoiceTraceSelection
                 ? { is_voice_call: true }
@@ -1774,6 +1949,22 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     return filters.filter((f) => f?.columnId);
   }, [filters]);
 
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
+
   // Append the date range as a created_at between filter — mirrors
   // `useLLMTracingFilters`. The backend list_traces endpoint + bulk-select
   // resolver both parse it as a standard filter entry.
@@ -1814,7 +2005,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+            filters: JSON.stringify(
+              canonicalizeApiFilterColumnIds(
+                objectCamelToSnake(filtersRef.current),
+              ),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2171,6 +2366,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
+          fieldLabelMap={filterChipLabelMap}
           onAddFilter={(anchorEl) => {
             setFilterAnchorEl(anchorEl || filterButtonRef.current);
             setFilterOpen(true);
@@ -2276,7 +2472,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             params={{
               project_id: projectId,
               filters: JSON.stringify(
-                objectCamelToSnake(validatedFilters || []),
+                canonicalizeApiFilterColumnIds(
+                  objectCamelToSnake(validatedFilters || []),
+                ),
               ),
             }}
             onSelectionChanged={(traceIds) => {
@@ -2418,6 +2616,22 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     return filters.filter((f) => f?.columnId);
   }, [filters]);
 
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
+
   const validatedFilters = useMemo(() => {
     const range = dateFilter?.dateFilter;
     if (!range || !range[0] || !range[1]) return validatedMainFilters;
@@ -2455,7 +2669,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+            filters: JSON.stringify(
+              canonicalizeApiFilterColumnIds(
+                objectCamelToSnake(filtersRef.current),
+              ),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2794,6 +3012,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
+          fieldLabelMap={filterChipLabelMap}
           onAddFilter={(anchorEl) => {
             setFilterAnchorEl(anchorEl || filterButtonRef.current);
             setFilterOpen(true);
@@ -2976,6 +3195,22 @@ function SessionSelector({ onSetSelection }) {
     [filters],
   );
 
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "sessions",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
+
   const validatedFilters = useMemo(() => {
     return buildSessionSelectionFilters(validatedMainFilters, dateFilter);
   }, [validatedMainFilters, dateFilter]);
@@ -3009,7 +3244,11 @@ function SessionSelector({ onSetSelection }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds(
+                    objectCamelToSnake(filtersRef.current),
+                  ),
+                ),
               },
             },
           );
@@ -3335,6 +3574,7 @@ function SessionSelector({ onSetSelection }) {
           extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
             (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
           )}
+          fieldLabelMap={filterChipLabelMap}
           onAddFilter={(anchorEl) => {
             setFilterAnchorEl(anchorEl || filterButtonRef.current);
             setFilterOpen(true);
@@ -3983,12 +4223,27 @@ export function buildSimulationSelectorColumnDefs(columnOrder = []) {
   return columns;
 }
 
+const simulationDefaultFilterBase = {
+  columnId: "",
+  filterConfig: {
+    filterType: "",
+    filterOp: "",
+    filterValue: "",
+  },
+};
+
 function SimulationSelector({ onSetSelection }) {
   const [testId, setTestId] = useState("");
   const [executionRunId, setExecutionRunId] = useState("");
   const [gridApi, setGridApi] = useState(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const [simulationColumnOrder, setSimulationColumnOrder] = useState([]);
+  const [filters, setFilters] = useState([
+    { ...simulationDefaultFilterBase, id: getRandomId() },
+  ]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const filterButtonRef = useRef(null);
   const columnOrderSignatureRef = useRef("");
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -4031,6 +4286,21 @@ function SimulationSelector({ onSetSelection }) {
     staleTime: 1000 * 60 * 2,
   });
 
+  const validatedFilters = useMemo(
+    () => filters.filter(apiFilterHasValue),
+    [filters],
+  );
+
+  const serializedFilters = useMemo(
+    () =>
+      JSON.stringify(
+        canonicalizeApiFilterColumnIds(
+          objectCamelToSnake(validatedFilters || []),
+        ),
+      ),
+    [validatedFilters],
+  );
+
   // 3. Server-side datasource for call executions within selected run
   const dataSource = useMemo(
     () => ({
@@ -4047,10 +4317,15 @@ function SimulationSelector({ onSetSelection }) {
               executionRunId,
               pageNumber,
               pageSize,
+              serializedFilters,
             ],
             queryFn: () =>
               axios.get(endpoints.testExecutions.list(executionRunId), {
-                params: { page: pageNumber + 1, limit: pageSize },
+                params: {
+                  page: pageNumber + 1,
+                  limit: pageSize,
+                  filters: serializedFilters,
+                },
               }),
           });
 
@@ -4086,12 +4361,20 @@ function SimulationSelector({ onSetSelection }) {
         }
       },
     }),
-    [executionRunId, queryClient],
+    [executionRunId, queryClient, serializedFilters],
   );
 
   const columnDefs = useMemo(
     () => buildSimulationSelectorColumnDefs(simulationColumnOrder),
     [simulationColumnOrder],
+  );
+  const filterFields = useMemo(
+    () => buildSimulationSelectorFilterFields(simulationColumnOrder),
+    [simulationColumnOrder],
+  );
+  const filterFieldsById = useMemo(
+    () => Object.fromEntries(filterFields.map((field) => [field.id, field])),
+    [filterFields],
   );
 
   const defaultColDef = useMemo(
@@ -4123,6 +4406,11 @@ function SimulationSelector({ onSetSelection }) {
     }
   }, [executionRunId, gridApi, dataSource]);
 
+  const clearSelection = useCallback(() => {
+    gridApi?.deselectAll?.();
+    onSetSelection([]);
+  }, [gridApi, onSetSelection]);
+
   const onSelectionChanged = useCallback(
     (event) => {
       const ids = [];
@@ -4141,6 +4429,9 @@ function SimulationSelector({ onSetSelection }) {
     setExecutionRunId("");
     columnOrderSignatureRef.current = "";
     setSimulationColumnOrder([]);
+    setFilters([{ ...simulationDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
+    setFilterOpen(false);
     onSetSelection([]);
   };
 
@@ -4154,6 +4445,7 @@ function SimulationSelector({ onSetSelection }) {
   const isTestsLoading = isFetchingTests && tests.length === 0;
   const isExecutionListLoading =
     isExecutionRunsLoading || (isExecutionRunsFetching && !executionRuns);
+  const isFilterApplied = validatedFilters.length > 0;
 
   return (
     <Box
@@ -4315,7 +4607,111 @@ function SimulationSelector({ onSetSelection }) {
             })}
           </TextField>
         )}
+
+        {executionRunId && (
+          <>
+            <Box sx={{ flex: 1 }} />
+            <IconButton
+              ref={filterButtonRef}
+              size="small"
+              aria-label="Open simulation filters"
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((value) => !value);
+              }}
+              sx={{
+                border: "1px solid",
+                borderColor: isFilterApplied ? "primary.main" : "divider",
+                borderRadius: 0.5,
+                p: 0.75,
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/action_buttons/ic_filter.svg"
+                sx={{
+                  width: 16,
+                  height: 16,
+                  color: isFilterApplied ? "primary.main" : "text.primary",
+                }}
+              />
+            </IconButton>
+          </>
+        )}
       </Box>
+
+      {executionRunId && (
+        <TraceFilterPanel
+          anchorEl={filterAnchorEl || filterButtonRef.current}
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          currentFilters={validatedFilters.map((filter) =>
+            apiFilterToPanel(filter, filterFieldsById),
+          )}
+          onApply={(newPanelFilters) => {
+            const nextFilters = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
+            setFilters(
+              nextFilters.length
+                ? nextFilters.map((filter) => ({
+                    ...filter,
+                    id: getRandomId(),
+                  }))
+                : [{ ...simulationDefaultFilterBase, id: getRandomId() }],
+            );
+            clearSelection();
+          }}
+          properties={filterFields}
+          source="simulation"
+          showAi={false}
+          showQueryTab={false}
+          categories={SIMULATION_FILTER_CATEGORIES}
+          panelWidth={560}
+        />
+      )}
+
+      {executionRunId && (
+        <FilterChips
+          extraFilters={objectCamelToSnake(validatedFilters) || []}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_index, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onRemoveFilter={(index) => {
+            setFilterAnchorEl(null);
+            const snakeFilters = objectCamelToSnake(validatedFilters) || [];
+            const target = snakeFilters[index];
+            if (!target) return;
+            setFilters((prev) => {
+              const nextFilters = prev.filter((filter) => {
+                const colMatches = filter?.columnId === target.column_id;
+                const opMatches =
+                  filter?.filterConfig?.filterOp ===
+                  target?.filter_config?.filter_op;
+                return !(colMatches && opMatches);
+              });
+              return nextFilters.length
+                ? nextFilters
+                : [{ ...simulationDefaultFilterBase, id: getRandomId() }];
+            });
+            clearSelection();
+          }}
+          onClearAll={() => {
+            setFilterAnchorEl(null);
+            setFilters([{ ...simulationDefaultFilterBase, id: getRandomId() }]);
+            setFilterOpen(false);
+            clearSelection();
+          }}
+        />
+      )}
 
       {/* Empty state */}
       {!testId && (

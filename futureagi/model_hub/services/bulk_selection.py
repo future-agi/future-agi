@@ -19,8 +19,8 @@ Future phases will add sibling resolvers for ``observation_span``,
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 from uuid import UUID
 
 import structlog
@@ -51,6 +51,11 @@ from django.db.models.functions import Coalesce, JSONObject, Round
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from simulate.models.test_execution import CallExecution
+from simulate.utils.persona_filtering import (
+    UnsupportedPersonaFilter,
+    apply_persona_filter,
+    is_persona_filter_column,
+)
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
@@ -1257,10 +1262,9 @@ def resolve_filtered_session_ids(
 # --------------------------------------------------------------------------
 
 
-# UI column id → CallExecution ORM lookup. Mirrors the SIMULATION_RULE_FILTER_FIELDS
-# the rule dialog sends. agent_definition is matched by name (icontains)
-# because the dialog field is free-text. Persona is a nested JSON field on
-# call_metadata, matched as a substring against the serialised JSON blob.
+# UI column id → CallExecution ORM lookup. Mirrors the simulation add-items and
+# rule filter fields. Structured persona fields are handled separately because
+# call_metadata.row_data.persona may store scalar or list-shaped JSON values.
 _CALL_EXECUTION_FIELD_MAP = {
     "status": "status",
     "simulation_call_type": "simulation_call_type",
@@ -1268,7 +1272,6 @@ _CALL_EXECUTION_FIELD_MAP = {
     "duration_seconds": "duration_seconds",
     "overall_score": "overall_score",
     "agent_definition": "test_execution__agent_definition__agent_name",
-    "persona": "call_metadata__row_data__persona",
 }
 
 
@@ -1289,6 +1292,19 @@ def _apply_call_execution_filters(qs, filters):
             if "filter_value" in cfg
             else cfg.get("filterValue")
         )
+        if is_persona_filter_column(col):
+            try:
+                qs = apply_persona_filter(
+                    qs,
+                    col,
+                    op,
+                    value,
+                    cfg.get("filter_type") or cfg.get("filterType"),
+                )
+            except UnsupportedPersonaFilter:
+                unsupported.append(col or "<unknown>")
+            continue
+
         orm_field = _CALL_EXECUTION_FIELD_MAP.get(col)
         if not orm_field or not op:
             unsupported.append(col or "<unknown>")
@@ -1300,19 +1316,6 @@ def _apply_call_execution_filters(qs, filters):
                 if op == "is_null"
                 else qs.filter(**{f"{orm_field}__isnull": False})
             )
-            continue
-
-        # Persona is a nested JSON field; only support substring/equals
-        # ops. Numeric ranges or in/not_in don't make sense.
-        if col == "persona":
-            if op in ("contains", "icontains"):
-                qs = qs.filter(**{f"{orm_field}__icontains": value})
-                continue
-            if op in ("equals", "eq", "in"):
-                values = value if isinstance(value, list) else [value]
-                qs = qs.filter(**{f"{orm_field}__in": values})
-                continue
-            unsupported.append(col)
             continue
 
         try:

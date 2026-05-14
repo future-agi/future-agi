@@ -21,6 +21,7 @@ from accounts.models import User
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
 )
+from tfc.constants.levels import Level
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import (
@@ -1477,9 +1478,19 @@ class UserViewSet(viewsets.ModelViewSet):
             # Prefer workspace-level filtering when workspace context is available
             workspace = getattr(self.request, "workspace", None)
             if workspace:
-                user_ids = WorkspaceMembership.objects.filter(
+                explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
                     workspace=workspace, is_active=True
                 ).values_list("user_id", flat=True)
+                auto_access_user_ids = OrganizationMembership.no_workspace_objects.filter(
+                    organization_id=organization_id,
+                    is_active=True,
+                ).filter(
+                    Q(level__gte=Level.ADMIN)
+                    | Q(level__isnull=True, role__in=["Admin", "Owner"])
+                ).values_list("user_id", flat=True)
+                user_ids = list(explicit_workspace_user_ids) + list(
+                    auto_access_user_ids
+                )
             else:
                 # Fallback to org membership
                 user_ids = OrganizationMembership.no_workspace_objects.filter(

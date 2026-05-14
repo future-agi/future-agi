@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { objectCamelToSnake } from "src/utils/utils";
-import { buildSimulationSelectorColumnDefs } from "../items/add-items-dialog";
+import {
+  buildAnnotatorFilterChipLabelMap,
+  buildSimulationSelectorColumnDefs,
+  buildSimulationSelectorFilterFields,
+} from "../items/add-items-dialog";
 import {
   buildSessionSelectionFilters,
   buildSessionSelectorFilterFields,
@@ -100,6 +104,128 @@ describe("Simulation add-items columns", () => {
   });
 });
 
+describe("Simulation add-items filters", () => {
+  it("exposes the same core simulation filters used by automation rules", () => {
+    expect(buildSimulationSelectorFilterFields()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "status",
+          name: "Status",
+          category: "system",
+          type: "categorical",
+        }),
+        expect.objectContaining({
+          id: "simulation_call_type",
+          name: "Simulation Call Type",
+          category: "system",
+          type: "text",
+        }),
+        expect.objectContaining({
+          id: "persona.language",
+          name: "Language",
+          category: "persona",
+          type: "categorical",
+          choices: expect.arrayContaining(["English", "Hindi"]),
+        }),
+        expect.objectContaining({
+          id: "persona.communication_style",
+          name: "Communication Style",
+          category: "persona",
+          type: "categorical",
+        }),
+        expect.objectContaining({
+          id: "persona.multilingual",
+          name: "Multilingual",
+          category: "persona",
+          type: "boolean",
+        }),
+        expect.objectContaining({
+          id: "duration_seconds",
+          name: "Duration",
+          category: "system",
+          type: "number",
+        }),
+        expect.objectContaining({
+          id: "avg_agent_latency_ms",
+          name: "Latency",
+          category: "system",
+          type: "number",
+        }),
+        expect.objectContaining({
+          id: "cost_cents",
+          name: "Cost",
+          category: "system",
+          type: "number",
+        }),
+        expect.objectContaining({
+          id: "created_at",
+          name: "Created At",
+          category: "system",
+          type: "date",
+        }),
+      ]),
+    );
+  });
+
+  it("adds scenario attributes and eval columns from simulation column order", () => {
+    const fields = buildSimulationSelectorFilterFields([
+      {
+        id: "scenario-priority",
+        column_name: "Priority",
+        data_type: "text",
+        type: "scenario_dataset_column",
+      },
+      {
+        id: "scenario-attempts",
+        column_name: "Attempts",
+        data_type: "integer",
+        type: "scenario_dataset_column",
+      },
+      {
+        id: "eval-quality",
+        column_name: "Quality Score",
+        output_type: "score",
+        type: "evaluation",
+      },
+      {
+        id: "tool-eval-status",
+        column_name: "Tool Status",
+        output_type: "Pass/Fail",
+        type: "tool_evaluation",
+      },
+    ]);
+
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "scenario-priority",
+          name: "Priority",
+          category: "attribute",
+          type: "text",
+        }),
+        expect.objectContaining({
+          id: "scenario-attempts",
+          name: "Attempts",
+          category: "attribute",
+          type: "number",
+        }),
+        expect.objectContaining({
+          id: "eval-quality",
+          name: "Quality Score",
+          category: "eval",
+          type: "number",
+        }),
+        expect.objectContaining({
+          id: "tool-eval-status",
+          name: "Tool Status",
+          category: "eval",
+          type: "text",
+        }),
+      ]),
+    );
+  });
+});
+
 describe("Session add-items filters", () => {
   it("maps session fields to the searchable filter panel shape", () => {
     const fields = buildSessionSelectorFilterFields([
@@ -171,5 +297,24 @@ describe("Session add-items filters", () => {
         },
       },
     ]);
+  });
+});
+
+describe("Add-items annotator filter chips", () => {
+  it("maps selected annotator ids to name and email labels", () => {
+    expect(
+      buildAnnotatorFilterChipLabelMap([
+        {
+          value: "e1f8e455-9248-4aec-a510-ead35a946235",
+          label: "Kartik",
+          email: "kartik.nvj@futureagi.com",
+        },
+      ]),
+    ).toEqual({
+      annotator: {
+        "e1f8e455-9248-4aec-a510-ead35a946235":
+          "Kartik (kartik.nvj@futureagi.com)",
+      },
+    });
   });
 });

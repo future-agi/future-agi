@@ -99,6 +99,8 @@ export function panelOperatorAndValueToApi(operator, value) {
   if (Array.isArray(filterValue)) {
     if (baseOp === "between" || baseOp === "not_between") {
       filterValue = filterValue.map(String);
+    } else if (baseOp === "in" || baseOp === "not_in") {
+      filterValue = filterValue.map(String);
     } else if (baseOp === "equals") {
       filterOp = "in";
       filterValue = filterValue.map(String);

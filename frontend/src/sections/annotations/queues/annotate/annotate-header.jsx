@@ -84,6 +84,34 @@ function commentsTooltipArrowSx(theme) {
   };
 }
 
+function commentBadgeSx(hasOpenFeedback) {
+  return (theme) => {
+    const tone = theme.palette[hasOpenFeedback ? "warning" : "info"];
+    const isDark = theme.palette.mode === "dark";
+
+    return {
+      "& .MuiBadge-badge": {
+        minWidth: 22,
+        height: 22,
+        px: 0.5,
+        fontWeight: 800,
+        border: `1px solid ${
+          isDark
+            ? alpha(tone.light || tone.main, 0.46)
+            : alpha(theme.palette.background.paper, 0.94)
+        }`,
+        bgcolor: isDark ? alpha(tone.main, 0.24) : tone.main,
+        color: isDark
+          ? tone.light || theme.palette.common.white
+          : theme.palette.common.white,
+        boxShadow: `0 0 0 2px ${
+          isDark ? theme.palette.grey[900] : theme.palette.background.paper
+        }`,
+      },
+    };
+  };
+}
+
 AnnotateHeader.propTypes = {
   queueName: PropTypes.string,
   progress: PropTypes.shape({
@@ -336,19 +364,8 @@ export default function AnnotateHeader({
             <span>
               <Badge
                 badgeContent={badgeCount || null}
-                color={openFeedbackCount ? "warning" : "primary"}
                 overlap="rectangular"
-                sx={{
-                  "& .MuiBadge-badge": {
-                    fontWeight: 800,
-                    bgcolor: (theme) =>
-                      theme.palette[openFeedbackCount ? "warning" : "primary"]
-                        .main,
-                    color: (theme) => theme.palette.common.white,
-                    boxShadow: (theme) =>
-                      `0 0 0 2px ${theme.palette.background.paper}`,
-                  },
-                }}
+                sx={commentBadgeSx(Boolean(openFeedbackCount))}
               >
                 <Button
                   size="small"
