@@ -1553,9 +1553,13 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = properties.find((p) => p.id === f.field);
           const fieldType = f.fieldType || prop?.type || "string";
-          const hydratedOp =
-            (fieldType === "string" || fieldType === "text") &&
-            HYDRATE_STRING_OP[f.operator]
+          // ID-only fields (trace_id / span_id) bypass the string-op
+          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
+          // than "is" renders blank in the operator Select.
+          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
+            ? "is"
+            : (fieldType === "string" || fieldType === "text") &&
+                HYDRATE_STRING_OP[f.operator]
               ? HYDRATE_STRING_OP[f.operator]
               : f.operator;
           // Scalar legacy `equals` value → array for the multi-select picker.
