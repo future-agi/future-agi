@@ -4314,6 +4314,88 @@ class TestFilterBuilderEdgeCases:
         assert "!= lower" in where
         assert "bad" in params.values()
 
+    def test_annotation_label_types_translate_to_expected_storage_shapes(self):
+        """All FE annotation label types should hit the matching Score JSON shape."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        label_id = "00000000-0000-0000-0000-000000000066"
+        cases = [
+            (
+                {
+                    "filter_type": "number",
+                    "filter_op": "equals",
+                    "filter_value": 4,
+                    "col_type": "ANNOTATION",
+                },
+                ["JSONExtractFloat", "'rating'", "'value'", ") = %(ann_"],
+                {4},
+            ),
+            (
+                {
+                    "filter_type": "text",
+                    "filter_op": "starts_with",
+                    "filter_value": "needs",
+                    "col_type": "ANNOTATION",
+                },
+                ["JSONExtractString", "'text'", "ILIKE"],
+                {"needs%"},
+            ),
+            (
+                {
+                    "filter_type": "thumbs",
+                    "filter_op": "in",
+                    "filter_value": ["Thumbs Up", "down"],
+                    "col_type": "ANNOTATION",
+                },
+                ["JSONExtractString", "'value'", " IN %(ann_"],
+                {("up", "down")},
+            ),
+            (
+                {
+                    "filter_type": "categorical",
+                    "filter_op": "contains",
+                    "filter_value": ["refund", "billing"],
+                    "col_type": "ANNOTATION",
+                },
+                ["JSONExtract", "'selected'", "has(", " OR "],
+                {"refund", "billing"},
+            ),
+            (
+                {
+                    "filter_type": "annotator",
+                    "filter_op": "equals",
+                    "filter_value": [
+                        "11111111-1111-1111-1111-111111111111",
+                        "22222222-2222-2222-2222-222222222222",
+                    ],
+                    "col_type": "ANNOTATION",
+                },
+                ["s.annotator_id IN", "toUUID(%(ann_"],
+                {
+                    "11111111-1111-1111-1111-111111111111",
+                    "22222222-2222-2222-2222-222222222222",
+                },
+            ),
+        ]
+
+        for config, expected_fragments, expected_values in cases:
+            builder = ClickHouseFilterBuilder()
+            where, params = builder.translate(
+                [
+                    {
+                        "column_id": label_id,
+                        "filter_config": config,
+                    }
+                ]
+            )
+
+            assert "model_hub_score AS s FINAL" in where
+            for fragment in expected_fragments:
+                assert fragment in where
+            assert expected_values.issubset(set(params.values()))
+
     def test_is_null_system_metric(self):
         """IS NULL on system metric column."""
         from tracer.services.clickhouse.query_builders.filters import (

@@ -4,7 +4,6 @@ import {
   getTraceFilterFields,
   normalizeFilterRowOperator,
 } from "../TraceFilterPanel";
-import { panelFiltersToApiFilters } from "../filterTransforms";
 import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
@@ -66,7 +65,7 @@ describe("normalizeFilterRowOperator", () => {
     ).toBe("is_not");
   });
 
-  it("maps backend number/date operators to valid panel operators", () => {
+  it("keeps canonical number ops and maps backend date ops to valid panel operators", () => {
     expect(
       normalizeFilterRowOperator({
         field: "latency_ms",
@@ -74,7 +73,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "equals",
         value: "100",
       }).operator,
-    ).toBe("equal_to");
+    ).toBe("equals");
 
     expect(
       normalizeFilterRowOperator({
@@ -93,6 +92,17 @@ describe("normalizeFilterRowOperator", () => {
         fieldType: "string",
         operator: "contains",
         value: "abc",
+      }).operator,
+    ).toBe("is");
+  });
+
+  it("maps legacy annotation equality operators to the restricted annotator operator", () => {
+    expect(
+      normalizeFilterRowOperator({
+        field: "annotator",
+        fieldType: "annotator",
+        operator: "equals",
+        value: ["user-a", "user-b"],
       }).operator,
     ).toBe("is");
   });
@@ -137,31 +147,63 @@ describe("annotator annotation filter (TH-4710)", () => {
     expect(annotatorIndex).toBeLessThan(labelIndex);
   });
 
-  it("serializes multiple annotators as a global IN filter, not a label filter", () => {
-    const apiFilters = panelFiltersToApiFilters([
+  it("maps every annotation label output type to the matching filter input type", () => {
+    const properties = buildTraceFilterProperties([
       {
-        field: "annotator",
-        fieldName: "Annotator",
-        fieldCategory: "annotation",
-        fieldType: "annotator",
-        apiColType: "SYSTEM_METRIC",
-        operator: "is",
-        value: ["user-a", "user-b"],
+        name: "numeric-label",
+        display_name: "Numeric",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "numeric",
+      },
+      {
+        name: "star-label",
+        display_name: "Star",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "star",
+      },
+      {
+        name: "text-label",
+        display_name: "Text",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "text",
+      },
+      {
+        name: "thumbs-label",
+        display_name: "Thumbs",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "thumbs_up_down",
+      },
+      {
+        name: "category-label",
+        display_name: "Category",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "categorical",
+        choices: ["refund", "billing"],
       },
     ]);
 
-    expect(apiFilters).toEqual([
-      {
-        column_id: "annotator",
-        display_name: "Annotator",
-        filter_config: {
-          filter_type: "text",
-          filter_op: "in",
-          filter_value: ["user-a", "user-b"],
-          col_type: "SYSTEM_METRIC",
-        },
-      },
-    ]);
+    expect(properties).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "numeric-label", type: "number" }),
+        expect.objectContaining({ id: "star-label", type: "number" }),
+        expect.objectContaining({ id: "text-label", type: "text" }),
+        expect.objectContaining({
+          id: "thumbs-label",
+          type: "thumbs",
+          choices: ["Thumbs Up", "Thumbs Down"],
+        }),
+        expect.objectContaining({
+          id: "category-label",
+          type: "categorical",
+          choices: ["refund", "billing"],
+        }),
+      ]),
+    );
   });
 
   it("uses annotator email as secondary display text and searchable text", () => {

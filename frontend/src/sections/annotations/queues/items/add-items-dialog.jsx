@@ -54,7 +54,6 @@ import {
   generateSpanObserveFilterDefinition,
   SPAN_DEFAULT_COLUMNS,
 } from "src/sections/projects/LLMTracing/common";
-import LLMFilterBox from "src/sections/projects/LLMTracing/LLMFilterBox";
 import DateRangePill, {
   dateFilterForOption,
 } from "src/sections/projects/LLMTracing/DateRangePill";
@@ -72,6 +71,17 @@ import {
   normalizeApiFilterOp,
   panelOperatorAndValueToApi,
 } from "src/sections/annotations/queues/utils/filter-operators";
+import {
+  getSessionListColumnDef,
+  defaultFilter as sessionDefaultFilterBase,
+} from "src/sections/projects/SessionsView/common";
+import {
+  buildSessionSelectionFilters,
+  buildSessionSelectorFilterFields,
+  SESSION_DATE_FILTER_COLUMN,
+} from "./add-items-session-utils";
+import "src/styles/clean-data-table.css";
+import { fetchRootSpans } from "src/api/project/llm-tracing";
 
 // ---------------------------------------------------------------------------
 // TraceFilterPanel ↔ API filter converters (mirror ObserveToolbar's inline
@@ -84,6 +94,9 @@ const PANEL_TYPE_TO_API = {
   boolean: "boolean",
   categorical: "categorical",
   text: "text",
+  date: "datetime",
+  datetime: "datetime",
+  timestamp: "datetime",
 };
 const PANEL_CAT_TO_COL_TYPE = {
   attribute: "SPAN_ATTRIBUTE",
@@ -158,11 +171,15 @@ function apiFilterToPanel(api) {
     ? "number"
     : filterType === "number"
       ? "number"
-      : filterType === "categorical"
-        ? "categorical"
-        : filterType === "text" && rawColType === "ANNOTATION"
-          ? "text"
-          : "string";
+      : filterType === "date" ||
+          filterType === "datetime" ||
+          filterType === "timestamp"
+        ? "datetime"
+        : filterType === "categorical"
+          ? "categorical"
+          : filterType === "text" && rawColType === "ANNOTATION"
+            ? "text"
+            : "string";
   return {
     field: api.columnId,
     fieldName: api.displayName,
@@ -172,14 +189,25 @@ function apiFilterToPanel(api) {
     value,
   };
 }
-import {
-  getSessionListColumnDef,
-  filterDefinition as sessionFilterDefinition,
-  defaultFilter as sessionDefaultFilterBase,
-} from "src/sections/projects/SessionsView/common";
-import "src/styles/clean-data-table.css";
-import { fetchRootSpans } from "src/api/project/llm-tracing";
 
+function renderProjectAutocompleteOption(props, option, state) {
+  const { key, ...optionProps } = props;
+  return (
+    <li
+      {...optionProps}
+      key={option?.id || key || `${option?.name || "project"}-${state.index}`}
+    >
+      {option?.name}
+      {option?.trace_type === "experiment" && (
+        <Chip
+          label="Prototype"
+          size="small"
+          sx={{ ml: 1, height: 20, fontSize: 10 }}
+        />
+      )}
+    </li>
+  );
+}
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -2006,18 +2034,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
@@ -2644,18 +2661,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
@@ -2914,10 +2920,16 @@ function SessionSelector({ onSetSelection }) {
   const [filters, setFilters] = useState([
     { ...sessionDefaultFilterBase, id: getRandomId() },
   ]);
+  const [dateFilter, setDateFilter] = useState(() => ({
+    dateFilter: dateFilterForOption("6M"),
+    dateOption: "6M",
+  }));
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
+  const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
 
@@ -2954,10 +2966,19 @@ function SessionSelector({ onSetSelection }) {
     staleTime: 1000 * 60 * 2,
   });
 
-  // Build validated filters for API calls
+  const sessionFilterFields = useMemo(
+    () => buildSessionSelectorFilterFields(columns),
+    [columns],
+  );
+
+  const validatedMainFilters = useMemo(
+    () => filters.filter(apiFilterHasValue),
+    [filters],
+  );
+
   const validatedFilters = useMemo(() => {
-    return filters.filter((f) => f.columnId && f.filterConfig?.filterValue);
-  }, [filters]);
+    return buildSessionSelectionFilters(validatedMainFilters, dateFilter);
+  }, [validatedMainFilters, dateFilter]);
 
   // Keep filtersRef in sync
   useEffect(() => {
@@ -2970,7 +2991,8 @@ function SessionSelector({ onSetSelection }) {
       getRows: async (params) => {
         try {
           const { request } = params;
-          const pageNumber = Math.floor(request.startRow / 10);
+          const pageSize = request.endRow - request.startRow;
+          const pageNumber = Math.floor(request.startRow / pageSize);
 
           setIsGridLoading(true);
           const results = await axios.get(
@@ -2978,6 +3000,7 @@ function SessionSelector({ onSetSelection }) {
             {
               params: {
                 project_id: projectId,
+                ...(versionId ? { project_version_id: versionId } : {}),
                 page_number: pageNumber,
                 page_size: SESSION_ROWS_LIMIT,
                 sort_params: JSON.stringify(
@@ -3019,7 +3042,7 @@ function SessionSelector({ onSetSelection }) {
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, validatedFilters],
+    [projectId, versionId, validatedFilters],
   );
 
   // Build column defs from server config (same as Session-grid)
@@ -3112,14 +3135,18 @@ function SessionSelector({ onSetSelection }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
+    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
+    onSetSelection([]);
   };
 
   // For prototype projects, require a version to be selected before showing grid
@@ -3162,18 +3189,7 @@ function SessionSelector({ onSetSelection }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
@@ -3241,12 +3257,31 @@ function SessionSelector({ onSetSelection }) {
         )}
 
         {canShowGrid && (
-          <>
-            <Box sx={{ flex: 1 }} />
+          <Box
+            sx={{
+              ml: "auto",
+              pt: 0.5,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexShrink: 0,
+            }}
+          >
+            <DateRangePill
+              dateFilter={dateFilter}
+              setDateFilter={setDateFilter}
+              sx={{ height: 36 }}
+            />
             <IconButton
+              ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
+                width: 36,
+                height: 36,
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
@@ -3266,33 +3301,73 @@ function SessionSelector({ onSetSelection }) {
                 }}
               />
             </IconButton>
-          </>
+          </Box>
         )}
       </Box>
 
-      {/* Filter box – same filter definitions as sessions view */}
-      {canShowGrid && filterOpen && (
-        <Box sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
-          <Box
-            sx={{
-              p: 1.5,
-            }}
-          >
-            <LLMFilterBox
-              filters={filters}
-              setFilters={setFilters}
-              filterDefinition={sessionFilterDefinition}
-              setFilterDefinition={() => {}}
-              defaultFilter={sessionDefaultFilterBase}
-              resetFiltersAndClose={() => {
-                setFilters([
-                  { ...sessionDefaultFilterBase, id: getRandomId() },
-                ]);
-                setFilterOpen(false);
-              }}
-            />
-          </Box>
-        </Box>
+      {canShowGrid && (
+        <TraceFilterPanel
+          anchorEl={filterAnchorEl || filterButtonRef.current}
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          projectId={projectId}
+          source="sessions"
+          properties={sessionFilterFields}
+          categories={[]}
+          currentFilters={validatedMainFilters
+            .filter((f) => f?.columnId)
+            .map(apiFilterToPanel)}
+          onApply={(newPanelFilters) => {
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
+            setFilters(
+              apiNext.length
+                ? apiNext.map((f) => ({ ...f, id: getRandomId() }))
+                : [{ ...sessionDefaultFilterBase, id: getRandomId() }],
+            );
+          }}
+        />
+      )}
+
+      {canShowGrid && (
+        <FilterChips
+          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+            (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
+          )}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onRemoveFilter={(idx) => {
+            setFilterAnchorEl(null);
+            const snakeChips = (
+              objectCamelToSnake(validatedMainFilters) || []
+            ).filter(
+              (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
+            );
+            const target = snakeChips[idx];
+            if (!target) return;
+            setFilters((prev) =>
+              prev.filter((f) => {
+                const colMatches = f?.columnId === target.column_id;
+                const opMatches =
+                  f?.filterConfig?.filterOp ===
+                  target?.filter_config?.filter_op;
+                return !(colMatches && opMatches);
+              }),
+            );
+          }}
+          onClearAll={() => {
+            setFilterAnchorEl(null);
+            setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+            setFilterOpen(false);
+          }}
+        />
       )}
 
       {/* Empty state */}

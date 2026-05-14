@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { objectCamelToSnake } from "src/utils/utils";
 import { buildSimulationSelectorColumnDefs } from "../items/add-items-dialog";
+import {
+  buildSessionSelectionFilters,
+  buildSessionSelectorFilterFields,
+} from "../items/add-items-session-utils";
 
 function valuesByHeader(row, columnOrder = []) {
   return Object.fromEntries(
@@ -92,5 +97,79 @@ describe("Simulation add-items columns", () => {
     const values = valuesByHeader({});
 
     expect(values["Agent Talk (%)"]).toBe("-");
+  });
+});
+
+describe("Session add-items filters", () => {
+  it("maps session fields to the searchable filter panel shape", () => {
+    const fields = buildSessionSelectorFilterFields([
+      {
+        id: "annotation_quality",
+        name: "Annotation Quality",
+        groupBy: "Annotation Metrics",
+        dataType: "number",
+      },
+    ]);
+
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "session_id",
+          name: "Session ID",
+          category: "system",
+          type: "string",
+        }),
+        expect.objectContaining({
+          id: "start_time",
+          name: "Start Time",
+          category: "system",
+          type: "datetime",
+        }),
+        expect.objectContaining({
+          id: "annotation_quality",
+          name: "Annotation Quality",
+          category: "annotation",
+          type: "number",
+        }),
+      ]),
+    );
+  });
+
+  it("adds the date-range filter in the API payload shape used by list sessions", () => {
+    const filters = buildSessionSelectionFilters(
+      [
+        {
+          columnId: "total_traces_count",
+          filterConfig: {
+            filterType: "number",
+            filterOp: "greater_than",
+            filterValue: "2",
+          },
+        },
+      ],
+      { dateFilter: ["2026-01-01", "2026-02-01"] },
+    );
+
+    expect(objectCamelToSnake(filters)).toEqual([
+      {
+        column_id: "total_traces_count",
+        filter_config: {
+          filter_type: "number",
+          filter_op: "greater_than",
+          filter_value: "2",
+        },
+      },
+      {
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
+            "2026-01-01T00:00:00.000Z",
+            "2026-02-01T00:00:00.000Z",
+          ],
+        },
+      },
+    ]);
   });
 });

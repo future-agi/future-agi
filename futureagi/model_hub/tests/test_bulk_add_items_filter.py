@@ -9,15 +9,18 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from datetime import timedelta
+
 import pytest
 from django.utils import timezone
 
 from model_hub.models.ai_model import AIModel
-from model_hub.models.annotation_queues import AnnotationQueue
+from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
-
+from tracer.models.trace_session import TraceSession
 
 # --------------------------------------------------------------------------
 # Fixtures
@@ -51,6 +54,17 @@ def active_queue(db, auth_client):
 
 def _add_items_url(queue_id):
     return f"/model-hub/annotation-queues/{queue_id}/items/add-items/"
+
+
+def _api_filter(column_id, filter_type, filter_op, filter_value):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
 
 
 # --------------------------------------------------------------------------
@@ -454,8 +468,9 @@ class TestAddItemsFilterModeSpan:
     def test_filter_mode_span_truncation_returns_400(
         self, auth_client, active_queue, observe_project, span_parent_trace
     ):
-        import model_hub.views.annotation_queues as views_mod
         from datetime import timedelta
+
+        import model_hub.views.annotation_queues as views_mod
 
         original_cap = views_mod.MAX_SELECTION_CAP
         views_mod.MAX_SELECTION_CAP = 2
@@ -547,6 +562,79 @@ class TestAddItemsFilterModeSession:
         assert resp.status_code == 200, resp.data
         assert resp.data["result"]["added"] == 3
         assert resp.data["result"]["total_matching"] == 3
+
+    @pytest.mark.api
+    def test_filter_mode_session_date_filter_matches_list_endpoint(
+        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
+    ):
+        now = timezone.now()
+        recent_start = now - timedelta(days=7)
+        recent_end = now + timedelta(days=1)
+        recent_sessions = seeded_sessions_for_dispatch[:2]
+        old_session = seeded_sessions_for_dispatch[2]
+
+        TraceSession.objects.filter(id=recent_sessions[0].id).update(
+            created_at=now - timedelta(days=2)
+        )
+        TraceSession.objects.filter(id=recent_sessions[1].id).update(
+            created_at=now - timedelta(days=1)
+        )
+        TraceSession.objects.filter(id=old_session.id).update(
+            created_at=now - timedelta(days=90)
+        )
+
+        filters = [
+            _api_filter(
+                "created_at",
+                "datetime",
+                "between",
+                [recent_start.isoformat(), recent_end.isoformat()],
+            )
+        ]
+        expected_ids = {str(session.id) for session in recent_sessions}
+
+        list_resp = auth_client.get(
+            "/tracer/trace-session/list_sessions/",
+            {
+                "project_id": str(observe_project.id),
+                "filters": json.dumps(filters),
+                "sort_params": "[]",
+                "page_number": 0,
+                "page_size": 20,
+            },
+        )
+        assert list_resp.status_code == 200, list_resp.data
+        list_ids = {
+            row["session_id"]
+            for row in list_resp.data["result"]["table"]
+        }
+        assert list_ids == expected_ids
+
+        add_resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace_session",
+                    "project_id": str(observe_project.id),
+                    "filter": filters,
+                }
+            },
+            format="json",
+        )
+        assert add_resp.status_code == 200, add_resp.data
+        assert add_resp.data["result"]["added"] == 2
+        assert add_resp.data["result"]["total_matching"] == 2
+
+        queue_session_ids = {
+            str(item.trace_session_id)
+            for item in QueueItem.objects.filter(
+                queue=active_queue,
+                source_type="trace_session",
+                deleted=False,
+            )
+        }
+        assert queue_session_ids == expected_ids
 
     def test_filter_mode_session_respects_exclude_ids(
         self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch

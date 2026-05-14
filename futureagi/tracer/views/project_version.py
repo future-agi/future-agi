@@ -30,7 +30,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
@@ -46,7 +45,6 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion, ProjectVersionWinner
 from tracer.models.trace import Trace
-from tracer.models.trace_annotation import TraceAnnotation
 from tracer.serializers.project import ProjectVersionExportSerializer
 from tracer.serializers.project_version import ProjectVersionSerializer
 from tracer.utils.filters import ColType, FilterEngine
@@ -57,6 +55,8 @@ from tracer.utils.helper import (
     update_run_column_config_based_on_annotations,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+logger = structlog.get_logger(__name__)
 
 ## TODO: need a major revamp. queries are wrong.
 
@@ -392,6 +392,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             else:
                 return self._gm.bad_request(serializer.errors)
 
+            request_organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+
             # Build the base query with all necessary annotations
             base_query = ObservationSpan.objects.filter(
                 project_id=project_id,
@@ -428,8 +432,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             try:
                 project = Project.objects.get(
                     id=project_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=request_organization,
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
@@ -562,12 +565,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                         option["label"] for option in label.settings["options"]
                     ]
 
-                score_base_filter = dict(
-                    observation_span__project_version_id=OuterRef("project_version_id"),
-                    label_id=label.id,
-                    organization=request.user.organization,
-                    deleted=False,
-                )
+                score_base_filter = {
+                    "observation_span__project_version_id": OuterRef(
+                        "project_version_id"
+                    ),
+                    "label_id": label.id,
+                    "organization": request_organization,
+                    "deleted": False,
+                }
 
                 # Project version annotation rollup. Reads from the unified
                 # ``Score`` model — the JSON paths (``value__value``,
@@ -582,10 +587,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                             "project_version_id"
                         ),
                         label_id=label.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=request_organization,
                         deleted=False,
                     )
                     .values("label_id")
@@ -1345,12 +1347,15 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 raise Exception("Project id is required")
 
+            request_organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+
             # Get project and validate access
             try:
                 project = Project.objects.get(
                     id=project_id,
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    organization=request_organization,
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found")
@@ -1534,12 +1539,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                         option["label"] for option in label.settings.get("options", [])
                     ]
 
-                score_base_filter = dict(
-                    observation_span__project_version_id=OuterRef("project_version_id"),
-                    label_id=label.id,
-                    organization=request.user.organization,
-                    deleted=False,
-                )
+                score_base_filter = {
+                    "observation_span__project_version_id": OuterRef(
+                        "project_version_id"
+                    ),
+                    "label_id": label.id,
+                    "organization": request_organization,
+                    "deleted": False,
+                }
 
                 # Same Score-based rollup as the first metric_subquery —
                 # see comment above for context.
@@ -1549,10 +1556,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                             "project_version_id"
                         ),
                         label_id=label.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=request_organization,
                         deleted=False,
                     )
                     .values("label_id")

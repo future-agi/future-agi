@@ -14,7 +14,7 @@ describe("annotation queue filter operator contract", () => {
   it("serializes panel-only number operators to backend canonical operators", () => {
     expect(panelOpToApi("equal_to")).toBe("equals");
     expect(panelOpToApi("not_equal_to")).toBe("not_equals");
-    expect(panelOpToApi("not_between")).toBe("not_in_between");
+    expect(panelOpToApi("not_between")).toBe("not_between");
     expect(panelOpToApi("inBetween")).toBe("between");
   });
 
@@ -27,13 +27,13 @@ describe("annotation queue filter operator contract", () => {
   it("keeps older saved operator aliases readable when hydrating the panel", () => {
     expect(normalizeApiFilterOp("equal_to")).toBe("equals");
     expect(normalizeApiFilterOp("not_equal_to")).toBe("not_equals");
-    expect(normalizeApiFilterOp("not_between")).toBe("not_in_between");
+    expect(normalizeApiFilterOp("not_in_between")).toBe("not_between");
   });
 
   it("maps canonical backend number operators back to panel operators", () => {
-    expect(apiOpToPanel("equals", "number")).toBe("equal_to");
-    expect(apiOpToPanel("not_equals", "number")).toBe("not_equal_to");
-    expect(apiOpToPanel("not_in_between", "number")).toBe("not_between");
+    expect(apiOpToPanel("equals", "number")).toBe("equals");
+    expect(apiOpToPanel("not_equals", "number")).toBe("not_equals");
+    expect(apiOpToPanel("not_between", "number")).toBe("not_between");
   });
 
   it("maps canonical backend text and date operators back to panel operators", () => {
@@ -60,7 +60,7 @@ describe("annotation queue filter operator contract", () => {
       filterValue: "45",
     });
     expect(panelOperatorAndValueToApi("not_between", [10, 50])).toEqual({
-      filterOp: "not_in_between",
+      filterOp: "not_between",
       filterValue: ["10", "50"],
     });
   });

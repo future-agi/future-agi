@@ -1,7 +1,5 @@
-// TraceFilterPanel uses UI-facing operator names (`equal_to`, `is`,
-// `not_between`). The trace/filter APIs use canonical backend names
-// (`equals`, `not_equals`, `not_in_between`). Keep that contract in one place
-// so annotation queue flows do not leak panel-only operator names to the API.
+// Keep the annotation queue add-items dialog on the same canonical filter
+// contract as Observe. Legacy panel names are accepted only at the boundary.
 
 export const PANEL_OP_TO_API = {
   is: "equals",
@@ -19,8 +17,8 @@ export const PANEL_OP_TO_API = {
   less_than: "less_than",
   less_than_or_equal: "less_than_or_equal",
   between: "between",
-  not_between: "not_in_between",
-  not_in_between: "not_in_between",
+  not_between: "not_between",
+  not_in_between: "not_between",
   inBetween: "between",
   is_empty: "is_null",
   is_not_empty: "is_not_null",
@@ -38,19 +36,19 @@ const API_OP_ALIASES = {
   is_not: "not_equals",
   equal_to: "equals",
   not_equal_to: "not_equals",
-  not_between: "not_in_between",
+  not_in_between: "not_between",
   inBetween: "between",
 };
 
 const NUMBER_API_TO_PANEL = {
-  equals: "equal_to",
-  not_equals: "not_equal_to",
+  equals: "equals",
+  not_equals: "not_equals",
   greater_than: "greater_than",
   greater_than_or_equal: "greater_than_or_equal",
   less_than: "less_than",
   less_than_or_equal: "less_than_or_equal",
   between: "between",
-  not_in_between: "not_between",
+  not_between: "not_between",
 };
 
 const DATE_API_TO_PANEL = {
@@ -58,7 +56,7 @@ const DATE_API_TO_PANEL = {
   less_than: "before",
   greater_than: "after",
   between: "between",
-  not_in_between: "not_between",
+  not_between: "not_between",
 };
 
 const TEXT_API_TO_PANEL = {
@@ -75,7 +73,7 @@ const TEXT_API_TO_PANEL = {
 };
 
 export const NUMBER_FILTER_OPS = new Set(Object.keys(NUMBER_API_TO_PANEL));
-export const RANGE_FILTER_OPS = new Set(["between", "not_in_between"]);
+export const RANGE_FILTER_OPS = new Set(["between", "not_between"]);
 const VALUELESS_FILTER_OPS = new Set([
   "is_null",
   "is_not_null",
@@ -99,7 +97,7 @@ export function panelOperatorAndValueToApi(operator, value) {
   let filterValue = value;
 
   if (Array.isArray(filterValue)) {
-    if (baseOp === "between" || baseOp === "not_in_between") {
+    if (baseOp === "between" || baseOp === "not_between") {
       filterValue = filterValue.map(String);
     } else if (baseOp === "equals") {
       filterOp = "in";
