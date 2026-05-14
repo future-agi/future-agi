@@ -1075,6 +1075,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
         results = []
+        # Materialize qs so we can do a single bulk-fetch for the agent-eval
+        # output_str fallback below (otherwise we'd N×M query inside the loop —
+        # one lookup per (trace × choices/score config) pair).
+        qs = list(qs)
+
+        # Pre-fetch EvalLogger.output_str for traces × configs whose template
+        # output type is "choices" or "score". Agent-evaluator writes the result
+        # as a Python dict literal in output_str (e.g. "{'score': 0.0,
+        # 'choice': 'never'}") when output_float/output_str_list are empty.
+        # Keyed by (trace_id, config_id); only the most recent row per pair.
+        _str_lookup_configs = [
+            c for c in eval_configs
+            if ((getattr(getattr(c, "eval_template", None), "config", None) or {}).get("output"))
+            in (EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value)
+        ]
+        output_str_map: dict[tuple, "EvalLogger"] = {}
+        if _str_lookup_configs and qs:
+            trace_ids_for_lookup = [t.id for t in qs]
+            for log in (
+                EvalLogger.objects.filter(
+                    trace_id__in=trace_ids_for_lookup,
+                    custom_eval_config_id__in=[c.id for c in _str_lookup_configs],
+                    deleted=False,
+                )
+                .order_by("trace_id", "custom_eval_config_id", "-created_at")
+                .only("trace_id", "custom_eval_config_id", "output_str")
+            ):
+                key = (log.trace_id, log.custom_eval_config_id)
+                if key not in output_str_map:  # first hit = most recent
+                    output_str_map[key] = log
+
         for trace in qs:
             attrs = getattr(trace, "span_attributes", None) or {}
             metadata = getattr(trace, "metadata", None) or {}
@@ -1169,6 +1200,49 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         if choice_score > 0:
                             per_choice.append(choice_key)
                     metric_entry["output"] = per_choice
+
+                # New agent-evaluator path: when the legacy fields are empty,
+                # read the chosen bucket (or numeric score) from
+                # EvalLogger.output_str — stored as a Python dict literal like
+                # "{'score': 0.0, 'choice': 'never'}". Uses the bulk-fetched
+                # map built before the trace loop (no per-row query).
+                if metric_entry.get("output") in (None, [], ""):
+                    tpl = getattr(config, "eval_template", None)
+                    tpl_output = (
+                        (getattr(tpl, "config", None) or {}).get("output")
+                        if tpl is not None
+                        else None
+                    )
+                    log = output_str_map.get((trace.id, config.id))
+                    if log and log.output_str and tpl_output in (
+                        EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                    ):
+                        try:
+                            import ast as _ast_mod
+                            parsed = _ast_mod.literal_eval(log.output_str)
+                        except (ValueError, SyntaxError):
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            if tpl_output == EvalOutputType.CHOICES.value:
+                                choice = parsed.get("choice")
+                                if choice:
+                                    metric_entry["output"] = [choice]
+                                    metric_entry["output_type"] = EvalOutputType.CHOICES.value
+                                    # Mirror as top-level `score` so the
+                                    # drawer's `e?.score ?? e?.output ?? e?.value`
+                                    # lookup hits a string and renders verbatim
+                                    # — avoids a frontend renderer change.
+                                    metric_entry["score"] = choice
+                            elif tpl_output == EvalOutputType.SCORE.value:
+                                score_val = parsed.get("score")
+                                if isinstance(score_val, (int, float)):
+                                    # output_str's score is 0–1; backend convention
+                                    # for score evals is 0–100 (consistent with the
+                                    # output_float * 100 branch above).
+                                    metric_entry["output"] = round(
+                                        float(score_val) * 100, 2
+                                    )
+                                    metric_entry["output_type"] = EvalOutputType.SCORE.value
 
                 metrics[str(config.id)] = metric_entry
             if metrics:
@@ -3680,11 +3754,44 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "error": log.error,
                 }
                 if log.output_str_list:
+                    # Legacy categorical eval — pre-agent-evaluator path
                     metric_entry["output"] = log.output_str_list
-                elif output_type == "Pass/Fail" and log.output_bool is not None:
+                elif output_type == EvalOutputType.PASS_FAIL.value and log.output_bool is not None:
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
                 elif log.output_float is not None:
+                    # Score evals on the legacy storage path.
                     metric_entry["output"] = round(log.output_float * 100, 2)
+                elif output_type in (
+                    EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                ) and log.output_str:
+                    # New agent-evaluator path: output_str holds a Python dict
+                    # literal like "{'score': 0.0, 'choice': 'never'}". For
+                    # choices evals, use `choice`; for score evals, use `score`.
+                    # The drawer renderer falls back to top-level `score` →
+                    # mirror the choice there so categorical evals render
+                    # verbatim without a frontend change.
+                    try:
+                        import ast as _ast_mod
+                        parsed = _ast_mod.literal_eval(log.output_str)
+                    except (ValueError, SyntaxError):
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        if output_type == EvalOutputType.CHOICES.value:
+                            choice = parsed.get("choice")
+                            if choice:
+                                metric_entry["output"] = [choice]
+                                metric_entry["score"] = choice
+                            else:
+                                metric_entry["output"] = None
+                        else:  # SCORE
+                            score_val = parsed.get("score")
+                            metric_entry["output"] = (
+                                round(float(score_val) * 100, 2)
+                                if isinstance(score_val, (int, float))
+                                else None
+                            )
+                    else:
+                        metric_entry["output"] = None
                 else:
                     metric_entry["output"] = None
                 eval_outputs[config_id] = metric_entry
