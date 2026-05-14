@@ -144,4 +144,6 @@ def extract_raw_result(eval_result, eval_template):
         "metrics": first.get("metrics"),
         "metadata": first.get("metadata"),
         "output": eval_template.config.get("output", "score"),
+        "cost": first.get("cost"),
+        "token_usage": first.get("token_usage"),
     }

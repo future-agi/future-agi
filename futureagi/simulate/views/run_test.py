@@ -678,7 +678,6 @@ class RunTestExecutionView(APIView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
-        self.test_executor = TestExecutor()
 
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
@@ -732,21 +731,11 @@ class RunTestExecutionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._execute_with_temporal(
-                    run_test=run_test,
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
-            else:
-                # Execute the test using the legacy test executor (Celery)
-                result = self.test_executor.execute_test(
-                    run_test_id=str(run_test.id),
-                    user_id=str(request.user.id),
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
+            result = self._execute_with_temporal(
+                run_test=run_test,
+                scenario_ids=final_scenario_ids,
+                simulator_id=simulator_id,
+            )
 
             if result["success"]:
                 return Response(
@@ -939,15 +928,7 @@ class TestExecutionCancelView(APIView):
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
             test_execution.save()
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._cancel_with_temporal(test_execution)
-            else:
-                # Cancel using legacy test executor (Celery)
-                test_executor = TestExecutor()
-                result = test_executor.cancel_test(
-                    run_test_id=run_test_id, test_execution_id=test_execution_id
-                )
+            result = self._cancel_with_temporal(test_execution)
 
             if result["success"]:
                 response_data = {

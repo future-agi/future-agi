@@ -107,17 +107,7 @@ class CancelTestExecutionTool(BaseTool):
         test_execution.status = TestExecution.ExecutionStatus.CANCELLING
         test_execution.save(update_fields=["status", "updated_at"])
 
-        # Dispatch cancellation to Temporal or Celery
-        if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-            result = self._cancel_with_temporal(test_execution)
-        else:
-            from simulate.services.test_executor import TestExecutor
-
-            test_executor = TestExecutor()
-            result = test_executor.cancel_test(
-                run_test_id=run_test_id,
-                test_execution_id=test_execution_id,
-            )
+        result = self._cancel_with_temporal(test_execution)
 
         if not result.get("success"):
             error_msg = result.get("error", "Failed to cancel test execution")

@@ -188,6 +188,6 @@ def run_eval(request: EvalRequest) -> EvalResult:
         start_time=start_time,
         end_time=end_time,
         duration=end_time - start_time,
-        cost=getattr(eval_instance, "cost", None),
-        token_usage=getattr(eval_instance, "token_usage", None),
+        cost=response.get("cost") or getattr(eval_instance, "cost", None),
+        token_usage=response.get("token_usage") or getattr(eval_instance, "token_usage", None),
     )
