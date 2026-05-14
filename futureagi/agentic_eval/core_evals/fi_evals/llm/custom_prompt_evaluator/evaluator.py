@@ -10,6 +10,7 @@ from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
 from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_evals.base_evaluator import BaseEvaluator
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
 import structlog
 
@@ -19,7 +20,7 @@ from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 
 
-class CustomPromptEvaluator(LLM):
+class CustomPromptEvaluator(BaseEvaluator, LLM):
     """
     This evaluator can be configured with custom examples and instructions.
     """
@@ -86,6 +87,18 @@ class CustomPromptEvaluator(LLM):
     def default_model(self):
         return self._model
 
+    @property
+    def metric_ids(self) -> list[str]:
+        return [LlmEvalTypeId.CUSTOM_PROMPT_EVAL.value]
+
+    @property
+    def required_args(self) -> list[str]:
+        # Required keys are template-specific and validated at runtime in _evaluate.
+        return []
+
+    @property
+    def examples(self):
+        return None
 
     def to_config(self) -> dict | None:
         return {

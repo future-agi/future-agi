@@ -127,7 +127,17 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
                 .order_by("-version_number")
                 .afirst()
             )
-            if not agent_version:
+            if agent_version:
+                activity.logger.warning(
+                    "simulate_agent_version_fallback_to_active",
+                    extra={
+                        "run_test_id": str(test_execution.run_test_id),
+                        "agent_definition_id": str(test_execution.agent_definition_id),
+                        "resolved_version_id": str(agent_version.id),
+                        "resolved_version_number": agent_version.version_number,
+                    },
+                )
+            else:
                 agent_version = (
                     await AgentVersion.objects.filter(
                         agent_definition_id=test_execution.agent_definition_id,
@@ -135,6 +145,17 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
                     .order_by("-version_number")
                     .afirst()
                 )
+                if agent_version:
+                    activity.logger.warning(
+                        "simulate_agent_version_fallback_to_latest",
+                        extra={
+                            "run_test_id": str(test_execution.run_test_id),
+                            "agent_definition_id": str(test_execution.agent_definition_id),
+                            "resolved_version_id": str(agent_version.id),
+                            "resolved_version_number": agent_version.version_number,
+                            "resolved_version_status": str(agent_version.status),
+                        },
+                    )
 
             # Save the resolved agent_version back to TestExecution so
             # create_call_execution_records can read it from DB
