@@ -1458,9 +1458,19 @@ const TestPlayground = React.forwardRef(
                                 : String(schema?.default ?? "")
                             }
                             value={codeParams[key] ?? ""}
-                            onChange={(e) =>
-                              handleCodeParamChange(key, e.target.value)
-                            }
+                            onChange={(e) => {
+                              // BE's `type: number` schema rejects strings; coerce here.
+                              const raw = e.target.value;
+                              const isNumeric =
+                                schema?.type === "integer" ||
+                                schema?.type === "number";
+                              let next = raw;
+                              if (isNumeric && raw !== "") {
+                                const n = Number(raw);
+                                if (!Number.isNaN(n)) next = n;
+                              }
+                              handleCodeParamChange(key, next);
+                            }}
                             sx={{
                               flex: 1,
                               px: 1,
