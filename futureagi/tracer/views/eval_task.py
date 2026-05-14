@@ -1328,6 +1328,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             # Build rich eval objects so the frontend can render eval cards
             # with name, mapping, model, template info — not just bare UUIDs.
+            from tracer.serializers.custom_eval_config import is_rule_prompt_customized
+
             evals_rich = []
             for eval_config in queryset.evals.select_related("eval_template").all():
                 template = eval_config.eval_template
@@ -1348,6 +1350,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "outputType": (
                             template.output_type_normalized if template else None
                         ),
+                        "is_customized": is_rule_prompt_customized(eval_config),
                     }
                 )
 

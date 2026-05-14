@@ -11,6 +11,7 @@ import {
   Select,
   Slider,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -97,7 +98,7 @@ const SOURCE_LABELS = {
 };
 
 const getEvalPromptText = (evalData, config = {}) =>
-  evalData?.instructions || config?.rule_prompt || "";
+  config?.rule_prompt || evalData?.instructions || "";
 
 
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
@@ -1315,6 +1316,108 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     </Typography>
                   </Box>
                 )}
+
+              {(() => {
+                const templateDefault =
+                  fullEval?.instructions ||
+                  fullEval?.criteria ||
+                  fullEval?.config?.rule_prompt ||
+                  "";
+                const showBanner =
+                  !isComposite &&
+                  (evalType === "agent" || evalType === "llm") &&
+                  dataReady &&
+                  isEditMode &&
+                  instructions &&
+                  templateDefault &&
+                  instructions.trim() !== templateDefault.trim();
+                if (!showBanner) return null;
+                return (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 1,
+                      border: "1px solid",
+                      borderColor: (theme) => theme.palette.info.light,
+                      bgcolor: (theme) =>
+                        theme.palette.mode === "dark"
+                          ? "rgba(33,150,243,0.08)"
+                          : "rgba(33,150,243,0.06)",
+                    }}
+                  >
+                    <Iconify
+                      icon="eva:info-outline"
+                      width={16}
+                      sx={{ color: "info.dark", flexShrink: 0 }}
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontSize: "12px",
+                        color: "info.dark",
+                        flex: 1,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      This prompt is customized for this evaluation. The
+                      template default is different.
+                    </Typography>
+                    <Tooltip
+                      placement="top"
+                      title={
+                        <Box
+                          sx={{
+                            whiteSpace: "pre-wrap",
+                            fontSize: "11px",
+                            maxWidth: 360,
+                            py: 0.5,
+                          }}
+                        >
+                          {templateDefault || "(empty)"}
+                        </Box>
+                      }
+                    >
+                      <Button
+                        size="small"
+                        variant="text"
+                        sx={{
+                          textTransform: "none",
+                          fontSize: "11px",
+                          py: 0.25,
+                          minWidth: 0,
+                        }}
+                      >
+                        View template
+                      </Button>
+                    </Tooltip>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        setInstructions(templateDefault);
+                        if (evalType === "llm") {
+                          setMessages([
+                            { role: "system", content: templateDefault },
+                          ]);
+                        }
+                        setIsDirty(true);
+                      }}
+                      sx={{
+                        textTransform: "none",
+                        fontSize: "11px",
+                        py: 0.25,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Reset to default
+                    </Button>
+                  </Box>
+                );
+              })()}
 
               {/* Agent type — only render after data loads so Quill
                   initializes with the actual instructions content */}
