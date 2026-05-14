@@ -211,6 +211,33 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         return self._gm.success_response("success")
 
 
+_UNRESOLVED_TOKEN_RE = re.compile(r"\{\{[^}]+\}\}")
+
+
+def _warn_unresolved_placeholders(messages: list[dict]) -> None:
+    """Log a warning for any {{token}} that survived template substitution."""
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            tokens = _UNRESOLVED_TOKEN_RE.findall(content)
+            if tokens:
+                logger.warning(
+                    "populate_placeholders_unresolved_tokens",
+                    unresolved=tokens,
+                    role=msg.get("role"),
+                )
+        elif isinstance(content, list):
+            for item in content:
+                text = item.get("text", "") if isinstance(item, dict) else ""
+                tokens = _UNRESOLVED_TOKEN_RE.findall(text)
+                if tokens:
+                    logger.warning(
+                        "populate_placeholders_unresolved_tokens",
+                        unresolved=tokens,
+                        role=msg.get("role"),
+                    )
+
+
 def create_placeholder(variable_name):
     """Create a Jinja2/Mustache placeholder like {{variable_name}}"""
     return "{{" + str(variable_name) + "}}"
@@ -451,6 +478,7 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                 # Preserve all message keys (name, tool_calls, tool_call_id, etc.)
                 processed_messages.append({**message, "content": processed_content})
 
+            _warn_unresolved_placeholders(processed_messages)
             return processed_messages
 
         except ValueError as e:
@@ -463,7 +491,8 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
         else:
             traceback.print_exc()
             logger.exception(f"Fatal error processing messages: {e}")
-            # Return original messages as fallback
+            # Return original messages as fallback — warn if they contain unresolved tokens
+            _warn_unresolved_placeholders(messages)
             return messages
 
 
