@@ -23,7 +23,6 @@ from agent_playground.services.engine.utils.json_path import parse_variable
 from agent_playground.services.node_crud import (
     _create_default_output_port_from_prompt,
     _create_input_ports_from_prompt,
-    _create_ports_from_prompt,
     _default_prompt_data,
     _resolve_or_create_pt_ptv,
 )
@@ -299,7 +298,19 @@ def _auto_create_edges(
                             ).save()
                 else:
                     # Simple variable: match by display_name
-                    out_port = output_ports_by_name.get(in_port.display_name)
+                    if (
+                        nc.target_node.node_template
+                        and nc.target_node.node_template.name == "code_execution"
+                    ):
+                        out_port = (
+                            Port.no_workspace_objects.filter(
+                                node=nc.source_node, direction=PortDirection.OUTPUT
+                            )
+                            .order_by("created_at")
+                            .first()
+                        )
+                    else:
+                        out_port = output_ports_by_name.get(in_port.display_name)
                     if out_port:
                         Edge(
                             graph_version=version,
@@ -314,8 +325,8 @@ def _resolve_node_template(node_template_id: str | None) -> NodeTemplate | None:
         return None
     try:
         return NodeTemplate.no_workspace_objects.get(id=node_template_id)
-    except NodeTemplate.DoesNotExist:
-        raise ValidationError(f"Node template '{node_template_id}' not found")
+    except NodeTemplate.DoesNotExist as exc:
+        raise ValidationError(f"Node template '{node_template_id}' not found") from exc
 
 
 def _resolve_ref_graph_version(ref_graph_version_id: str | None) -> GraphVersion | None:
@@ -324,10 +335,10 @@ def _resolve_ref_graph_version(ref_graph_version_id: str | None) -> GraphVersion
         return None
     try:
         return GraphVersion.no_workspace_objects.get(id=ref_graph_version_id)
-    except GraphVersion.DoesNotExist:
+    except GraphVersion.DoesNotExist as exc:
         raise ValidationError(
             f"Referenced graph version '{ref_graph_version_id}' not found"
-        )
+        ) from exc
 
 
 def create_node(
@@ -374,8 +385,8 @@ def _resolve_ref_port(ref_port_id: str | None) -> Port | None:
         return None
     try:
         return Port.no_workspace_objects.get(id=ref_port_id)
-    except Port.DoesNotExist:
-        raise ValidationError(f"Referenced port '{ref_port_id}' not found")
+    except Port.DoesNotExist as exc:
+        raise ValidationError(f"Referenced port '{ref_port_id}' not found") from exc
 
 
 def create_port(

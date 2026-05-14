@@ -35,7 +35,6 @@ from agent_playground.services.engine.output_sink import get_sink
 from tfc.temporal.agent_playground.activities import ALL_ACTIVITIES
 from tfc.temporal.agent_playground.types import (
     ExecuteGraphInput,
-    ExecuteNodeStandaloneInput,
     OutputSinkConfig,
 )
 
@@ -359,6 +358,65 @@ class TestFailurePropagation:
         assert node_execs["B"].status == NodeExecutionStatus.FAILED
         assert node_execs["C"].status == NodeExecutionStatus.SUCCESS
         assert node_execs["D"].status == NodeExecutionStatus.SKIPPED
+
+    async def test_failure_outputs_route_after_failed_state(
+        self, workflow_environment, graph_builder, monkeypatch
+    ):
+        """Failure payload routing must observe the persisted FAILED node state."""
+        from agent_playground.services.engine.analyzer import GraphAnalyzer
+        from agent_playground.services.engine.node_runner import (
+            BaseNodeRunner,
+            register_runner,
+        )
+        from tfc.temporal.agent_playground.activities import _execute_node_sync
+
+        class FailureWithOutputs(Exception):
+            outputs = {"result": {"ok": False, "error": "boom"}}
+
+        class FailureOutputRunner(BaseNodeRunner):
+            def run(self, config, inputs, execution_context):
+                raise FailureWithOutputs("boom")
+
+        register_runner("failure_output_template", FailureOutputRunner())
+
+        builder = graph_builder
+        builder.add_node(
+            "A",
+            template_name="failure_output_template",
+            inputs=["user_input"],
+            outputs=["result"],
+        )
+        version = await sync_to_async(builder.build)()
+        execution = await _create_graph_execution(version, {"user_input": "hello"})
+        topology_data = await sync_to_async(
+            lambda: GraphAnalyzer.analyze(version.id).to_dict()
+        )()
+        node_id = await sync_to_async(
+            lambda: str(version.nodes.get(name="A").id)
+        )()
+
+        import agent_playground.services.engine as engine
+
+        original_route_node_outputs = engine.route_node_outputs
+        observed_statuses = []
+
+        def route_spy(*args, **kwargs):
+            node_execution = kwargs["node_execution"]
+            node_execution.refresh_from_db()
+            observed_statuses.append(node_execution.status)
+            return original_route_node_outputs(*args, **kwargs)
+
+        monkeypatch.setattr(engine, "route_node_outputs", route_spy)
+
+        result = await sync_to_async(_execute_node_sync)(
+            str(execution.id),
+            str(version.id),
+            node_id,
+            topology_data=topology_data,
+        )
+
+        assert result["status"] == "FAILED"
+        assert observed_statuses == [NodeExecutionStatus.FAILED]
 
 
 # =============================================================================

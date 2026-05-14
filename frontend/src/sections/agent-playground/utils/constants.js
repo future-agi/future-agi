@@ -3,6 +3,7 @@ export const NODE_X_OFFSET = 450;
 
 export const NODE_TYPES = {
   LLM_PROMPT: "llm_prompt",
+  CODE_EXECUTION: "code_execution",
   AGENT: "agent",
 };
 
@@ -23,7 +24,93 @@ export const NODE_TYPE_CONFIG = {
     color: "orange.500",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
+  [NODE_TYPES.CODE_EXECUTION]: {
+    id: NODE_TYPES.CODE_EXECUTION,
+    title: "Code Execution",
+    description: "Run code in an isolated sandbox",
+    iconSrc: "/assets/icons/components/ic_code.svg",
+    color: "success.main",
+  },
 };
+
+export const CODE_EXECUTION_LANGUAGES = [
+  { value: "python", label: "Python" },
+  { value: "javascript", label: "JavaScript" },
+  { value: "typescript", label: "TypeScript" },
+];
+
+export const CODE_EXECUTION_DEFAULT_CONFIG = {
+  language: "python",
+  code: 'result = {"message": "hello from code_execution", "inputs": inputs}',
+  timeout_ms: 5000,
+  memory_mb: 128,
+};
+
+export const CODE_EXECUTION_RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "ok",
+    "value",
+    "stdout",
+    "stderr",
+    "exit_code",
+    "duration_ms",
+    "error",
+    "metadata",
+  ],
+  properties: {
+    ok: { type: "boolean" },
+    value: {},
+    stdout: { type: "string" },
+    stderr: { type: "string" },
+    exit_code: { anyOf: [{ type: "integer" }, { type: "null" }] },
+    duration_ms: { type: "integer", minimum: 0 },
+    error: { anyOf: [{ type: "string" }, { type: "null" }] },
+    metadata: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "language",
+        "runner",
+        "timed_out",
+        "memory_mb",
+        "stdout_truncated",
+        "stderr_truncated",
+        "output_limit_bytes",
+      ],
+      properties: {
+        language: {
+          type: "string",
+          enum: ["python", "javascript", "typescript"],
+        },
+        runner: { anyOf: [{ type: "string" }, { type: "null" }] },
+        timed_out: { type: "boolean" },
+        memory_mb: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        stdout_truncated: { type: "boolean" },
+        stderr_truncated: { type: "boolean" },
+        output_limit_bytes: { anyOf: [{ type: "integer" }, { type: "null" }] },
+      },
+    },
+  },
+};
+
+export const CODE_EXECUTION_PORTS = [
+  {
+    key: "inputs",
+    display_name: "inputs",
+    direction: "input",
+    data_schema: { type: "object" },
+    required: false,
+  },
+  {
+    key: "result",
+    display_name: "result",
+    direction: "output",
+    data_schema: CODE_EXECUTION_RESULT_SCHEMA,
+    required: true,
+  },
+];
 
 export const AGENT_PLAYGROUND_TABS = [
   {

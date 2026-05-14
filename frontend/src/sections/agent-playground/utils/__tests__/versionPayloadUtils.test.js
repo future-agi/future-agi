@@ -4,7 +4,7 @@ import {
   parseVersionResponse,
 } from "../versionPayloadUtils";
 import { createPromptNode, createAgentNode, createEdge } from "./fixtures";
-import { API_NODE_TYPES, VERSION_STATUS } from "../constants";
+import { API_NODE_TYPES, NODE_TYPES, VERSION_STATUS } from "../constants";
 
 // ---------------------------------------------------------------------------
 // buildVersionPayload
@@ -106,6 +106,66 @@ describe("buildVersionPayload", () => {
     const nodes = [createPromptNode("p1")];
     const result = buildVersionPayload(nodes, []);
     expect(result.nodes[0].node_template_id).toBe("tpl-prompt");
+  });
+
+  it("serializes code execution nodes with config instead of prompt_template", () => {
+    const nodes = [
+      {
+        id: "code-1",
+        type: NODE_TYPES.CODE_EXECUTION,
+        position: { x: 10, y: 20 },
+        data: {
+          label: "Code",
+          node_template_id: "tpl-code",
+          config: { language: "python", code: "result = inputs" },
+          ports: [
+            {
+              temp_id: "code-in",
+              key: "inputs",
+              display_name: "inputs",
+              direction: "input",
+              data_schema: { type: "object" },
+              required: false,
+            },
+            {
+              temp_id: "code-out",
+              key: "result",
+              display_name: "result",
+              direction: "output",
+              data_schema: { type: "object" },
+              required: true,
+            },
+          ],
+        },
+      },
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+
+    expect(result.nodes[0]).toMatchObject({
+      type: API_NODE_TYPES.ATOMIC,
+      node_template_id: "tpl-code",
+      config: { language: "python", code: "result = inputs" },
+    });
+    expect(result.nodes[0]).not.toHaveProperty("prompt_template");
+    expect(result.nodes[0].ports).toEqual([
+      {
+        id: "code-in",
+        key: "inputs",
+        display_name: "inputs",
+        direction: "input",
+        data_schema: { type: "object" },
+        required: false,
+      },
+      {
+        id: "code-out",
+        key: "result",
+        display_name: "result",
+        direction: "output",
+        data_schema: { type: "object" },
+        required: true,
+      },
+    ]);
   });
 
   it("does not include node_template_id for subgraph nodes", () => {
@@ -420,8 +480,52 @@ describe("edge cases", () => {
       const result = parseVersionResponse(apiData);
       expect(result.nodes).toHaveLength(1);
       // Port should still be reconstructed
-      expect(result.nodes[0].data.ports[0].display_name).toBe("response");
+    expect(result.nodes[0].data.ports[0].display_name).toBe("response");
+  });
+
+  it("parses code execution nodes from canonical snake_case response data", () => {
+    const apiData = {
+      nodes: [
+        {
+          id: "code-1",
+          type: API_NODE_TYPES.ATOMIC,
+          name: "Code",
+          node_template_id: "tpl-code",
+          node_template_name: NODE_TYPES.CODE_EXECUTION,
+          config: { language: "python", code: "result = inputs" },
+          position: { x: 1, y: 2 },
+          ports: [
+            {
+              id: "port-1",
+              key: "result",
+              display_name: "result",
+              direction: "output",
+              data_schema: { type: "object" },
+            },
+          ],
+        },
+      ],
+      node_connections: [
+        { id: "edge-1", source_node_id: "code-1", target_node_id: "next-1" },
+      ],
+    };
+
+    const result = parseVersionResponse(apiData);
+
+    expect(result.nodes[0]).toMatchObject({
+      id: "code-1",
+      type: NODE_TYPES.CODE_EXECUTION,
+      data: {
+        node_template_id: "tpl-code",
+        config: { language: "python", code: "result = inputs" },
+      },
     });
+    expect(result.edges[0]).toEqual({
+      id: "edge-1",
+      source: "code-1",
+      target: "next-1",
+    });
+  });
 
     it("handles orphaned edges (referencing non-existent ports)", () => {
       const apiData = {

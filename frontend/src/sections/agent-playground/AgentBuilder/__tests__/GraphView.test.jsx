@@ -29,6 +29,7 @@ vi.mock("../nodes", () => ({
   PromptNode: () => <div />,
   AgentNode: () => <div />,
   EvalNode: () => <div />,
+  CodeExecutionNode: () => <div />,
 }));
 
 vi.mock("../edges", () => ({

@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { NODE_TYPES } from "../../sections/agent-playground/utils/constants";
+import {
+  NODE_TYPE_CONFIG,
+  NODE_TYPES,
+} from "../../sections/agent-playground/utils/constants";
 
 /**
  * Hook for fetching graphs that can be referenced as agent nodes.
@@ -19,7 +22,7 @@ export const useGetReferenceableGraphs = (graphId, options = {}) =>
   });
 
 /**
- * Hook for fetching node templates. Filters to llm_prompt only for now.
+ * Hook for fetching node templates.
  * Maps API shape to NodeCard shape: { id, node_template_id, title, description, iconSrc, color }
  * @param {object} options - Additional react-query options
  */
@@ -29,15 +32,21 @@ export const useGetNodeTemplates = (options = {}) =>
     queryFn: () => axios.get(endpoints.agentPlayground.nodeTemplates),
     select: (res) =>
       (res.data?.result?.node_templates ?? [])
-        .filter((t) => t.name === NODE_TYPES.LLM_PROMPT)
-        .map((t) => ({
-          id: t.name,
-          node_template_id: t.id,
-          title: t.display_name,
-          description: t.description,
-          iconSrc: "/assets/icons/ic_chat_single.svg",
-          color: "orange.500",
-        })),
+        .filter((t) =>
+          [NODE_TYPES.LLM_PROMPT, NODE_TYPES.CODE_EXECUTION].includes(t.name),
+        )
+        .map((t) => {
+          const config = NODE_TYPE_CONFIG[t.name];
+
+          return {
+            id: t.name,
+            node_template_id: t.id,
+            title: t.display_name ?? config.title,
+            description: t.description ?? config.description,
+            iconSrc: config.iconSrc,
+            color: config.color,
+          };
+        }),
     staleTime: 5 * 60 * 1000,
     ...options,
   });

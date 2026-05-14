@@ -67,6 +67,7 @@ node_detail = NodeCrudViewSet.as_view(
     }
 )
 node_possible_mappings = NodeCrudViewSet.as_view({"get": "possible_edge_mappings"})
+node_test_execution = NodeCrudViewSet.as_view({"post": "test_execution"})
 port_update = PortCrudViewSet.as_view({"patch": "partial_update"})
 nc_create = NodeConnectionCrudViewSet.as_view({"post": "create"})
 nc_delete = NodeConnectionCrudViewSet.as_view({"delete": "destroy"})
@@ -151,6 +152,11 @@ urlpatterns = [
         "graphs/<uuid:pk>/versions/<uuid:version_id>/nodes/<uuid:node_id>/possible-edge-mappings/",
         node_possible_mappings,
         name="node-possible-edge-mappings",
+    ),
+    path(
+        "graphs/<uuid:pk>/versions/<uuid:version_id>/nodes/<uuid:node_id>/test-execution/",
+        node_test_execution,
+        name="node-test-execution",
     ),
     # ── Port update ──────────────────────────────────────────────────
     path(
