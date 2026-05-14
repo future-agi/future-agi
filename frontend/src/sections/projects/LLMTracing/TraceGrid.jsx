@@ -216,23 +216,47 @@ const TraceGrid = React.forwardRef(
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
-                if (!_.isEqual(newCols, currentNonCustom)) {
-                  // Merge: existing custom cols + pending (from localStorage/saved view)
-                  const existingCustom = (columnsRef.current || []).filter(
-                    (c) => c.groupBy === "Custom Columns",
-                  );
-                  const pending = pendingCustomColumnsRef?.current || [];
-                  const existingIds = new Set(existingCustom.map((c) => c.id));
-                  const dedupedPending = pending.filter(
-                    (c) => !existingIds.has(c.id),
-                  );
+                const existingCustom = (columnsRef.current || []).filter(
+                  (c) => c.groupBy === "Custom Columns",
+                );
+                const pending = pendingCustomColumnsRef?.current || [];
+                const existingIds = new Set(existingCustom.map((c) => c.id));
+                const dedupedPending = pending.filter(
+                  (c) => !existingIds.has(c.id),
+                );
+                // Strip isVisible from the diff so saved-view hide maps
+                // don't keep retriggering the merge on every fetch. The
+                // hasPending clause ensures a saved-view switch with same
+                // backend cols still drains the pending customs.
+                const stripVis = (cols) =>
+                  (cols || []).map(({ isVisible, ...rest }) => rest);
+                const backendChanged = !_.isEqual(
+                  stripVis(newCols),
+                  stripVis(currentNonCustom),
+                );
+                const hasPending = dedupedPending.length > 0;
+                if (backendChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
-                  // Clear pending after consuming
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
+                  // Preserve existing isVisible so saved-view hide intent
+                  // survives backend col changes. Pending-only path reuses
+                  // currentNonCustom to keep column identity stable.
+                  const finalNonCustom = backendChanged
+                    ? newCols.map((nc) => {
+                        const existing = currentNonCustom.find(
+                          (c) => c.id === nc.id,
+                        );
+                        return existing
+                          ? { ...nc, isVisible: existing.isVisible }
+                          : nc;
+                      })
+                    : currentNonCustom;
                   setColumns(
-                    allCustom.length > 0 ? [...newCols, ...allCustom] : newCols,
+                    allCustom.length > 0
+                      ? [...finalNonCustom, ...allCustom]
+                      : finalNonCustom,
                   );
                 }
               }

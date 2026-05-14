@@ -6,79 +6,151 @@ import Iconify from "src/components/iconify";
 import { getRandomId } from "src/utils/utils";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 
-// ── Operator maps (new panel format ↔ old task filter format) ──
-const OP_NEW_TO_OLD = {
-  is: "equals",
-  is_not: "not_equals",
-  contains: "contains",
-  not_contains: "not_contains",
-  equal_to: "equal_to",
-  not_equal_to: "not_equal_to",
-  greater_than: "greater_than",
-  greater_than_or_equal: "greater_than_or_equal",
-  less_than: "less_than",
-  less_than_or_equal: "less_than_or_equal",
-  between: "between",
-  not_between: "not_between",
-};
+// ── Operator handling — canonical backend ops ──
+//
+// `TraceFilterPanel` (PR #432 / TH-4924) emits canonical backend op names
+// directly: `equals`, `not_equals`, `in`, `not_in`, `contains`,
+// `not_contains`, `starts_with`, `ends_with`, `is_null`, `is_not_null`,
+// `greater_than`, `greater_than_or_equal`, `less_than`,
+// `less_than_or_equal`, `between`, `not_between`. The thumbs / categorical
+// / id-only dropdowns inside the panel still emit legacy `is`/`is_not` —
+// alias those to canonical so the wire is consistent.
+const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
 
-const OP_OLD_TO_NEW = {
-  equals: "is",
-  not_equals: "is_not",
-  contains: "contains",
-  not_contains: "not_contains",
-  is: "is",
-  is_not: "is_not",
-  equal_to: "equal_to",
-  not_equal_to: "not_equal_to",
-  greater_than: "greater_than",
-  greater_than_or_equal: "greater_than_or_equal",
-  less_than: "less_than",
-  less_than_or_equal: "less_than_or_equal",
-  between: "between",
-  not_between: "not_between",
+const RANGE_OPS = new Set(["between", "not_between"]);
+const LIST_OPS = new Set(["in", "not_in"]);
+const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
+
+// Legacy string ops persisted before TH-4924 land in form state as
+// `equals`/`not_equals`. Rewrite to `in`/`not_in` on read so the new
+// panel renders the row under the multi-value picker.
+const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
+
+const isStringLike = (fieldType) =>
+  fieldType === "text" || fieldType === "string";
+
+const coerceForType = (val, fieldType) => {
+  if (val === null || val === undefined || val === "") return val;
+  if (Array.isArray(val)) return val.map((v) => coerceForType(v, fieldType));
+  if (fieldType === "number") {
+    const n = Number(val);
+    return Number.isNaN(n) ? val : n;
+  }
+  if (fieldType === "boolean") {
+    if (val === true || val === false) return val;
+    if (val === "true") return true;
+    if (val === "false") return false;
+  }
+  return val;
 };
 
 const OP_DISPLAY = {
-  is: "is",
-  is_not: "is not",
+  // canonical
+  equals: "equals",
+  not_equals: "not equals",
+  in: "is one of",
+  not_in: "is not one of",
   contains: "contains",
   not_contains: "not contains",
-  equal_to: "=",
-  not_equal_to: "≠",
+  starts_with: "starts with",
+  ends_with: "ends with",
+  is_null: "is null",
+  is_not_null: "is not null",
   greater_than: ">",
   greater_than_or_equal: "≥",
   less_than: "<",
   less_than_or_equal: "≤",
   between: "between",
   not_between: "not between",
+  // legacy (still rendered if a stale row survives until the next save)
+  is: "is",
+  is_not: "is not",
+  equal_to: "=",
+  not_equal_to: "≠",
 };
 
-// ── new panel filter → old task form filter(s) ──
-// Each picked value becomes a separate row so the backend's
-// `getNewTaskFilters` pushes them into the same property array.
-// We stash `fieldCategory` and `fieldLabel` on each row so the live
-// preview (which reads raw useWatch values) can reconstruct the
-// tracing API array without losing metadata. Zod strips these at
-// submit time so the backend payload is unaffected.
+// ── new panel filter → form filter(s) ──
+//
+// List ops (`in`/`not_in`) carry the full array on a single form row so
+// the wire keeps the BE's canonical shape; range ops carry a 2-element
+// array; no-value ops omit `filterValue`; other ops explode into one
+// scalar row per value so system-filter accumulation keeps working.
+// `fieldCategory` / `fieldLabel` are stashed for the live preview and
+// chip rendering — zod strips them on submit.
 function convertNewToOld(newFilters) {
   const out = [];
   (newFilters || []).forEach((f) => {
     if (!f?.field) return;
-    const values = Array.isArray(f.value) ? f.value : [f.value];
     const isAttribute = f.fieldCategory === "attribute";
-    values.forEach((v) => {
+    const fieldType = f.fieldType || "string";
+    const filterType =
+      fieldType === "number"
+        ? "number"
+        : fieldType === "boolean"
+          ? "boolean"
+          : "text";
+    const op = LEGACY_OP_ALIAS[f.operator] || f.operator || "equals";
+
+    const base = {
+      property: isAttribute ? "attributes" : f.field,
+      propertyId: f.field,
+      fieldCategory: f.fieldCategory || "system",
+      fieldLabel: f.fieldLabel || f.field,
+    };
+
+    if (NO_VALUE_OPS.has(op)) {
+      out.push({
+        id: getRandomId(),
+        ...base,
+        filterConfig: { filterType, filterOp: op },
+      });
+      return;
+    }
+
+    if (RANGE_OPS.has(op)) {
+      const arr = Array.isArray(f.value) ? f.value : [];
+      if (arr.length < 2) return;
+      out.push({
+        id: getRandomId(),
+        ...base,
+        filterConfig: {
+          filterType,
+          filterOp: op,
+          filterValue: coerceForType(arr.slice(0, 2), fieldType),
+        },
+      });
+      return;
+    }
+
+    if (LIST_OPS.has(op)) {
+      const arr = (Array.isArray(f.value) ? f.value : [f.value]).filter(
+        (v) => v !== undefined && v !== null && v !== "",
+      );
+      if (arr.length === 0) return;
+      out.push({
+        id: getRandomId(),
+        ...base,
+        filterConfig: {
+          filterType,
+          filterOp: op,
+          filterValue: coerceForType(arr, fieldType),
+        },
+      });
+      return;
+    }
+
+    // Single-value ops: explode any incoming array (legacy multi-value
+    // `equals` from saved tasks) into one scalar row per value.
+    const arr = Array.isArray(f.value) ? f.value : [f.value];
+    arr.forEach((v) => {
       if (v === undefined || v === null || v === "") return;
       out.push({
         id: getRandomId(),
-        property: isAttribute ? "attributes" : f.field,
-        propertyId: f.field,
-        fieldCategory: f.fieldCategory || "system",
-        fieldLabel: f.fieldLabel || f.field,
+        ...base,
         filterConfig: {
-          filterType: f.fieldType === "number" ? "number" : "text",
-          filterOp: OP_NEW_TO_OLD[f.operator] || f.operator || "equals",
-          filterValue: v,
+          filterType,
+          filterOp: op,
+          filterValue: coerceForType(v, fieldType),
         },
       });
     });
@@ -86,7 +158,7 @@ function convertNewToOld(newFilters) {
   return out;
 }
 
-// ── old task form filter → new panel format (one row per property+op group) ──
+// ── form filter → new panel format (one row per property+op group) ──
 function convertOldToNew(oldFilters) {
   const groups = new Map();
   (oldFilters || []).forEach((f) => {
@@ -94,22 +166,43 @@ function convertOldToNew(oldFilters) {
     const isAttribute = f.property === "attributes";
     const field = isAttribute ? f.propertyId : f.property;
     if (!field) return;
-    const op = f?.filterConfig?.filterOp || "equals";
+
+    const rawOp = f?.filterConfig?.filterOp || "equals";
     const category = f.fieldCategory || (isAttribute ? "attribute" : "system");
+    const ft = f?.filterConfig?.filterType;
+    const fieldType =
+      ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
+
+    // Aliased legacy → canonical first, then string-specific rehydration.
+    let op = LEGACY_OP_ALIAS[rawOp] || rawOp;
+    if (isStringLike(fieldType) && HYDRATE_STRING_OP[op]) {
+      op = HYDRATE_STRING_OP[op];
+    }
+
     const key = `${field}|${op}|${category}`;
     if (!groups.has(key)) {
       groups.set(key, {
         field,
         fieldLabel: f.fieldLabel || field,
-        fieldType:
-          f?.filterConfig?.filterType === "number" ? "number" : "string",
+        fieldType,
         fieldCategory: category,
-        operator: OP_OLD_TO_NEW[op] || op,
+        operator: op,
         value: [],
       });
     }
+
+    if (NO_VALUE_OPS.has(op)) return;
+
     const val = f?.filterConfig?.filterValue;
-    if (val !== undefined && val !== null && val !== "") {
+    if (RANGE_OPS.has(op)) {
+      // Range: the form row carries the [low, high] array directly.
+      groups.get(key).value = Array.isArray(val) ? val : [];
+      return;
+    }
+    if (val === undefined || val === null || val === "") return;
+    if (Array.isArray(val)) {
+      groups.get(key).value.push(...val);
+    } else {
       groups.get(key).value.push(val);
     }
   });
@@ -118,7 +211,7 @@ function convertOldToNew(oldFilters) {
 
 // ── Chip display for an active filter ──
 const FilterChip = ({ filter, onRemove }) => {
-  const opLabel = OP_DISPLAY[filter.operator] || filter.operator || "is";
+  const opLabel = OP_DISPLAY[filter.operator] || filter.operator || "equals";
   const valueStr = Array.isArray(filter.value)
     ? filter.value.join(", ")
     : String(filter.value ?? "");
@@ -187,8 +280,25 @@ FilterChip.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
+// Map task rowType → TraceFilterPanel `tab` so the property picker
+// surfaces Trace ID / Span ID the same way LLM Tracing does. Callers
+// use inconsistent casing ("spans"/"Span", "traces"/"Trace") so we
+// normalize. Sessions / voiceCalls return null (no id fields).
+const rowTypeToFilterTab = (rowType) => {
+  const key = String(rowType || "").toLowerCase();
+  if (key === "spans" || key === "span") return "spans";
+  if (key === "traces" || key === "trace") return "trace";
+  return null;
+};
+
 // ── Main ──
-const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) => {
+const TaskFilterBar = ({
+  control,
+  setValue,
+  projectId,
+  isSimulator = false,
+  rowType,
+}) => {
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
   const [panelFilters, setPanelFilters] = useState(() =>
@@ -351,6 +461,7 @@ const TaskFilterBar = ({ control, setValue, projectId, isSimulator = false }) =>
         currentFilters={panelFilters}
         projectId={projectId}
         isSimulator={isSimulator}
+        tab={rowTypeToFilterTab(rowType)}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>
@@ -362,6 +473,7 @@ TaskFilterBar.propTypes = {
   setValue: PropTypes.func.isRequired,
   projectId: PropTypes.string,
   isSimulator: PropTypes.bool,
+  rowType: PropTypes.string,
 };
 
 export default TaskFilterBar;

@@ -75,12 +75,33 @@ _MISSING = object()
 
 
 def _resolve_attr(span_attrs: dict, candidate: str):
-    """Literal lookup, then dotted-path walk. Returns ``_MISSING`` on miss."""
+    """Literal lookup → dotted walk → JSON-parsed parent walk on miss.
+
+    Last step matches the dataset-eval resolver so the trace-eval path
+    can resolve picker paths inside JSON-stringified ``input.value`` /
+    ``output.value`` flat keys.
+    """
     if candidate in span_attrs:
         return span_attrs[candidate]
     walked = _walk_dotted_path(span_attrs, candidate)
     if walked is not None:
         return walked
+
+    from model_hub.utils.json_path_resolver import parse_json_safely
+
+    parts = candidate.split(".")
+    for split_idx in range(len(parts) - 1, 0, -1):
+        prefix = ".".join(parts[:split_idx])
+        remainder = ".".join(parts[split_idx:])
+        for key in (f"{prefix}.value", prefix):
+            if key not in span_attrs:
+                continue
+            parsed, ok = parse_json_safely(span_attrs[key])
+            if not ok:
+                continue
+            walked = _walk_dotted_path(parsed, remainder)
+            if walked is not None:
+                return walked
     return _MISSING
 
 
@@ -122,6 +143,225 @@ _ATTRIBUTE_ALIASES: dict[str, list[str]] = {
         "gen_ai.voice.summary",
     ],
 }
+
+
+def build_span_context(span, *, anchor_span_id: str | None = None) -> dict:
+    """Build the ``span_context`` payload that AgentEvaluator receives.
+
+    Identical shape across span / trace / session handlers so the agent
+    sees a consistent dict regardless of which surface triggered the eval.
+    ``cost`` is float-coerced because the ORM returns a Decimal — JSON
+    serialization would otherwise fail.
+    """
+    return {
+        "id": str(getattr(span, "id", "") or ""),
+        "name": getattr(span, "name", None),
+        "observation_type": getattr(span, "observation_type", None),
+        "status": getattr(span, "status", None),
+        "status_message": getattr(span, "status_message", None),
+        "model": getattr(span, "model", None),
+        "latency_ms": getattr(span, "latency_ms", None),
+        "total_tokens": getattr(span, "total_tokens", None),
+        "cost": float(span.cost) if getattr(span, "cost", None) else None,
+    }
+
+
+def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
+    """Build the ``trace_context`` payload that AgentEvaluator receives.
+
+    Includes span aggregates (count, error count, tokens, latency) AND an
+    inline list of span identifiers so the agent can drill into spans via
+    ``span_detail`` directly — no preliminary ``list_trace_spans`` call
+    required. Span list capped at 200 to bound payload size; aggregates
+    cover the full trace.
+
+    ``anchor_span_id`` is set by the span handler to pin the originating
+    span — null for trace-level evals. Aggregate query failures fall back
+    to empty values rather than raising; the eval continues without the
+    optional context fields.
+    """
+    from django.db.models import Count, Q, Sum
+
+    from tracer.models.observation_span import ObservationSpan
+
+    try:
+        _agg = ObservationSpan.objects.filter(
+            trace=trace, deleted=False
+        ).aggregate(
+            span_count=Count("id"),
+            error_count=Count("id", filter=Q(status="ERROR")),
+            total_tokens=Sum("total_tokens"),
+            total_latency_ms=Sum("latency_ms"),
+        )
+        _spans = list(
+            ObservationSpan.objects.filter(trace=trace, deleted=False)
+            .order_by("start_time")
+            .values("id", "name", "observation_type", "status", "parent_span_id")[:200]
+        )
+    except Exception:
+        _agg, _spans = {}, []
+
+    _created_at = getattr(trace, "created_at", None)
+    payload = {
+        "id": str(getattr(trace, "id", "") or ""),
+        "name": getattr(trace, "name", None),
+        "created_at": _created_at.isoformat() if _created_at else None,
+        "span_count": _agg.get("span_count") or 0,
+        "error_count": _agg.get("error_count") or 0,
+        "total_tokens": _agg.get("total_tokens") or 0,
+        "total_latency_ms": _agg.get("total_latency_ms") or 0,
+        "has_error": bool(_agg.get("error_count") or 0),
+        "spans": [
+            {
+                "id": str(s["id"]),
+                "name": s.get("name"),
+                "observation_type": s.get("observation_type"),
+                "status": s.get("status"),
+                "parent_span_id": (
+                    str(s["parent_span_id"]) if s.get("parent_span_id") else None
+                ),
+            }
+            for s in _spans
+        ],
+    }
+    if anchor_span_id is not None:
+        payload["span_id"] = anchor_span_id
+    return payload
+
+
+def build_session_context(session) -> dict | None:
+    """Build the ``session_context`` payload that AgentEvaluator receives.
+
+    Same shape the playground produces (model_hub/views/separate_evals.py),
+    so the agent gets a consistent payload regardless of which surface
+    triggered the eval. Returns None on lookup/aggregation failure rather
+    than raising — the eval continues without the optional context.
+    """
+    if session is None:
+        return None
+    try:
+        from django.db.models import Count, Max, Min, Q, Sum
+
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+
+        trace_qs = Trace.objects.filter(session=session, deleted=False)
+        sess_agg = ObservationSpan.objects.filter(
+            trace__in=trace_qs, deleted=False
+        ).aggregate(
+            total_spans=Count("id"),
+            error_count=Count("id", filter=Q(status="ERROR")),
+            total_tokens=Sum("total_tokens"),
+            total_cost=Sum("cost"),
+            start_time=Min("start_time"),
+            end_time=Max("end_time"),
+        )
+
+        # Cap at 100 traces for the in-prompt summary; the agent uses
+        # explore_trace for deeper drill-down.
+        traces_page = list(trace_qs.order_by("created_at")[:100])
+        trace_ids = [t.id for t in traces_page]
+        per_trace = {
+            row["trace_id"]: row
+            for row in (
+                ObservationSpan.objects.filter(
+                    trace_id__in=trace_ids, deleted=False
+                )
+                .values("trace_id")
+                .annotate(
+                    span_count=Count("id"),
+                    error_count=Count("id", filter=Q(status="ERROR")),
+                    total_tokens=Sum("total_tokens"),
+                    total_latency=Sum("latency_ms"),
+                )
+            )
+        }
+        # Inline span metadata per trace so the agent has concrete span
+        # ids in its context and can call span_detail directly. Cap 50 per
+        # trace to bound payload size.
+        spans_by_trace: dict = {}
+        for s in (
+            ObservationSpan.objects.filter(
+                trace_id__in=trace_ids, deleted=False
+            )
+            .order_by("start_time")
+            .values("id", "trace_id", "name", "observation_type", "status", "parent_span_id")
+        ):
+            bucket = spans_by_trace.setdefault(s["trace_id"], [])
+            if len(bucket) >= 50:
+                continue
+            bucket.append(
+                {
+                    "id": str(s["id"]),
+                    "name": s.get("name"),
+                    "observation_type": s.get("observation_type"),
+                    "status": s.get("status"),
+                    "parent_span_id": (
+                        str(s["parent_span_id"]) if s.get("parent_span_id") else None
+                    ),
+                }
+            )
+
+        trace_summaries = []
+        for t in traces_page:
+            # getattr guards against incomplete Trace rows (None on nullable
+            # columns from in-flight ingests or older surfaces).
+            t_id = getattr(t, "id", None)
+            if t_id is None:
+                continue
+            t_created = getattr(t, "created_at", None)
+            t_error = getattr(t, "error", None)
+            agg = per_trace.get(t_id, {})
+            err_count = agg.get("error_count") or 0
+            trace_summaries.append(
+                {
+                    "id": str(t_id),
+                    "name": getattr(t, "name", None),
+                    "created_at": t_created.isoformat() if t_created else None,
+                    "span_count": agg.get("span_count") or 0,
+                    "error_count": err_count,
+                    "total_tokens": agg.get("total_tokens") or 0,
+                    "total_latency_ms": agg.get("total_latency") or 0,
+                    "has_error": bool(t_error or err_count > 0),
+                    "spans": spans_by_trace.get(t_id, []),
+                }
+            )
+
+        start = sess_agg["start_time"]
+        end = sess_agg["end_time"]
+        duration = (end - start).total_seconds() if start and end else None
+
+        return {
+            "id": str(session.id),
+            "name": session.name,
+            "project_id": (
+                str(session.project_id) if session.project_id else None
+            ),
+            "bookmarked": session.bookmarked,
+            "created_at": (
+                session.created_at.isoformat() if session.created_at else None
+            ),
+            "trace_count": trace_qs.count(),
+            "total_spans": sess_agg["total_spans"] or 0,
+            "error_count": sess_agg["error_count"] or 0,
+            "total_tokens": sess_agg["total_tokens"] or 0,
+            "total_cost": (
+                float(round(sess_agg["total_cost"], 6))
+                if sess_agg["total_cost"]
+                else 0
+            ),
+            "start_time": str(start) if start else None,
+            "end_time": str(end) if end else None,
+            "duration_seconds": duration,
+            "traces": trace_summaries,
+        }
+    except Exception as e:
+        logger.warning(
+            "build_session_context_failed",
+            session_id=str(getattr(session, "id", None)),
+            error=str(e),
+        )
+        return None
 
 
 def _process_mapping(
@@ -609,22 +849,23 @@ def _execute_evaluation(
         (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
     )
     if _di["span_context"]:
-        _eval_inputs["span_context"] = {
-            "id": str(observation_span.id),
-            "name": observation_span.name,
-            "observation_type": observation_span.observation_type,
-            "status": observation_span.status,
-            "status_message": observation_span.status_message,
-            "model": observation_span.model,
-            "latency_ms": observation_span.latency_ms,
-            "total_tokens": observation_span.total_tokens,
-            "cost": float(observation_span.cost) if observation_span.cost else None,
-        }
+        _eval_inputs["span_context"] = build_span_context(observation_span)
     if _di["trace_context"]:
+        # Span-handler trace_context stays minimal — the agent already has
+        # span_context for the originating span; trace-level aggregates are
+        # only built when the eval is at trace/session level.
         _eval_inputs["trace_context"] = {
             "id": str(observation_span.trace_id),
             "span_id": str(observation_span.id),
         }
+    if _di["session_context"]:
+        # Trace.session is nullable (orphan traces aren't bound to a
+        # session) — when missing, skip the kwarg entirely so the agent
+        # sees no session_context at all rather than partial / null data.
+        _session = getattr(getattr(observation_span, "trace", None), "session", None)
+        _session_ctx = build_session_context(_session) if _session else None
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
     try:
@@ -1522,8 +1763,9 @@ def _resolve_span_path(span: ObservationSpan, path: str):
         span_attrs = get_span_attributes(span)
         if not rest:
             return span_attrs
-        walked = _walk_dotted_path(span_attrs, rest)
-        return walked if walked is not None else _MISSING
+        # Legacy ``span_attributes.<x>`` paths share resolver semantics
+        # with bare paths.
+        return _resolve_attr(span_attrs, rest)
 
     span_attrs = get_span_attributes(span)
     return _resolve_attr(span_attrs, path)
@@ -1768,11 +2010,48 @@ def _execute_evaluation_for_trace(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Set workspace context for tools that need org-scoping ---
+    # See _execute_evaluation_for_session for rationale; same applies here.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+        set_workspace_context(
+            workspace=workspace,
+            organization=trace.project.organization,
+        )
+    except Exception as _ctx_err:
+        logger.warning(
+            "Failed to set workspace context for trace eval: %s", _ctx_err
+        )
+
+    # --- Build context for data_injection support (trace-scoped) ---
+    # Mirrors the span-level _execute_evaluation block. At trace level, the
+    # entity being evaluated is the Trace itself (anchored on a span):
+    #   trace_context   → trace identity + name. Agents drill into spans
+    #                     via the explore_trace tool using these IDs.
+    #   session_context → walk trace.session (nullable for orphan traces);
+    #                     build full session aggregate when present.
+    #   span_context    → the anchor_span data, same shape as the span-level
+    #                     handler. Useful when the eval is conceptually
+    #                     trace-scoped but the anchor span has rich detail.
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["trace_context"]:
+        _eval_inputs["trace_context"] = build_trace_context(trace)
+    if _di["session_context"]:
+        _session = getattr(trace, "session", None)
+        _session_ctx = build_session_context(_session) if _session else None
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
+    if _di["span_context"]:
+        _eval_inputs["span_context"] = build_span_context(anchor_span)
+
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)
@@ -1938,11 +2217,48 @@ def _execute_evaluation_for_session(
     if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # --- Set workspace context for tools that need org-scoping ---
+    # The explore_trace tool's live DB actions (list_trace_spans, span_detail)
+    # call get_current_organization() to enforce tenant isolation. The
+    # ContextVar is request-bound and not set in Temporal worker contexts.
+    # Set it here from the session's project so the agent can drill into
+    # individual trace spans during exploration.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+        set_workspace_context(
+            workspace=workspace,
+            organization=trace_session.project.organization,
+        )
+    except Exception as _ctx_err:
+        logger.warning(
+            "Failed to set workspace context for session eval: %s", _ctx_err
+        )
+
+    # --- Build context for data_injection support (session-scoped) ---
+    # Mirrors the span-level _execute_evaluation block. At session level, the
+    # entity being evaluated is the TraceSession, so:
+    #   session_context → full session aggregate (traces, span/error counts,
+    #                     tokens, cost, time range — via build_session_context)
+    #   trace_context   → not applicable at session-level (no single focal
+    #                     trace; the session has many). We omit to avoid
+    #                     committing to an ambiguous "first trace" semantic.
+    #                     Agents can drill into individual traces via the
+    #                     session_context.traces[] summaries + explore_trace.
+    #   span_context    → not applicable at session-level.
+    _eval_inputs = dict(run_params or {})
+    _di = _di_normalize(
+        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+    )
+    if _di["session_context"]:
+        _session_ctx = build_session_context(trace_session)
+        if _session_ctx is not None:
+            _eval_inputs["session_context"] = _session_ctx
+
     try:
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
-                inputs=run_params or {},
+                inputs=_eval_inputs,
                 model=custom_eval_config.model,
                 kb_id=(
                     getattr(custom_eval_config.kb_id, "id", custom_eval_config.kb_id)

@@ -372,3 +372,27 @@ PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
         },
     },
 }
+
+
+# SPAN_ATTRIBUTE filter vocabulary shared by the CH builder and the Django ORM
+# validator. Single source of truth for allowed filter ops per type.
+SPAN_ATTR_ALLOWED_OPS: dict[str, set[str]] = {
+    "text": {
+        "equals", "not_equals", "in", "not_in",
+        "contains", "not_contains", "starts_with", "ends_with",
+        "is_null", "is_not_null",
+    },
+    "number": {
+        "equals", "not_equals",
+        "greater_than", "greater_than_or_equal",
+        "less_than", "less_than_or_equal",
+        "between", "not_between",
+        "is_null", "is_not_null",
+    },
+    "boolean": {
+        "equals", "not_equals", "is_null", "is_not_null",
+    },
+}
+LIST_OPS: set[str] = {"in", "not_in"}
+RANGE_OPS: set[str] = {"between", "not_between"}
+NO_VALUE_OPS: set[str] = {"is_null", "is_not_null"}

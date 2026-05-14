@@ -1,18 +1,72 @@
 import { getNumberValidation } from "src/utils/validation";
 import { z } from "zod";
 
+const RANGE_OPS = new Set(["between", "not_between"]);
+const LIST_OPS = new Set(["in", "not_in"]);
+
+// Group multiple form rows for the same (columnId, op) into a single wire
+// entry. Scalar rows for list ops collapse to array `filterValue`; multiple
+// scalar rows for a single-value op (legacy multi-value `equals` from saved
+// tasks) are promoted to `in` so the BE filter validator accepts them.
 export const extractAttributeFilters = (filters) => {
-  const attributeFilters = filters
-    ?.filter((filter) => filter?.property === "attributes")
-    .map(({ property, propertyId, id, ...rest }) => ({
-      ...rest,
-      columnId: propertyId,
+  const merged = new Map();
+  (filters || [])
+    .filter((f) => f?.property === "attributes")
+    .forEach((f) => {
+      const columnId = f.propertyId;
+      if (!columnId) return;
+      const op = f?.filterConfig?.filterOp || "equals";
+      const filterType = f?.filterConfig?.filterType || "text";
+      const key = `${columnId}|${op}|${filterType}`;
+      if (!merged.has(key)) {
+        merged.set(key, {
+          columnId,
+          op,
+          filterType,
+          rangeValue: undefined,
+          values: [],
+        });
+      }
+      const entry = merged.get(key);
+      const v = f?.filterConfig?.filterValue;
+      if (RANGE_OPS.has(op)) {
+        entry.rangeValue = Array.isArray(v) ? v : entry.rangeValue;
+      } else if (LIST_OPS.has(op)) {
+        const arr = Array.isArray(v)
+          ? v
+          : v !== undefined && v !== null && v !== ""
+            ? [v]
+            : [];
+        entry.values.push(...arr);
+      } else if (v !== undefined && v !== null && v !== "") {
+        entry.values.push(v);
+      }
+    });
+
+  return Array.from(merged.values()).map((entry) => {
+    let filterValue;
+    let filterOp = entry.op;
+    if (RANGE_OPS.has(filterOp)) {
+      filterValue = entry.rangeValue;
+    } else if (LIST_OPS.has(filterOp)) {
+      filterValue = entry.values;
+    } else if (entry.values.length > 1) {
+      // Multiple scalar rows under a single-value op → promote to `in`.
+      filterOp = "in";
+      filterValue = entry.values;
+    } else if (entry.values.length === 1) {
+      filterValue = entry.values[0];
+    }
+    return {
+      columnId: entry.columnId,
       filterConfig: {
-        ...rest?.filterConfig,
+        filterType: entry.filterType,
+        filterOp,
         colType: "SPAN_ATTRIBUTE",
+        ...(filterValue !== undefined && { filterValue }),
       },
-    }));
-  return attributeFilters ?? [];
+    };
+  });
 };
 
 export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
@@ -20,13 +74,22 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
 
   const attributeFilters = extractAttributeFilters(data?.filters);
 
+  // System filters: spread array `filterValue` (from canonical `in`/`not_in`
+  // or `between` rows) into the per-field array so the BE wire stays in the
+  // historical `{ field: [v1, v2, ...] }` shape it expects.
   data?.filters?.forEach((filter) => {
+    if (filter?.property === "attributes") return;
+    const val = filter?.filterConfig?.filterValue;
+    const vals = Array.isArray(val)
+      ? val
+      : val !== undefined && val !== null && val !== ""
+        ? [val]
+        : [];
+    if (vals.length === 0) return;
     if (filter?.property in filters) {
-      if (filter?.property === "attributes") return;
-      filters[filter?.property].push(filter?.filterConfig?.filterValue);
+      filters[filter?.property].push(...vals);
     } else {
-      if (filter?.property === "attributes") return;
-      filters[filter?.property] = [filter?.filterConfig?.filterValue];
+      filters[filter?.property] = [...vals];
     }
   });
 

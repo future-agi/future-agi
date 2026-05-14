@@ -23,7 +23,12 @@ import {
   getDatasetQueryKey,
   getDatasetQueryOptions,
 } from "src/api/develop/develop-detail";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  isCancelledError,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useParams } from "react-router";
 import {
   DATASET_TYPES,
@@ -289,14 +294,23 @@ const getDataSource = (
           }
         }
       } catch (e) {
-        // React Query throws `CancelledError` when a new query supersedes
-        // an in-flight one (common during bulk stop-eval / invalidations).
-        // It's expected flow control, not a real failure — don't log or
-        // flip the grid into failed state for it.
-        const err = /** @type {any} */ (e);
+        // Flow-control errors from request cancellation are not real failures:
+        //   • React Query throws CancelledError when a new query supersedes an
+        //     in-flight one (common during bulk stop-eval / invalidations).
+        //     Its class extends Error but never sets `this.name`, and the
+        //     constructor name gets mangled in production — only `instanceof`
+        //     (via `isCancelledError`) is reliable.
+        //   • Axios throws CanceledError (one L) / code ERR_CANCELED when the
+        //     underlying request is aborted before React Query wraps it.
+        //   • Fetch / AbortController surfaces AbortError.
+        // Don't log or flip the grid into failed state for any of these.
+        const err = e;
+        const name = err?.name;
         const isCancelled =
-          err?.name === "CancelledError" ||
-          err?.constructor?.name === "CancelledError";
+          isCancelledError(err) ||
+          name === "CanceledError" ||
+          name === "AbortError" ||
+          err?.code === "ERR_CANCELED";
         if (isCancelled) return;
         logger.error("[getRows] failed", {
           message: e instanceof Error ? e.message : String(e),

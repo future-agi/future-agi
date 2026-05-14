@@ -15,6 +15,7 @@ import axios, { endpoints } from "src/utils/axios";
 UsageChart.propTypes = {
   dimension: PropTypes.string.isRequired,
   period: PropTypes.string,
+  periodEnd: PropTypes.string,
   freeAllowance: PropTypes.number,
   displayUnit: PropTypes.string,
 };
@@ -22,16 +23,17 @@ UsageChart.propTypes = {
 export default function UsageChart({
   dimension,
   period,
+  periodEnd,
   freeAllowance,
   displayUnit,
 }) {
   const theme = useTheme();
 
   const { data: seriesData, isLoading } = useQuery({
-    queryKey: ["v2-usage-time-series", dimension, period],
+    queryKey: ["v2-usage-time-series", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageTimeSeries, {
-        params: { dimension, period },
+        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
       }),
     select: (res) => res.data?.result?.series || [],
     enabled: !!dimension,

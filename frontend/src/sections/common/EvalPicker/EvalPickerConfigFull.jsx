@@ -28,6 +28,7 @@ import React, {
 } from "react";
 import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
@@ -72,6 +73,7 @@ import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
   contextOptionsForRowType,
+  extractCodeEvaluateParams,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
@@ -96,6 +98,7 @@ const SOURCE_LABELS = {
 
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
+
 
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const { isOSS } = useDeploymentMode();
@@ -258,6 +261,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
+      // Live-parse the user's `def evaluate(...)` signature so adding /
+      // renaming a parameter immediately surfaces a new mapping row.
+      // Fall back to the saved mapping + template required_keys when the
+      // code can't be parsed (non-python language, no `def evaluate`).
+      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+      if (liveParams.length > 0) {
+        return [...new Set([...liveParams, ...requiredKeys])];
+      }
       const savedMapping = normalizedEvalData?.mapping || {};
       const savedStdvars = ["input", "output", "expected"].filter(
         (v) => v in savedMapping,
@@ -289,7 +300,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     isSystemEval,
     compositeDetail,
     templateFormat,
+    code,
+    codeLanguage,
   ]);
+
+
+  const hasDataInjection = useMemo(
+    () =>
+      evalType === "agent" &&
+      (source === "task" || source === "tracing") &&
+      Array.isArray(contextOptions) &&
+      contextOptions.some((o) => o && o !== "variables_only"),
+    [evalType, source, contextOptions],
+  );
 
   const visibleCodeParamEntries = useMemo(() => {
     if (!functionParamsSchema) return [];
@@ -1560,6 +1583,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     isSimulator={String(sourceRowType || "")
                       .toLowerCase()
                       .startsWith("voice")}
+                    rowType={sourceRowType}
                   />
                 </Box>
               )}
@@ -1631,6 +1655,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     previewData={sourcePreviewData}
+                    initialMapping={evalData?.mapping}
                   />
                 )}
                 {source === "task" && (
@@ -1777,6 +1802,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             settings only. */}
         {source !== "composite" &&
           !sourceReady &&
+          !hasDataInjection &&
           !testError &&
           !testPassed && (
             <Typography
@@ -1820,7 +1846,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           } else if (!hasInstructions) {
             testDisabled = true;
             testDisabledReason = "Add instructions before running a test.";
-          } else if (!hasVariables) {
+          } else if (!hasVariables && !hasDataInjection) {
             testDisabled = true;
             testDisabledReason =
               templateFormat === "jinja"
@@ -1828,38 +1854,42 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 : "Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.";
           }
 
-          if (!testDisabled && !sourceReady) {
+          if (!testDisabled && !sourceReady && !hasDataInjection) {
             testDisabled = true;
             testDisabledReason = "Map all variables before running a test.";
           }
 
           return (
-            <CustomTooltip
-              show={testDisabled && !!testDisabledReason}
-              type=""
-              title={testDisabledReason}
-              arrow
+            <ShowComponent
+              condition={!hasDataInjection }
             >
-              <span>
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  size="small"
-                  onClick={handleTestEvaluation}
-                  disabled={testDisabled}
-                  startIcon={
-                    isTesting ? (
-                      <CircularProgress size={14} />
-                    ) : (
-                      <Iconify icon="mdi:play-circle-outline" width={16} />
-                    )
-                  }
-                  sx={{ textTransform: "none" }}
-                >
-                  {isTesting ? "Testing..." : "Test Evaluation"}
-                </Button>
-              </span>
-            </CustomTooltip>
+              <CustomTooltip
+                show={testDisabled && !!testDisabledReason}
+                type=""
+                title={testDisabledReason}
+                arrow
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    size="small"
+                    onClick={handleTestEvaluation}
+                    disabled={testDisabled}
+                    startIcon={
+                      isTesting ? (
+                        <CircularProgress size={14} />
+                      ) : (
+                        <Iconify icon="mdi:play-circle-outline" width={16} />
+                      )
+                    }
+                    sx={{ textTransform: "none" }}
+                  >
+                    {isTesting ? "Testing..." : "Test Evaluation"}
+                  </Button>
+                </span>
+              </CustomTooltip>
+            </ShowComponent>
           );
         })()}
 
@@ -1889,7 +1919,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           } else if (!hasInstructions) {
             addDisabled = true;
             addDisabledReason = `Add instructions before ${actionLabel}.`;
-          } else if (!hasVariables) {
+          } else if (!hasVariables && !hasDataInjection) {
             addDisabled = true;
             addDisabledReason =
               templateFormat === "jinja"
@@ -1899,7 +1929,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
           // Non-composite flows additionally require the full source config
           // (name / output type / etc.) to be valid.
-          if (!addDisabled && source !== "composite" && !sourceReady) {
+          if (
+            !addDisabled &&
+            source !== "composite" &&
+            !sourceReady &&
+            !hasDataInjection
+          ) {
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }
