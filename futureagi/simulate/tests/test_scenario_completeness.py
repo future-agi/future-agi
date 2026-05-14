@@ -42,7 +42,9 @@ def simulator_agent(db, organization, workspace):
     )
 
 
-def _scenario(organization, workspace, agent_definition, simulator_agent, *, name, status_):
+def _scenario(
+    organization, workspace, agent_definition, simulator_agent, *, name, status_
+):
     return Scenarios.objects.create(
         name=name,
         description="",
@@ -68,21 +70,35 @@ def run_test(db, organization, workspace, agent_definition, simulator_agent):
     return rt
 
 
-def test_returns_none_for_empty_scenario_ids(run_test):
-    assert check_scenarios_incomplete([], run_test) is None
-    assert check_scenarios_incomplete(None, run_test) is None
+@pytest.mark.parametrize("scenario_ids", [[], None])
+def test_returns_400_when_no_scenario_ids(run_test, scenario_ids):
+    response = check_scenarios_incomplete(scenario_ids, run_test)
+
+    assert response is not None
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    payload = response.data["result"]
+    assert payload["error"] == "No scenarios"
+    assert payload["scenarios"] == []
 
 
 def test_returns_none_when_all_scenarios_completed(
     db, run_test, organization, workspace, agent_definition, simulator_agent
 ):
     s1 = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="A", status_=StatusType.COMPLETED.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="A",
+        status_=StatusType.COMPLETED.value,
     )
     s2 = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="B", status_=StatusType.COMPLETED.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="B",
+        status_=StatusType.COMPLETED.value,
     )
     run_test.scenarios.add(s1, s2)
 
@@ -93,12 +109,20 @@ def test_returns_400_when_any_scenario_running(
     db, run_test, organization, workspace, agent_definition, simulator_agent
 ):
     s1 = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="Done", status_=StatusType.COMPLETED.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="Done",
+        status_=StatusType.COMPLETED.value,
     )
     s2 = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="StillRunning", status_=StatusType.RUNNING.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="StillRunning",
+        status_=StatusType.RUNNING.value,
     )
     run_test.scenarios.add(s1, s2)
 
@@ -117,8 +141,12 @@ def test_failed_scenarios_also_block(
     db, run_test, organization, workspace, agent_definition, simulator_agent
 ):
     s = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="Broken", status_=StatusType.FAILED.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="Broken",
+        status_=StatusType.FAILED.value,
     )
     run_test.scenarios.add(s)
 
@@ -186,8 +214,12 @@ def test_unattached_scenarios_silently_ignored(
     """Scenario in the same org but NOT attached to this run_test should not
     affect the gate."""
     unattached = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="Unattached", status_=StatusType.RUNNING.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="Unattached",
+        status_=StatusType.RUNNING.value,
     )
 
     response = check_scenarios_incomplete([unattached.id], run_test)
@@ -199,8 +231,12 @@ def test_soft_deleted_scenarios_excluded(
     db, run_test, organization, workspace, agent_definition, simulator_agent
 ):
     s = _scenario(
-        organization, workspace, agent_definition, simulator_agent,
-        name="DeletedRunning", status_=StatusType.RUNNING.value,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        name="DeletedRunning",
+        status_=StatusType.RUNNING.value,
     )
     run_test.scenarios.add(s)
     s.deleted = True
