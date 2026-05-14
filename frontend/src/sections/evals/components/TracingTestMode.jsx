@@ -1337,6 +1337,7 @@ const TracingTestMode = React.forwardRef(
               setValue={internalFilterForm.setValue}
               projectId={selectedProjectId}
               isSimulator={isVoiceProject}
+              rowType={rowType}
             />
           </Box>
         )}

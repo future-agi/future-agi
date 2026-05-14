@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { useParams } from "react-router";
@@ -13,9 +13,9 @@ import FilterChips from "../../LLMTracing/FilterChips";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import { transformDateFilterToBackendFilters } from "../common";
 
-// New trace view embedded inside UserDetails. Mounts LLMTracing's TraceGrid
-// pre-filtered to the current user, with the full ObserveToolbar (Filter +
-// Display + Custom Columns) the user gets on the main trace list page.
+// Trace view embedded inside UserDetails — mounts TraceGrid pre-filtered
+// to the current user, with the full ObserveToolbar (filter, display,
+// custom columns).
 const UserTraceTabV2 = ({ dateFilter }) => {
   const { observeId, userId } = useParams();
   const [selectedProjectId] = useUrlState("projectId", null);
@@ -36,6 +36,60 @@ const UserTraceTabV2 = ({ dateFilter }) => {
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
   const openColumnConfigure = Boolean(columnConfigureAnchor);
   const pendingCustomColumnsRef = useRef([]);
+
+  // Scoped per {project, user} — same user across projects gets its own
+  // set since available attributes are project-specific.
+  const customColsStorageKey = `user-trace-customcols-${projectId}-${userId}`;
+  // hasDrainedRef gates the save effect until TraceGrid's merge has
+  // landed; without it the first-render empty `columns` would wipe the
+  // saved customs before the pending ref drains. skipNextSaveRef skips
+  // the first save fire after a hydrate so the pre-hydrate closure can't
+  // overwrite what we just loaded.
+  const hasDrainedRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(customColsStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved) && saved.length > 0) {
+        // Shallow-clone so the pending ref doesn't share identity with
+        // the parsed localStorage payload.
+        pendingCustomColumnsRef.current = saved.map((c) => ({ ...c }));
+        skipNextSaveRef.current = true;
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+  }, [customColsStorageKey]);
+
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    const customCols = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    if (!hasDrainedRef.current && customCols.length === 0) {
+      if ((columns || []).length > 0) {
+        hasDrainedRef.current = true;
+      } else {
+        return;
+      }
+    } else {
+      hasDrainedRef.current = true;
+    }
+    try {
+      if (customCols.length > 0) {
+        localStorage.setItem(customColsStorageKey, JSON.stringify(customCols));
+      } else {
+        localStorage.removeItem(customColsStorageKey);
+      }
+    } catch {
+      /* quota exceeded */
+    }
+  }, [columns, customColsStorageKey]);
 
   // Build validated filter list: user_id + date range + any user-added extras.
   const validatedFilters = useMemo(() => {
