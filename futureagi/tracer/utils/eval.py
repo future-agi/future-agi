@@ -27,11 +27,11 @@ from tracer.views.project import get_default_project_version_config
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 custom_prompt_eval_types = ["CustomPrompt"]
 EXPERIMENT = "experiment"

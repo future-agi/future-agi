@@ -38,12 +38,12 @@ from tracer.utils.semantic_conventions import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_resource_request
 
 
 class OtelSpan:

@@ -162,13 +162,13 @@ def _safe_background_task(func, *args, **kwargs):
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallTypeChoices = None
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import APICallTypeChoices
+    from tfc.oss_stubs.usage import count_text_tokens
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 MIME_TO_EXT = {
     # Documents

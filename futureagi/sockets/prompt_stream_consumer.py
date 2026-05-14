@@ -33,13 +33,13 @@ from model_hub.views.prompt_template import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import count_text_tokens
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 
 class PromptStreamConsumer(AsyncJsonWebsocketConsumer):

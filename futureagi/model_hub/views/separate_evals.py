@@ -74,7 +74,7 @@ try:
     from ee.usage.models.usage import APICallLog, APICallStatusChoices
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
 
 
 def apply_filters(row_data, filters):

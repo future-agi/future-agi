@@ -5,7 +5,7 @@ from model_hub.models.choices import ModelChoices
 try:
     from ee.usage.models.usage import APICallTypeChoices
 except ImportError:
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallTypeChoices
 
 if APICallTypeChoices is not None:
     model_to_api_call_type = {
