@@ -2,42 +2,12 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Divider, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
-
-const colorMap = (type) => {
-  if (type === "conversation")
-    return {
-      color: "primary.main",
-      icon: "/assets/icons/navbar/ic_prompt.svg",
-      name: "Conversation",
-    };
-  if (type === "end")
-    return {
-      color: "red.600",
-      icon: "/assets/icons/components/ic_end_call.svg",
-      name: "End Call",
-    };
-  if (type === "transfer")
-    return {
-      color: "orange.600",
-      icon: "/assets/icons/components/ic_transfer_call.svg",
-      name: "Transfer Call",
-    };
-  if (type === "endChat")
-    return {
-      color: "red.600",
-      icon: "/assets/icons/ic_end_chat.svg",
-      name: "End Chat",
-    };
-  if (type === "transferChat")
-    return {
-      color: "orange.600",
-      icon: "/assets/icons/ic_transfer_chat.svg",
-      name: "Transfer Chat",
-    };
-};
+import { GRAPH_NODES } from "../common";
 
 const NodeHeader = ({ type, title }) => {
-  const { color, icon, name } = colorMap(type);
+  const node = GRAPH_NODES.find((n) => n.type === type);
+  if (!node) return null;
+  const { color, backgroundColor, icon, name } = node;
   return (
     <>
       <Box
@@ -49,7 +19,7 @@ const NodeHeader = ({ type, title }) => {
       >
         <Box
           sx={{
-            backgroundColor: color,
+            backgroundColor,
             padding: 1,
             borderRadius: "2px",
             width: "24px",
@@ -64,7 +34,7 @@ const NodeHeader = ({ type, title }) => {
             sx={{
               width: "16px",
               height: "16px",
-              color: "common.white",
+              color,
               flexShrink: 0,
             }}
           />

@@ -146,6 +146,36 @@ class TestProcessEvalTaskSpans:
 
         assert second_count == first_count
 
+    def test_continuous_run_type_with_sampling_rate(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Continuous tasks must dispatch under sampling_rate without NameError.
+
+        Regression guard for the broken `spans.count()` reference in the
+        is_continuous branch — the queryset was renamed to `pending_entities`
+        but this one call site was missed, so every tick raised NameError
+        and the broad except silently flipped the task to FAILED.
+        """
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.sampling_rate = 50.0
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status != EvalTaskStatus.FAILED
+        count = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        # 50% of 12 pending spans -> 6 sampled at dispatch
+        assert count == 6
+
 
 @pytest.mark.integration
 @pytest.mark.api
