@@ -421,6 +421,11 @@ def _process_mapping(
                 resolved_value = value
                 break
 
+        if resolved_value is _MISSING and attribute in _SPAN_PUBLIC_FIELDS:
+            model_val = getattr(span, attribute, _MISSING)
+            if model_val is not _MISSING:
+                resolved_value = model_val
+
         if resolved_value is not _MISSING:
             if isinstance(resolved_value, str):
                 parsed_mapping[key] = resolved_value
@@ -1733,6 +1738,31 @@ _TRACE_PUBLIC_FIELDS = frozenset(
 )
 _SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
 
+# Span model fields that are stored as dedicated DB columns (not inside
+# ``span_attributes``).  The eval mapping picker can expose these via
+# ``spans.<n>.<field>`` paths, but they won't be found by
+# ``_resolve_attr(span_attrs, …)`` because they live on the Django model,
+# not in the JSON bag.  This allow-list mirrors the pattern used by
+# ``_TRACE_PUBLIC_FIELDS`` above.
+_SPAN_PUBLIC_FIELDS = frozenset(
+    {
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost",
+        "response_time",
+        "model",
+        "name",
+        "observation_type",
+        "status",
+        "status_message",
+        "provider",
+        "input",
+        "output",
+    }
+)
+
 
 def _resolve_span_path(span: ObservationSpan, path: str):
     """Walk a path against a span via the ``span_attributes`` bag.
@@ -1763,12 +1793,19 @@ def _resolve_span_path(span: ObservationSpan, path: str):
         span_attrs = get_span_attributes(span)
         if not rest:
             return span_attrs
-        # Legacy ``span_attributes.<x>`` paths share resolver semantics
-        # with bare paths.
         return _resolve_attr(span_attrs, rest)
 
     span_attrs = get_span_attributes(span)
-    return _resolve_attr(span_attrs, path)
+    result = _resolve_attr(span_attrs, path)
+    if result is not _MISSING:
+        return result
+
+    if head in _SPAN_PUBLIC_FIELDS and not rest:
+        value = getattr(span, head, _MISSING)
+        if value is not _MISSING:
+            return value
+
+    return _MISSING
 
 
 def _resolve_trace_path(trace: Trace, path: str):

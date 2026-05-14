@@ -1870,10 +1870,15 @@ class EvaluationRunner:
         # Build ordered inputs from mapping keys and row values.
         required_field, mapping = self._prepare_mapping_data(row, mappings)
         config_copy = config.copy()
+        kb_id = (
+            str(self.user_eval_metric.kb_id)
+            if self.user_eval_metric and self.user_eval_metric.kb_id
+            else None
+        )
         eval_instance = self._create_eval_instance(
             config=config,
             model=self.user_eval_metric.model,
-            kb_id=getattr(self.user_eval_metric, "kb_id", None),
+            kb_id=kb_id,
         )
 
         config_error = self._prepare_eval_config(config_copy)

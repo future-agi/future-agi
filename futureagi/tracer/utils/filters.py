@@ -10,6 +10,7 @@ from django.db.models.functions import Cast, Round
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
 from tracer.models.observability_provider import ProviderChoices
+from tracer.utils.filter_operators import normalize_filter_op
 from tracer.utils.helper import extract_date
 
 
@@ -66,7 +67,7 @@ def apply_created_at_filters(qs, filters):
         cfg = f.get("filter_config") or f.get("filterConfig") or {}
         if cfg.get("filter_type") != "datetime":
             continue
-        op = cfg.get("filter_op")
+        op = normalize_filter_op(cfg.get("filter_op"))
         val = cfg.get("filter_value")
         if val is None:
             continue
@@ -105,7 +106,16 @@ class ColType(Enum):
 class FilterEngine:
     DEFAULT_FIELD_MAP = {
         "avg_cost": "row_avg_cost",
+        "cost": "row_avg_cost",
         "avg_latency": "row_avg_latency_ms",
+        "latency": "row_avg_latency_ms",
+        "latency_ms": "row_avg_latency_ms",
+        "tokens": "total_tokens",
+        "total_tokens": "total_tokens",
+        "input_tokens": "avg_input_tokens",
+        "prompt_tokens": "avg_input_tokens",
+        "output_tokens": "avg_output_tokens",
+        "completion_tokens": "avg_output_tokens",
         "node_type": "node_type",
         "trace_id": "trace_id",
         "span_id": "id",
@@ -408,6 +418,7 @@ class FilterEngine:
         return [obj for obj in objects if matches(obj.get(column_id))]
 
     def _filter_datetime(self, objects, column_id, filter_op, filter_value, col_type):
+        filter_op = normalize_filter_op(filter_op)
         if isinstance(filter_value, str):
             filter_value = datetime.strptime((filter_value), "%Y-%m-%dT%H:%M:%S.%fZ")
         elif isinstance(filter_value, list):
@@ -533,7 +544,11 @@ class FilterEngine:
             if column_id in [
                 "avg_score",
                 "avg_latency",
+                "latency",
+                "latency_ms",
                 "avg_cost",
+                "cost",
+                "tokens",
                 "node_type",
                 "trace_id",
                 "span_id",
@@ -545,7 +560,11 @@ class FilterEngine:
                 "prompt_template_version",
                 "labels",
                 "avg_input_tokens",
+                "input_tokens",
+                "prompt_tokens",
                 "avg_output_tokens",
+                "output_tokens",
+                "completion_tokens",
                 "unique_traces",
                 "first_used",
                 "last_used",
@@ -592,7 +611,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = str(filter_config.get("filter_op"))
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -768,8 +787,8 @@ class FilterEngine:
             if not defn:
                 continue
 
-            filter_op = str(
-                filter_config.get("filter_op") or filter_config.get("filterOp", "")
+            filter_op = normalize_filter_op(
+                filter_config.get("filter_op") or filter_config.get("filterOp")
             )
             filter_value = filter_config.get(
                 "filter_value", filter_config.get("filterValue")
@@ -882,7 +901,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = filter_config.get("filterOp")
+            filter_op = normalize_filter_op(filter_config.get("filterOp"))
             filter_value = filter_config.get("filterValue")
             filter_type = filter_config.get("filterType")
 
@@ -989,7 +1008,7 @@ class FilterEngine:
             if column_id not in field_map:
                 continue
 
-            filter_op = filter_config.get("filter_op")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1100,7 +1119,7 @@ class FilterEngine:
             if column_id in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
 
-            filter_op = filter_config.get("filter_op")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1222,7 +1241,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filterType")
-            filter_op = filter_config.get("filterOp")
+            filter_op = normalize_filter_op(filter_config.get("filterOp"))
             filter_value = filter_config.get("filterValue")
 
             if filter_type == "number":
@@ -1365,7 +1384,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = filter_config.get("filter_op")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
             filter_value = filter_config.get("filter_value")
 
             # Replace '*' with '_' in column_id
@@ -1377,6 +1396,40 @@ class FilterEngine:
                 metric_column_id = f"metric_{column_id}"
             elif col_type == ColType.EVAL_METRIC.value:
                 metric_column_id = f"metric_{column_id}"
+
+            def _values(raw_value):
+                if isinstance(raw_value, (list, tuple)):
+                    return [v for v in raw_value if v not in (None, "")]
+                if raw_value in (None, ""):
+                    return []
+                return [raw_value]
+
+            def _eval_choice_condition(raw_value):
+                values = _values(raw_value)
+                if not values:
+                    return (
+                        Q()
+                        if filter_op in ("not_equals", "not_in", "not_contains")
+                        else Q(id__isnull=True)
+                    )
+
+                positive = Q()
+                for value in values:
+                    text_value = str(value).strip()
+                    if not text_value:
+                        continue
+                    normalized = text_value.lower()
+                    if normalized in ("passed", "pass", "true", "1"):
+                        positive |= Q(**{f"{metric_column_id}__score__gt": 0})
+                    elif normalized in ("failed", "fail", "false", "0"):
+                        positive |= Q(**{f"{metric_column_id}__score": 0})
+                    positive |= Q(
+                        **{f"{metric_column_id}__{text_value}__score__gt": 0}
+                    )
+
+                if filter_op in ("not_equals", "not_in", "not_contains"):
+                    return Q(**{f"{metric_column_id}__isnull": False}) & ~positive
+                return positive
 
             if filter_type == "number":
                 # Append 'metric_' at the beginning and '__score' at the end of column_id
@@ -1395,13 +1448,6 @@ class FilterEngine:
                     _fv = float(_fv) if not isinstance(_fv, (int, float)) else _fv
                 except (ValueError, TypeError):
                     pass
-
-                # UI shows scores as 0-100 but DB stores output_float as 0-1.
-                # Divide by 100 for eval metric filters (not annotations or prompts).
-                if col_type == ColType.EVAL_METRIC.value and isinstance(
-                    _fv, (int, float)
-                ):
-                    _fv = _fv / 100.0
 
                 score_condition = None
 
@@ -1425,11 +1471,6 @@ class FilterEngine:
                         _hi = float(_hi)
                     except (ValueError, TypeError):
                         pass
-                    if col_type == ColType.EVAL_METRIC.value:
-                        if isinstance(_lo, (int, float)):
-                            _lo = _lo / 100.0
-                        if isinstance(_hi, (int, float)):
-                            _hi = _hi / 100.0
                     score_condition = Q(
                         **{
                             f"{metric_column_id}__gte": _lo,
@@ -1447,11 +1488,6 @@ class FilterEngine:
                         _hi = float(_hi)
                     except (ValueError, TypeError):
                         pass
-                    if col_type == ColType.EVAL_METRIC.value:
-                        if isinstance(_lo, (int, float)):
-                            _lo = _lo / 100.0
-                        if isinstance(_hi, (int, float)):
-                            _hi = _hi / 100.0
                     score_condition = ~Q(
                         **{
                             f"{metric_column_id}__gte": _lo,
@@ -1472,11 +1508,14 @@ class FilterEngine:
                     eval_filter_conditions &= Q(bool_pass_rate=filter_value)
 
             elif filter_type == "array":
-
                 if col_type in [
                     ColType.PROMPT_METRIC.value,
                     ColType.EVAL_METRIC.value,
                 ]:
+                    if col_type == ColType.EVAL_METRIC.value:
+                        eval_filter_conditions &= _eval_choice_condition(filter_value)
+                        continue
+
                     if isinstance(filter_value, list):
                         array_conditions = Q()
                         for value in filter_value:
@@ -1488,9 +1527,9 @@ class FilterEngine:
                         eval_filter_conditions &= Q(
                             **{f"{metric_column_id}__icontains": filter_value}
                         )
-            elif filter_type == "text":
-                # Skip EVAL_METRIC as it stores numeric scores, not text data
+            elif filter_type in ("text", "categorical"):
                 if col_type == ColType.EVAL_METRIC.value:
+                    eval_filter_conditions &= _eval_choice_condition(filter_value)
                     continue
 
                 eval_filter_conditions &= Q(**{f"{metric_column_id}": filter_value})
@@ -1681,7 +1720,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = filter_config.get("filter_op")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
             filter_value = filter_config.get("filter_value")
 
             # Parse column_id for sub-field separator
@@ -1709,6 +1748,7 @@ class FilterEngine:
                     score_field = f"{annotation_field}__{sub_field}"
                 else:
                     score_field = f"{annotation_field}__score"
+                has_score = Q(**{f"{score_field}__isnull": False})
                 score_condition = None
 
                 if filter_op == "greater_than":
@@ -1747,7 +1787,7 @@ class FilterEngine:
                     )
 
                 if score_condition:
-                    q_conditions &= score_condition
+                    q_conditions &= has_score & score_condition
 
             elif filter_type == "boolean":
                 # Thumbs up/down annotations: {"thumbs_up": N, "thumbs_down": M, ...}
@@ -1787,8 +1827,10 @@ class FilterEngine:
                     if t is not None and t not in tokens:
                         tokens.append(t)
                 if tokens:
-                    negate = filter_op in ("not_in", "not_equals", "is_not")
+                    negate = filter_op in ("not_in", "not_equals")
+                    has_annotation = Q(**{f"{annotation_field}__isnull": False})
                     if negate:
+                        q_conditions &= has_annotation
                         for t in tokens:
                             q_conditions &= ~Q(**{f"{annotation_field}__{t}__gt": 0})
                     else:
@@ -1806,6 +1848,7 @@ class FilterEngine:
                 _THUMBS_MAP = {"Thumbs Up": "thumbs_up", "Thumbs Down": "thumbs_down"}
                 raw_values = filter_value if isinstance(filter_value, list) else [filter_value]
                 values = [_THUMBS_MAP.get(v, v) for v in raw_values]
+                has_annotation = Q(**{f"{annotation_field}__isnull": False})
 
                 if filter_op in ("equals", "in", "contains"):
                     choice_q = Q()
@@ -1813,6 +1856,7 @@ class FilterEngine:
                         choice_q |= Q(**{f"{annotation_field}__{val}__gt": 0})
                     q_conditions &= choice_q
                 elif filter_op in ("not_equals", "not_in", "not_contains"):
+                    q_conditions &= has_annotation
                     for val in values:
                         q_conditions &= ~Q(**{f"{annotation_field}__{val}__gt": 0})
 
@@ -1821,17 +1865,18 @@ class FilterEngine:
                 # under the "text" key.  Use Exists subqueries against Score
                 # so that starts_with / ends_with operate on the actual text,
                 # not on a stringified JSON blob.
-                base_ann_filter = {
-                    "observation_span__trace_id": OuterRef("trace_id"),
-                    "label_id": (column_id if not sub_field else base_column_id),
-                    "value__text__isnull": False,
-                    "deleted": False,
-                }
+                label_id = column_id if not sub_field else base_column_id
+                base_text_qs = Score.objects.filter(
+                    source_q,
+                    label_id=label_id,
+                    value__text__isnull=False,
+                    deleted=False,
+                )
+                has_text_annotation = Q(Exists(base_text_qs))
                 if filter_op == "contains":
                     q_conditions &= Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__icontains=filter_value,
                             )
                         )
@@ -1839,26 +1884,23 @@ class FilterEngine:
                 elif filter_op == "equals":
                     q_conditions &= Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__iexact=filter_value,
                             )
                         )
                     )
                 elif filter_op == "not_contains":
-                    q_conditions &= ~Q(
+                    q_conditions &= has_text_annotation & ~Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__icontains=filter_value,
                             )
                         )
                     )
                 elif filter_op == "not_equals":
-                    q_conditions &= ~Q(
+                    q_conditions &= has_text_annotation & ~Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__iexact=filter_value,
                             )
                         )
@@ -1866,8 +1908,7 @@ class FilterEngine:
                 elif filter_op == "starts_with":
                     q_conditions &= Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__istartswith=filter_value,
                             )
                         )
@@ -1875,8 +1916,7 @@ class FilterEngine:
                 elif filter_op == "ends_with":
                     q_conditions &= Q(
                         Exists(
-                            Score.objects.filter(
-                                **base_ann_filter,
+                            base_text_qs.filter(
                                 value__text__iendswith=filter_value,
                             )
                         )

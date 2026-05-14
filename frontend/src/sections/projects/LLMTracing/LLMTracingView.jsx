@@ -32,6 +32,7 @@ import {
   getUniqueColorPalette,
   objectCamelToSnake,
 } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -162,6 +163,12 @@ import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "./filterValuePickerUtils";
 import CustomColumnDialog from "./CustomColumnDialog";
 import SvgColor from "src/components/svg-color";
 import { ObserveIconButton } from "../SharedComponents";
@@ -314,6 +321,7 @@ const CompareGraphHeader = ({
   extraFilters,
   onRemoveFilter,
   onClearFilters,
+  fieldLabelMap,
 }) => {
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
@@ -473,6 +481,11 @@ const CompareGraphHeader = ({
             const field = f?.column_id;
             const op = f?.filter_config?.filter_op || "";
             const val = f?.filter_config?.filter_value;
+            const valueMap = fieldLabelMap?.[field];
+            const resolveValue = (v) => {
+              const key = String(v ?? "");
+              return valueMap?.[key] ?? key;
+            };
             const opLabel =
               {
                 equals: "is",
@@ -495,8 +508,8 @@ const CompareGraphHeader = ({
                 not_between: "not between",
               }[op] || op;
             const valueStr = Array.isArray(val)
-              ? val.join(", ")
-              : String(val ?? "");
+              ? val.map(resolveValue).join(", ")
+              : resolveValue(val);
             if (!field) return null;
             return (
               <Chip
@@ -575,6 +588,7 @@ CompareGraphHeader.propTypes = {
   extraFilters: PropTypes.array,
   onRemoveFilter: PropTypes.func,
   onClearFilters: PropTypes.func,
+  fieldLabelMap: PropTypes.object,
 };
 
 const DEFAULT_DISPLAY_CONFIG = {
@@ -626,7 +640,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Simulator CallLogsGrid has its own client-side selection (paginated,
   // no ag-grid server-side inverted-select-all). Banner visibility keys
   // off `simCallMeta.isAllOnPageSelected && totalCount > pageLimit`.
-  const [simCallFilterSelectionMode, setSimCallFilterSelectionMode] = useState(false);
+  const [simCallFilterSelectionMode, setSimCallFilterSelectionMode] =
+    useState(false);
   const [simCallMeta, setSimCallMeta] = useState({
     isAllOnPageSelected: false,
     currentPageSize: 0,
@@ -1375,19 +1390,51 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // User mode only — project mode already scopes to a single project.
   const projectFilterField = useProjectFilterField({ enabled: isUserMode });
+  const hasAnnotatorFilter = useMemo(
+    () =>
+      [...(extraFilters || []), ...(compareExtraFilters || [])].some(
+        (filter) => filter?.column_id === "annotator",
+      ),
+    [extraFilters, compareExtraFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: observeId ? [observeId] : [],
+    // Keep this in sync with the TraceFilterPanel ValuePicker source so
+    // applying a freshly-picked annotator can reuse the same cached options.
+    source: "traces",
+    enabled: hasAnnotatorFilter,
+  });
+  const annotatorFilterLabelMap = useMemo(() => {
+    const entries = annotatorFilterOptions
+      .map((option) => {
+        const value = String(getPickerOptionValue(option));
+        if (!value) return null;
+        const label = getPickerOptionLabel(option);
+        const email = getPickerOptionSecondaryLabel(option);
+        return [value, email ? `${label} (${email})` : label];
+      })
+      .filter(Boolean);
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }, [annotatorFilterOptions]);
   const toolbarFilterFields = useMemo(
     () => (projectFilterField ? [projectFilterField] : undefined),
     [projectFilterField],
   );
   // Map a filter's raw value back to the human label for chip display.
   const filterChipLabelMap = useMemo(() => {
-    if (!projectFilterField?.choices?.length) return undefined;
-    return {
-      project_id: Object.fromEntries(
+    const map = {};
+    if (projectFilterField?.choices?.length) {
+      map.project_id = Object.fromEntries(
         projectFilterField.choices.map((c) => [c.value, c.label]),
-      ),
-    };
-  }, [projectFilterField]);
+      );
+    }
+    if (annotatorFilterLabelMap) {
+      map.annotator = annotatorFilterLabelMap;
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }, [projectFilterField, annotatorFilterLabelMap]);
 
   const [primaryFilterDefinition, setPrimaryFilterDefinition] = useState(() => {
     if (selectedTab === "trace") {
@@ -3171,6 +3218,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     hasActiveFilter={extraFilters?.length > 0}
                     extraFilters={extraFilters}
+                    fieldLabelMap={filterChipLabelMap}
                     onRemoveFilter={(idx) =>
                       setExtraFilters((prev) =>
                         prev.filter((_, i) => i !== idx),
@@ -3207,6 +3255,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     hasActiveFilter={compareExtraFilters?.length > 0}
                     extraFilters={compareExtraFilters}
+                    fieldLabelMap={filterChipLabelMap}
                     onRemoveFilter={(idx) =>
                       setCompareExtraFilters((prev) =>
                         prev.filter((_, i) => i !== idx),
@@ -3250,6 +3299,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }
                       hasActiveFilter={extraFilters?.length > 0}
                       extraFilters={extraFilters}
+                      fieldLabelMap={filterChipLabelMap}
                       onRemoveFilter={(idx) =>
                         setExtraFilters((prev) =>
                           prev.filter((_, i) => i !== idx),
@@ -3286,6 +3336,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }
                       hasActiveFilter={compareExtraFilters?.length > 0}
                       extraFilters={compareExtraFilters}
+                      fieldLabelMap={filterChipLabelMap}
                       onRemoveFilter={(idx) =>
                         setCompareExtraFilters((prev) =>
                           prev.filter((_, i) => i !== idx),
@@ -3634,10 +3685,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 // opted into filter-mode selection via the banner
                 // (`filterSelectionMode`). The popover's submit then
                 // dispatches a filter-mode payload to the backend.
-                if (
-                  isSelectAll &&
-                  ["tags", "annotate"].includes(actionId)
-                ) {
+                if (isSelectAll && ["tags", "annotate"].includes(actionId)) {
                   enqueueSnackbar(
                     "Deselect 'all' and pick specific items for this action",
                     { variant: "info" },
@@ -4074,7 +4122,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // Simulator projects surface voice calls whose selected IDs
                   // come from CallLogsGrid as `row.trace_id` — send them as
                   // traces, not call_executions.
-                  if (projectSource === PROJECT_SOURCE.SIMULATOR) return "trace";
+                  if (projectSource === PROJECT_SOURCE.SIMULATOR)
+                    return "trace";
                   return selectedTab === "trace" ? "trace" : "observation_span";
                 })()}
                 sourceIds={(() => {
@@ -4107,8 +4156,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   return selectedTab === "trace" ? "Trace" : "Span";
                 })()}
                 selectionMode={(() => {
-                  if (filterSelectionMode && selectedTab === "trace") return "filter";
-                  if (spanFilterSelectionMode && selectedTab === "spans") return "filter";
+                  if (filterSelectionMode && selectedTab === "trace")
+                    return "filter";
+                  if (spanFilterSelectionMode && selectedTab === "spans")
+                    return "filter";
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
@@ -4124,37 +4175,37 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // set than the grid, leading to the bug where "N selected"
                   // under a chip/metric filter adds MORE than N to the queue.
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primarySpanValidatedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
                   ) {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   return null;
                 })()}
@@ -4501,14 +4552,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...primaryCombinedFilters,
-                      ...(extraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...primaryCombinedFilters,
+                        ...(extraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
@@ -4539,14 +4592,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...compareCombinedFilters,
-                      ...(compareExtraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...compareCombinedFilters,
+                        ...(compareExtraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}

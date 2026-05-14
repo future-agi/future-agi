@@ -11,6 +11,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useBulkCreateScores } from "src/api/scores/scores";
@@ -146,7 +147,7 @@ ShortcutsHelp.propTypes = {
 
 /**
  * @param {Object} props
- * @param {Array<{sourceType: string, sourceId: string}>} props.sources
+ * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} props.sources
  * @param {Function} props.onClose
  * @param {Function} props.onScoresChanged
  */
@@ -159,7 +160,12 @@ export default function AnnotationSidebarContent({
   hideEmpty = false,
 }) {
   const validSources = sources.filter((s) => s.sourceId);
-  const { data: queueItems, isLoading, isFetching, refetch } = useQueueItemsForSource(validSources);
+  const {
+    data: queueItems,
+    isLoading,
+    isFetching,
+    refetch,
+  } = useQueueItemsForSource(validSources);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   if (validSources.length === 0) {
@@ -188,8 +194,12 @@ export default function AnnotationSidebarContent({
 
   // Build a lookup from source_type → sourceId for saving scores
   const sourceMap = {};
+  const spanNotesSourceMap = {};
   for (const s of validSources) {
     sourceMap[s.sourceType] = s.sourceId;
+    if (s.spanNotesSourceId) {
+      spanNotesSourceMap[s.sourceType] = s.spanNotesSourceId;
+    }
   }
 
   return (
@@ -231,7 +241,9 @@ export default function AnnotationSidebarContent({
                     icon="mingcute:refresh-2-line"
                     width={16}
                     sx={{
-                      animation: isFetching ? "spin 1s linear infinite" : "none",
+                      animation: isFetching
+                        ? "spin 1s linear infinite"
+                        : "none",
                       "@keyframes spin": {
                         from: { transform: "rotate(0deg)" },
                         to: { transform: "rotate(360deg)" },
@@ -248,9 +260,15 @@ export default function AnnotationSidebarContent({
                 onClick={() => setShowShortcuts((p) => !p)}
                 sx={{
                   color: showShortcuts ? "primary.main" : "text.secondary",
-                  bgcolor: showShortcuts ? "primary.lighter" : "transparent",
+                  bgcolor: (theme) =>
+                    showShortcuts
+                      ? alpha(theme.palette.primary.main, 0.12)
+                      : "transparent",
                   "&:hover": {
-                    bgcolor: showShortcuts ? "primary.lighter" : "action.hover",
+                    bgcolor: (theme) =>
+                      showShortcuts
+                        ? alpha(theme.palette.primary.main, 0.18)
+                        : theme.palette.action.hover,
                   },
                 }}
               >
@@ -316,6 +334,7 @@ export default function AnnotationSidebarContent({
                 key={queueEntry.queue.id}
                 queueEntry={queueEntry}
                 sourceMap={sourceMap}
+                spanNotesSourceMap={spanNotesSourceMap}
                 onScoresChanged={onScoresChanged}
                 showShortcuts={showShortcuts}
                 setShowShortcuts={setShowShortcuts}
@@ -343,6 +362,7 @@ AnnotationSidebarContent.propTypes = {
     PropTypes.shape({
       sourceType: PropTypes.string,
       sourceId: PropTypes.string,
+      spanNotesSourceId: PropTypes.string,
     }),
   ),
   onClose: PropTypes.func,
@@ -358,13 +378,22 @@ AnnotationSidebarContent.propTypes = {
 function QueueAnnotationSection({
   queueEntry,
   sourceMap,
+  spanNotesSourceMap,
   onScoresChanged,
   _showShortcuts,
   setShowShortcuts,
 }) {
-  const { queue, item, labels, existingScores, existingNotes, existingLabelNotes } = queueEntry;
+  const {
+    queue,
+    item,
+    labels,
+    existingScores,
+    existingNotes,
+    existingLabelNotes,
+  } = queueEntry;
   const [values, setValues] = useState({});
   const [notes, setNotes] = useState("");
+  const [notesTouched, setNotesTouched] = useState(false);
   const [labelNotes, setLabelNotes] = useState({});
   const [showNotes, setShowNotes] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -372,10 +401,31 @@ function QueueAnnotationSection({
   const isCompleted = item?.status === "completed";
   const containerRef = useRef(null);
   const hasInitializedScoresRef = useRef(false);
+  const hasInitializedNotesRef = useRef(false);
+  const itemSourceType =
+    item?.sourceType || item?.source_type || Object.keys(sourceMap)[0];
+  const sourceId = sourceMap[itemSourceType];
+  const spanNotesSourceId =
+    spanNotesSourceMap[itemSourceType] ||
+    queueEntry.spanNotesSourceId ||
+    queueEntry.span_notes_source_id ||
+    (itemSourceType === "observation_span" ? sourceId : undefined);
+  const sourceLabel = SOURCE_TYPE_LABELS[itemSourceType] || itemSourceType;
+  const sourceKey = `${queue.id}:${item?.id || "default"}:${itemSourceType || ""}:${sourceId || ""}`;
 
   const handleLabelNotesChange = useCallback((labelId, val) => {
     setLabelNotes((prev) => ({ ...prev, [labelId]: val }));
   }, []);
+
+  useEffect(() => {
+    hasInitializedScoresRef.current = false;
+    hasInitializedNotesRef.current = false;
+    setValues({});
+    setLabelNotes({});
+    setNotes("");
+    setNotesTouched(false);
+    setShowNotes(false);
+  }, [sourceKey]);
 
   // Pre-populate form with existing scores and notes when editing — only once
   useEffect(() => {
@@ -390,16 +440,13 @@ function QueueAnnotationSection({
         setLabelNotes(existingLabelNotes);
       }
     }
-    if (existingNotes && !hasInitializedScoresRef.current) {
+    if (existingNotes && !hasInitializedNotesRef.current) {
+      hasInitializedNotesRef.current = true;
       setNotes(existingNotes);
+      setNotesTouched(false);
       setShowNotes(true);
     }
   }, [existingScores, existingNotes, existingLabelNotes]);
-
-  const itemSourceType =
-    item?.sourceType || item?.source_type || Object.keys(sourceMap)[0];
-  const sourceId = sourceMap[itemSourceType];
-  const sourceLabel = SOURCE_TYPE_LABELS[itemSourceType] || itemSourceType;
 
   const handleChange = useCallback((labelId, value) => {
     setValues((prev) => ({ ...prev, [labelId]: value }));
@@ -425,14 +472,35 @@ function QueueAnnotationSection({
     if (scores.length === 0) return;
 
     bulkCreate(
-      { sourceType: itemSourceType, sourceId, scores, notes: "", spanNotes: notes },
+      {
+        sourceType: itemSourceType,
+        sourceId,
+        scores,
+        notes: "",
+        spanNotes: notes,
+        spanNotesSourceId,
+        includeSpanNotes: Boolean(
+          spanNotesSourceId && (notesTouched || notes || existingNotes),
+        ),
+      },
       {
         onSuccess: () => {
           onScoresChanged?.();
         },
       },
     );
-  }, [values, notes, labelNotes, itemSourceType, sourceId, bulkCreate, onScoresChanged]);
+  }, [
+    values,
+    notes,
+    notesTouched,
+    existingNotes,
+    labelNotes,
+    itemSourceType,
+    sourceId,
+    spanNotesSourceId,
+    bulkCreate,
+    onScoresChanged,
+  ]);
 
   // Keyboard shortcut handler — scoped to this section's container
   useEffect(() => {
@@ -613,7 +681,9 @@ function QueueAnnotationSection({
               index={i}
               focused={focusedIndex === i}
               labelNotes={labelNotes[label.id] || ""}
-              onLabelNotesChange={(val) => handleLabelNotesChange(label.id, val)}
+              onLabelNotesChange={(val) =>
+                handleLabelNotesChange(label.id, val)
+              }
             />
           </Box>
         ))}
@@ -628,12 +698,16 @@ function QueueAnnotationSection({
               maxRows={4}
               placeholder="Add your notes here..."
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={(e) => {
+                setNotesTouched(true);
+                setNotes(e.target.value);
+              }}
               autoFocus
             />
             <IconButton
               size="small"
               onClick={() => {
+                setNotesTouched(true);
                 setShowNotes(false);
                 setNotes("");
               }}
@@ -707,8 +781,11 @@ QueueAnnotationSection.propTypes = {
     existingScores: PropTypes.object,
     existingNotes: PropTypes.string,
     existingLabelNotes: PropTypes.object,
+    spanNotesSourceId: PropTypes.string,
+    span_notes_source_id: PropTypes.string,
   }).isRequired,
   sourceMap: PropTypes.object.isRequired,
+  spanNotesSourceMap: PropTypes.object.isRequired,
   onScoresChanged: PropTypes.func,
   _showShortcuts: PropTypes.bool,
   setShowShortcuts: PropTypes.func,

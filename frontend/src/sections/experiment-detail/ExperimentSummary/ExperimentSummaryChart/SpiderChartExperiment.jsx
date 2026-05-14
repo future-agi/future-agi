@@ -11,12 +11,12 @@ import CompareDatasetSummaryIcon from "./../../../develop-detail/DatasetSummaryT
 const SpiderChartExperiment = ({ data, cols }) => {
   // Track datasets (active/inactive)
   const [datasets, setDatasets] = useState(
-    data.map((item) => ({ ...item, active: true })),
+    (data || []).map((item) => ({ ...item, active: true })),
   );
 
   // Track metrics (still stored if you need filtering later, but not used in sidebar toggle)
   const metrics = useMemo(
-    () => cols.map((item) => ({ ...item, active: true })),
+    () => (cols || []).map((item) => ({ ...item, active: true })),
     [cols],
   );
 
@@ -197,7 +197,7 @@ const SpiderChartExperiment = ({ data, cols }) => {
                         color="text.primary"
                       >
                         {item}
-                        {cols[ind]?.output_type !== OutputTypes.NUMERIC && "%"}
+                        {cols?.[ind]?.output_type !== OutputTypes.NUMERIC && "%"}
                       </Typography>
                     </Box>
                   );

@@ -84,8 +84,8 @@ class TestGatewayProvidersOrgIsolation:
 
         assert response.status_code == 200, response.json()
         gateway = response.json()["result"][0]
-        assert gateway["providerCount"] == 1
-        assert gateway["modelCount"] == 1
+        assert gateway["provider_count"] == 1
+        assert gateway["model_count"] == 1
 
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_gateway_config_uses_active_request_organization(

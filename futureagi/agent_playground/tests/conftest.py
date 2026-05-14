@@ -3,8 +3,6 @@ Conftest for agent_playground app tests.
 Provides fixtures specific to agent_playground models and test data.
 """
 
-from unittest.mock import patch
-
 import pytest
 from django.conf import settings as django_settings
 from rest_framework.test import APIClient
@@ -40,6 +38,37 @@ from agent_playground.models.prompt_template_node import PromptTemplateNode
 
 # Store original APIView.initial for patching
 _original_apiview_initial = APIView.initial
+_REQUEST_INJECTION_ACTIVE = False
+
+
+def _initial_with_context(view_self, request, *args, **view_kwargs):
+    workspace = None
+    organization = None
+
+    ws_header = request.META.get("HTTP_X_WORKSPACE_ID")
+    org_header = request.META.get("HTTP_X_ORGANIZATION_ID")
+    if ws_header:
+        workspace = (
+            Workspace.no_workspace_objects.select_related("organization")
+            .filter(id=ws_header, is_active=True)
+            .first()
+        )
+        if workspace:
+            organization = workspace.organization
+    elif org_header:
+        organization = Organization.objects.filter(id=org_header).first()
+
+    request.workspace = workspace
+    request.organization = organization
+    if organization:
+        from tfc.middleware.workspace_context import set_workspace_context
+
+        set_workspace_context(
+            workspace=workspace,
+            organization=organization,
+            user=getattr(request, "user", None),
+        )
+    return _original_apiview_initial(view_self, request, *args, **view_kwargs)
 
 
 class WorkspaceAwareAPIClient(APIClient):
@@ -56,42 +85,78 @@ class WorkspaceAwareAPIClient(APIClient):
         self._workspace = workspace
         if workspace:
             self._organization = workspace.organization
-            self.credentials(HTTP_X_WORKSPACE_ID=str(workspace.id))
+            self.credentials(
+                HTTP_X_WORKSPACE_ID=str(workspace.id),
+                HTTP_X_ORGANIZATION_ID=str(workspace.organization_id),
+            )
             self._start_request_injection()
 
     def set_organization(self, organization):
         """Set the organization for subsequent requests."""
         self._organization = organization
+        if organization:
+            self.credentials(HTTP_X_ORGANIZATION_ID=str(organization.id))
         self._start_request_injection()
 
     def _start_request_injection(self):
         """Patch APIView.initial to inject workspace and organization into requests."""
-        if self._patcher:
-            self._patcher.stop()
-            self._patcher = None
+        global _REQUEST_INJECTION_ACTIVE
+        if (
+            _REQUEST_INJECTION_ACTIVE
+            and APIView.__dict__.get("initial") is _initial_with_context
+        ):
+            return
+        APIView.initial = _initial_with_context
+        _REQUEST_INJECTION_ACTIVE = True
 
-        workspace = self._workspace
-        organization = self._organization
+    def _request_with_clean_context(self, method, *args, **kwargs):
+        from tfc.middleware.workspace_context import clear_workspace_context
 
-        def initial_with_context(view_self, request, *args, **view_kwargs):
-            request.workspace = workspace
-            request.organization = organization
-            return _original_apiview_initial(view_self, request, *args, **view_kwargs)
+        self._start_request_injection()
+        if self._workspace is not None:
+            self.credentials(
+                HTTP_X_WORKSPACE_ID=str(self._workspace.id),
+                HTTP_X_ORGANIZATION_ID=str(self._workspace.organization_id),
+            )
+        elif self._organization is not None:
+            self.credentials(HTTP_X_ORGANIZATION_ID=str(self._organization.id))
 
-        self._patcher = patch.object(APIView, "initial", initial_with_context)
-        self._patcher.start()
+        clear_workspace_context()
+        try:
+            return method(*args, **kwargs)
+        finally:
+            clear_workspace_context()
+
+    def get(self, *args, **kwargs):
+        return self._request_with_clean_context(super().get, *args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        return self._request_with_clean_context(super().post, *args, **kwargs)
+
+    def put(self, *args, **kwargs):
+        return self._request_with_clean_context(super().put, *args, **kwargs)
+
+    def patch(self, *args, **kwargs):
+        return self._request_with_clean_context(super().patch, *args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._request_with_clean_context(super().delete, *args, **kwargs)
 
     def stop_workspace_injection(self):
         """Stop the workspace injection patch."""
-        if self._patcher:
-            self._patcher.stop()
-            self._patcher = None
+        global _REQUEST_INJECTION_ACTIVE
+        if APIView.__dict__.get("initial") is _initial_with_context:
+            APIView.initial = _original_apiview_initial
+            _REQUEST_INJECTION_ACTIVE = False
+        self._patcher = None
 
 
 @pytest.fixture
 def api_client():
     """Create an API client."""
-    return WorkspaceAwareAPIClient()
+    client = WorkspaceAwareAPIClient()
+    yield client
+    client.stop_workspace_injection()
 
 
 @pytest.fixture

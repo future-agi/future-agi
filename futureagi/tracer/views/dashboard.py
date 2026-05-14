@@ -932,7 +932,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     used_label_ids = list(
                         Score.objects.filter(
                             Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids),
+                            | Q(trace__project_id__in=project_ids)
+                            | Q(observation_span__project_id__in=project_ids)
+                            | Q(trace_session__project_id__in=project_ids),
                             deleted=False,
                         )
                         .values_list("label_id", flat=True)
@@ -1839,7 +1841,54 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             project_ids = list(workspace_project_ids)
 
         try:
-            if not is_clickhouse_enabled():
+            if metric_type == "annotation_metric" and metric_name == "annotator":
+                from django.db.models import Q
+
+                from model_hub.models.score import Score
+
+                rows = (
+                    Score.objects.filter(
+                        deleted=False,
+                        annotator_id__isnull=False,
+                    )
+                    .filter(
+                        Q(project_id__in=project_ids)
+                        | Q(trace__project_id__in=project_ids)
+                        | Q(observation_span__project_id__in=project_ids)
+                        | Q(trace_session__project_id__in=project_ids)
+                    )
+                    .values(
+                        "annotator_id",
+                        "annotator__name",
+                        "annotator__email",
+                    )
+                    .distinct()
+                    .order_by("annotator__name", "annotator__email")
+                )
+                values = []
+                seen = set()
+                for row in rows:
+                    user_id = str(row["annotator_id"])
+                    if user_id in seen:
+                        continue
+                    seen.add(user_id)
+                    name = (row.get("annotator__name") or "").strip()
+                    email = (row.get("annotator__email") or "").strip()
+                    label = name or email or user_id
+                    option = {"value": user_id, "label": label}
+                    if name:
+                        option["name"] = name
+                    if email:
+                        option["email"] = email
+                    if name and email and email != name:
+                        option["description"] = email
+                    values.append(option)
+                return self._gm.success_response({"values": values})
+
+            if not is_clickhouse_enabled() and metric_type not in (
+                "annotation_metric",
+                "eval_metric",
+            ):
                 return self._gm.success_response({"values": []})
 
             analytics = AnalyticsQueryService()
@@ -1923,7 +1972,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             elif metric_type in ("annotation_metric", "eval_metric"):
                 # Annotation / eval filter values are derived from the label
-                # definition (settings) rather than scanning stored values.
+                # definition (settings) and, for categorical annotations, from
+                # stored scores. Older imported/backfilled labels can have
+                # real choices in Score.value without settings.options; relying
+                # only on settings makes the value dropdown empty even though
+                # the annotation metric itself is available.
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 try:
@@ -1936,16 +1989,80 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 label_type = label.type
                 settings = label.settings or {}
 
-                if label_type == "categorical":
-                    options = settings.get("options", [])
-                    values = [
+                def add_value_option(options, seen, raw_value, raw_label=None):
+                    if raw_value in (None, ""):
+                        return
+                    value = str(raw_value)
+                    if not value or value in seen:
+                        return
+                    seen.add(value)
+                    options.append(
                         {
-                            "value": opt.get("label", ""),
-                            "label": opt.get("label", ""),
+                            "value": value,
+                            "label": str(raw_label or raw_value),
                         }
-                        for opt in options
-                        if isinstance(opt, dict) and opt.get("label")
-                    ]
+                    )
+
+                if label_type == "categorical":
+                    values = []
+                    seen_values = set()
+                    for opt in settings.get("options", []):
+                        if isinstance(opt, dict):
+                            option_value = (
+                                opt.get("value")
+                                or opt.get("label")
+                                or opt.get("name")
+                            )
+                            option_label = (
+                                opt.get("label")
+                                or opt.get("name")
+                                or option_value
+                            )
+                            add_value_option(
+                                values, seen_values, option_value, option_label
+                            )
+                        else:
+                            add_value_option(values, seen_values, opt)
+
+                    # Include actual stored categorical choices as a fallback
+                    # and as protection against stale label settings.
+                    from django.db.models import Q
+
+                    from model_hub.models.score import Score
+
+                    score_qs = Score.objects.filter(
+                        label_id=label.id,
+                        deleted=False,
+                    )
+                    if project_ids:
+                        score_qs = score_qs.filter(
+                            Q(project_id__in=project_ids)
+                            | Q(trace__project_id__in=project_ids)
+                            | Q(observation_span__project_id__in=project_ids)
+                            | Q(trace_session__project_id__in=project_ids)
+                        )
+
+                    for payload in score_qs.values_list("value", flat=True).order_by(
+                        "-updated_at"
+                    )[:5000]:
+                        raw_values = []
+                        if isinstance(payload, dict):
+                            selected = payload.get("selected")
+                            if isinstance(selected, list):
+                                raw_values.extend(selected)
+                            elif selected not in (None, ""):
+                                raw_values.append(selected)
+                            for key in ("value", "label", "text"):
+                                val = payload.get(key)
+                                if val not in (None, ""):
+                                    raw_values.append(val)
+                        elif isinstance(payload, list):
+                            raw_values.extend(payload)
+                        elif payload not in (None, ""):
+                            raw_values.append(payload)
+
+                        for raw_value in raw_values:
+                            add_value_option(values, seen_values, raw_value)
                 elif label_type == "star":
                     no_of_stars = settings.get("no_of_stars", 5)
                     values = [
@@ -2269,6 +2386,25 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             dashboard_id=dashboard_id,
             dashboard__workspace=self.request.workspace,
         )
+
+    def _get_trace_query_timeout_ms(self, trace_config):
+        return DashboardViewSet._get_trace_query_timeout_ms(self, trace_config)
+
+    def _empty_simulation_metric_result(self, metric):
+        return DashboardViewSet._empty_simulation_metric_result(self, metric)
+
+    def _run_simulation_queries(self, simulation_config, fetch_rows):
+        return DashboardViewSet._run_simulation_queries(
+            self, simulation_config, fetch_rows
+        )
+
+    def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
+        return DashboardViewSet._run_simulation_clickhouse_queries(
+            self, ch_client, simulation_config
+        )
+
+    def _normalize_metric_sources(self, metrics):
+        return DashboardViewSet._normalize_metric_sources(self, metrics)
 
     def create(self, request, *args, **kwargs):
         try:

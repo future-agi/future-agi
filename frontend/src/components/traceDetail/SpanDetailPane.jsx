@@ -1443,6 +1443,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         secondarySourceType="trace"
         secondarySourceId={traceId}
         title=""
+        openQueueItemOnRowClick
         renderActions={
           onAction ? (
             <Button
@@ -2052,9 +2053,7 @@ const SpanDetailPane = ({
                       variant="caption"
                       sx={{
                         fontSize: 10,
-                        color: matchCount
-                          ? "text.secondary"
-                          : "text.disabled",
+                        color: matchCount ? "text.secondary" : "text.disabled",
                         minWidth: 42,
                         textAlign: "right",
                         fontVariantNumeric: "tabular-nums",
@@ -2133,11 +2132,9 @@ const SpanDetailPane = ({
                   context: {
                     trace_id: traceId,
                     span_id: ev.spanId || ev.observation_span_id || span?.id,
-                    eval_log_id:
-                      ev.eval_log_id || ev.cell_id || ev.log_id,
+                    eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
                     custom_eval_config_id:
-                      ev.custom_eval_config_id ||
-                      ev.eval_config_id,
+                      ev.custom_eval_config_id || ev.eval_config_id,
                     eval_name: ev.eval_name,
                     score: ev.score,
                     explanation: ev.explanation || ev.eval_explanation,

@@ -14,6 +14,13 @@ export default function RHFTextField({
   sx,
   InputProps: consumerInputProps,
   InputLabelProps: consumerInputLabelProps,
+  // Filter out ``shrink`` so it can't leak via ``{...other}`` onto TextField
+  // and then to the underlying DOM input. ``shrink`` belongs on InputLabel
+  // only — passing it as a top-level prop triggers React's
+  // "Received true for a non-boolean attribute" warning that floods the
+  // console when many fields render at once (e.g. on drawer open).
+  // eslint-disable-next-line no-unused-vars
+  shrink: _shrink,
   ...other
 }) {
   const { control, setValue, getValues } = useFormContext();
@@ -169,6 +176,7 @@ RHFTextField.propTypes = {
   InputLabelProps: PropTypes.object,
   InputProps: PropTypes.object,
   name: PropTypes.string,
+  shrink: PropTypes.bool,
   sx: PropTypes.object,
   type: PropTypes.string,
 };

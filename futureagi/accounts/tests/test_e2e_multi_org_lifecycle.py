@@ -1148,7 +1148,8 @@ class TestLifecycleBulkInvite:
 
         set_workspace_context(organization=organization)
 
-        # Bulk invite with an existing active member should fail entirely
+        # Bulk invite with an existing active member should still process
+        # the other emails and report the existing member separately.
         existing_mem = _make_user(
             organization, "already_here@futureagi.com", "Member", Level.MEMBER
         )
@@ -1164,7 +1165,11 @@ class TestLifecycleBulkInvite:
             },
             format="json",
         )
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.json()["result"]
+        assert "already_here@futureagi.com" in result["already_members"]
+        assert "ext1@futureagi.com" in result["invited"]
+        assert "newbie1@example.com" in result["invited"]
 
         # Bulk invite without existing members should succeed
         resp = auth_client.post(
@@ -1182,7 +1187,12 @@ class TestLifecycleBulkInvite:
         )
         assert resp.status_code == status.HTTP_200_OK
         result = resp.json().get("result", resp.json())
-        assert len(result.get("invited", [])) == 4
+        assert set(result.get("invited", [])) == {
+            "ext2@futureagi.com",
+            "newbie1@example.com",
+            "newbie2@example.com",
+        }
+        assert result.get("already_members") == ["ext1@futureagi.com"]
 
 
 @pytest.mark.django_db

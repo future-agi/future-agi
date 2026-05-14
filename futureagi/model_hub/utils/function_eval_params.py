@@ -58,13 +58,11 @@ def _normalize_integer(value, field: str):
 
 
 def _normalize_number(value, field: str):
-    # FE form fields serialize numeric inputs as strings; coerce so the
-    # value validates against numeric-typed schema entries (max_latency_ms etc.).
     if value is None:
         return None
     if isinstance(value, bool):
         raise ValueError(f"{field} must be a number")
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         try:

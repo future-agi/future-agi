@@ -96,6 +96,19 @@ const SOURCE_LABELS = {
   composite: "Composite",
 };
 
+const SOURCE_NAME_SLUGS = {
+  dataset: "dataset",
+  experiment: "experiment",
+  "run-experiment": "experiment",
+  optimization: "optimization",
+  "run-optimization": "optimization",
+  workbench: "workbench",
+  simulation: "simulation",
+  "create-simulate": "simulation",
+  task: "task",
+  composite: "composite",
+};
+
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
@@ -526,7 +539,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       );
 
       // Edit mode: keep the saved name. Create mode: generate a unique name
-      // from the template base name + current date (e.g. "is_good_summary_14_Apr_2026").
+      // from the template base name + source slug + date/time, e.g.
+      // "is_good_summary_dataset_14_may_2026_15_42". The source slug ties
+      // the name to where the eval was created (dataset / experiment /
+      // workbench / …); the timestamp avoids collisions on the backend
+      // uniqueness check for same-source same-day repeats.
       if (isEditMode) {
         setEvalName(evalData?.name || fullEval.name || "");
       } else {
@@ -536,8 +553,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           .toLowerCase()
           .replace(/\s+/g, "_")
           .replace(/[^a-z0-9_-]/g, "");
-        const dateSuffix = format(new Date(), "dd_MMM_yyyy").toLowerCase();
-        setEvalName(`${sanitized}_${dateSuffix}`);
+        const sourceSlug = SOURCE_NAME_SLUGS[source] || "";
+        const stamp = format(new Date(), "dd_MMM_yyyy_HH_mm").toLowerCase();
+        setEvalName(
+          [sanitized, sourceSlug, stamp].filter(Boolean).join("_"),
+        );
       }
 
       initialLoadDone.current = true;
@@ -1745,7 +1765,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                         }
                         label={key}
                         value={codeParams[key] ?? ""}
-                        onChange={(e) => handleCodeParamChange(key, e.target.value)}
+                        onChange={(e) => {
+                          // BE's `type: number` schema rejects strings; coerce here.
+                          const raw = e.target.value;
+                          const isNumeric =
+                            schema?.type === "integer" ||
+                            schema?.type === "number";
+                          let next = raw;
+                          if (isNumeric && raw !== "") {
+                            const n = Number(raw);
+                            if (!Number.isNaN(n)) next = n;
+                          }
+                          handleCodeParamChange(key, next);
+                        }}
                         helperText={
                           configParamsDesc?.[key] || schema?.description || ""
                         }
@@ -1853,6 +1885,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             if (!(code || "").trim()) {
               testDisabled = true;
               testDisabledReason = "Write some code before running a test.";
+            } else {
+              const missingRequiredParam = visibleCodeParamEntries.find(
+                ([key, schema]) => {
+                  if (!schema?.required) return false;
+                  if (schema.nullable) return false;
+                  if (schema.default !== null && schema.default !== undefined)
+                    return false;
+                  const v = codeParams[key];
+                  return (
+                    v === undefined ||
+                    v === null ||
+                    (typeof v === "string" && v.trim() === "")
+                  );
+                },
+              );
+              if (missingRequiredParam) {
+                testDisabled = true;
+                testDisabledReason = `Set ${missingRequiredParam[0]} before running a test.`;
+              }
             }
           } else if (!hasInstructions) {
             testDisabled = true;
@@ -1926,6 +1977,26 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             if (!(code || "").trim()) {
               addDisabled = true;
               addDisabledReason = `Write some code before ${actionLabel}.`;
+            } else {
+              // Mirror BE's required-param check so the round-trip never happens.
+              const missingRequiredParam = visibleCodeParamEntries.find(
+                ([key, schema]) => {
+                  if (!schema?.required) return false;
+                  if (schema.nullable) return false;
+                  if (schema.default !== null && schema.default !== undefined)
+                    return false;
+                  const v = codeParams[key];
+                  return (
+                    v === undefined ||
+                    v === null ||
+                    (typeof v === "string" && v.trim() === "")
+                  );
+                },
+              );
+              if (missingRequiredParam) {
+                addDisabled = true;
+                addDisabledReason = `Set ${missingRequiredParam[0]} before ${actionLabel}.`;
+              }
             }
           } else if (!hasInstructions) {
             addDisabled = true;
