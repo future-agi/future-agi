@@ -1734,7 +1734,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                         }
                         label={key}
                         value={codeParams[key] ?? ""}
-                        onChange={(e) => handleCodeParamChange(key, e.target.value)}
+                        onChange={(e) => {
+                          // BE's `type: number` schema rejects strings; coerce here.
+                          const raw = e.target.value;
+                          const isNumeric =
+                            schema?.type === "integer" ||
+                            schema?.type === "number";
+                          let next = raw;
+                          if (isNumeric && raw !== "") {
+                            const n = Number(raw);
+                            if (!Number.isNaN(n)) next = n;
+                          }
+                          handleCodeParamChange(key, next);
+                        }}
                         helperText={
                           configParamsDesc?.[key] || schema?.description || ""
                         }
@@ -1842,6 +1854,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             if (!(code || "").trim()) {
               testDisabled = true;
               testDisabledReason = "Write some code before running a test.";
+            } else {
+              const missingRequiredParam = visibleCodeParamEntries.find(
+                ([key, schema]) => {
+                  if (!schema?.required) return false;
+                  if (schema.nullable) return false;
+                  if (schema.default !== null && schema.default !== undefined)
+                    return false;
+                  const v = codeParams[key];
+                  return (
+                    v === undefined ||
+                    v === null ||
+                    (typeof v === "string" && v.trim() === "")
+                  );
+                },
+              );
+              if (missingRequiredParam) {
+                testDisabled = true;
+                testDisabledReason = `Set ${missingRequiredParam[0]} before running a test.`;
+              }
             }
           } else if (!hasInstructions) {
             testDisabled = true;
@@ -1915,6 +1946,26 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             if (!(code || "").trim()) {
               addDisabled = true;
               addDisabledReason = `Write some code before ${actionLabel}.`;
+            } else {
+              // Mirror BE's required-param check so the round-trip never happens.
+              const missingRequiredParam = visibleCodeParamEntries.find(
+                ([key, schema]) => {
+                  if (!schema?.required) return false;
+                  if (schema.nullable) return false;
+                  if (schema.default !== null && schema.default !== undefined)
+                    return false;
+                  const v = codeParams[key];
+                  return (
+                    v === undefined ||
+                    v === null ||
+                    (typeof v === "string" && v.trim() === "")
+                  );
+                },
+              );
+              if (missingRequiredParam) {
+                addDisabled = true;
+                addDisabledReason = `Set ${missingRequiredParam[0]} before ${actionLabel}.`;
+              }
             }
           } else if (!hasInstructions) {
             addDisabled = true;
