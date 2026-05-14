@@ -261,16 +261,18 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
+      const savedMapping = normalizedEvalData?.mapping || {};
+      const savedStdvars = ["input", "output", "expected"].filter(
+        (v) => v in savedMapping,
+      );
+
       // System code evals always have the canonical
       // `evaluate(input, output, expected, context, **kwargs)` signature —
       // the real keys live in required_keys, so trust them directly and
       // never live-parse (would surface input/output/expected/context).
       if (isSystemEval) {
         if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
-        const savedMapping = normalizedEvalData?.mapping || {};
-        return ["input", "output", "expected"].filter(
-          (v) => v in savedMapping,
-        );
+        return savedStdvars;
       }
 
       // User-authored code: live-parse the `def evaluate(...)` signature
@@ -281,10 +283,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       if (liveParams.length > 0) {
         return [...new Set([...liveParams, ...requiredKeys])];
       }
-      const savedMapping = normalizedEvalData?.mapping || {};
-      const savedStdvars = ["input", "output", "expected"].filter(
-        (v) => v in savedMapping,
-      );
       return [...new Set([...savedStdvars, ...requiredKeys])];
     }
 
