@@ -96,7 +96,8 @@ export const AGENT_TYPES = {
 export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
-  { label: "LiveKit", value: "livekit_bridge" },
+  // Hidden until LiveKit server stability is restored.
+  // { label: "LiveKit", value: "livekit_bridge" },
   // { label: "ElevenLabs", value: "elevenlabs" },
   { label: "Others", value: "others" },
 ];
