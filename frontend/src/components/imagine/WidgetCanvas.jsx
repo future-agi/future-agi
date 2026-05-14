@@ -4,7 +4,7 @@ import { Box, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import WidgetRenderer from "./WidgetRenderer";
 import { resolveBindings } from "./resolveBindings";
-import useDynamicAnalysis, { runAnalysis } from "./useDynamicAnalysis";
+import useDynamicAnalysis from "./useDynamicAnalysis";
 import useImagineStore from "./useImagineStore";
 
 const DEFAULT_ROW_HEIGHT = 260;
@@ -22,6 +22,7 @@ export default function WidgetCanvas({
   emptyState,
   chatRef,
   traceId,
+  projectId,
 }) {
   // Cache lookup function for dynamic analysis widgets
   const analysisCache = useImagineStore((s) => s.analysisCache);
@@ -41,12 +42,18 @@ export default function WidgetCanvas({
   );
 
   // Watch for Falcon WS updates and cache analysis results
-  useDynamicAnalysis(resolvedWidgets, traceData, chatRef, traceId);
+  const runAnalysis = useDynamicAnalysis(
+    resolvedWidgets,
+    traceData,
+    chatRef,
+    traceId,
+    projectId,
+  );
 
   // Handler for "Run Analysis" / "Rerun" button on dynamic widgets
   const handleRunAnalysis = useCallback(
-    (widget) => runAnalysis(widget, traceId),
-    [traceId],
+    (widget) => runAnalysis(widget),
+    [runAnalysis],
   );
 
   if (!resolvedWidgets?.length) {
@@ -145,4 +152,5 @@ WidgetCanvas.propTypes = {
   emptyState: PropTypes.node,
   chatRef: PropTypes.object,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
 };

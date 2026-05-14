@@ -21,7 +21,6 @@ import { LoadingButton } from "@mui/lab";
 import { useNavigate, useParams } from "react-router";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
 import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
-import { coreSpanFields } from "../common";
 
 const AddExistingDataset = ({
   handleclose,
@@ -82,23 +81,26 @@ const AddExistingDataset = ({
     return isUsedButNotSame || !isTypeCompatible;
   };
 
-  const syncUsedColumns = (mapToColumnList, columnOptionList) => {
-    const usedColumns = mapToColumnList
+  useEffect(() => {
+    if (!mapToColumn?.length) return;
+
+    const usedColumns = mapToColumn
       .filter((item) => item.column)
       .map((item) => item.column);
 
-    const updatedOptions = columnOptionList.map((col) => ({
-      ...col,
-      used: usedColumns.includes(col.name),
-    }));
+    setAllColumnOption((currentOptions) => {
+      if (!currentOptions?.length) return currentOptions;
 
-    setAllColumnOption(updatedOptions);
-  };
+      let hasChanges = false;
+      const updatedOptions = currentOptions.map((col) => {
+        const used = usedColumns.includes(col.name);
+        if (col.used === used) return col;
+        hasChanges = true;
+        return { ...col, used };
+      });
 
-  useEffect(() => {
-    if (mapToColumn?.length && allColumnOption?.length) {
-      syncUsedColumns(mapToColumn, allColumnOption);
-    }
+      return hasChanges ? updatedOptions : currentOptions;
+    });
   }, [mapToColumn]);
 
   useEffect(() => {
@@ -215,7 +217,7 @@ const AddExistingDataset = ({
     });
 
     setMapToColumn(updatedMapping);
-  }, [data?.columns]);
+  }, [data?.columns, observationFields]);
 
   const handleAddToDataset = () => {
     const selected = mapToColumn.filter(
@@ -663,7 +665,7 @@ const AddExistingDataset = ({
 
 AddExistingDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.number,
+  selectedNode: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   availableDatasets: PropTypes.array,
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,

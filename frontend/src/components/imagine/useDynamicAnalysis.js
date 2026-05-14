@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import useImagineStore from "./useImagineStore";
 
@@ -16,6 +16,7 @@ export default function useDynamicAnalysis(
   traceData,
   _chatRef,
   traceId,
+  projectId,
 ) {
   const triggeredRef = useRef(new Set());
   const pollIntervalRef = useRef(null);
@@ -23,7 +24,7 @@ export default function useDynamicAnalysis(
 
   // Main trigger effect
   useEffect(() => {
-    if (!widgets?.length || !traceId || !traceData || !savedViewId) return;
+    if (!widgets?.length || !traceId || !traceData) return;
 
     const store = useImagineStore.getState();
 
@@ -39,8 +40,13 @@ export default function useDynamicAnalysis(
       const hasPending = widgets.some(
         (w) => w.dynamicAnalysis && !store.getAnalysis(traceId, w.id),
       );
-      if (hasPending && !pollIntervalRef.current) {
-        startPolling(traceId, savedViewId, pollIntervalRef);
+      if (hasPending && savedViewId && !pollIntervalRef.current) {
+        startPolling(
+          traceId,
+          savedViewId,
+          pollIntervalRef,
+          widgets.filter((w) => w.dynamicAnalysis).map((w) => w.id),
+        );
       }
       return;
     }
@@ -48,16 +54,21 @@ export default function useDynamicAnalysis(
     // Mark as triggered
     needsRun.forEach((w) => triggeredRef.current.add(`${traceId}::${w.id}`));
 
-    // Extract project_id from URL
-    const pathParts = window.location.pathname.split("/");
-    const observeIdx = pathParts.indexOf("observe");
-    const projectId = observeIdx >= 0 ? pathParts[observeIdx + 1] : null;
+    const resolvedProjectId = resolveProjectId(projectId, traceData);
 
     // Trigger analysis via API
-    triggerAnalysis(needsRun, traceId, savedViewId, projectId);
-
-    // Start polling for results
-    startPolling(traceId, savedViewId, pollIntervalRef);
+    triggerAnalysis(needsRun, traceId, savedViewId, resolvedProjectId).then(
+      (started) => {
+        if (started) {
+          startPolling(
+            traceId,
+            savedViewId,
+            pollIntervalRef,
+            needsRun.map((w) => w.id),
+          );
+        }
+      },
+    );
 
     return () => {
       if (pollIntervalRef.current) {
@@ -65,7 +76,32 @@ export default function useDynamicAnalysis(
         pollIntervalRef.current = null;
       }
     };
-  }, [widgets, traceData, traceId, savedViewId]);
+  }, [widgets, traceData, traceId, savedViewId, projectId]);
+
+  const runWidgetAnalysis = useCallback((widget) => {
+    if (!widget?.dynamicAnalysis?.prompt || !traceId) return false;
+
+    const store = useImagineStore.getState();
+    const currentSavedViewId = store._savedViewId;
+
+    // Clear cache so skeleton shows
+    store.setAnalysis(traceId, widget.id, null);
+    triggeredRef.current.add(`${traceId}::${widget.id}`);
+
+    const resolvedProjectId = resolveProjectId(projectId, traceData);
+    triggerAnalysis(
+      [widget],
+      traceId,
+      currentSavedViewId,
+      resolvedProjectId,
+    ).then((started) => {
+      if (started) {
+        startPolling(traceId, currentSavedViewId, pollIntervalRef, [widget.id]);
+      }
+    });
+
+    return true;
+  }, [projectId, traceData, traceId]);
 
   // Reset when trace changes
   const prevTraceRef = useRef(traceId);
@@ -89,14 +125,55 @@ export default function useDynamicAnalysis(
       }
     };
   }, []);
+
+  return runWidgetAnalysis;
 }
 
-async function triggerAnalysis(widgets, traceId, savedViewId, projectId) {
+export function resolveProjectId(projectId, traceData) {
+  if (projectId) return projectId;
+
+  const trace = traceData?.trace || {};
+  const project = traceData?.project || trace?.project || {};
+  const inferredProjectId =
+    traceData?.project_id ||
+    traceData?.projectId ||
+    trace?.project_id ||
+    trace?.projectId ||
+    project?.id;
+  if (inferredProjectId) return inferredProjectId;
+
+  const pathParts = window.location.pathname.split("/");
+  const observeIdx = pathParts.indexOf("observe");
+  return observeIdx >= 0 ? pathParts[observeIdx + 1] : null;
+}
+
+function setWidgetFailures(widgets, traceId, message) {
+  const store = useImagineStore.getState();
+  widgets.forEach((widget) => {
+    store.setAnalysis(traceId, widget.id, `*${message}*`);
+  });
+}
+
+export async function triggerAnalysis(
+  widgets,
+  traceId,
+  savedViewId,
+  projectId,
+) {
+  if (!savedViewId) {
+    setWidgetFailures(
+      widgets,
+      traceId,
+      "Analysis needs a saved Imagine view. Save this view and click Rerun to retry.",
+    );
+    return false;
+  }
+
   try {
     const response = await axios.post(endpoints.imagineAnalysis.trigger, {
       saved_view_id: savedViewId,
       trace_id: traceId,
-      project_id: projectId,
+      ...(projectId ? { project_id: projectId } : {}),
       widgets: widgets.map((w) => ({
         widget_id: w.id,
         prompt: w.dynamicAnalysis.prompt,
@@ -109,18 +186,38 @@ async function triggerAnalysis(widgets, traceId, savedViewId, projectId) {
     analyses.forEach((a) => {
       if (a.status === "completed" && a.content) {
         store.setAnalysis(traceId, a.widgetId || a.widget_id, a.content);
+      } else if (a.status === "failed") {
+        store.setAnalysis(
+          traceId,
+          a.widgetId || a.widget_id,
+          `*Analysis failed: ${a.error || "Unknown error"}. Click Rerun to retry.*`,
+        );
       }
     });
+    return true;
   } catch (err) {
+    setWidgetFailures(
+      widgets,
+      traceId,
+      `Analysis failed: ${err?.response?.data?.error || err?.message || "Unknown error"}. Click Rerun to retry.`,
+    );
     // eslint-disable-next-line no-console
     console.error("Failed to trigger analysis:", err);
+    return false;
   }
 }
 
-function startPolling(traceId, savedViewId, intervalRef) {
-  if (intervalRef.current) return;
+function startPolling(
+  traceId,
+  savedViewId,
+  intervalRef,
+  expectedWidgetIds = [],
+) {
+  if (!savedViewId || intervalRef.current) return;
 
   let failures = 0;
+  let emptyPolls = 0;
+  const expectedIds = new Set(expectedWidgetIds.filter(Boolean));
 
   intervalRef.current = setInterval(async () => {
     try {
@@ -131,23 +228,47 @@ function startPolling(traceId, savedViewId, intervalRef) {
       const analyses = response.data?.result?.analyses || [];
       const store = useImagineStore.getState();
 
+      if (analyses.length === 0) {
+        emptyPolls++;
+        if (emptyPolls > 10 && expectedIds.size > 0) {
+          expectedIds.forEach((widgetId) => {
+            store.setAnalysis(
+              traceId,
+              widgetId,
+              "*Analysis failed: no analysis record was created. Click Rerun to retry.*",
+            );
+          });
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        return;
+      }
+
+      emptyPolls = 0;
       let allDone = true;
+      const doneWidgetIds = new Set();
       analyses.forEach((a) => {
         const widgetId = a.widgetId || a.widget_id;
         if (a.status === "completed" && a.content) {
           store.setAnalysis(traceId, widgetId, a.content);
+          doneWidgetIds.add(widgetId);
         } else if (a.status === "failed") {
           store.setAnalysis(
             traceId,
             widgetId,
             `*Analysis failed: ${a.error || "Unknown error"}. Click Rerun to retry.*`,
           );
+          doneWidgetIds.add(widgetId);
         } else {
           allDone = false;
         }
       });
 
-      if (allDone || analyses.length === 0) {
+      if (expectedIds.size > 0) {
+        allDone = Array.from(expectedIds).every((id) => doneWidgetIds.has(id));
+      }
+
+      if (allDone) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
@@ -156,32 +277,17 @@ function startPolling(traceId, savedViewId, intervalRef) {
     } catch {
       failures++;
       if (failures > 10) {
+        const store = useImagineStore.getState();
+        expectedIds.forEach((widgetId) => {
+          store.setAnalysis(
+            traceId,
+            widgetId,
+            "*Analysis failed: polling timed out. Click Rerun to retry.*",
+          );
+        });
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     }
   }, 3000);
-}
-
-/**
- * Trigger re-analysis for a single widget (Rerun button).
- */
-export function runAnalysis(widget, traceId) {
-  if (!widget?.dynamicAnalysis?.prompt || !traceId) return false;
-
-  const store = useImagineStore.getState();
-  const savedViewId = store._savedViewId;
-
-  // Clear cache so skeleton shows
-  store.setAnalysis(traceId, widget.id, null);
-
-  // Extract project_id
-  const pathParts = window.location.pathname.split("/");
-  const observeIdx = pathParts.indexOf("observe");
-  const projectId = observeIdx >= 0 ? pathParts[observeIdx + 1] : null;
-
-  // Trigger via API
-  triggerAnalysis([widget], traceId, savedViewId, projectId);
-
-  return true;
 }
