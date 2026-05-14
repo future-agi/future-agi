@@ -96,6 +96,19 @@ const SOURCE_LABELS = {
   composite: "Composite",
 };
 
+const SOURCE_NAME_SLUGS = {
+  dataset: "dataset",
+  experiment: "experiment",
+  "run-experiment": "experiment",
+  optimization: "optimization",
+  "run-optimization": "optimization",
+  workbench: "workbench",
+  simulation: "simulation",
+  "create-simulate": "simulation",
+  task: "task",
+  composite: "composite",
+};
+
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
@@ -516,7 +529,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       );
 
       // Edit mode: keep the saved name. Create mode: generate a unique name
-      // from the template base name + current date (e.g. "is_good_summary_14_Apr_2026").
+      // from the template base name + source slug + date/time, e.g.
+      // "is_good_summary_dataset_14_may_2026_15_42". The source slug ties
+      // the name to where the eval was created (dataset / experiment /
+      // workbench / …); the timestamp avoids collisions on the backend
+      // uniqueness check for same-source same-day repeats.
       if (isEditMode) {
         setEvalName(evalData?.name || fullEval.name || "");
       } else {
@@ -526,8 +543,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           .toLowerCase()
           .replace(/\s+/g, "_")
           .replace(/[^a-z0-9_-]/g, "");
-        const dateSuffix = format(new Date(), "dd_MMM_yyyy").toLowerCase();
-        setEvalName(`${sanitized}_${dateSuffix}`);
+        const sourceSlug = SOURCE_NAME_SLUGS[source] || "";
+        const stamp = format(new Date(), "dd_MMM_yyyy_HH_mm").toLowerCase();
+        setEvalName(
+          [sanitized, sourceSlug, stamp].filter(Boolean).join("_"),
+        );
       }
 
       initialLoadDone.current = true;
