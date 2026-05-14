@@ -85,7 +85,25 @@ const useSpeakerColors = () => {
 // same role in this legend. Any other role still shows up but trails.
 const TALK_ROLE_ORDER = ["user", "assistant", "system", "tool"];
 
-const TalkRatioBar = ({ totals, colors }) => {
+// Display labels for the TALK RATIO legend. Internal role keys (`user`,
+// `assistant`, …) don't always read naturally — the search filter tabs
+// above display `user` as "Customer", so the legend uses the same
+// mapping for visual consistency. Override with the `roleLabels` prop.
+const DEFAULT_ROLE_LABELS = {
+  user: "Customer",
+  assistant: "Assistant",
+  system: "System",
+  tool: "Tool",
+};
+
+const TalkRatioBar = ({
+  totals,
+  colors,
+  hideLabel = false,
+  hidePercentages = false,
+  legendAlign = "left",
+  roleLabels = DEFAULT_ROLE_LABELS,
+}) => {
   const total = totals.total || 1;
   const segments = Object.entries(totals.byRole)
     .filter(([, v]) => v > 0)
@@ -98,19 +116,33 @@ const TalkRatioBar = ({ totals, colors }) => {
     });
 
   return (
-    <Stack direction="row" alignItems="center" gap={1} sx={{ minWidth: 0 }}>
-      <Typography
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{ minWidth: 0, width: "100%" }}
+    >
+      {!hideLabel && (
+        <Typography
+          sx={{
+            fontSize: 10,
+            fontWeight: 600,
+            color: "text.secondary",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Talk ratio
+        </Typography>
+      )}
+      <Stack
+        direction="row"
+        gap={1.25}
         sx={{
-          fontSize: 10,
-          fontWeight: 600,
-          color: "text.secondary",
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          flexWrap: "wrap",
+          ...(legendAlign === "right" ? { ml: "auto" } : {}),
         }}
       >
-        Talk ratio
-      </Typography>
-      <Stack direction="row" gap={1.25} sx={{ flexWrap: "wrap" }}>
         {segments.map(([role, val]) => (
           <Stack key={role} direction="row" alignItems="center" gap={0.5}>
             <Box
@@ -128,7 +160,12 @@ const TalkRatioBar = ({ totals, colors }) => {
                 textTransform: "capitalize",
               }}
             >
-              {role} {Math.round((val / total) * 100)}%
+              {(() => {
+                const label = roleLabels?.[role] || role;
+                return hidePercentages
+                  ? label
+                  : `${label} ${Math.round((val / total) * 100)}%`;
+              })()}
             </Typography>
           </Stack>
         ))}
@@ -140,6 +177,10 @@ const TalkRatioBar = ({ totals, colors }) => {
 TalkRatioBar.propTypes = {
   totals: PropTypes.object.isRequired,
   colors: PropTypes.object.isRequired,
+  hideLabel: PropTypes.bool,
+  hidePercentages: PropTypes.bool,
+  legendAlign: PropTypes.oneOf(["left", "right"]),
+  roleLabels: PropTypes.object,
 };
 
 const SpeakerTimelineStrip = ({
@@ -488,7 +529,29 @@ const FILTERS = [
   { id: "user", label: "Customer" },
 ];
 
-const TranscriptView = ({ transcript, onAnnotate }) => {
+const TranscriptView = ({
+  transcript,
+  onAnnotate,
+  // Header-row customization hooks used by the chat drawer to repurpose
+  // the voice TalkRatioBar as a compact speaker legend:
+  //   - hideTimelineStrip: drop the orange/white bar below the TALK RATIO
+  //     row (chat doesn't have a speaker timeline derived from audio).
+  //   - hideTalkRatioPercentages: render only colored-dot + role label
+  //     (no percentage text) — keeps the row reading as a legend, not
+  //     a stats row.
+  //   - talkRatioLegendAlign: "right" pushes the legend chips to the end
+  //     of the row so TALK RATIO sits left-aligned with the legend on
+  //     the opposite side.
+  hideTimelineStrip = false,
+  hideTalkRatioLabel = false,
+  hideTalkRatioPercentages = false,
+  talkRatioLegendAlign = "left",
+  // "Silence" is a voice concept (dead air between speaker turns). For
+  // chat transcripts the gap between messages is just response latency,
+  // not silence — so the chat drawer passes true here to suppress the
+  // inline silence dividers.
+  hideSilenceMarkers = false,
+}) => {
   const colors = useSpeakerColors();
 
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
@@ -689,16 +752,26 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
         flexDirection: "column",
       }}
     >
-      {/* Header: talk ratio + timeline strip — flat, no wrapper border */}
+      {/* Header: talk ratio + timeline strip — flat, no wrapper border.
+          Chat drawer hides the timeline strip (no audio-backed speaker
+          timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
-        <TalkRatioBar totals={totals} colors={colors} />
-        <SpeakerTimelineStrip
-          turns={turns}
+        <TalkRatioBar
+          totals={totals}
           colors={colors}
-          duration={duration}
-          currentTime={currentTime}
-          onSeek={handleSeek}
+          hideLabel={hideTalkRatioLabel}
+          hidePercentages={hideTalkRatioPercentages}
+          legendAlign={talkRatioLegendAlign}
         />
+        {!hideTimelineStrip && (
+          <SpeakerTimelineStrip
+            turns={turns}
+            colors={colors}
+            duration={duration}
+            currentTime={currentTime}
+            onSeek={handleSeek}
+          />
+        )}
       </Stack>
 
       {/* Toolbar: search + filter pills */}
@@ -830,9 +903,11 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
         ) : (
           filteredTurns.map((turn, i) => (
             <React.Fragment key={turn.id}>
-              {turn.silenceBefore != null && turn.silenceBefore > 0.3 && (
-                <SilenceGap seconds={turn.silenceBefore} />
-              )}
+              {!hideSilenceMarkers &&
+                turn.silenceBefore != null &&
+                turn.silenceBefore > 0.3 && (
+                  <SilenceGap seconds={turn.silenceBefore} />
+                )}
               <MemoTurnRow
                 ref={(el) => (rowRefs.current[i] = el)}
                 turn={turn}
@@ -896,6 +971,11 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
 TranscriptView.propTypes = {
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
+  hideTimelineStrip: PropTypes.bool,
+  hideTalkRatioLabel: PropTypes.bool,
+  hideTalkRatioPercentages: PropTypes.bool,
+  talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
+  hideSilenceMarkers: PropTypes.bool,
 };
 
 export default TranscriptView;
