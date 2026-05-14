@@ -130,57 +130,53 @@ export default function AddToQueueDialog({
             })),
           };
 
-      addItems(
-        mutationArgs,
-        {
-          onSuccess: (data) => {
-            const result = data?.data?.result || data?.data;
-            const added = result?.added || 0;
-            const duplicates = result?.duplicates || 0;
-            const errors = Array.isArray(result?.errors) ? result.errors : [];
-            const label = itemName || "Item";
-            const plural = (n, s = "s") => (n === 1 ? "" : s);
-            if (added === 0 && duplicates === 0 && errors.length > 0) {
-              // Backend returned 200 but resolution failed — surface the
-              // real reason instead of pretending the add succeeded.
-              enqueueSnackbar(
-                `Couldn't add to ${queue.name}: ${errors[0]}`,
-                { variant: "error" },
-              );
-            } else if (added === 0 && duplicates > 0) {
-              // Nothing added — everything was already there.
-              enqueueSnackbar(
-                duplicates === 1
-                  ? `${label} already in ${queue.name}`
-                  : `All ${duplicates} ${label.toLowerCase()}s already in ${queue.name}`,
-                { variant: "info" },
-              );
-            } else if (added > 0 && duplicates > 0) {
-              // Partial — report both counts so the user isn't misled.
-              enqueueSnackbar(
-                `${added} ${label.toLowerCase()}${plural(added)} added to ${queue.name} · ${duplicates} already in queue`,
-                { variant: "info" },
-              );
-            } else if (added === 0) {
-              // Nothing added and no duplicates or errors reported — don't
-              // claim success.
-              enqueueSnackbar(
-                `Couldn't add ${label.toLowerCase()} to ${queue.name}`,
-                { variant: "error" },
-              );
-            } else {
-              enqueueSnackbar(
-                added === 1
-                  ? `${label} added to ${queue.name}`
-                  : `${added} ${label.toLowerCase()}s added to ${queue.name}`,
-                { variant: "success" },
-              );
-            }
-            onSuccess?.();
-            onClose();
-          },
+      addItems(mutationArgs, {
+        onSuccess: (data) => {
+          const result = data?.data?.result || data?.data;
+          const added = result?.added || 0;
+          const duplicates = result?.duplicates || 0;
+          const errors = Array.isArray(result?.errors) ? result.errors : [];
+          const label = itemName || "Item";
+          const plural = (n, s = "s") => (n === 1 ? "" : s);
+          if (added === 0 && duplicates === 0 && errors.length > 0) {
+            // Backend returned 200 but resolution failed — surface the
+            // real reason instead of pretending the add succeeded.
+            enqueueSnackbar(`Couldn't add to ${queue.name}: ${errors[0]}`, {
+              variant: "error",
+            });
+          } else if (added === 0 && duplicates > 0) {
+            // Nothing added — everything was already there.
+            enqueueSnackbar(
+              duplicates === 1
+                ? `${label} already in ${queue.name}`
+                : `All ${duplicates} ${label.toLowerCase()}s already in ${queue.name}`,
+              { variant: "info" },
+            );
+          } else if (added > 0 && duplicates > 0) {
+            // Partial — report both counts so the user isn't misled.
+            enqueueSnackbar(
+              `${added} ${label.toLowerCase()}${plural(added)} added to ${queue.name} · ${duplicates} already in queue`,
+              { variant: "info" },
+            );
+          } else if (added === 0) {
+            // Nothing added and no duplicates or errors reported — don't
+            // claim success.
+            enqueueSnackbar(
+              `Couldn't add ${label.toLowerCase()} to ${queue.name}`,
+              { variant: "error" },
+            );
+          } else {
+            enqueueSnackbar(
+              added === 1
+                ? `${label} added to ${queue.name}`
+                : `${added} ${label.toLowerCase()}s added to ${queue.name}`,
+              { variant: "success" },
+            );
+          }
+          onSuccess?.();
+          onClose();
         },
-      );
+      });
     },
     [
       isPending,

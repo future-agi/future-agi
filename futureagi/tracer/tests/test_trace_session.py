@@ -73,9 +73,8 @@ class TestTraceSessionRetrieveAPI:
         """
         Test retrieving session from different organization.
 
-        NOTE: Currently the API does not enforce organization-level access control
-        on session retrieval - it returns 200 for any valid session ID. This test
-        documents the current behavior. Consider adding org filtering if needed.
+        The API now enforces organization-level access control on session
+        retrieval and rejects sessions outside the request organization.
         """
         from accounts.models.organization import Organization
         from model_hub.models.ai_model import AIModel
@@ -95,8 +94,7 @@ class TestTraceSessionRetrieveAPI:
         )
 
         response = auth_client.get(f"/tracer/trace-session/{other_session.id}/")
-        # API currently allows cross-org access (returns session data)
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_retrieve_session_has_navigation_fields(self, auth_client, trace_session):
         """Session detail response includes previous/next session IDs in session_metadata."""
@@ -179,9 +177,9 @@ class TestTraceSessionListAPI:
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_list_sessions_missing_project(self, auth_client):
-        """List sessions fails without project ID."""
+        """List sessions supports org-scoped listing without project ID."""
         response = auth_client.get("/tracer/trace-session/list_sessions/")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_200_OK
 
     def test_list_sessions_success(
         self, auth_client, observe_project, trace_session, session_trace

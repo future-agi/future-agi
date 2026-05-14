@@ -14,6 +14,7 @@ import TestDetailCallAnalytics from "src/sections/test-detail/TestDetailDrawer/T
 import LoadingStateComponent from "./LoadingStateComponent";
 import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/common";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
+import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import { getSpanAttributes } from "../traceDetailDrawer/DrawerRightRenderer/getSpanData";
 
 const TABS = [
@@ -52,16 +53,28 @@ const RightSection = ({ data, hideAnnotations = false }) => {
     return { evalsMetrics: transformedEvalMetrics };
   }, [data]);
 
-  const observationSpan = data?.observation_span?.[0];
+  const observationSpan = useMemo(() => {
+    const spans = data?.observation_span;
+    if (!Array.isArray(spans) || spans.length === 0) return undefined;
+    return (
+      spans.find(
+        (s) => !s?.parent_span_id && s?.observation_type === "conversation",
+      ) ||
+      spans.find((s) => !s?.parent_span_id) ||
+      spans[0]
+    );
+  }, [data?.observation_span]);
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(data?.status, data?.simulationCallType);
   // Determine source type and ID for scores — fetch both levels
   const traceId = data?.trace_id || data?.id;
-  const sourceType = observationSpan?.id ? "observation_span" : "trace";
-  const sourceId = observationSpan?.id || traceId;
-  const secondarySourceType = observationSpan?.id ? "trace" : undefined;
-  const secondarySourceId = observationSpan?.id ? traceId : undefined;
+  const { sourceType, sourceId, secondarySourceType, secondarySourceId } =
+    buildVoiceCallScoreSource({
+      traceId,
+      rootSpanId: observationSpan?.id,
+      isSimulate: false,
+    });
 
   return (
     <Stack gap={2} minHeight={300}>
@@ -109,6 +122,7 @@ const RightSection = ({ data, hideAnnotations = false }) => {
             sourceId={sourceId}
             secondarySourceType={secondarySourceType}
             secondarySourceId={secondarySourceId}
+            openQueueItemOnRowClick
           />
         </ShowComponent>
       </ShowComponent>

@@ -137,11 +137,11 @@ export const createAgentDefinitionSchema = (options) => {
         !isLiveKitProvider(data.provider)
       ) {
         // Phone number is optional when API key + assistant ID are provided (web bridge)
-        const hasWebBridgeCreds =
-          data.apiKey?.trim() && data.assistantId?.trim();
+        // const hasWebBridgeCreds =
+        //   data.apiKey?.trim() && data.assistantId?.trim();
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
-        if (!hasWebBridgeCreds) {
+        // if (!hasWebBridgeCreds) {
           if (!hasCountryCode) {
             ctx.addIssue({
               path: ["countryCode"],
@@ -156,7 +156,7 @@ export const createAgentDefinitionSchema = (options) => {
               code: z.ZodIssueCode.custom,
             });
           }
-        } else {
+        // } else {
           // Both are optional, but if one is provided the other is required
           if (hasContactNumber && !hasCountryCode) {
             ctx.addIssue({
@@ -172,7 +172,7 @@ export const createAgentDefinitionSchema = (options) => {
               code: z.ZodIssueCode.custom,
             });
           }
-        }
+        // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
           const trimmedNumber = data.contactNumber.trim();

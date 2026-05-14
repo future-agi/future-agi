@@ -1745,6 +1745,7 @@ const EvalDetailPage = () => {
                     evalType={evalType}
                     code={code}
                     codeLanguage={codeLanguage}
+                    isSystemEval={isSystemEval}
                     requiredKeys={variables}
                     showVersions={!(isSystemEval && evalType === "code")}
                     errorLocalizerEnabled={errorLocalizerEnabled}

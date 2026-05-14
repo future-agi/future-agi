@@ -133,8 +133,15 @@ class TestAddToNewDatasetAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_missing_project(self, auth_client, observe_spans):
-        """Request without project should return 400."""
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_missing_project_derives_from_spans(
+        self, mock_check_allowed, mock_task, auth_client, observe_spans
+    ):
+        """Request without project derives it from selected spans."""
+        mock_check_allowed.return_value = True
+        mock_task.delay.return_value = None
+
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
             {
@@ -144,7 +151,7 @@ class TestAddToNewDatasetAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_200_OK
 
     def test_no_spans_or_traces_provided(self, auth_client, observe_project):
         """Request without spanIds or traceIds should return 400."""

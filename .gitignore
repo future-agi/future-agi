@@ -215,6 +215,10 @@ plan/
 planning/
 scratch/
 ee/
+
+# Puppeteer / e2e test screenshots — local debugging only.
+frontend/scripts/.artifacts/
+
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log

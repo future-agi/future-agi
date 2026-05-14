@@ -821,12 +821,14 @@ def custom_exception_handler(exc, context):
         return Response({"detail": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
 
     if isinstance(exc, FeatureUnavailable):
+        detail = {"feature": exc.feature}
+        detail.update(getattr(exc, "metadata", {}) or {})
         body = {
             "status": False,
             "error": {
-                "code": exc.default_code,
+                "code": getattr(exc, "error_code", exc.default_code),
                 "message": str(exc.detail),
-                "detail": {"feature": exc.feature},
+                "detail": detail,
             },
             "upgrade_required": True,
         }

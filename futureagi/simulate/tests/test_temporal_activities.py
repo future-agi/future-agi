@@ -520,7 +520,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -576,7 +576,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -642,7 +642,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -946,7 +946,7 @@ class TestFetchAndPersistCallResultActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.services.voice_service_manager.VoiceServiceManager"
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
             ) as mock_vsm_class,
         ):
             mock_vsm = MagicMock()
@@ -1040,7 +1040,7 @@ class TestFetchAndPersistCallResultActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.services.voice_service_manager.VoiceServiceManager"
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
             ) as mock_vsm_class,
         ):
             mock_vsm = MagicMock()

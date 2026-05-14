@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
 import { Box, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
@@ -39,11 +39,8 @@ export const StereoMultiTrackPlayer = ({
     theme.palette.mode === "dark"
       ? theme.palette.primary.light
       : theme.palette.primary.main;
-  const orange = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
-  const trackColors = {
-    assistant: primary,
-    customer: orange,
-  };
+  const assistantColor = primary;
+  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
 
   const {
     assistantUrl: stereoAssistant,
@@ -55,6 +52,24 @@ export const StereoMultiTrackPlayer = ({
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =
     recordings?.stereo && !stereoError && (stereoLoading || stereoAssistant);
+
+  const assistantUrl = useStereo ? stereoAssistant : recordings?.assistant;
+  const customerUrl = useStereo ? stereoCustomer : recordings?.customer;
+  const trackUrls = useMemo(
+    () => [
+      {
+        url: customerUrl,
+        color: customerColor,
+        name: "Customer Audio",
+      },
+      {
+        url: assistantUrl,
+        color: assistantColor,
+        name: "Assistant Audio",
+      },
+    ],
+    [customerUrl, assistantUrl, customerColor, assistantColor],
+  );
 
   if (useStereo && stereoLoading) {
     return (
@@ -75,23 +90,9 @@ export const StereoMultiTrackPlayer = ({
     );
   }
 
-  const assistantUrl = useStereo ? stereoAssistant : recordings?.assistant;
-  const customerUrl = useStereo ? stereoCustomer : recordings?.customer;
-
   return (
     <MultiTrackAudioPlayer
-      trackUrls={[
-        {
-          url: customerUrl,
-          color: trackColors.customer,
-          name: "Customer Audio",
-        },
-        {
-          url: assistantUrl,
-          color: trackColors.assistant,
-          name: "Assistant Audio",
-        },
-      ]}
+      trackUrls={trackUrls}
       audioUrls={recordings}
       id={id}
       height={height}

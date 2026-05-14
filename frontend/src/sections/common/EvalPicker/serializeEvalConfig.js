@@ -42,6 +42,8 @@ export function serializeEvalConfig(evalConfig) {
     mapping: evalConfig.mapping || {},
     config: {
       ...(evalConfig.config || {}),
+      // BE looks up function-param values at `config.params` (normalize_eval_runtime_config).
+      ...(evalConfig.params !== undefined && { params: evalConfig.params }),
       run_config: {
         ...(evalConfig.config?.run_config || {}),
         ...runConfig,

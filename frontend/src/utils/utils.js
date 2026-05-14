@@ -766,31 +766,19 @@ export function mergeRefs(...refs) {
 // ---------------------------------------------------------------------------
 // canonicalKeys / canonicalEntries / canonicalValues
 //
-// The axios response interceptor (`src/utils/axios.js`) adds camelCase
-// aliases alongside every snake_case key in backend responses so existing
-// camelCase reads keep working without a big-bang refactor. Those aliases
-// are plain enumerable own-properties, so `Object.keys(obj)` returns BOTH
-// the snake_case key AND its camelCase alias — the object effectively
-// doubles in size when enumerated. Call sites that iterate API response
-// objects (dynamic columns, metadata lists, chart categories, span
-// attribute tables, etc) end up rendering every field twice, or merging
-// duplicate entries into `flat[...]` buckets.
+// Legacy cached objects and older call sites can still contain both a
+// snake_case key and a camelCase alias for the same value. Those aliases are
+// plain enumerable own-properties, so `Object.keys(obj)` returns both keys and
+// dynamic UI lists can render duplicate fields.
 //
-// Use these helpers instead of `Object.keys/entries/values` whenever you
-// are iterating an API-originated object to build UI. Logic: keep a key
-// if it contains an underscore (it's an original snake_case key) OR if
-// converting it to snake_case yields a key that does NOT exist in the
-// object (it's a genuine camelCase-only field). This drops only the
-// alias half of every duplicated pair and leaves real camelCase keys
-// alone.
+// These helpers only de-dupe an object that already has both keys. They do
+// not add aliases or mutate response payloads.
 // ---------------------------------------------------------------------------
 const SNAKE_TO_CAMEL_ALIAS_RE = /_([a-z0-9])/g;
 
-// Build the set of camelCase alias keys the axios interceptor would have
-// added for snake_case keys in `obj`. Mirrors `snakeToCamelKey` in
-// `src/utils/axios.js`. Forward-mapping this way is robust to digit
-// separators (e.g. `tone_17_apr_2026` → `tone17Apr2026`), which a naïve
-// reverse regex on camelCase cannot recover.
+// Forward-mapping is robust to digit separators
+// (e.g. `tone_17_apr_2026` -> `tone17Apr2026`), which a reverse regex on
+// camelCase cannot recover.
 const buildAliasSet = (obj) => {
   const aliases = new Set();
   const keys = Object.keys(obj);

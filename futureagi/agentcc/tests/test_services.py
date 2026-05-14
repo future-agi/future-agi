@@ -77,6 +77,10 @@ class TestGatewayClient:
         "http://localhost:8080",
     )
     @patch(
+        "agentcc.services.gateway_client.AGENTCC_GATEWAY_INTERNAL_URL",
+        "http://localhost:8080",
+    )
+    @patch(
         "agentcc.services.gateway_client.AGENTCC_ADMIN_TOKEN",
         "env-token",
     )

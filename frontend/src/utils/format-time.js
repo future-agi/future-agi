@@ -1,4 +1,9 @@
-import { format, getTime, formatDistanceToNow } from "date-fns";
+import {
+  format,
+  getTime,
+  formatDistanceToNow,
+  formatDistanceToNowStrict,
+} from "date-fns";
 
 // ----------------------------------------------------------------------
 
@@ -21,6 +26,14 @@ export function fTimestamp(date) {
 export function fToNow(date) {
   return date
     ? formatDistanceToNow(new Date(date), {
+        addSuffix: true,
+      })
+    : "";
+}
+
+export function fToNowStrict(date) {
+  return date
+    ? formatDistanceToNowStrict(new Date(date), {
         addSuffix: true,
       })
     : "";

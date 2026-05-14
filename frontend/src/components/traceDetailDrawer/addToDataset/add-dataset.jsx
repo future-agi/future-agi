@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Typography,
   Box,
@@ -16,8 +16,13 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import AddExistingDataset from "./AddExistingDataset";
 import AddNewDataset from "./AddNewDataset";
-import _ from "lodash";
 import { defaultSpanFields } from "../common";
+
+const EMPTY_ARRAY = [];
+const VIRTUAL_FIELDS = [
+  { name: "eval_metrics", type: "json" },
+  { name: "annotation_metrics", type: "json" },
+];
 
 const AddDataset = ({
   handleClose,
@@ -31,7 +36,6 @@ const AddDataset = ({
 }) => {
   const [selectedOptionDataset, setSelectedOptionDataset] =
     useState("existing");
-  const [getobservationFields, setGetobservationFields] = useState([]);
 
   const theme = useTheme();
 
@@ -42,15 +46,17 @@ const AddDataset = ({
         source: "observe",
       }),
     select: (data) => data?.data?.result?.datasets,
+    enabled: Boolean(actionToDataset),
   });
 
-  const { data: observationFields = [] } = useQuery({
+  const { data: observationFields = EMPTY_ARRAY } = useQuery({
     queryKey: ["observationFields"],
     queryFn: () =>
       axios
         .get(endpoints.project.getObservationSpanField)
         .then((res) => res.data),
     select: (data) => data?.result,
+    enabled: Boolean(actionToDataset),
   });
 
   // const { data: observationSpan } = useQuery({
@@ -61,43 +67,14 @@ const AddDataset = ({
   //   select: (data) => data?.data?.result?.observation_span,
   // });
 
-  useEffect(() => {
-    if (!observationFields) return;
-
-    // Case 1: If observationFields are available, filter based on them
-    // if (observationSpan) {
-    //   const filteredFields = observationFields.filter((field) => {
-    //     const camelCaseKey = _.camelCase(field.name);
-    //     const value = observationSpan?.[camelCaseKey];
-
-    //     if (value === null || value === undefined) return false;
-    //     if (Array.isArray(value) && value.length === 0) return false;
-    //     if (
-    //       typeof value === "object" &&
-    //       !Array.isArray(value) &&
-    //       Object.keys(value).length === 0
-    //     )
-    //       return false;
-    //     if (typeof value === "string" && value.trim() === "") return false;
-
-    //     return true;
-    //   });
-
-    //   setGetobservationFields(filteredFields);
-    // }
-
+  const datasetObservationFields = useMemo(() => {
     const matchedFields = observationFields.filter((field) =>
       defaultSpanFields.includes(field.name),
     );
 
-    // Inject virtual fields that are not real model fields on the backend.
-    // These are computed per-span in the dataset task from EvalLogger and Score.
-    const VIRTUAL_FIELDS = [
-      { name: "eval_metrics", type: "json" },
-      { name: "annotation_metrics", type: "json" },
-    ];
-
-    setGetobservationFields([...matchedFields, ...VIRTUAL_FIELDS]);
+    // Virtual fields are computed per-span in the dataset task from EvalLogger
+    // and Score; they are not real model fields returned by the backend.
+    return [...matchedFields, ...VIRTUAL_FIELDS];
   }, [observationFields]);
 
   return (
@@ -192,7 +169,7 @@ const AddDataset = ({
           handleclose={handleClose}
           selectedNode={spanId}
           availableDatasets={availableDatasets}
-          observationFields={getobservationFields}
+          observationFields={datasetObservationFields}
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}
@@ -203,7 +180,7 @@ const AddDataset = ({
         <AddNewDataset
           handleclose={handleClose}
           selectedNode={spanId}
-          observationFields={getobservationFields}
+          observationFields={datasetObservationFields}
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}

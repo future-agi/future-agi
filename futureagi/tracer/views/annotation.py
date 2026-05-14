@@ -490,16 +490,27 @@ class BulkAnnotationView(APIView):
             for ann in rec.get("annotations", [])
         }
 
-        # Convert span and label IDs back to their original types for the DB query (they are UUIDs)
-        span_ids_query = [k[0] for k in request_keys]
-        label_ids_query = [k[1] for k in request_keys]
+        # Tuple-precise duplicate prefetch. Using ``span_id__in × label_id__in``
+        # would over-fetch the cartesian product — N spans × M labels rows
+        # per request, even when the user only submitted N (span, label) pairs.
+        # We OR the exact (span, label) tuples instead so the query returns
+        # at most ``len(request_keys)`` rows.
+        if request_keys:
+            from django.db.models import Q
 
-        existing_duplicates = Score.objects.filter(
-            observation_span_id__in=span_ids_query,
-            label_id__in=label_ids_query,
-            annotator_id=current_user_id,
-            deleted=False,
-        )
+            tuple_filter = Q()
+            for span_id, label_id, _ in request_keys:
+                tuple_filter |= Q(
+                    observation_span_id=span_id,
+                    label_id=label_id,
+                )
+            existing_duplicates = Score.objects.filter(
+                tuple_filter,
+                annotator_id=current_user_id,
+                deleted=False,
+            )
+        else:
+            existing_duplicates = Score.objects.none()
 
         existing_key_map = {
             (str(s.observation_span_id), str(s.label_id), str(s.annotator_id)): s
@@ -813,7 +824,14 @@ class BulkAnnotationView(APIView):
                 "warning": warning,
             }
 
-        # Create new Score
+        # Create new Score.
+        # NOTE: ``Score.project`` is a FK to ``model_hub.DevelopAI``, NOT
+        # to ``tracer.Project``. Earlier code set ``project=span.project``
+        # which raised ``ValueError`` at .save() time and silently dropped
+        # every record into the response's ``errors`` list. The Score model
+        # already filters by ``organization`` for tenancy, and the
+        # ``project`` FK is only used for DevelopAI scoping (which doesn't
+        # apply to tracer-side annotations), so it's safe to leave NULL.
         score = Score(
             observation_span=span,
             label=annotation_label,
@@ -822,7 +840,6 @@ class BulkAnnotationView(APIView):
             value=value_fields,
             score_source="human",
             organization=span.project.organization,
-            project=span.project,
         )
         return {
             "error": None,
