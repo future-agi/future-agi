@@ -29,6 +29,7 @@ import ScheduledRuns from "./ScheduledRuns";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -246,18 +247,16 @@ const NewTaskDrawerV2 = ({
     createEvalTask(payload);
   };
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
+  // Top 200 attrs for filter authoring. EvalPicker config screen has its
+  // own server search for the unbounded variable-mapping picker.
+  const evalAttrFilters = useMemo(
+    () => objectCamelToSnake(filtersWithoutDate),
+    [filtersWithoutDate],
+  );
+  const { items: evalAttributes } = useEvalAttributesPage({
+    projectId: project,
+    rowType,
+    filters: evalAttrFilters,
     enabled: isProjectSelected,
   });
 
@@ -269,16 +268,6 @@ const NewTaskDrawerV2 = ({
       }),
     select: (data) => data.data?.result?.projects,
   });
-
-  // Format eval attributes as source columns for EvalPickerDrawer
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Handle adding eval from the new picker
   const handleEvalAdded = useCallback(
@@ -608,7 +597,8 @@ const NewTaskDrawerV2 = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
-        sourceColumns={sourceColumns}
+        sourceId={project}
+        sourceRowType={rowType}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />

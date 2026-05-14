@@ -22,6 +22,7 @@ import {
   useWatch,
 } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -210,27 +211,18 @@ const EditTaskDrawerV2Content = ({
     if (configuredEvalList) replace(configuredEvalList);
   }, [configuredEvalList, replace]);
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
-        },
-      }),
-    select: (d) => d.data?.result,
+  // Top 200 attrs for filter authoring. EvalPicker config does its own
+  // server search for variable mapping.
+  const evalAttrFilters = useMemo(
+    () => objectCamelToSnake(filters),
+    [filters],
+  );
+  const { items: evalAttributes } = useEvalAttributesPage({
+    projectId: project,
+    rowType,
+    filters: evalAttrFilters,
+    enabled: !!project,
   });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Fetch project list
   const { data: projectsList } = useQuery({
@@ -677,7 +669,8 @@ const EditTaskDrawerV2Content = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
-        sourceColumns={sourceColumns}
+        sourceId={project}
+        sourceRowType={rowType}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />

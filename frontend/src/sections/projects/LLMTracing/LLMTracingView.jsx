@@ -163,6 +163,7 @@ import SelectAllBanner from "./SelectAllBanner";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
 import CustomColumnDialog from "./CustomColumnDialog";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import SvgColor from "src/components/svg-color";
 import { ObserveIconButton } from "../SharedComponents";
 import { useGetProjectDetails } from "src/api/project/project-detail";
@@ -1174,18 +1175,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     },
   );
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
-  });
-
   // Shared node click handler for agent graph/path views
   const handleAgentNodeClick = useCallback(
     (nodeData) => {
@@ -1367,11 +1356,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     compareSpansValidatedFilters,
   ]);
 
-  const [attributes, setAttributes] = useState([]);
-
-  useEffect(() => {
-    setAttributes(evalAttributes || []);
-  }, [evalAttributes]);
+  // Top 200 attributes for the filter-definition generators. The Custom
+  // Columns dialog self-fetches with server search separately.
+  const { items: attributes } = useEvalAttributesPage({
+    projectId: observeId,
+    enabled: Boolean(observeId),
+  });
 
   // User mode only — project mode already scopes to a single project.
   const projectFilterField = useProjectFilterField({ enabled: isUserMode });
@@ -4262,7 +4252,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             <CustomColumnDialog
               open={openCustomColumn}
               onClose={() => setOpenCustomColumn(false)}
-              attributes={attributes}
+              projectId={observeId}
               existingColumns={columns[columnKey]}
               onAddColumns={handleAddCustomColumns}
               onRemoveColumns={handleRemoveCustomColumns}

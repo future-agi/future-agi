@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { render as renderWithProviders } from "src/utils/test-utils";
 import CustomColumnDialog from "../CustomColumnDialog";
 
@@ -14,38 +14,57 @@ vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn(),
 }));
 
+// Stub the picker hook so tests can control the items the dialog renders
+// without standing up MSW or a real query client.
+const hookMock = vi.fn();
+vi.mock("src/hooks/use-eval-attributes", () => ({
+  useEvalAttributesInfinite: (...args) => hookMock(...args),
+}));
+
+const baseHookResult = {
+  items: [],
+  totalRows: 0,
+  isLoading: false,
+  isFetching: false,
+  isFetchingNextPage: false,
+  hasMore: false,
+  fetchMore: vi.fn(),
+};
+
 describe("CustomColumnDialog — TH-4139", () => {
   it("surfaces existing custom columns whose ids are not in the attributes list", () => {
-    const onAddColumns = vi.fn();
-    const onRemoveColumns = vi.fn();
+    hookMock.mockReturnValue({
+      ...baseHookResult,
+      items: ["llm.token_count.prompt"],
+    });
     renderWithProviders(
       <CustomColumnDialog
         open
         onClose={vi.fn()}
-        // The "stale" custom column id is not present in the API attributes
-        attributes={["llm.token_count.prompt"]}
+        projectId="proj-1"
         existingColumns={[
           { id: "trace_name" },
           { id: "stale.attribute.id", groupBy: "Custom Columns" },
         ]}
-        onAddColumns={onAddColumns}
-        onRemoveColumns={onRemoveColumns}
+        onAddColumns={vi.fn()}
+        onRemoveColumns={vi.fn()}
       />,
     );
 
-    // The stale custom column appears in the dialog so the user can
-    // see and uncheck it — without this, the dialog would silently
-    // hide the column while it still counted on the panel badge.
     expect(screen.getByText("stale.attribute.id")).toBeInTheDocument();
     expect(screen.getByText("llm.token_count.prompt")).toBeInTheDocument();
   });
 
   it("excludes ids that are already standard columns", () => {
+    hookMock.mockReturnValue({
+      ...baseHookResult,
+      items: ["trace_name", "input", "custom.attr"],
+    });
     renderWithProviders(
       <CustomColumnDialog
         open
         onClose={vi.fn()}
-        attributes={["trace_name", "input", "custom.attr"]}
+        projectId="proj-1"
         existingColumns={[{ id: "trace_name" }, { id: "input" }]}
         onAddColumns={vi.fn()}
         onRemoveColumns={vi.fn()}
@@ -57,13 +76,14 @@ describe("CustomColumnDialog — TH-4139", () => {
   });
 
   it("calls onRemoveColumns for a stale custom column when the user unchecks it", () => {
+    hookMock.mockReturnValue({ ...baseHookResult, items: [] });
     const onRemoveColumns = vi.fn();
     const onAddColumns = vi.fn();
     renderWithProviders(
       <CustomColumnDialog
         open
         onClose={vi.fn()}
-        attributes={[]}
+        projectId="proj-1"
         existingColumns={[
           { id: "stale.attribute.id", groupBy: "Custom Columns" },
         ]}

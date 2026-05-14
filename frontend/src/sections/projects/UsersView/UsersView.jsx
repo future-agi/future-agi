@@ -16,7 +16,6 @@ import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
-import { useQuery } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import {
   useUpdateSavedView,
@@ -178,20 +177,6 @@ const UsersView = ({
       gridApi.sizeColumnsToFit();
     }
   }, [gridApi, autoSizeAllCols]);
-
-  // --- Eval attributes for custom column dialog (mirrors LLMTracingView) ---
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
-  });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   // --- Observe header refresh wiring (TH-4023) ---
   // Expose a refresh callback to the shared ObserveHeader so the refresh
@@ -941,7 +926,7 @@ const UsersView = ({
       <CustomColumnDialog
         open={openCustomColumnDialog}
         onClose={() => setOpenCustomColumnDialog(false)}
-        attributes={attributes}
+        projectId={observeId}
         existingColumns={columns}
         onAddColumns={addCustomColumns}
         onRemoveColumns={removeCustomColumns}

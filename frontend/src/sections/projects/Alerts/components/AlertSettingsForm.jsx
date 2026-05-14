@@ -22,6 +22,7 @@ import {
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import NewTaskFilterRow from "src/sections/common/EvalsTasks/NewTaskDrawer/NewTaskFilterRow";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEvalAttributesPage } from "src/hooks/use-eval-attributes";
 import axios, { endpoints } from "src/utils/axios";
 import { getRandomId } from "src/utils/utils";
 import {
@@ -261,23 +262,18 @@ export default function AlertSettingsForm({
     }
   }, [queryPayload, setThresholdOperator, setWarningValue, setCriticalValue]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({
-            project_id: observeId,
-          }),
-        },
-      }),
+  const { items: evalAttributeKeys } = useEvalAttributesPage({
+    projectId: observeId,
     enabled: !!observeId,
-    select: (data) =>
-      data.data?.result?.map((attr) => ({
+  });
+  const evalAttributes = useMemo(
+    () =>
+      (evalAttributeKeys || []).map((attr) => ({
         label: attr,
         value: attr,
       })),
-  });
+    [evalAttributeKeys],
+  );
 
   const addFilter = () => {
     append({
