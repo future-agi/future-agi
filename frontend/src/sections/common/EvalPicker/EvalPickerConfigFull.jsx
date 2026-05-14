@@ -103,12 +103,9 @@ const SOURCE_NAME_SLUGS = {
   optimization: "optimization",
   "run-optimization": "optimization",
   workbench: "workbench",
-  tracing: "tracing",
   simulation: "simulation",
   "create-simulate": "simulation",
-  test: "test",
   task: "task",
-  custom: "custom",
   composite: "composite",
 };
 
