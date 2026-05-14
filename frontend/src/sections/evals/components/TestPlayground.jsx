@@ -744,19 +744,21 @@ const TestPlayground = React.forwardRef(
         return Array.isArray(requiredKeys) ? [...new Set(requiredKeys)] : [];
       }
 
-      // For code evals: live-parse the user's `def evaluate(...)` / JS
-      // destructuring signature so new params surface in the mapping panel
-      // as soon as they're typed. Fall back to explicit requiredKeys
-      // (system evals define these) and finally to the standard trio.
+      // For code evals: prefer explicit requiredKeys when the template
+      // declares them. System evals always do — the canonical signature
+      // is `evaluate(input, output, expected, context, **kwargs)` and the
+      // real keys live in YAML required_keys, so signature parsing would
+      // surface the wrong field names. Live-parse only when there are no
+      // requiredKeys (user-authored code) so newly typed params still
+      // surface in the mapping panel. Standard trio is the last fallback.
       let codeStdVars = [];
       if (evalType === "code") {
-        const liveParams = extractCodeEvaluateParams(code, codeLanguage);
-        if (liveParams.length > 0) {
-          codeStdVars = liveParams;
-        } else if (Array.isArray(requiredKeys) && requiredKeys.length > 0) {
+        if (Array.isArray(requiredKeys) && requiredKeys.length > 0) {
           codeStdVars = requiredKeys;
         } else {
-          codeStdVars = ["input", "output", "expected"];
+          const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+          codeStdVars =
+            liveParams.length > 0 ? liveParams : ["input", "output", "expected"];
         }
       }
 
