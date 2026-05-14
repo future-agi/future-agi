@@ -71,7 +71,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 size="small"
                 options={GenderOptions}
                 multiple={multiple}
-                checkbox
+                checkbox={multiple}
                 selectAll
               />
               <FormSearchSelectFieldControl
@@ -83,7 +83,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 size="small"
                 options={AgeGroupOptions}
                 multiple={multiple}
-                checkbox
+                checkbox={multiple}
                 selectAll
               />
               <FormSearchSelectFieldControl
@@ -95,7 +95,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 size="small"
                 options={LocationOptions}
                 multiple={multiple}
-                checkbox
+                checkbox={multiple}
                 selectAll
               />
               <FormSearchSelectFieldControl
@@ -107,7 +107,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 size="small"
                 options={ProfessionOptions}
                 multiple={multiple}
-                checkbox
+                checkbox={multiple}
                 selectAll
               />
             </Box>
