@@ -139,8 +139,8 @@ export const DynamicColumns = [
 export const replaceColumnIdWithName = (text, allColumns) => {
   let updatedText = text;
   allColumns.forEach(({ headerName, field }) => {
-    const pattern = new RegExp(`{{\\s*${field}\\s*}}`, "g");
-    updatedText = updatedText.replace(pattern, `{{${headerName}}}`);
+    const pattern = new RegExp(`{{\\s*${field}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+    updatedText = updatedText.replace(pattern, `{{${headerName}$1}}`);
   });
 
   return updatedText;
@@ -149,9 +149,10 @@ export const replaceColumnIdWithName = (text, allColumns) => {
 export const replaceColumnNameWithId = (text, allColumns) => {
   let newText = text;
   allColumns.forEach(({ headerName, field }) => {
-    const pattern = new RegExp(`{{${headerName}}}`, "g");
+    // Note: column names containing dots are not supported (dot is treated as a path separator)
+    const pattern = new RegExp(`{{${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)}}`, "g");
     if (newText && newText.length) {
-      newText = newText.replace(pattern, `{{${field}}}`);
+      newText = newText.replace(pattern, `{{${field}$1}}`);
     }
   });
   return newText;
@@ -165,20 +166,26 @@ export const transformDynamicColumnConfig = (type, config, allColumns) => {
           ...config,
           url: replaceColumnIdWithName(config?.url || "", allColumns),
           body: replaceColumnIdWithName(
-            JSON.stringify(config?.body) || "",
+            typeof config?.body === "string"
+              ? config.body
+              : JSON.stringify(config?.body) || "",
             allColumns,
           ),
           params: Object.entries(config?.params || {}).map(([key, value]) => ({
             id: getRandomId(),
             name: key,
-            value: value.value,
+            value: value.type === "Variable"
+              ? replaceColumnIdWithName(value.value, allColumns)
+              : value.value,
             type: value.type,
           })),
           headers: Object.entries(config?.headers || {}).map(
             ([key, value]) => ({
               id: getRandomId(),
               name: key,
-              value: value.value,
+              value: value.type === "Variable"
+                ? replaceColumnIdWithName(value.value, allColumns)
+                : value.value,
               type: value.type,
             }),
           ),
