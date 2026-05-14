@@ -270,6 +270,9 @@ exclude = [
 [tool.django-stubs]
 django_settings_module = "tfc.settings"
 
+[project.scripts]
+fi-simulate = "sdk.cli.main:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
