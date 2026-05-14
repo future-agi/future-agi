@@ -30,6 +30,7 @@ def system_eval_template(organization, workspace):
         organization=None,
         workspace=None,
         owner=OwnerChoices.SYSTEM.value,
+        eval_type="llm",
         config={"output": "Pass/Fail", "eval_type_id": "CustomPromptEvaluator"},
         eval_tags=["llm", "safety"],
         visible_ui=True,
@@ -44,6 +45,7 @@ def user_eval_template(organization, workspace, user):
         organization=organization,
         workspace=workspace,
         owner=OwnerChoices.USER.value,
+        eval_type="code",
         config={"output": "score", "eval_type_id": "Regex"},
         eval_tags=["code", "function"],
         visible_ui=True,
@@ -58,6 +60,7 @@ def agent_eval_template(organization, workspace):
         organization=organization,
         workspace=workspace,
         owner=OwnerChoices.USER.value,
+        eval_type="agent",
         config={"output": "choices", "eval_type_id": "AgentEval"},
         eval_tags=["agent", "agentic"],
         visible_ui=True,
@@ -426,6 +429,166 @@ class TestEvalTemplateListAPI:
         assert response.status_code == 200
         for item in response.data["result"]["items"]:
             assert item["template_type"] == "single"
+
+
+# =============================================================================
+# E2E API Tests: Negation Filters (TH-4359)
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestEvalListNegationFilters:
+    """Tests for ``_not`` filter variants added in TH-4359."""
+
+    url = "/model-hub/eval-templates/list/"
+
+    # --- eval_type_not ---
+
+    def test_eval_type_not_excludes_matching(
+        self, auth_client, system_eval_template, user_eval_template, agent_eval_template
+    ):
+        """eval_type_not=['code'] should exclude code evals, keep llm and agent."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"eval_type_not": ["code"]}, "page_size": 100},
+            format="json",
+        )
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        eval_types = {item["eval_type"] for item in items}
+        assert "code" not in eval_types
+
+    def test_eval_type_not_keeps_non_matching(
+        self, auth_client, system_eval_template, user_eval_template, agent_eval_template
+    ):
+        """eval_type_not=['llm'] should still return code and agent evals."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"eval_type_not": ["llm"]}, "page_size": 100},
+            format="json",
+        )
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        item_names = {item["name"] for item in items}
+        # user_eval_template is code, agent_eval_template is agent — both should survive
+        assert user_eval_template.name in item_names
+        assert agent_eval_template.name in item_names
+
+    def test_eval_type_not_multiple(
+        self, auth_client, system_eval_template, user_eval_template, agent_eval_template
+    ):
+        """Excluding multiple types leaves only the remaining type."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"eval_type_not": ["llm", "agent"]}, "page_size": 100},
+            format="json",
+        )
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        for item in items:
+            assert item["eval_type"] not in ("llm", "agent")
+
+    # --- created_by_not ---
+
+    def test_created_by_not_excludes_user(
+        self, auth_client, organization, workspace, user
+    ):
+        """created_by_not should exclude evals created by the named user."""
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+        keep_tmpl = EvalTemplate.no_workspace_objects.create(
+            name="keep_this_eval",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "score"},
+            visible_ui=True,
+        )
+        exclude_tmpl = EvalTemplate.no_workspace_objects.create(
+            name="exclude_this_eval",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "score"},
+            visible_ui=True,
+        )
+        # Create versions with different creators
+        EvalTemplateVersion.objects.create(
+            eval_template=keep_tmpl,
+            version_number=1,
+            is_default=True,
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        from accounts.models import User
+
+        other_user = User.objects.create_user(
+            email="other@example.com",
+            password="test",
+            name="OtherUser",
+        )
+        EvalTemplateVersion.objects.create(
+            eval_template=exclude_tmpl,
+            version_number=1,
+            is_default=True,
+            organization=organization,
+            workspace=workspace,
+            created_by=other_user,
+        )
+
+        response = auth_client.post(
+            self.url,
+            {
+                "owner_filter": "user",
+                "filters": {"created_by_not": ["OtherUser"]},
+                "page_size": 100,
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+        item_names = {item["name"] for item in response.data["result"]["items"]}
+        assert "exclude_this_eval" not in item_names
+        assert "keep_this_eval" in item_names
+
+    # --- Serializer accepts _not fields ---
+
+    def test_serializer_accepts_eval_type_not(self, auth_client):
+        """eval_type_not should be accepted without 400."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"eval_type_not": ["llm"]}},
+            format="json",
+        )
+        assert response.status_code == 200
+
+    def test_serializer_accepts_output_type_not(self, auth_client):
+        """output_type_not should be accepted without 400."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"output_type_not": ["pass_fail"]}},
+            format="json",
+        )
+        assert response.status_code == 200
+
+    def test_serializer_accepts_created_by_not(self, auth_client):
+        """created_by_not should be accepted without 400."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"created_by_not": ["SomeUser"]}},
+            format="json",
+        )
+        assert response.status_code == 200
+
+    def test_serializer_rejects_invalid_eval_type_not(self, auth_client):
+        """Invalid choice in eval_type_not should return 400."""
+        response = auth_client.post(
+            self.url,
+            {"filters": {"eval_type_not": ["invalid_type"]}},
+            format="json",
+        )
+        assert response.status_code == 400
 
 
 # =============================================================================
