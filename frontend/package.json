@@ -28,8 +28,9 @@
     "re:build": "yarn rm:all && yarn install && node --max-old-space-size=8192 ./node_modules/.bin/vite build",
     "re:build-npm": "npm run rm:all && npm install && npm run build",
     "dev:host": "vite --host",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "node --max-old-space-size=4096 ./node_modules/.bin/storybook build"
+    "generate-icons": "node scripts/generate-icon-manifest.mjs",
+    "storybook": "node scripts/generate-icon-manifest.mjs && storybook dev -p 6006",
+    "build-storybook": "node scripts/generate-icon-manifest.mjs && node --max-old-space-size=4096 ./node_modules/.bin/storybook build"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.5",
