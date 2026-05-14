@@ -1706,6 +1706,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     templateId={templateId}
                     instructions={evalType === "code" ? "" : instructions}
                     evalType={evalType}
+                    isSystemEval={isSystemEval}
                     requiredKeys={variables}
                     showVersions={!(isSystemEval && evalType === "code")}
                     onTestResult={handleTestResult}

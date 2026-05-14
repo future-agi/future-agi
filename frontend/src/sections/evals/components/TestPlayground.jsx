@@ -631,6 +631,7 @@ const TestPlayground = React.forwardRef(
       configParamsDesc = null,
       code = "",
       codeLanguage = "python",
+      isSystemEval = false,
       onReadyChange,
     },
     ref,
@@ -744,17 +745,18 @@ const TestPlayground = React.forwardRef(
         return Array.isArray(requiredKeys) ? [...new Set(requiredKeys)] : [];
       }
 
-      // For code evals: prefer explicit requiredKeys when the template
-      // declares them. System evals always do — the canonical signature
-      // is `evaluate(input, output, expected, context, **kwargs)` and the
-      // real keys live in YAML required_keys, so signature parsing would
-      // surface the wrong field names. Live-parse only when there are no
-      // requiredKeys (user-authored code) so newly typed params still
-      // surface in the mapping panel. Standard trio is the last fallback.
+      // For code evals: system evals always have the canonical signature
+      // `evaluate(input, output, expected, context, **kwargs)` and store
+      // the real keys in YAML required_keys — use those directly.
+      // User-authored code is live-parsed so newly typed kwargs surface
+      // as mapping rows. Standard trio is the last-resort fallback.
       let codeStdVars = [];
       if (evalType === "code") {
-        if (Array.isArray(requiredKeys) && requiredKeys.length > 0) {
-          codeStdVars = requiredKeys;
+        if (isSystemEval) {
+          codeStdVars =
+            Array.isArray(requiredKeys) && requiredKeys.length > 0
+              ? requiredKeys
+              : ["input", "output", "expected"];
         } else {
           const liveParams = extractCodeEvaluateParams(code, codeLanguage);
           codeStdVars =
@@ -781,6 +783,7 @@ const TestPlayground = React.forwardRef(
       templateFormat,
       code,
       codeLanguage,
+      isSystemEval,
     ]);
 
     // Custom input values
