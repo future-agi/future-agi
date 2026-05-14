@@ -449,11 +449,17 @@ def validate_sort_params_helper(value):
 
 
 def get_annotation_labels_for_project(project_id, organization=None):
-    """Find annotation labels that have at least one annotation/score in a project.
+    """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
-    labels), so we look for labels referenced by Score or TraceAnnotation
-    records whose trace or observation_span belongs to the project.
+    labels), so we look for labels referenced by Score records whose trace or
+    observation_span belongs to the project.
+
+    Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
+    labels. Score is the unified store now (the dual-write mirrors every
+    TraceAnnotation write to Score, so any label in TraceAnnotation is also
+    reachable via Score). Reading both was redundant; reading Score alone
+    is the path forward toward fully retiring TraceAnnotation.
     """
     from django.db.models import Q
 
@@ -470,25 +476,8 @@ def get_annotation_labels_for_project(project_id, organization=None):
         .distinct()
     )
 
-    # Labels with trace annotations for this project
-    try:
-        from tracer.models.trace_annotation import TraceAnnotation
-
-        annotation_label_ids = (
-            TraceAnnotation.objects.filter(
-                Q(observation_span__project_id=project_id)
-                | Q(trace__project_id=project_id),
-            )
-            .values("annotation_label__id")
-            .distinct()
-        )
-    except (ImportError, Exception):
-        annotation_label_ids = Score.objects.none().values("label_id")
-
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id)
-        | Q(id__in=score_label_ids)
-        | Q(id__in=annotation_label_ids),
+        Q(project_id=project_id) | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

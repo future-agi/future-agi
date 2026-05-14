@@ -23,9 +23,11 @@ from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
 try:
-    from ee.voice.tasks.call_log_tasks import ingest_call_logs_task
+    from ee.voice.tasks.call_log_tasks import _ingest_call_logs, ingest_call_logs_task
 except ImportError:
+    _ingest_call_logs = None
     ingest_call_logs_task = None
 
 requires_ee_voice = pytest.mark.skipif(
@@ -37,6 +39,22 @@ requires_ee_voice = pytest.mark.skipif(
 # ============================================================================
 # Fixtures — minimal call_execution with full ancestry
 # ============================================================================
+
+
+@pytest.fixture
+def keep_test_db_connection_open():
+    """The helper closes stale worker connections in production; keep pytest's
+    transaction connection open while exercising the helper directly."""
+    with (
+        patch("ee.voice.tasks.call_log_tasks.close_old_connections", return_value=None),
+        patch("tfc.temporal.drop_in.decorator.close_old_connections", return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _keep_test_db_connection_open(keep_test_db_connection_open):
+    yield
 
 
 @pytest.fixture
@@ -156,6 +174,135 @@ def test_call_execution_serializer_ignores_missing_scenario_row(call_execution):
     )
 
     assert serializer.data["scenario_columns"] == {}
+
+
+def test_call_execution_serializer_exposes_raw_simulation_metrics(call_execution):
+    call_execution.duration_seconds = 42
+    call_execution.response_time_ms = 1234
+    call_execution.avg_agent_latency_ms = 567
+    call_execution.cost_cents = 89
+    call_execution.customer_cost_cents = 123
+    call_execution.save(
+        update_fields=[
+            "duration_seconds",
+            "response_time_ms",
+            "avg_agent_latency_ms",
+            "cost_cents",
+            "customer_cost_cents",
+        ]
+    )
+
+    data = CallExecutionDetailSerializer(call_execution).data
+
+    assert data["duration"] == 42
+    assert data["duration_seconds"] == 42
+    assert data["response_time"] == 1.234
+    assert data["response_time_ms"] == 1234
+    assert data["avg_agent_latency"] == 567
+    assert data["avg_agent_latency_ms"] == 567
+    assert data["cost_cents"] == 89
+    assert data["customer_cost_cents"] == 123
+
+
+def _fake_log_payload(body, severity="INFO", category="llm", ts_ms=1_700_000_000_000):
+    """Build a VAPI-shaped log payload dict."""
+    return {
+        "time": ts_ms,
+        "level": 30,
+        "severityText": severity,
+        "body": body,
+        "attributes": {"category": category},
+    }
+
+
+@pytest.mark.django_db
+@requires_ee_voice
+class TestIngestCallLogsHelper:
+    """_ingest_call_logs — plain-Python helper extracted from the Temporal
+    task so activities can run ingestion inline without chaining a second
+    Temporal activity."""
+
+    def test_persists_rows_and_summary_for_customer_source(self, call_execution):
+        payloads = [
+            _fake_log_payload("first line"),
+            _fake_log_payload("second line", severity="WARN", category="model"),
+        ]
+        with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
+            MockVSM.return_value.iter_call_logs.return_value = iter(payloads)
+
+            ok = _ingest_call_logs(
+                str(call_execution.id),
+                "https://example.com/log",
+                source=CallLogEntry.LogSource.CUSTOMER,
+            )
+
+        assert ok is True
+        rows = CallLogEntry.objects.filter(call_execution=call_execution)
+        assert rows.count() == 2
+        assert set(rows.values_list("source", flat=True)) == {
+            CallLogEntry.LogSource.CUSTOMER
+        }
+
+        call_execution.refresh_from_db()
+        assert call_execution.customer_logs_summary["total_entries"] == 2
+
+    def test_customer_vs_agent_summary_field(self, call_execution):
+        with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
+            MockVSM.return_value.iter_call_logs.return_value = iter(
+                [_fake_log_payload("x")]
+            )
+            _ingest_call_logs(
+                str(call_execution.id),
+                "https://example.com/log",
+                source=CallLogEntry.LogSource.AGENT,
+            )
+
+        call_execution.refresh_from_db()
+        # AGENT source populates logs_summary (not customer_logs_summary)
+        assert call_execution.logs_summary == {
+            "total_entries": 1,
+            "level_counts": {"30": 1},
+            "category_counts": {"llm": 1},
+            "last_logged_at": call_execution.logs_summary["last_logged_at"],
+        }
+        assert not call_execution.customer_logs_summary
+
+    def test_missing_call_execution_returns_false_without_raising(self, db):
+        # Non-existent call id should be handled gracefully (False return)
+        # so the caller's own persistence doesn't get rolled back.
+        ok = _ingest_call_logs(
+            "00000000-0000-0000-0000-000000000000",
+            "https://example.com/log",
+            source=CallLogEntry.LogSource.CUSTOMER,
+        )
+        assert ok is False
+
+
+# ============================================================================
+# ingest_call_logs_task — legacy wrapper forwards to helper
+# ============================================================================
+
+
+@pytest.mark.django_db
+@requires_ee_voice
+def test_ingest_call_logs_task_delegates_to_helper(call_execution):
+    """The Temporal-decorated wrapper must remain a thin pass-through so the
+    legacy TestExecutor code path continues working. Run it on an empty
+    iterator — the wrapper's only job is to forward args to the helper."""
+    with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
+        MockVSM.return_value.iter_call_logs.return_value = iter([])
+        ok = ingest_call_logs_task(
+            str(call_execution.id),
+            "https://example.com/log",
+            verify_ssl=False,
+            source=CallLogEntry.LogSource.CUSTOMER,
+        )
+
+    assert ok is True
+    MockVSM.return_value.iter_call_logs.assert_called_once_with(
+        url="https://example.com/log",
+        verify_ssl=False,
+    )
 
 
 @requires_ee_voice

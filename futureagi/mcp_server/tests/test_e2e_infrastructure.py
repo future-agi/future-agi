@@ -20,6 +20,8 @@ from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
 
+pytestmark = pytest.mark.e2e
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

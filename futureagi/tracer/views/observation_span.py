@@ -1742,10 +1742,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Add Span Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(
-                project__id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+            annotation_labels = get_annotation_labels_for_project(
+                project_id,
+                getattr(request, "organization", None) or request.user.organization,
             )
             base_query = build_annotation_subqueries(
                 base_query,
@@ -3379,7 +3378,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # LEFT JOIN on nullable workspace FK that triggers
                     # PostgreSQL's "FOR UPDATE cannot be applied to the
                     # nullable side of an outer join".
-                    Score.no_workspace_objects.update_or_create(
+                    score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
                         annotator_id=request.user.pk,

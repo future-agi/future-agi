@@ -24,6 +24,7 @@ import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
 import { useQuery } from "@tanstack/react-query";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
 
@@ -260,7 +261,9 @@ const SpanTab = React.forwardRef(
               {
                 params: {
                   filters: JSON.stringify(
-                    objectCamelToSnake(debouncedValidatedFilters),
+                    canonicalizeApiFilterColumnIds(
+                      objectCamelToSnake(debouncedValidatedFilters),
+                    ),
                   ),
                   project: projectId,
                   project_version_id: runId,

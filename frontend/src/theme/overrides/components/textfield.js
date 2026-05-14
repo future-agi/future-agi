@@ -33,9 +33,6 @@ export function textField(theme) {
 
     // LABEL
     MuiFormLabel: {
-      defaultProps: {
-        shrink: true, // Makes all labels shrink by default
-      },
       styleOverrides: {
         asterisk: {
           color: theme.palette.red[500],

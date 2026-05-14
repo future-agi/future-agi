@@ -631,8 +631,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
     });
   };
 
-  
- 
   const toLegacyEvalShape = (evalConfig, versionedName) => {
     const serialized = serializeEvalConfig(evalConfig);
     return {

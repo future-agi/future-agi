@@ -18,6 +18,14 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 from django.utils import timezone
 
+
+@pytest.fixture(autouse=True)
+def _allow_usage_metering():
+    """These workflow tests mock execution; billing limit behavior is tested separately."""
+    with patch("ee.usage.services.metering.check_usage") as mock_check_usage:
+        mock_check_usage.return_value = MagicMock(allowed=True)
+        yield mock_check_usage
+
 # =============================================================================
 # SECTION 1: Run Prompt E2E Flow Tests
 # =============================================================================

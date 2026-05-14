@@ -30,6 +30,18 @@ from simulate.models.simulator_agent import SimulatorAgent
 
 
 @pytest.fixture
+def allow_ee_feature_checks():
+    """Scenario API tests exercise validation/workflow behavior, not plan gates."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _allow_ee_feature_checks_for_scenario_api(allow_ee_feature_checks):
+    yield
+
+
+@pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
     return AgentDefinition.objects.create(
@@ -1055,7 +1067,7 @@ class TestAddScenarioRowsView:
         scenario.dataset = dataset_with_rows
         scenario.save()
 
-        payload = {"num_rows": 5, "description": "Additional test rows"}
+        payload = {"num_rows": 10, "description": "Additional test rows"}
 
         response = auth_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1063,12 +1075,12 @@ class TestAddScenarioRowsView:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
-        assert data["num_rows"] == 5
+        assert data["num_rows"] == 10
         mock_workflow.assert_called_once()
 
     def test_add_rows_unauthenticated(self, api_client, scenario):
         """Test adding rows without authentication returns 401/403."""
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = api_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1082,7 +1094,7 @@ class TestAddScenarioRowsView:
     def test_add_rows_scenario_not_found(self, auth_client):
         """Test adding rows to non-existent scenario returns 404."""
         fake_id = uuid.uuid4()
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = auth_client.post(
             f"/simulate/scenarios/{fake_id}/add-rows/", payload, format="json"
@@ -1101,7 +1113,7 @@ class TestAddScenarioRowsView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "does not have an associated dataset" in response.json()["error"]
+        assert "does not have an associated dataset" in response.json()["result"]
 
     def test_add_rows_invalid_num_rows_zero(
         self, auth_client, scenario, dataset_with_rows

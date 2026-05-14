@@ -8,6 +8,7 @@ import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useGetValidatedFilters } from "src/hooks/use-get-validated-filters";
@@ -224,7 +225,11 @@ const UsersGrid = React.memo(
                   : null,
                 page_size: pageSize,
                 current_page_index: pageNumber,
-                filters: JSON.stringify(objectCamelToSnake(validatedFilters)),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds(
+                    objectCamelToSnake(validatedFilters),
+                  ),
+                ),
               },
             });
 

@@ -16,6 +16,7 @@ from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
+from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -177,6 +178,8 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except FeatureUnavailable:
+            raise
         except Exception as e:
             logger.exception("org_config_create_error", error=str(e))
             return self._gm.bad_request(str(e))

@@ -4,6 +4,9 @@ import { Chip } from "@mui/material";
 const STATUS_CONFIG = {
   pending: { label: "Pending", color: "default" },
   in_progress: { label: "In Progress", color: "info" },
+  in_review: { label: "In Review", color: "warning" },
+  needs_changes: { label: "Needs Changes", color: "error" },
+  resubmitted: { label: "Resubmitted", color: "info" },
   completed: { label: "Completed", color: "success" },
   skipped: { label: "Skipped", color: "warning" },
 };

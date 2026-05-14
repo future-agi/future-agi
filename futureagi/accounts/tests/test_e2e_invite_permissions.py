@@ -555,10 +555,10 @@ class TestTargetUserStateVariations:
         # User is created (inactive) via dual-write
         assert User.objects.filter(email="brand.new@example.com").exists()
 
-    def test_invite_existing_active_user_same_org_returns_error(
+    def test_invite_existing_active_user_same_org_returns_already_member(
         self, auth_client, organization, workspace
     ):
-        """Inviting an existing active user already in same org — returns error."""
+        """Inviting an existing active user in the same org is idempotent."""
         existing = _make_user_with_role(
             organization, "existing@futureagi.com", "Member", Level.MEMBER
         )
@@ -567,7 +567,9 @@ class TestTargetUserStateVariations:
             _invite_payload(existing.email, Level.MEMBER, workspace),
             format="json",
         )
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST, resp.json()
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        result = resp.json().get("result", resp.json())
+        assert result == {"invited": [], "already_members": [existing.email]}
 
     def test_invite_existing_user_different_org(
         self, auth_client, organization, workspace, user

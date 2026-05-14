@@ -30,7 +30,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
@@ -46,7 +45,6 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion, ProjectVersionWinner
 from tracer.models.trace import Trace
-from tracer.models.trace_annotation import TraceAnnotation
 from tracer.serializers.project import ProjectVersionExportSerializer
 from tracer.serializers.project_version import ProjectVersionSerializer
 from tracer.utils.filters import ColType, FilterEngine
@@ -57,6 +55,8 @@ from tracer.utils.helper import (
     update_run_column_config_based_on_annotations,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+logger = structlog.get_logger(__name__)
 
 ## TODO: need a major revamp. queries are wrong.
 
@@ -392,6 +392,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             else:
                 return self._gm.bad_request(serializer.errors)
 
+            request_organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+
             # Build the base query with all necessary annotations
             base_query = ObservationSpan.objects.filter(
                 project_id=project_id,
@@ -428,8 +432,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             try:
                 project = Project.objects.get(
                     id=project_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=request_organization,
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
@@ -562,31 +565,48 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                         option["label"] for option in label.settings["options"]
                     ]
 
-                score_base_filter = dict(
-                    observation_span__project_version_id=OuterRef("project_version_id"),
-                    label_id=label.id,
-                    organization=request.user.organization,
-                    deleted=False,
-                )
+                score_base_filter = {
+                    "observation_span__project_version_id": OuterRef(
+                        "project_version_id"
+                    ),
+                    "label_id": label.id,
+                    "organization": request_organization,
+                    "deleted": False,
+                }
 
+                # Project version annotation rollup. Reads from the unified
+                # ``Score`` model — the JSON paths (``value__value``,
+                # ``value__selected__contains``) match Score.value's schema.
+                # Pre-deprecation this queried ``TraceAnnotation`` (whose
+                # value lives in typed columns ``annotation_value_float``
+                # etc.), so those JSON paths returned no rows. Swapping to
+                # Score makes the query correct.
                 metric_subquery = (
-                    TraceAnnotation.objects.filter(
+                    Score.objects.filter(
                         observation_span__project_version_id=OuterRef(
                             "project_version_id"
                         ),
-                        annotation_label__id=label.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        label_id=label.id,
+                        observation_span__project__organization=request_organization,
+                        deleted=False,
                     )
-                    .values("annotation_label__id")
+                    .values("label_id")
                     .annotate(
+                        # Score stores numeric labels as ``{"value": <float>}``
+                        # but STAR labels as ``{"rating": <float>}`` (see
+                        # tracer/views/annotation.py:_to_score_value).
+                        # Coalesce both so star ratings show up in rollups.
                         annotation_float_score=Round(
                             Avg(
-                                Cast(
-                                    KeyTextTransform("value", "value"),
-                                    FloatField(),
+                                Coalesce(
+                                    Cast(
+                                        KeyTextTransform("value", "value"),
+                                        FloatField(),
+                                    ),
+                                    Cast(
+                                        KeyTextTransform("rating", "value"),
+                                        FloatField(),
+                                    ),
                                 )
                             ),
                             2,
@@ -643,7 +663,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                                     Score.objects.filter(
                                         **score_base_filter,
                                     )
-                                    .exclude(value__value__isnull=True)
+                                    # Numeric stores ``{value: float}``; STAR
+                                    # stores ``{rating: float}``. Existence
+                                    # check accepts either path so star
+                                    # ratings aren't filtered out.
+                                    .filter(
+                                        Q(value__value__isnull=False)
+                                        | Q(value__rating__isnull=False)
+                                    )
                                     .filter(
                                         label__type__in=[
                                             AnnotationTypeChoices.NUMERIC.value,
@@ -1320,12 +1347,15 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 raise Exception("Project id is required")
 
+            request_organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+
             # Get project and validate access
             try:
                 project = Project.objects.get(
                     id=project_id,
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    organization=request_organization,
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found")
@@ -1509,31 +1539,43 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                         option["label"] for option in label.settings.get("options", [])
                     ]
 
-                score_base_filter = dict(
-                    observation_span__project_version_id=OuterRef("project_version_id"),
-                    label_id=label.id,
-                    organization=request.user.organization,
-                    deleted=False,
-                )
+                score_base_filter = {
+                    "observation_span__project_version_id": OuterRef(
+                        "project_version_id"
+                    ),
+                    "label_id": label.id,
+                    "organization": request_organization,
+                    "deleted": False,
+                }
 
+                # Same Score-based rollup as the first metric_subquery —
+                # see comment above for context.
                 metric_subquery = (
-                    TraceAnnotation.objects.filter(
+                    Score.objects.filter(
                         observation_span__project_version_id=OuterRef(
                             "project_version_id"
                         ),
-                        annotation_label__id=label.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        label_id=label.id,
+                        observation_span__project__organization=request_organization,
+                        deleted=False,
                     )
-                    .values("annotation_label__id")
+                    .values("label_id")
                     .annotate(
+                        # Score stores numeric labels as ``{"value": <float>}``
+                        # but STAR labels as ``{"rating": <float>}`` (see
+                        # tracer/views/annotation.py:_to_score_value).
+                        # Coalesce both so star ratings show up in rollups.
                         annotation_float_score=Round(
                             Avg(
-                                Cast(
-                                    KeyTextTransform("value", "value"),
-                                    FloatField(),
+                                Coalesce(
+                                    Cast(
+                                        KeyTextTransform("value", "value"),
+                                        FloatField(),
+                                    ),
+                                    Cast(
+                                        KeyTextTransform("rating", "value"),
+                                        FloatField(),
+                                    ),
                                 )
                             ),
                             2,
@@ -1596,7 +1638,14 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                                     Score.objects.filter(
                                         **score_base_filter,
                                     )
-                                    .exclude(value__value__isnull=True)
+                                    # Numeric stores ``{value: float}``; STAR
+                                    # stores ``{rating: float}``. Existence
+                                    # check accepts either path so star
+                                    # ratings aren't filtered out.
+                                    .filter(
+                                        Q(value__value__isnull=False)
+                                        | Q(value__rating__isnull=False)
+                                    )
                                     .filter(
                                         label__type__in=[
                                             AnnotationTypeChoices.NUMERIC.value,
