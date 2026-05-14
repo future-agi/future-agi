@@ -3516,6 +3516,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         except NotFound:
             raise
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in fetching voice calls list: {str(e)}")
             return self._gm.bad_request("Failed to fetch voice calls")
