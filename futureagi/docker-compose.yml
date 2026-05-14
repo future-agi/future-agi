@@ -58,9 +58,12 @@ services:
       - FAST_STARTUP=${FAST_STARTUP:-true}
       - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
-      # Read replica: uncomment to test read/write split locally (points to same DB)
+      # Read replica: uncomment to test read/write split locally (points to same DB).
+      # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
+      # routing to happen. See .env.example for the full list of feature keys.
       # - PGBOUNCER_READ_HOST=pgbouncer
       # - PGBOUNCER_READ_PORT=6432
+      # - READ_REPLICA_OPT_IN=feature:org_config_bulk
     depends_on:
       pgbouncer:
         condition: service_started

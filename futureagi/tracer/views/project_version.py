@@ -36,10 +36,12 @@ from model_hub.models.score import Score
 from model_hub.serializers.develop_annotations import (
     AnnotationProjectVersionMapperSerializer,
 )
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message, get_specific_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
+from tracer.db_routing import DATABASE_FOR_PROJECT_VERSION_IDS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
@@ -1029,9 +1031,16 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @action(detail=False, methods=["get"])
+    @uses_db(
+        DATABASE_FOR_PROJECT_VERSION_IDS,
+        feature_key="feature:project_version_ids",
+    )
     def get_project_version_ids(self, request, *args, **kwargs):
         try:
-            queryset = self.get_queryset()
+            # KNOWN PERF BUG (independent of routing): this paginates in
+            # memory after serializing the entire queryset. Worth fixing
+            # separately to push pagination down to SQL.
+            queryset = self.get_queryset().using(DATABASE_FOR_PROJECT_VERSION_IDS)
             serializer = self.get_serializer(queryset, many=True)
 
             project_version_ids = [

@@ -226,31 +226,91 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
+def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
+    """
+    Build a Postgres config dict for a Django DATABASES alias.
+
+    Mirrors PostHog's `postgres_config()` helper. The `default`, `replica`,
+    and `default_direct` aliases differ only by host/port and (for
+    default_direct) cursor + lock-timeout options, so we factor the shared
+    config here.
+
+    Behaviour note: an empty-string `port` or `name` falls back to the
+    PG_DB / PGBOUNCER_PORT defaults via `or` semantics. The previous
+    DATABASES block preserved empty strings verbatim — this is a small,
+    intentional behaviour change because an empty PORT / NAME would have
+    failed anyway at connection time.
+    """
+    cfg = {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("PG_DB", "tfc"),
+        "NAME": name or os.getenv("PG_DB", "tfc"),
         "USER": os.getenv("PG_USER", "user"),
         "PASSWORD": os.getenv("PG_PASSWORD", "password"),
-        "HOST": os.getenv("PGBOUNCER_HOST", "pgbouncer"),
-        "PORT": os.getenv("PGBOUNCER_PORT", 6432),
+        "HOST": host,
+        "PORT": port or os.getenv("PGBOUNCER_PORT", 6432),
         "CONN_MAX_AGE": 0,
-        "CONN_HEALTH_CHECKS": True,  # Verify connection is alive before use (prevents stale PgBouncer connections)
-        "DISABLE_SERVER_SIDE_CURSORS": True,  # Required for PgBouncer transaction pooling
-    },
+        # Verify connection is alive before use (prevents stale PgBouncer connections)
+        "CONN_HEALTH_CHECKS": True,
+        # Required for PgBouncer transaction pooling (server-side cursors need session persistence)
+        "DISABLE_SERVER_SIDE_CURSORS": disable_cursors,
+    }
+    if options is not None:
+        cfg["OPTIONS"] = options
+    return cfg
+
+
+DATABASES = {
+    "default": _pg_config(os.getenv("PGBOUNCER_HOST", "pgbouncer")),
 }
 
 # Read replica — only enabled when PGBOUNCER_READ_HOST is set.
 # Falls back to default when not configured, so safe to deploy without a replica.
 _read_host = os.getenv("PGBOUNCER_READ_HOST")
 if _read_host:
-    DATABASES["replica"] = {
-        **DATABASES["default"],
-        "HOST": _read_host,
-        "PORT": os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
-        "NAME": os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
-        "TEST": {"MIRROR": "default"},  # Tests use default DB, not a real replica
-    }
+    DATABASES["replica"] = _pg_config(
+        _read_host,
+        port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
+        name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
+    )
+    DATABASES["replica"]["TEST"] = {"MIRROR": "default"}  # Tests use default DB, not a real replica
+
+# Direct connection (bypasses PgBouncer) — used for migrations that need
+# `lock_timeout` set at connection time. PgBouncer transaction-pool mode
+# does not persist session-level SET statements between transactions, so a
+# `SET lock_timeout` issued by the migration runner would not survive.
+# This connection has server-side cursors ENABLED (no PgBouncer to break
+# them) — useful for data-migration scripts that iterate over large tables.
+_direct_host = os.getenv("PG_DIRECT_HOST")
+if _direct_host:
+    # Defensive: malformed env var should not crash Django at import time.
+    try:
+        _lock_timeout_ms = int(os.getenv("PG_MIGRATION_LOCK_TIMEOUT_MS", "20000"))
+    except (TypeError, ValueError):
+        _lock_timeout_ms = 20000
+    DATABASES["default_direct"] = _pg_config(
+        _direct_host,
+        port=os.getenv("PG_DIRECT_PORT", "5432"),
+        disable_cursors=False,
+        options={"options": f"-c lock_timeout={_lock_timeout_ms}"},
+    )
+    DATABASES["default_direct"]["TEST"] = {"MIRROR": "default"}
+
+# Opt-in list for read-replica routing. Comma-separated.
+# Accepts TWO kinds of strings, NAMESPACED to avoid collision:
+#   - Bare model class names (e.g. "Dashboard", "SavedView") — ReadReplicaRouter
+#     routes those models to the replica.
+#   - Feature/path keys prefixed with "feature:" (e.g. "feature:dashboard_render")
+#     — hot-path code checks these and switches its `db_manager()` target
+#     manually. The router ignores prefixed keys.
+# Special value 'ALL_MODELS_USE_READ_REPLICA' routes every model — DO NOT use
+# outside a controlled load-shed experiment (we have ~245 atomic/locking
+# sites; routing everything is a consistency incident waiting to happen).
+#
+# IMPORTANT: env-var changes only take effect after worker restart. The
+# router re-reads settings per call, but feature-key constants in hot paths
+# are computed at import time.
+_opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
+READ_REPLICA_OPT_IN: list[str] = [s.strip() for s in _opt_in_raw.split(",") if s.strip()]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 

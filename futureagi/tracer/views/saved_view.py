@@ -4,8 +4,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_SAVED_VIEW_LIST
 from tracer.models.project import Project
 from tracer.models.saved_view import SavedView
 from tracer.serializers.saved_view import (
@@ -66,17 +68,28 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # LIST — returns default tabs + custom views
     # ------------------------------------------------------------------
 
+    @uses_db(DATABASE_FOR_SAVED_VIEW_LIST, feature_key="feature:saved_view_list")
     def list(self, request, *args, **kwargs):
         try:
             project_id = request.query_params.get("project_id")
             if project_id:
-                # Verify project exists and user has access
+                # Existence check only — does NOT validate workspace/user
+                # access for this project. Workspace/user access is enforced
+                # by `BaseModelViewSetMixin.get_queryset()` below (the actual
+                # SavedView rows it returns are already workspace/user-scoped).
+                # Stays on `default`: Project isn't opted in to replica
+                # routing, and a stale 404 here would be confusing right
+                # after a project create.
                 try:
                     Project.objects.get(id=project_id)
                 except Project.DoesNotExist:
                     return self._gm.not_found("Project not found.")
 
-            queryset = self.get_queryset()
+            # Route the saved-view list read to the replica when the
+            # feature key is opted in. See tracer/db_routing.py.
+            # No-op (stays on "default") until READ_REPLICA_OPT_IN includes
+            # "feature:saved_view_list".
+            queryset = self.get_queryset().using(DATABASE_FOR_SAVED_VIEW_LIST)
             serializer = SavedViewListSerializer(
                 queryset, many=True, context={"request": request}
             )
