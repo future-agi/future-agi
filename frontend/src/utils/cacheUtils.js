@@ -2,7 +2,29 @@
  * Utility functions for managing React Query cache
  */
 
+import { isCancelledError } from "@tanstack/react-query";
+
 import logger from "./logger";
+
+// invalidate/refetch return Promises that reject with a cancellation error
+// whenever react-query supersedes an in-flight fetch for the same key. These
+// callers are intentionally fire-and-forget, so we drop those rejections on
+// the floor and only log real failures.
+//
+// react-query's CancelledError extends Error but never sets `this.name`, so
+// `err.name` is "Error" in production and `err.constructor.name` gets mangled
+// by the minifier — only `isCancelledError` (instanceof check) is reliable.
+// Axios sets `name = "CanceledError"` itself so the name check works there.
+const swallowCancellations = (label) => (error) => {
+  const name = error?.name;
+  const isCancelled =
+    isCancelledError(error) ||
+    name === "CanceledError" ||
+    name === "AbortError" ||
+    error?.code === "ERR_CANCELED";
+  if (isCancelled) return;
+  logger.error(label, error);
+};
 
 /**
  * Invalidates and refetches dataset list cache
@@ -14,18 +36,17 @@ export const invalidateDatasetListCache = (queryClient) => {
     return;
   }
 
-  try {
-    // Invalidate all dataset-related queries
-    queryClient.invalidateQueries({
-      queryKey: ["develop", "dataset-name-list"],
-    });
-    queryClient.invalidateQueries({ queryKey: ["develop", "dataset-list"] });
+  const onError = swallowCancellations("Error invalidating dataset cache:");
 
-    // Force refetch to ensure immediate update
-    queryClient.refetchQueries({ queryKey: ["develop", "dataset-name-list"] });
-  } catch (error) {
-    logger.error("Error invalidating dataset cache:", error);
-  }
+  queryClient
+    .invalidateQueries({ queryKey: ["develop", "dataset-name-list"] })
+    .catch(onError);
+  queryClient
+    .invalidateQueries({ queryKey: ["develop", "dataset-list"] })
+    .catch(onError);
+  queryClient
+    .refetchQueries({ queryKey: ["develop", "dataset-name-list"] })
+    .catch(onError);
 };
 
 /**
@@ -39,12 +60,14 @@ export const invalidateExperimentCache = (queryClient, datasetId = null) => {
     return;
   }
 
-  try {
-    queryClient.invalidateQueries({ queryKey: ["experiments"] });
-    if (datasetId) {
-      queryClient.invalidateQueries({ queryKey: ["experiments", datasetId] });
-    }
-  } catch (error) {
-    logger.error("Error invalidating experiment cache:", error);
+  const onError = swallowCancellations("Error invalidating experiment cache:");
+
+  queryClient
+    .invalidateQueries({ queryKey: ["experiments"] })
+    .catch(onError);
+  if (datasetId) {
+    queryClient
+      .invalidateQueries({ queryKey: ["experiments", datasetId] })
+      .catch(onError);
   }
 };
