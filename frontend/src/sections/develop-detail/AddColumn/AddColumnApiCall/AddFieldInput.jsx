@@ -6,9 +6,10 @@ import { FormSelectField } from "src/components/FormSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import Iconify from "src/components/iconify";
 import SecretSelect from "src/sections/common/SecretSelect/SecretSelect";
+import RequestBody from "./RequestBody";
 import { getRandomId } from "src/utils/utils";
 
-const ValueSelector = ({ control, field, type, allColumns }) => {
+const ValueSelector = ({ control, field, type, allColumns, jsonSchemas }) => {
   if (type === "PlainText") {
     return (
       <FormTextFieldV2
@@ -24,16 +25,14 @@ const ValueSelector = ({ control, field, type, allColumns }) => {
 
   if (type === "Variable") {
     return (
-      <FormSelectField
+      <RequestBody
         control={control}
-        fieldName={field}
-        size="small"
-        label="Value"
-        fullWidth
-        options={allColumns.map((c) => ({
-          label: c.headerName,
-          value: c.field,
-        }))}
+        contentFieldName={field}
+        allColumns={allColumns}
+        jsonSchemas={jsonSchemas}
+        placeholder="{{variable}}"
+        multiline={false}
+        showHelper={false}
       />
     );
   }
@@ -58,6 +57,7 @@ ValueSelector.propTypes = {
   field: PropTypes.string,
   type: PropTypes.string,
   allColumns: PropTypes.array,
+  jsonSchemas: PropTypes.object,
 };
 
 const AddFieldInputRow = ({
@@ -66,6 +66,7 @@ const AddFieldInputRow = ({
   index,
   onRemove,
   allColumns,
+  jsonSchemas,
 }) => {
   const type = useWatch({ control, name: `${fieldPrefix}.${index}.type` });
 
@@ -96,6 +97,7 @@ const AddFieldInputRow = ({
         field={`${fieldPrefix}.${index}.value`}
         type={type}
         allColumns={allColumns}
+        jsonSchemas={jsonSchemas}
       />
       <IconButton size="small" onClick={() => onRemove(index)}>
         <Iconify
@@ -114,9 +116,10 @@ AddFieldInputRow.propTypes = {
   index: PropTypes.number,
   onRemove: PropTypes.func,
   allColumns: PropTypes.array,
+  jsonSchemas: PropTypes.object,
 };
 
-const AddFieldInput = ({ control, fieldName, allColumns }) => {
+const AddFieldInput = ({ control, fieldName, allColumns, jsonSchemas }) => {
   const { fields, append, remove } = useFieldArray({
     control,
     name: fieldName,
@@ -141,6 +144,7 @@ const AddFieldInput = ({ control, fieldName, allColumns }) => {
           control={control}
           onRemove={remove}
           allColumns={allColumns}
+          jsonSchemas={jsonSchemas}
         />
       ))}
       <Box>
@@ -169,6 +173,7 @@ AddFieldInput.propTypes = {
   control: PropTypes.object,
   fieldName: PropTypes.string,
   allColumns: PropTypes.array,
+  jsonSchemas: PropTypes.object,
 };
 
 export default AddFieldInput;
