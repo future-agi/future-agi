@@ -2249,10 +2249,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
