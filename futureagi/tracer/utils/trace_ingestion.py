@@ -17,7 +17,13 @@ from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
 from tfc.temporal import temporal_activity
 from tfc.utils.payload_storage import payload_storage
-from tracer.models.observation_span import EndUser, ObservationSpan, Trace
+from tracer.models.observation_span import (
+    EndUser,
+    ObservationSpan,
+    Trace,
+    UserIdType,
+    normalize_user_id_type as _norm_uid_type,
+)
 from tracer.models.project import Project
 from tracer.models.trace_session import TraceSession
 from tracer.tasks.trace_scanner import scan_traces_task
@@ -264,7 +270,7 @@ def _fetch_or_create_end_users(
                 str(end_user["user_id"]),
                 str(organization_id),
                 str(end_user["project"].id),
-                end_user.get("user_id_type"),
+                _norm_uid_type(end_user.get("user_id_type")),
             )
             end_user_keys.add(key)
 
@@ -302,7 +308,7 @@ def _fetch_or_create_end_users(
                 user_id=str(end_user["user_id"]),
                 organization_id=organization_id,
                 project=end_user["project"],
-                user_id_type=end_user.get("user_id_type"),
+                user_id_type=_norm_uid_type(end_user.get("user_id_type")),
                 user_id_hash=end_user.get("user_id_hash"),
                 metadata=end_user.get("metadata", {}),
             )
@@ -460,7 +466,7 @@ def _link_end_user(observation_span_data, parsed_data, all_end_users, organizati
         str(end_user_info["user_id"]),
         str(organization_id),
         str(parsed_data["project"].id),
-        end_user_info.get("user_id_type"),
+        _norm_uid_type(end_user_info.get("user_id_type")),
     )
     if end_user_key in all_end_users:
         observation_span_data["end_user"] = all_end_users[end_user_key]
