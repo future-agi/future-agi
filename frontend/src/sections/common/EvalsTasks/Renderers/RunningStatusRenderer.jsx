@@ -7,6 +7,7 @@ import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
 import { OutlinedButton } from "src/sections/project-detail/ProjectDetailComponents";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { black, green, orange, red } from "src/theme/palette";
 import { alpha } from "@mui/material";
 
@@ -54,9 +55,16 @@ const RunningStatusRenderer = ({ value, data, api }) => {
 
   const { mutate: resumeEvalTask } = useMutation({
     mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id)),
+    meta: { errorHandled: true },
     onSuccess: (_) => {
       api.applyServerSideTransaction({
         update: [{ ...data, status: "running" }],
+      });
+    },
+    onError: () => {
+      api.refreshServerSide?.();
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
       });
     },
   });

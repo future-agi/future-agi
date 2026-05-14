@@ -18,6 +18,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import DeleteConfirmation from "./DeleteConfirmation";
 
 // ── Status Config ──
@@ -330,7 +331,14 @@ const TaskListView = ({
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
       axios.post(endpoints.project.resumeEvalTask(taskId)),
+    meta: { errorHandled: true },
     onSuccess: () => refetch(),
+    onError: () => {
+      refetch();
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
+      });
+    },
   });
 
   // Delete mutation
