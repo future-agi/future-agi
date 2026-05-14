@@ -273,7 +273,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
             </CardContent>
           </Card>
 
-          {/* Labels & Annotators */}
+          {/* Labels & Members */}
           <Card
             elevation={0}
             sx={{
@@ -296,7 +296,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                 />
 
                 <Divider />
-                <Typography variant="subtitle1">Annotators</Typography>
+                <Typography variant="subtitle1">Members</Typography>
                 <AnnotatorPicker
                   value={annotators}
                   onChange={(a) =>
@@ -352,7 +352,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                       inputProps={{ min: 1, max: 10 }}
                       helperText={
                         fieldState.error?.message ||
-                        "Number of annotators that must complete each item"
+                        "Number of members with the Annotator role that must complete each item"
                       }
                       FormHelperTextProps={{ sx: { ml: 0 } }}
                       sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
@@ -406,11 +406,11 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                           fontWeight={500}
                           color="text.primary"
                         >
-                          Auto-assign items to all annotators
+                          Auto-assign items to all annotator members
                         </Typography>
                         <Typography variant="caption" color="text.disabled">
-                          When on, all annotators are assigned to every item and
-                          anyone can annotate any item
+                          When on, all members with the Annotator role are
+                          assigned to every item and can annotate any item
                         </Typography>
                       </Box>
                     }

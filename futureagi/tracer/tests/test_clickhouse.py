@@ -329,6 +329,37 @@ class TestClickHouseFilterBuilder:
         assert where == ""
         assert params == {}
 
+    def test_translate_global_annotator_multi_value_filter(self):
+        """Multiple annotators should match the union of traces they annotated."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        user_ids = [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ]
+        builder = ClickHouseFilterBuilder()
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": user_ids,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "trace_id IN" in where
+        assert "model_hub_score AS s FINAL" in where
+        assert "s.annotator_id IN" in where
+        assert "toUUID(%(uid_1)s), toUUID(%(uid_2)s)" in where
+        assert params == {"uid_1": user_ids[0], "uid_2": user_ids[1]}
+
     def test_translate_system_metric_equals(self):
         """SYSTEM_METRIC equals filter should map to direct column comparison."""
         from tracer.services.clickhouse.query_builders.filters import (

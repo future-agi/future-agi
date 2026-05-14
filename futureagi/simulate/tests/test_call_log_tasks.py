@@ -176,6 +176,34 @@ def test_call_execution_serializer_ignores_missing_scenario_row(call_execution):
     assert serializer.data["scenario_columns"] == {}
 
 
+def test_call_execution_serializer_exposes_raw_simulation_metrics(call_execution):
+    call_execution.duration_seconds = 42
+    call_execution.response_time_ms = 1234
+    call_execution.avg_agent_latency_ms = 567
+    call_execution.cost_cents = 89
+    call_execution.customer_cost_cents = 123
+    call_execution.save(
+        update_fields=[
+            "duration_seconds",
+            "response_time_ms",
+            "avg_agent_latency_ms",
+            "cost_cents",
+            "customer_cost_cents",
+        ]
+    )
+
+    data = CallExecutionDetailSerializer(call_execution).data
+
+    assert data["duration"] == 42
+    assert data["duration_seconds"] == 42
+    assert data["response_time"] == 1.234
+    assert data["response_time_ms"] == 1234
+    assert data["avg_agent_latency"] == 567
+    assert data["avg_agent_latency_ms"] == 567
+    assert data["cost_cents"] == 89
+    assert data["customer_cost_cents"] == 123
+
+
 def _fake_log_payload(body, severity="INFO", category="llm", ts_ms=1_700_000_000_000):
     """Build a VAPI-shaped log payload dict."""
     return {

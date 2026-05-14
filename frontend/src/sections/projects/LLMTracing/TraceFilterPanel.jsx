@@ -35,6 +35,13 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import { useAIFilter } from "src/hooks/use-ai-filter";
 import { QueryInput } from "src/components/filter-panel";
+import {
+  getPickerOptionExactMatches,
+  getPickerOptionLabel,
+  getPickerOptionSearchText,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "./filterValuePickerUtils";
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
@@ -152,6 +159,8 @@ const THUMBS_OPS = [
   { value: "is_not", label: "is not" },
 ];
 
+const ANNOTATOR_OPS = [{ value: "is", label: "is" }];
+
 // Direct ID columns on `spans` — the dashboard filter pipeline resolves
 // them via equality only (no col_type, no LIKE/IN expansion), so any
 // other operator silently no-ops. Restrict the UI accordingly.
@@ -223,6 +232,7 @@ const normalizeFieldType = (rawType) => {
 const getOperators = (fieldType) => {
   if (fieldType === "categorical") return CATEGORICAL_OPS;
   if (fieldType === "thumbs") return THUMBS_OPS;
+  if (fieldType === "annotator") return ANNOTATOR_OPS;
   if (fieldType === "text") return TEXT_OPS;
   const t = normalizeFieldType(fieldType);
   if (t === "number") return NUMBER_OPS;
@@ -287,6 +297,7 @@ const DEFAULT_OP_FOR_TYPE = {
   categorical: "is",
   thumbs: "is",
   text: "is",
+  annotator: "is",
 };
 
 const NO_VALUE_OPS = new Set([
@@ -314,93 +325,124 @@ const EXCLUDED_METRICS = new Set([
   "row_count",
   "cell_error_rate",
 ]);
+const PROPERTY_PICKER_RENDER_LIMIT = 250;
+
+const ANNOTATOR_FILTER_PROPERTY = {
+  id: "annotator",
+  name: "Annotator",
+  category: "annotation",
+  rawCategory: "annotation_metric",
+  type: "annotator",
+  // This is visually grouped with annotation filters, but the backend treats
+  // column_id=annotator as a global Score annotator filter, not a label column.
+  apiColType: "SYSTEM_METRIC",
+  allowCustomValue: false,
+};
+
+function metricToTraceFilterProperty(m) {
+  const outputType = m.outputType || m.output_type;
+  // Eval metrics don't carry a `type` field; derive the filter input type from
+  // `output_type`. SCORE → number (slider), PASS_FAIL/CHOICE/CHOICES → string
+  // (dropdown of choices).
+  const isEval = m.category === "eval_metric" || m.category === "evalMetric";
+  const isAnnotation =
+    m.category === "annotation_metric" || m.category === "annotationMetric";
+  let type;
+  if (isEval && outputType) {
+    const ot = String(outputType).toUpperCase();
+    if (ot === "SCORE") type = "number";
+    else type = "string";
+  } else if (isAnnotation && outputType) {
+    const ot = String(outputType).toLowerCase();
+    if (ot === "numeric" || ot === "star") type = "number";
+    else if (ot === "text") type = "text";
+    else if (ot === "thumbs_up_down") type = "thumbs";
+    else type = "categorical";
+  } else {
+    type = normalizeFieldType(m.type);
+  }
+  // thumbs labels have two fixed choices — surface them so the value picker
+  // renders a multi-select without needing a dashboard lookup.
+  const choices = type === "thumbs" ? ["Thumbs Up", "Thumbs Down"] : m.choices;
+  return {
+    id: m.name,
+    name: m.displayName || m.display_name || m.name,
+    category: mapCategory(m.category),
+    rawCategory: m.category,
+    type,
+    outputType,
+    choices,
+  };
+}
+
+export function buildTraceFilterProperties(
+  metrics,
+  { isSimulator = false } = {},
+) {
+  const properties = metrics
+    .filter((m) => {
+      const name = m.name;
+      const cat = m.category;
+      const src = m.source;
+
+      // Always exclude blacklisted metrics
+      if (EXCLUDED_METRICS.has(name)) return false;
+
+      // Exclude dataset-only metrics
+      if (src === "datasets") return false;
+
+      // Exclude simulation metrics for non-simulator projects
+      if (src === "simulation" && !isSimulator) return false;
+
+      // Exclude custom_column (dataset columns)
+      if (cat === "custom_column" || cat === "customColumn") return false;
+
+      // System metrics: string and number types
+      if (cat === "system_metric" || cat === "systemMetric") {
+        const normalized = normalizeFieldType(m.type);
+        return normalized === "string" || normalized === "number";
+      }
+
+      // Evals, annotations, custom attributes — include
+      if (cat === "eval_metric" || cat === "evalMetric") return true;
+      if (cat === "annotation_metric" || cat === "annotationMetric")
+        return true;
+      if (cat === "custom_attribute" || cat === "customAttribute") return true;
+
+      return false;
+    })
+    .map(metricToTraceFilterProperty);
+
+  const firstAnnotationIndex = properties.findIndex(
+    (property) => property.category === "annotation",
+  );
+  const alreadyHasAnnotator = properties.some(
+    (property) => property.id === ANNOTATOR_FILTER_PROPERTY.id,
+  );
+
+  if (firstAnnotationIndex !== -1 && !alreadyHasAnnotator) {
+    properties.splice(firstAnnotationIndex, 0, ANNOTATOR_FILTER_PROPERTY);
+  }
+
+  return properties;
+}
 
 function useTraceFilterProperties(
   projectId,
   { enabled = true, isSimulator = false } = {},
 ) {
   return useQuery({
-    queryKey: ["trace-filter-properties-v2", projectId],
-    enabled,
+    queryKey: ["trace-filter-properties-v2", projectId, isSimulator],
+    enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};
       if (projectId) params.project_ids = projectId;
       const { data } = await axios.get(endpoints.dashboard.metrics, { params });
       return data?.result?.metrics || [];
     },
-    select: (metrics) =>
-      metrics
-        .filter((m) => {
-          const name = m.name;
-          const cat = m.category;
-          const src = m.source;
-
-          // Always exclude blacklisted metrics
-          if (EXCLUDED_METRICS.has(name)) return false;
-
-          // Exclude dataset-only metrics
-          if (src === "datasets") return false;
-
-          // Exclude simulation metrics for non-simulator projects
-          if (src === "simulation" && !isSimulator) return false;
-
-          // Exclude custom_column (dataset columns)
-          if (cat === "custom_column" || cat === "customColumn") return false;
-
-          // System metrics: string and number types
-          if (cat === "system_metric" || cat === "systemMetric") {
-            const normalized = normalizeFieldType(m.type);
-            return normalized === "string" || normalized === "number";
-          }
-
-          // Evals, annotations, custom attributes — include
-          if (cat === "eval_metric" || cat === "evalMetric") return true;
-          if (cat === "annotation_metric" || cat === "annotationMetric")
-            return true;
-          if (cat === "custom_attribute" || cat === "customAttribute")
-            return true;
-
-          return false;
-        })
-        .map((m) => {
-          const outputType = m.outputType || m.output_type;
-          // Eval metrics don't carry a `type` field; derive the filter
-          // input type from `output_type`. SCORE → number (slider),
-          // PASS_FAIL/CHOICE/CHOICES → string (dropdown of choices).
-          const isEval =
-            m.category === "eval_metric" || m.category === "evalMetric";
-          const isAnnotation =
-            m.category === "annotation_metric" ||
-            m.category === "annotationMetric";
-          let type;
-          if (isEval && outputType) {
-            const ot = String(outputType).toUpperCase();
-            if (ot === "SCORE") type = "number";
-            else type = "string";
-          } else if (isAnnotation && outputType) {
-            const ot = String(outputType).toLowerCase();
-            if (ot === "numeric" || ot === "star") type = "number";
-            else if (ot === "text") type = "text";
-            else if (ot === "thumbs_up_down") type = "thumbs";
-            else type = "categorical";
-          } else {
-            type = normalizeFieldType(m.type);
-          }
-          // thumbs labels have two fixed choices — surface them so the value
-          // picker renders a multi-select without needing a dashboard lookup.
-          const choices =
-            type === "thumbs" ? ["Thumbs Up", "Thumbs Down"] : m.choices;
-          return {
-            id: m.name,
-            name: m.displayName || m.display_name || m.name,
-            category: mapCategory(m.category),
-            rawCategory: m.category,
-            type,
-            outputType,
-            choices,
-          };
-        }),
-    staleTime: 60_000,
+    select: (metrics) => buildTraceFilterProperties(metrics, { isSimulator }),
+    staleTime: 5 * 60_000,
+    gcTime: 15 * 60_000,
   });
 }
 
@@ -438,6 +480,11 @@ function PropertyPicker({
     for (const p of properties) c[p.category] = (c[p.category] || 0) + 1;
     return c;
   }, [properties]);
+  const visibleProperties = filtered.slice(0, PROPERTY_PICKER_RENDER_LIMIT);
+  const hiddenCount = Math.max(
+    filtered.length - PROPERTY_PICKER_RENDER_LIMIT,
+    0,
+  );
 
   const paperWidth = hasCategorySidebar ? 480 : 320;
 
@@ -575,7 +622,7 @@ function PropertyPicker({
                   No properties found
                 </Typography>
               )}
-              {filtered.map((prop) => (
+              {visibleProperties.map((prop) => (
                 <Box
                   key={prop.id}
                   onClick={() => {
@@ -635,6 +682,20 @@ function PropertyPicker({
                   )}
                 </Box>
               ))}
+              {hiddenCount > 0 && (
+                <Typography
+                  sx={{
+                    px: 1.5,
+                    py: 1,
+                    fontSize: 11,
+                    color: "text.secondary",
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  {hiddenCount} more properties. Search to narrow the list.
+                </Typography>
+              )}
             </Box>
           </Box>
         </Paper>
@@ -655,16 +716,6 @@ const SESSION_VALUE_FIELDS = new Set([
 ]);
 
 const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
-
-function getPickerOptionValue(option) {
-  if (typeof option === "string") return option;
-  return option?.value ?? option?.label ?? "";
-}
-
-function getPickerOptionLabel(option) {
-  if (typeof option === "string") return option;
-  return option?.label ?? option?.value ?? "";
-}
 
 function normalizePickerValues(values) {
   const rawValues = Array.isArray(values) ? values : values ? [values] : [];
@@ -694,7 +745,9 @@ function ValuePicker({
   // not indexed by the dashboard metrics pipeline or when options are known
   // client-side.
   const hasStaticChoices =
-    Array.isArray(property?.choices) && property.choices.length > 0;
+    propertyCategory !== "annotation" &&
+    Array.isArray(property?.choices) &&
+    property.choices.length > 0;
 
   const metricType = (() => {
     if (propertyCategory === "system") return "system_metric";
@@ -717,7 +770,7 @@ function ValuePicker({
     metricType,
     projectIds: projectId ? [projectId] : [],
     source,
-    enabled: !hasStaticChoices,
+    enabled: !hasStaticChoices && Boolean(anchorEl),
   });
 
   // Fallback: session filter values endpoint (for session-specific fields)
@@ -755,10 +808,9 @@ function ValuePicker({
   const filtered = useMemo(() => {
     if (!search || isSessionField) return options; // session endpoint already filters server-side
     const q = search.toLowerCase();
-    return options.filter((o) => {
-      const label = getPickerOptionLabel(o);
-      return label.toLowerCase().includes(q);
-    });
+    return options.filter((o) =>
+      getPickerOptionSearchText(o).toLowerCase().includes(q),
+    );
   }, [options, search, isSessionField]);
 
   const selectedValues = useMemo(() => normalizePickerValues(value), [value]);
@@ -784,13 +836,16 @@ function ValuePicker({
   );
 
   const customSearchValue = search.trim();
-  const searchMatchesExistingOption = options.some(
-    (option) =>
-      getPickerOptionValue(option).toLowerCase() ===
-      customSearchValue.toLowerCase(),
+  const searchMatchesExistingOption = options.some((option) =>
+    getPickerOptionExactMatches(option).some(
+      (matchValue) =>
+        matchValue.toLowerCase() === customSearchValue.toLowerCase(),
+    ),
   );
   const showCustomValueRow = Boolean(
-    customSearchValue && !searchMatchesExistingOption,
+    property?.allowCustomValue !== false &&
+      customSearchValue &&
+      !searchMatchesExistingOption,
   );
 
   return (
@@ -803,9 +858,9 @@ function ValuePicker({
           gap: 0.5,
           flexWrap: "wrap",
           minHeight: 28,
-          minWidth: 120,
-          flex: 1,
-          maxWidth: 250,
+          minWidth: 0,
+          flex: "1 1 180px",
+          maxWidth: "100%",
           px: 1,
           py: 0.25,
           border: "1px solid",
@@ -834,10 +889,15 @@ function ValuePicker({
             });
             const displayLabel =
               (typeof match === "string" ? match : match?.label) || v;
+            const secondaryLabel = getPickerOptionSecondaryLabel(match);
+            const chipTitle = secondaryLabel
+              ? `${displayLabel} (${secondaryLabel})`
+              : displayLabel;
             return (
               <Chip
                 key={v}
                 label={displayLabel}
+                title={chipTitle}
                 size="small"
                 onDelete={(e) => {
                   e.stopPropagation();
@@ -876,7 +936,9 @@ function ValuePicker({
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
-          paper: { sx: { width: 260, borderRadius: "8px", mt: 0.5 } },
+          paper: {
+            sx: { width: { xs: 280, sm: 320 }, borderRadius: "8px", mt: 0.5 },
+          },
         }}
       >
         <Box sx={{ p: 1 }}>
@@ -935,6 +997,7 @@ function ValuePicker({
           {filtered.map((opt) => {
             const strVal = getPickerOptionValue(opt);
             const label = getPickerOptionLabel(opt);
+            const secondaryLabel = getPickerOptionSecondaryLabel(opt);
             const isSelected = selectedValues.includes(strVal);
             return (
               <Box
@@ -945,7 +1008,7 @@ function ValuePicker({
                   alignItems: "center",
                   gap: 1,
                   px: 1.5,
-                  py: 0.75,
+                  py: secondaryLabel ? 0.65 : 0.75,
                   cursor: "pointer",
                   bgcolor: isSelected ? "action.selected" : "transparent",
                   "&:hover": { bgcolor: "action.hover" },
@@ -963,18 +1026,28 @@ function ValuePicker({
                     flexShrink: 0,
                   }}
                 />
-                <Typography
-                  noWrap
-                  sx={{
-                    fontSize: 12,
-                    flex: 1,
-                    maxWidth: 180,
-                    fontWeight: isSelected ? 600 : 400,
-                    color: isSelected ? "text.primary" : "text.primary",
-                  }}
-                >
-                  {label}
-                </Typography>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    noWrap
+                    title={label}
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: isSelected ? 600 : 400,
+                      color: "text.primary",
+                    }}
+                  >
+                    {label}
+                  </Typography>
+                  {secondaryLabel && (
+                    <Typography
+                      noWrap
+                      title={secondaryLabel}
+                      sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
+                    >
+                      {secondaryLabel}
+                    </Typography>
+                  )}
+                </Box>
               </Box>
             );
           })}
@@ -1098,7 +1171,8 @@ function FilterRow({
       const nt =
         prop.type === "categorical" ||
         prop.type === "thumbs" ||
-        prop.type === "text"
+        prop.type === "text" ||
+        prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
       const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "is";
@@ -1112,6 +1186,7 @@ function FilterRow({
         fieldName: prop.name,
         fieldCategory: prop.category,
         fieldType: nt,
+        apiColType: prop.apiColType,
         operator: defaultOp,
         value: defaultValue,
       });
@@ -1191,7 +1266,12 @@ function FilterRow({
             direction="row"
             alignItems="center"
             gap={0.5}
-            sx={{ flex: 1, minWidth: 180, maxWidth: 280 }}
+            sx={{
+              flex: "1 1 220px",
+              minWidth: 0,
+              maxWidth: "100%",
+              flexWrap: { xs: "wrap", sm: "nowrap" },
+            }}
           >
             <TextField
               size="small"
@@ -1204,7 +1284,7 @@ function FilterRow({
                 cur[0] = e.target.value;
                 updateRow({ value: cur });
               }}
-              sx={{ flex: 1 }}
+              sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
                 style: { fontSize: 11, height: 12, padding: "6px 6px" },
               }}
@@ -1223,7 +1303,7 @@ function FilterRow({
                 cur[1] = e.target.value;
                 updateRow({ value: cur });
               }}
-              sx={{ flex: 1 }}
+              sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
                 style: { fontSize: 11, height: 12, padding: "6px 6px" },
               }}
@@ -1237,7 +1317,7 @@ function FilterRow({
           type="datetime-local"
           value={typeof filter.value === "string" ? filter.value : ""}
           onChange={(e) => updateRow({ value: e.target.value })}
-          sx={{ flex: 1, minWidth: 140, maxWidth: 200 }}
+          sx={{ flex: "1 1 160px", minWidth: 0, maxWidth: "100%" }}
           inputProps={{
             style: { fontSize: 11, height: 12, padding: "6px 6px" },
           }}
@@ -1252,7 +1332,12 @@ function FilterRow({
             direction="row"
             alignItems="center"
             gap={0.5}
-            sx={{ flex: 1, minWidth: 120, maxWidth: 200 }}
+            sx={{
+              flex: "1 1 180px",
+              minWidth: 0,
+              maxWidth: "100%",
+              flexWrap: { xs: "wrap", sm: "nowrap" },
+            }}
           >
             <TextField
               size="small"
@@ -1266,7 +1351,7 @@ function FilterRow({
                 cur[0] = e.target.value;
                 updateRow({ value: cur });
               }}
-              sx={{ flex: 1 }}
+              sx={{ flex: "1 1 80px", minWidth: 0 }}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
@@ -1286,7 +1371,7 @@ function FilterRow({
                 cur[1] = e.target.value;
                 updateRow({ value: cur });
               }}
-              sx={{ flex: 1 }}
+              sx={{ flex: "1 1 80px", minWidth: 0 }}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
@@ -1301,7 +1386,7 @@ function FilterRow({
           placeholder="Value"
           value={filter.value ?? ""}
           onChange={(e) => updateRow({ value: e.target.value })}
-          sx={{ flex: 1, minWidth: 80, maxWidth: 140 }}
+          sx={{ flex: "1 1 120px", minWidth: 0, maxWidth: "100%" }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
           }}
@@ -1316,7 +1401,7 @@ function FilterRow({
           placeholder="Enter text..."
           value={filter.value ?? ""}
           onChange={(e) => updateRow({ value: e.target.value })}
-          sx={{ flex: 1, minWidth: 120, maxWidth: 200 }}
+          sx={{ flex: "1 1 160px", minWidth: 0, maxWidth: "100%" }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
           }}
@@ -1342,7 +1427,12 @@ function FilterRow({
   };
 
   return (
-    <Stack direction="row" alignItems="center" gap={0.5}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={0.5}
+      sx={{ width: "100%", minWidth: 0, flexWrap: "wrap" }}
+    >
       <CustomTooltip
         show={!!selectedProp?.name}
         arrow
@@ -1360,8 +1450,9 @@ function FilterRow({
             textTransform: "none",
             fontSize: 12,
             height: 28,
-            minWidth: 100,
-            maxWidth: 150,
+            flex: "1 1 150px",
+            minWidth: 0,
+            maxWidth: { xs: "100%", sm: 180 },
             borderColor: "divider",
             color: filter.field ? "text.primary" : "text.disabled",
             justifyContent: "space-between",
@@ -1371,7 +1462,7 @@ function FilterRow({
             noWrap
             sx={{
               fontSize: 12,
-              maxWidth: 100,
+              maxWidth: "100%",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
@@ -1393,7 +1484,13 @@ function FilterRow({
         size="small"
         value={safeOperator}
         onChange={handleOperatorChange}
-        sx={{ minWidth: 70, fontSize: 12, height: 28 }}
+        sx={{
+          flex: "0 1 128px",
+          minWidth: 90,
+          maxWidth: { xs: "100%", sm: 150 },
+          fontSize: 12,
+          height: 28,
+        }}
       >
         {ops.map((op) => (
           <MenuItem key={op.value} value={op.value} sx={{ fontSize: 12 }}>
@@ -1407,7 +1504,7 @@ function FilterRow({
       <IconButton
         size="small"
         onClick={() => onRemove(index)}
-        sx={{ p: 0.25, flexShrink: 0 }}
+        sx={{ p: 0.25, flexShrink: 0, ml: "auto" }}
       >
         <Iconify icon="mdi:close" width={14} />
       </IconButton>
@@ -1537,6 +1634,7 @@ const TraceFilterPanel = ({
         choices: p.choices,
         panelType: p.type || "string",
         category: p.category, // system, eval, annotation, attribute
+        apiColType: p.apiColType,
       })),
     [properties],
   );
@@ -1575,6 +1673,7 @@ const TraceFilterPanel = ({
             fieldCategory: f.fieldCategory || prop?.category || "system",
             fieldName: f.fieldName || prop?.name,
             fieldType: f.fieldType || prop?.type || "string",
+            apiColType: f.apiColType || prop?.apiColType,
           });
         });
         setRows(enriched);
@@ -1597,6 +1696,7 @@ const TraceFilterPanel = ({
             prop?.type ||
             queryFieldDef?.panelType ||
             (queryFieldDef?.type === "enum" ? "categorical" : "string"),
+          apiColType: prop?.apiColType || queryFieldDef?.apiColType,
           operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
           value: Array.isArray(t.value) ? t.value : [t.value],
         };
@@ -1655,6 +1755,7 @@ const TraceFilterPanel = ({
           field: f.field,
           fieldCategory: prop?.category || "system",
           fieldType: prop?.type || "string",
+          apiColType: prop?.apiColType,
           operator: f.operator || "is",
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
@@ -1676,10 +1777,12 @@ const TraceFilterPanel = ({
       slotProps={{
         paper: {
           sx: {
-            width: panelWidth || 560,
+            width: { xs: "calc(100vw - 24px)", sm: panelWidth || 560 },
+            maxWidth: "calc(100vw - 24px)",
             borderRadius: "10px",
             mt: 0.5,
             p: 1,
+            overflowX: "hidden",
           },
         },
       }}
@@ -1804,7 +1907,7 @@ const TraceFilterPanel = ({
               direction="row"
               justifyContent="space-between"
               alignItems="center"
-              sx={{ mt: 1.5 }}
+              sx={{ mt: 1.5, gap: 1, flexWrap: "wrap" }}
             >
               <Button
                 size="small"
@@ -1820,7 +1923,7 @@ const TraceFilterPanel = ({
               >
                 Add filter
               </Button>
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} sx={{ ml: "auto" }}>
                 <Button
                   size="small"
                   onClick={handleClear}

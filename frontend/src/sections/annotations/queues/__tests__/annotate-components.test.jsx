@@ -22,9 +22,12 @@ import AnnotateHeader from "../annotate/annotate-header";
 import AnnotateFooter from "../annotate/annotate-footer";
 import AnnotationHistory from "../annotate/annotation-history";
 
-const { mockCreateDiscussionComment } = vi.hoisted(() => ({
-  mockCreateDiscussionComment: vi.fn(),
-}));
+const { mockCreateDiscussionComment, mockUseItemAnnotations } = vi.hoisted(
+  () => ({
+    mockCreateDiscussionComment: vi.fn(),
+    mockUseItemAnnotations: vi.fn(() => ({ data: [] })),
+  }),
+);
 
 const {
   mockResolveDiscussionThread,
@@ -61,7 +64,7 @@ vi.mock("src/sections/common/CellMarkdown", () => ({
 
 // Mock API hook for annotation history
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
-  useItemAnnotations: vi.fn(() => ({ data: [] })),
+  useItemAnnotations: mockUseItemAnnotations,
   useCreateDiscussionComment: vi.fn(() => ({
     mutate: mockCreateDiscussionComment,
     ...mockDiscussionMutationState.create,
@@ -82,6 +85,8 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
 
 beforeEach(() => {
   mockCreateDiscussionComment.mockClear();
+  mockUseItemAnnotations.mockReset();
+  mockUseItemAnnotations.mockReturnValue({ data: [] });
   mockResolveDiscussionThread.mockClear();
   mockReopenDiscussionThread.mockClear();
   mockToggleDiscussionReaction.mockClear();
@@ -375,6 +380,69 @@ describe("LabelPanel", () => {
       ],
       itemNotes: "updated whole item note",
     });
+  });
+
+  it("does not carry stale annotation values when moving to another item", async () => {
+    const onSubmit = vi.fn();
+    const label = {
+      id: "ql-1",
+      label_id: "label-1",
+      name: "Content",
+      type: "thumbs_up_down",
+      settings: {},
+      allow_notes: true,
+    };
+    const previousItemAnnotations = [
+      {
+        label_id: "label-1",
+        value: { value: "up" },
+        notes: "old label note",
+      },
+    ];
+
+    const { rerender } = render(
+      <LabelPanel
+        labels={[label]}
+        annotations={previousItemAnnotations}
+        initialItemNotes="old item note"
+        onSubmit={onSubmit}
+        queueId="queue-1"
+        itemId="item-1"
+        detailItemId="item-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Add notes for this label..."),
+      ).toHaveValue("old label note");
+    });
+
+    rerender(
+      <LabelPanel
+        labels={[label]}
+        annotations={[...previousItemAnnotations]}
+        initialItemNotes="old item note"
+        onSubmit={onSubmit}
+        queueId="queue-1"
+        itemId="item-2"
+        detailItemId="item-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Add notes for this label..."),
+      ).toHaveValue("");
+    });
+    expect(
+      screen.getByPlaceholderText("Add notes for this item..."),
+    ).toHaveValue("");
+
+    expect(
+      screen.getByRole("button", { name: /submit & next/i }),
+    ).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("can label the submit action as submit for review", async () => {
@@ -788,6 +856,46 @@ describe("LabelPanel", () => {
     expect(screen.getByText("sentiment")).toBeInTheDocument();
   });
 
+  it("keeps long feedback targets available without relying on overflowing text", () => {
+    const target =
+      "newlabelwith notes1 / khushal.sonawat+annotation-heavy-reviewer@futureagi.local";
+
+    render(
+      <LabelPanel
+        labels={[]}
+        annotations={[]}
+        reviewComments={[
+          {
+            id: "feedback-long-target",
+            action: "request_changes",
+            blocking: true,
+            thread_status: "open",
+            comment:
+              "A very long reviewer note should still wrap inside the card.",
+            reviewer_name: "Kartik",
+            label_name: "newlabelwith notes1",
+            target_annotator_name:
+              "khushal.sonawat+annotation-heavy-reviewer@futureagi.local",
+            target_annotator_id: "user-1",
+            created_at: new Date().toISOString(),
+          },
+        ]}
+        currentUserId="user-1"
+        onSubmit={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+      />,
+    );
+
+    expect(screen.getByTitle(target)).toBeInTheDocument();
+    expect(screen.getByText("Kartik")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "A very long reviewer note should still wrap inside the card.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("treats legacy threadless request-change feedback as actionable", () => {
     render(
       <LabelPanel
@@ -859,6 +967,26 @@ describe("AnnotationComparisonPanel", () => {
       user_id: "user-2",
       name: "Narda",
       email: "narda@example.com",
+    },
+  ];
+  const reviewAnnotations = [
+    {
+      id: "ann-review-1",
+      annotator: "user-2",
+      annotator_name: "Narda",
+      annotator_email: "narda@example.com",
+      label_id: "label-1",
+      label_type: "thumbs_up_down",
+      value: { value: "down" },
+    },
+    {
+      id: "ann-review-2",
+      annotator: "user-1",
+      annotator_name: "Kartik",
+      annotator_email: "kartik.nvj@futureagi.com",
+      label_id: "label-2",
+      label_type: "categorical",
+      value: ["1"],
     },
   ];
 
@@ -982,6 +1110,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         onViewingAnnotatorChange={onViewingAnnotatorChange}
@@ -1611,6 +1740,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         queueId="queue-1"
@@ -1655,6 +1785,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         queueId="queue-1"
@@ -1689,6 +1820,7 @@ describe("AnnotationComparisonPanel", () => {
         item={{ id: "item-1", source_type: "trace" }}
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         queueId="queue-1"
@@ -1735,6 +1867,38 @@ describe("AnnotationComparisonPanel", () => {
     });
   });
 
+  it("does not offer targeted feedback for annotators without a submitted score", () => {
+    render(
+      <AnnotationComparisonPanel
+        labels={labels}
+        annotators={annotators}
+        annotations={[
+          {
+            id: "ann-review-only-current",
+            annotator: "user-1",
+            annotator_name: "Kartik",
+            annotator_email: "kartik.nvj@futureagi.com",
+            label_id: "label-2",
+            label_type: "categorical",
+            value: ["1"],
+          },
+        ]}
+        currentUserId="user-1"
+        viewingAnnotatorId={ALL_ANNOTATORS}
+        queueId="queue-1"
+        itemId="item-1"
+        showReviewActions
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /feedback for thumbs \/ narda/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /feedback for cat \/ kartik/i }),
+    ).toBeInTheDocument();
+  });
+
   it("reports reviewer draft dirty state to the workspace", async () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
@@ -1743,6 +1907,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         queueId="queue-1"
@@ -1773,6 +1938,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId={ALL_ANNOTATORS}
         queueId="queue-1"
@@ -1795,6 +1961,7 @@ describe("AnnotationComparisonPanel", () => {
       <AnnotationComparisonPanel
         labels={labels}
         annotators={annotators}
+        annotations={reviewAnnotations}
         currentUserId="user-1"
         viewingAnnotatorId="user-1"
         queueId="queue-1"
@@ -2215,6 +2382,67 @@ describe("AnnotateHeader", () => {
     expect(onOpenComments).toHaveBeenCalledOnce();
   });
 
+  it("renders and toggles completed item visibility for annotators", async () => {
+    const user = userEvent.setup();
+    const onIncludeCompletedChange = vi.fn();
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{ total: 10, completed: 3 }}
+        onBack={() => {}}
+        onSkip={() => {}}
+        isSkipping={false}
+        showCompletedToggle
+        includeCompleted={false}
+        onIncludeCompletedChange={onIncludeCompletedChange}
+      />,
+    );
+
+    const toggle = screen.getByRole("checkbox", {
+      name: /show completed items/i,
+    });
+    expect(screen.getByText("Show completed")).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(onIncludeCompletedChange).toHaveBeenCalledOnce();
+  });
+
+  it("can disable completed item visibility while navigation is updating", () => {
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{ total: 10, completed: 3 }}
+        onBack={() => {}}
+        onSkip={() => {}}
+        isSkipping={false}
+        showCompletedToggle
+        includeCompleted
+        completedToggleDisabled
+        onIncludeCompletedChange={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("checkbox", { name: /show completed items/i }),
+    ).toBeDisabled();
+  });
+
+  it("shows a compact completed-by-you indicator for completed items", () => {
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{ total: 10, completed: 3 }}
+        onBack={() => {}}
+        onSkip={() => {}}
+        isSkipping={false}
+        isItemCompleted
+        completedByCurrentUser
+      />,
+    );
+
+    expect(screen.getByText("Done by you")).toBeInTheDocument();
+  });
+
   it("renders Skip button", () => {
     render(
       <AnnotateHeader
@@ -2378,5 +2606,30 @@ describe("AnnotationHistory", () => {
 
     await user.click(screen.getByText(/ANNOTATION HISTORY/));
     expect(screen.getByText("No annotations yet")).toBeInTheDocument();
+  });
+
+  it("renders submitted score history after the history query refetches", async () => {
+    const user = userEvent.setup();
+    mockUseItemAnnotations.mockReturnValue({
+      data: [
+        {
+          id: "score-1",
+          label_name: "Sentiment",
+          value: "positive",
+          annotator: "user-1",
+          annotator_name: "Kartik",
+          score_source: "human",
+          created_at: "2025-01-01T12:00:00Z",
+        },
+      ],
+    });
+
+    render(<AnnotationHistory queueId="q-1" itemId="item-1" />);
+
+    expect(screen.getByText("ANNOTATION HISTORY (1)")).toBeInTheDocument();
+    await user.click(screen.getByText(/ANNOTATION HISTORY/));
+    expect(screen.getByText("Kartik")).toBeInTheDocument();
+    expect(screen.getByText("Sentiment")).toBeInTheDocument();
+    expect(screen.getByText("positive")).toBeInTheDocument();
   });
 });

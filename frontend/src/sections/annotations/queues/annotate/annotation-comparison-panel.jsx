@@ -74,6 +74,21 @@ function neutralChipSx(theme) {
   };
 }
 
+const WRAP_TEXT_SX = {
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+const CHIP_TRUNCATE_SX = {
+  maxWidth: "100%",
+  minWidth: 0,
+  flexShrink: 1,
+  "& .MuiChip-label": {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+};
+
 function stableStringify(value) {
   if (value === null || value === undefined) return "";
   if (typeof value !== "object") return String(value);
@@ -256,6 +271,7 @@ function ReviewStatusChip({ comment }) {
         height: 18,
         fontSize: 10,
         ml: 0.75,
+        flexShrink: 0,
       })}
     />
   );
@@ -479,8 +495,18 @@ function ReviewCommentStack({ comments = [], compact = false }) {
               };
             }}
           >
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Typography variant="caption" color="text.secondary" noWrap>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              useFlexGap
+              flexWrap="wrap"
+            >
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ minWidth: 0, ...WRAP_TEXT_SX }}
+              >
                 {reviewAuthorName(comment)}
               </Typography>
               <ReviewStatusChip comment={comment} />
@@ -498,7 +524,12 @@ function ReviewCommentStack({ comments = [], compact = false }) {
             </Stack>
             <Typography
               variant={compact ? "caption" : "body2"}
-              sx={{ display: "block", mt: 0.35, whiteSpace: "pre-wrap" }}
+              sx={{
+                display: "block",
+                mt: 0.35,
+                whiteSpace: "pre-wrap",
+                ...WRAP_TEXT_SX,
+              }}
             >
               {normalizeMentionMarkdown(comment.comment)}
             </Typography>
@@ -547,25 +578,31 @@ function TargetedFeedbackComposer({
             size="small"
             variant="outlined"
             label={itemContextLabel(item, itemId)}
-            sx={(theme) => neutralChipSx(theme)}
+            sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
           <Chip
             size="small"
             variant="outlined"
             label={label.name}
-            sx={(theme) => statusChipSx("warning")(theme)}
+            sx={(theme) => ({
+              ...statusChipSx("warning")(theme),
+              ...CHIP_TRUNCATE_SX,
+            })}
           />
           <Chip
             size="small"
             variant="outlined"
             label={annotatorDisplayName(annotator, currentUserId)}
-            sx={(theme) => statusChipSx("info")(theme)}
+            sx={(theme) => ({
+              ...statusChipSx("info")(theme),
+              ...CHIP_TRUNCATE_SX,
+            })}
           />
           <Chip
             size="small"
             variant="outlined"
             label={displayValue}
-            sx={(theme) => ({ ...neutralChipSx(theme), maxWidth: "100%" })}
+            sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
         </Stack>
         <TextField
@@ -654,6 +691,7 @@ function ScoreReviewCell({
   const tone = valueTone(annotation?.value, label.type);
   const counts = reviewFeedbackCounts(comments);
   const hasAnyFeedback = comments.length > 0;
+  const canReviewAnnotation = showReviewActions && Boolean(annotation);
 
   return (
     <Box sx={{ minWidth: 0 }}>
@@ -661,14 +699,19 @@ function ScoreReviewCell({
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ display: "block", mb: 0.5 }}
-          noWrap
+          sx={{ display: "block", mb: 0.5, ...WRAP_TEXT_SX }}
         >
           {annotatorDisplayName(annotator, currentUserId)}
         </Typography>
       )}
 
-      <Stack direction="row" alignItems="center" spacing={0.75}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        useFlexGap
+        flexWrap="wrap"
+      >
         <Chip
           size="small"
           variant="outlined"
@@ -699,7 +742,12 @@ function ScoreReviewCell({
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ display: "block", mt: 0.65, lineHeight: 1.35 }}
+          sx={{
+            display: "block",
+            mt: 0.65,
+            lineHeight: 1.35,
+            ...WRAP_TEXT_SX,
+          }}
         >
           Note: {annotation.notes}
         </Typography>
@@ -729,7 +777,7 @@ function ScoreReviewCell({
         </Box>
       )}
 
-      {showReviewActions && (
+      {canReviewAnnotation && (
         <>
           <Button
             size="small"
@@ -820,15 +868,23 @@ function ScoreReviewSurface({
     const annotator = visibleAnnotatorRows[0];
     return (
       <Box sx={{ mb: 1.5 }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          useFlexGap
+          flexWrap="wrap"
+          sx={{ mb: 1, minWidth: 0 }}
+        >
           <Iconify icon="solar:user-check-rounded-bold" width={18} />
-          <Typography variant="subtitle2" sx={{ flex: 1 }}>
+          <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
             Answer review
           </Typography>
           <Chip
             size="small"
             variant="outlined"
             label={annotatorDisplayName(annotator, currentUserId)}
+            sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
         </Stack>
         <Stack spacing={1.25}>
@@ -876,10 +932,16 @@ function ScoreReviewSurface({
                     px: 1.5,
                     py: 1,
                     bgcolor: "background.neutral",
+                    minWidth: 0,
+                    flexWrap: "wrap",
                   }}
                 >
                   <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="body2" fontWeight={700} noWrap>
+                    <Typography
+                      variant="body2"
+                      fontWeight={700}
+                      sx={WRAP_TEXT_SX}
+                    >
                       {label.name}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
@@ -891,7 +953,10 @@ function ScoreReviewSurface({
                       size="small"
                       variant="outlined"
                       label="Required"
-                      sx={(theme) => statusChipSx("error")(theme)}
+                      sx={(theme) => ({
+                        ...statusChipSx("error")(theme),
+                        flexShrink: 0,
+                      })}
                     />
                   )}
                 </Stack>
@@ -940,7 +1005,7 @@ function ScoreReviewSurface({
     <Box sx={{ mb: 1.5 }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
         <Iconify icon="solar:widget-4-bold" width={18} />
-        <Typography variant="subtitle2" sx={{ flex: 1 }}>
+        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
           Score matrix
         </Typography>
         <Chip
@@ -1011,7 +1076,12 @@ function ScoreReviewSurface({
                 minWidth: 0,
               }}
             >
-              <Typography variant="body2" fontWeight={700} noWrap>
+              <Typography
+                variant="body2"
+                fontWeight={700}
+                noWrap
+                sx={{ minWidth: 0 }}
+              >
                 {annotatorDisplayName(annotator, currentUserId)}
               </Typography>
               {annotator.email && (
@@ -1058,7 +1128,11 @@ function ScoreReviewSurface({
                   }}
                 >
                   <Stack spacing={0.75}>
-                    <Typography variant="body2" fontWeight={700} noWrap>
+                    <Typography
+                      variant="body2"
+                      fontWeight={700}
+                      sx={WRAP_TEXT_SX}
+                    >
                       {label.name}
                     </Typography>
                     <Stack direction="row" flexWrap="wrap" gap={0.5}>
@@ -1204,16 +1278,25 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
         };
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        useFlexGap
+        flexWrap="wrap"
+      >
         <Iconify icon="solar:target-bold" width={18} />
-        <Typography variant="subtitle2" sx={{ flex: 1 }}>
+        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
           Feedback to send
         </Typography>
         <Chip
           size="small"
           variant="outlined"
           label={`${feedbackDrafts.length} targeted`}
-          sx={(theme) => statusChipSx("warning")(theme)}
+          sx={(theme) => ({
+            ...statusChipSx("warning")(theme),
+            flexShrink: 0,
+          })}
         />
       </Stack>
       <Stack spacing={0.75} sx={{ mt: 1 }}>
@@ -1228,12 +1311,17 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
               bgcolor: "background.paper",
             }}
           >
-            <Stack direction="row" spacing={0.75} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={0.75}
+              alignItems="center"
+              useFlexGap
+              flexWrap="wrap"
+            >
               <Typography
                 variant="caption"
                 fontWeight={700}
-                sx={{ flex: 1, minWidth: 0 }}
-                noWrap
+                sx={{ flex: "1 1 180px", minWidth: 0, ...WRAP_TEXT_SX }}
               >
                 {target.labelName} / {target.annotatorName}
               </Typography>
@@ -1243,6 +1331,8 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
                 color="inherit"
                 onClick={() => onRemove(target.key)}
                 sx={{
+                  ml: "auto",
+                  flexShrink: 0,
                   color: (theme) => statusTone(theme, "error").text,
                   fontWeight: 700,
                   "&:hover": {
@@ -1253,13 +1343,13 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
                 Remove
               </Button>
             </Stack>
-            <Typography variant="body2" sx={{ mt: 0.25 }}>
+            <Typography variant="body2" sx={{ mt: 0.25, ...WRAP_TEXT_SX }}>
               {target.valueText}
             </Typography>
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ display: "block", mt: 0.25 }}
+              sx={{ display: "block", mt: 0.25, ...WRAP_TEXT_SX }}
             >
               Current answer: {target.value}
             </Typography>
@@ -1306,7 +1396,7 @@ function ItemNotesList({ notes, annotatorRows }) {
               <Typography variant="caption" color="text.secondary">
                 {noteOwnerName(note, annotatorRows)}
               </Typography>
-              <Typography variant="body2" sx={{ mt: 0.25 }}>
+              <Typography variant="body2" sx={{ mt: 0.25, ...WRAP_TEXT_SX }}>
                 {note.notes}
               </Typography>
             </Box>
@@ -1446,6 +1536,9 @@ export default function AnnotationComparisonPanel({
     () => buildAnnotationMap(annotations),
     [annotations],
   );
+  const hasSubmittedAnnotations = (annotations || []).length > 0;
+  const canReviewSubmittedAnnotations =
+    showReviewActions && hasSubmittedAnnotations;
   const labelById = useMemo(
     () =>
       new Map((labels || []).map((label) => [String(label.label_id), label])),
@@ -1508,8 +1601,8 @@ export default function AnnotationComparisonPanel({
     [decisionReviewComments],
   );
   const workflowCopy = useMemo(
-    () => workflowStatusCopy(reviewStatus, showReviewActions),
-    [reviewStatus, showReviewActions],
+    () => workflowStatusCopy(reviewStatus, canReviewSubmittedAnnotations),
+    [reviewStatus, canReviewSubmittedAnnotations],
   );
   const hasRequestFeedback = useMemo(
     () =>
@@ -1550,12 +1643,17 @@ export default function AnnotationComparisonPanel({
   const feedbackDraftCount =
     feedbackDrafts.length + (draftReviewNotes.trim() ? 1 : 0);
   const isApproveDisabled =
-    isPending || hasRequestFeedback || openBlockingFeedback.length > 0;
-  const reviewActionHint = openBlockingFeedback.length
-    ? "Resolve open requested changes before approving."
-    : hasRequestFeedback
-      ? "Request changes or clear feedback drafts before approving."
-      : "Approve as-is or add feedback before requesting changes.";
+    isPending ||
+    !hasSubmittedAnnotations ||
+    hasRequestFeedback ||
+    openBlockingFeedback.length > 0;
+  const reviewActionHint = !hasSubmittedAnnotations
+    ? "Review actions are available after at least one annotation is submitted."
+    : openBlockingFeedback.length
+      ? "Resolve open requested changes before approving."
+      : hasRequestFeedback
+        ? "Request changes or clear feedback drafts before approving."
+        : "Approve as-is or add feedback before requesting changes.";
 
   const buildReviewPayload = () => ({
     notes: draftReviewNotes,
@@ -1590,9 +1688,10 @@ export default function AnnotationComparisonPanel({
   return (
     <Box
       sx={{
-        p: 3,
+        p: { xs: 1.5, md: 3 },
         overflow: "auto",
         height: "100%",
+        minWidth: 0,
       }}
     >
       <Box
@@ -1608,7 +1707,12 @@ export default function AnnotationComparisonPanel({
           ...focusedScopeSx(focusedCommentScope === "item"),
         }}
       >
-        <Stack direction="row" alignItems="flex-start" spacing={1}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          spacing={1}
+          sx={{ minWidth: 0 }}
+        >
           <Iconify icon="solar:clipboard-list-bold" width={20} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="caption" color="text.secondary">
@@ -1618,16 +1722,21 @@ export default function AnnotationComparisonPanel({
               direction="row"
               alignItems="center"
               spacing={0.75}
-              sx={{ mt: 0.25 }}
+              useFlexGap
+              flexWrap="wrap"
+              sx={{ mt: 0.25, minWidth: 0 }}
             >
-              <Typography variant="subtitle2" noWrap>
+              <Typography variant="subtitle2" sx={WRAP_TEXT_SX}>
                 Review workflow
               </Typography>
               <Chip
                 size="small"
                 variant="outlined"
                 label={workflowCopy.label}
-                sx={(theme) => statusChipSx(workflowCopy.color)(theme)}
+                sx={(theme) => ({
+                  ...statusChipSx(workflowCopy.color)(theme),
+                  flexShrink: 0,
+                })}
               />
             </Stack>
             <Typography
@@ -1652,9 +1761,15 @@ export default function AnnotationComparisonPanel({
             bgcolor: (theme) => statusTone(theme, "warning").bg,
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            useFlexGap
+            flexWrap="wrap"
+          >
             <Iconify icon="solar:flag-bold" width={18} />
-            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
               Open requested changes
             </Typography>
             <Chip
@@ -1676,25 +1791,31 @@ export default function AnnotationComparisonPanel({
                   bgcolor: "background.paper",
                 }}
               >
-                <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                  useFlexGap
+                  flexWrap="wrap"
+                >
                   <Chip
                     size="small"
                     variant="outlined"
                     label={reviewCommentTargetLabel(comment)}
                     sx={(theme) => ({
                       ...statusChipSx("warning")(theme),
-                      maxWidth: "100%",
+                      ...CHIP_TRUNCATE_SX,
                     })}
                   />
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ ml: "auto" }}
+                    sx={{ ml: "auto", minWidth: 0, ...WRAP_TEXT_SX }}
                   >
                     {reviewAuthorName(comment)}
                   </Typography>
                 </Stack>
-                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                <Typography variant="body2" sx={{ mt: 0.5, ...WRAP_TEXT_SX }}>
                   {normalizeMentionMarkdown(comment.comment)}
                 </Typography>
               </Box>
@@ -1711,13 +1832,23 @@ export default function AnnotationComparisonPanel({
           <Stack spacing={0.75} sx={{ mt: 0.75 }}>
             {overallReviewComments.map((comment) => (
               <Box key={comment.id || comment.created_at}>
-                <Stack direction="row" alignItems="center" spacing={0.5}>
-                  <Typography variant="caption" color="text.secondary">
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  useFlexGap
+                  flexWrap="wrap"
+                >
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ minWidth: 0, ...WRAP_TEXT_SX }}
+                  >
                     {reviewAuthorName(comment)}
                   </Typography>
                   <ReviewStatusChip comment={comment} />
                 </Stack>
-                <Typography variant="body2">
+                <Typography variant="body2" sx={WRAP_TEXT_SX}>
                   {normalizeMentionMarkdown(comment.comment)}
                 </Typography>
               </Box>
@@ -1729,11 +1860,13 @@ export default function AnnotationComparisonPanel({
           <Typography variant="caption" fontWeight={700} display="block">
             Reviewer feedback
           </Typography>
-          <Typography variant="body2">{reviewNotes}</Typography>
+          <Typography variant="body2" sx={WRAP_TEXT_SX}>
+            {reviewNotes}
+          </Typography>
         </Alert>
       ) : null}
 
-      {showReviewActions && (
+      {canReviewSubmittedAnnotations && (
         <Box
           sx={(theme) => {
             const hasNotes = draftReviewNotes.trim();
@@ -1775,9 +1908,16 @@ export default function AnnotationComparisonPanel({
         </Box>
       )}
 
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Typography variant="subtitle2" sx={{ flex: 1 }}>
-          {showReviewActions ? "Review Annotations" : "Labels"}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ mb: 2 }}
+      >
+        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
+          {canReviewSubmittedAnnotations ? "Review Annotations" : "Labels"}
         </Typography>
         {reviewStatus && (
           <Chip
@@ -1841,6 +1981,9 @@ export default function AnnotationComparisonPanel({
                   minHeight: 30,
                   maxWidth: "100%",
                   justifyContent: "flex-start",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {annotatorDisplayName(annotator, currentUserId)}
@@ -1874,7 +2017,7 @@ export default function AnnotationComparisonPanel({
           labelFeedback={labelFeedback}
           activeFeedbackKey={activeFeedbackKey}
           focusedCommentScope={focusedCommentScope}
-          showReviewActions={showReviewActions}
+          showReviewActions={canReviewSubmittedAnnotations}
           currentUserId={currentUserId}
           item={item}
           itemId={itemId}
@@ -1884,7 +2027,7 @@ export default function AnnotationComparisonPanel({
           onDoneFeedback={() => setActiveFeedbackKey(null)}
         />
 
-        {showReviewActions && (
+        {canReviewSubmittedAnnotations && (
           <FeedbackDraftSummary
             feedbackDrafts={feedbackDrafts}
             onRemove={handleRemoveLabelFeedback}
@@ -1898,7 +2041,7 @@ export default function AnnotationComparisonPanel({
 
       <AnnotationHistory queueId={queueId} itemId={itemId} />
 
-      {showReviewActions && (
+      {canReviewSubmittedAnnotations && (
         <Box
           sx={{
             position: "sticky",
@@ -1919,12 +2062,19 @@ export default function AnnotationComparisonPanel({
             zIndex: 2,
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            useFlexGap
+            flexWrap="wrap"
+            sx={{ mb: 1 }}
+          >
             <Iconify icon="solar:checklist-minimalistic-bold" width={18} />
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ flex: 1 }}
+              sx={{ flex: 1, minWidth: 0, ...WRAP_TEXT_SX }}
             >
               {hasRequestFeedback
                 ? `${feedbackDraftCount} feedback ${
@@ -1933,7 +2083,7 @@ export default function AnnotationComparisonPanel({
                 : reviewActionHint}
             </Typography>
           </Stack>
-          <Stack direction="row" spacing={1}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             <Button
               variant="contained"
               color="inherit"

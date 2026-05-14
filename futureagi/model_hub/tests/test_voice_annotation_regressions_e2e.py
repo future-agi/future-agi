@@ -18,8 +18,8 @@ from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotationTypeChoices,
     CellStatus,
-    DataTypeChoices,
     DatasetSourceChoices,
+    DataTypeChoices,
     QueueItemSourceType,
     QueueItemStatus,
     SourceChoices,
@@ -34,6 +34,8 @@ from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import (
     CallExecution,
+)
+from simulate.models.test_execution import (
     TestExecution as SimTestExecution,
 )
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -192,7 +194,7 @@ def simulation_call_execution(
 def _queue(name, organization, workspace, user, **kwargs):
     return AnnotationQueue.objects.create(
         name=f"{name} {uuid.uuid4().hex[:8]}",
-        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        status=kwargs.pop("status", AnnotationQueueStatusChoices.ACTIVE.value),
         organization=organization,
         workspace=workspace,
         created_by=user,
@@ -600,6 +602,11 @@ class TestVoiceAnnotationRegressionE2E:
             order=2,
             status=QueueItemStatus.SKIPPED.value,
         )
+        base_time = timezone.now()
+        QueueItem.objects.filter(id=first_item.id).update(
+            created_at=base_time + timedelta(minutes=1)
+        )
+        QueueItem.objects.filter(id=skipped_item.id).update(created_at=base_time)
 
         submit_first = auth_client.post(
             _submit_url(queue, first_item),
@@ -653,6 +660,93 @@ class TestVoiceAnnotationRegressionE2E:
         assert complete_skipped.data["result"]["next_item"] is None
         queue.refresh_from_db()
         assert queue.status == AnnotationQueueStatusChoices.COMPLETED.value
+
+    def test_th3884_start_annotating_resumes_latest_skipped_item(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        second_span = ObservationSpan.objects.create(
+            id=f"voice_second_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=observe_trace,
+            name="Second skipped item",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            input={"messages": [{"role": "user", "content": "second"}]},
+            output={"messages": [{"role": "assistant", "content": "ok"}]},
+            status="OK",
+        )
+        third_span = ObservationSpan.objects.create(
+            id=f"voice_third_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=observe_trace,
+            name="Third skipped item",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            input={"messages": [{"role": "user", "content": "third"}]},
+            output={"messages": [{"role": "assistant", "content": "ok"}]},
+            status="OK",
+        )
+        queue = _queue(
+            "TH-3884 resume skipped queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+            status=AnnotationQueueStatusChoices.COMPLETED.value,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue=queue,
+            user=user,
+            role="annotator",
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            organization=organization,
+            workspace=workspace,
+            order=1,
+            status=QueueItemStatus.COMPLETED.value,
+        )
+        older_skipped = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=second_span,
+            organization=organization,
+            workspace=workspace,
+            order=2,
+            status=QueueItemStatus.SKIPPED.value,
+        )
+        latest_skipped = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=third_span,
+            organization=organization,
+            workspace=workspace,
+            order=3,
+            status=QueueItemStatus.SKIPPED.value,
+        )
+        base_time = timezone.now()
+        QueueItem.objects.filter(id=older_skipped.id).update(created_at=base_time)
+        QueueItem.objects.filter(id=latest_skipped.id).update(
+            created_at=base_time + timedelta(minutes=1)
+        )
+
+        resp = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/items/next-item/"
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["result"]["item"]["id"] == str(latest_skipped.id)
 
     def test_th3535_queue_item_preview_exposes_latency_response_metrics(
         self,
@@ -1028,6 +1122,156 @@ class TestVoiceAnnotationRegressionE2E:
             format="json",
         )
         assert disabled_resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_export_to_existing_dataset_reuses_columns_creates_missing_and_backfills(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        root_conversation_span.span_attributes = {"score": 7}
+        root_conversation_span.save(update_fields=["span_attributes"])
+        queue = _queue(
+            "Existing dataset export queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.COMPLETED.value,
+            order=1,
+        )
+        Score.objects.create(
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            label=thumbs_label,
+            value={"value": "up"},
+            notes="existing dataset export note",
+            annotator=user,
+            queue_item=item,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        dataset = Dataset.objects.create(
+            name=f"Existing export target {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        source_column = Column.objects.create(
+            dataset=dataset,
+            name="source_identifier",
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+            status=StatusType.COMPLETED.value,
+        )
+        existing_only_column = Column.objects.create(
+            dataset=dataset,
+            name="existing_only",
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+            status=StatusType.COMPLETED.value,
+        )
+        existing_row = Row.objects.create(dataset=dataset, order=1)
+        Cell.objects.create(
+            dataset=dataset,
+            row=existing_row,
+            column=source_column,
+            value="pre-existing-source",
+        )
+        Cell.objects.create(
+            dataset=dataset,
+            row=existing_row,
+            column=existing_only_column,
+            value="keep me",
+        )
+        dataset.column_order = [str(source_column.id), str(existing_only_column.id)]
+        dataset.column_config = {
+            str(source_column.id): {"is_frozen": False, "is_visible": True},
+            str(existing_only_column.id): {"is_frozen": False, "is_visible": True},
+        }
+        dataset.save(update_fields=["column_order", "column_config"])
+
+        label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
+        export_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
+            {
+                "dataset_id": str(dataset.id),
+                "status_filter": "completed",
+                "column_mapping": [
+                    {
+                        "field": "source_id",
+                        "column": "source_identifier",
+                        "enabled": True,
+                    },
+                    {
+                        "field": label_slot_1_value_field,
+                        "column": "thumbs_annotation_1_score",
+                        "enabled": True,
+                    },
+                    {
+                        "field": "attr:span_attributes.score",
+                        "column": "customer_score",
+                        "enabled": True,
+                    },
+                ],
+            },
+            format="json",
+        )
+
+        assert export_resp.status_code == status.HTTP_200_OK, export_resp.data
+        assert export_resp.data["result"]["dataset_id"] == str(dataset.id)
+        assert export_resp.data["result"]["rows_created"] == 1
+        assert Column.objects.filter(
+            dataset=dataset, name="source_identifier", deleted=False
+        ).count() == 1
+        assert (
+            Column.objects.get(dataset=dataset, name="customer_score").data_type
+            == DataTypeChoices.INTEGER.value
+        )
+        dataset.refresh_from_db()
+        assert str(
+            Column.objects.get(dataset=dataset, name="thumbs_annotation_1_score").id
+        ) in dataset.column_order
+        assert str(
+            Column.objects.get(dataset=dataset, name="customer_score").id
+        ) in dataset.column_order
+
+        exported_row = Row.objects.get(dataset=dataset, order=2, deleted=False)
+        exported_cells = {
+            cell.column.name: cell.value
+            for cell in Cell.objects.filter(row=exported_row).select_related("column")
+        }
+        assert exported_cells["source_identifier"] == root_conversation_span.id
+        assert exported_cells["thumbs_annotation_1_score"] == json.dumps(
+            {"value": "up"}
+        )
+        assert exported_cells["customer_score"] == "7"
+        assert exported_cells["existing_only"] == ""
+        assert exported_row.metadata["queue_item_id"] == str(item.id)
+
+        backfilled_existing_cells = {
+            cell.column.name: cell.value
+            for cell in Cell.objects.filter(row=existing_row).select_related("column")
+        }
+        assert backfilled_existing_cells["source_identifier"] == (
+            "pre-existing-source"
+        )
+        assert backfilled_existing_cells["existing_only"] == "keep me"
+        assert backfilled_existing_cells["thumbs_annotation_1_score"] == ""
+        assert backfilled_existing_cells["customer_score"] == ""
 
     def test_export_all_status_includes_all_queue_items(
         self,

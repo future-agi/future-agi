@@ -24,6 +24,7 @@ import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
+import { panelFiltersToApiFilters } from "./filterTransforms";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -243,6 +244,7 @@ const ObserveToolbar = ({
       const rawColType =
         gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
       const rawFilterType = gf.filter_config?.filter_type;
+      const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
       // stored as filter_type=categorical with values like ["Thumbs Up",
       // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
@@ -258,19 +260,25 @@ const ObserveToolbar = ({
       })();
       return {
         field: gf.column_id,
-        fieldName: gf.display_name,
-        fieldCategory: colTypeReverseMap[rawColType] || "system",
-        fieldType: isNumberOp
-          ? "number"
-          : rawFilterType === "number"
+        fieldName:
+          gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
+        fieldCategory: isGlobalAnnotatorFilter
+          ? "annotation"
+          : colTypeReverseMap[rawColType] || "system",
+        fieldType: isGlobalAnnotatorFilter
+          ? "annotator"
+          : isNumberOp
             ? "number"
-            : rawFilterType === "thumbs" || looksLikeThumbsValues
-              ? "thumbs"
-              : rawFilterType === "categorical"
-                ? "categorical"
-                : rawFilterType === "text" && rawColType === "ANNOTATION"
-                  ? "text"
-                  : "string",
+            : rawFilterType === "number"
+              ? "number"
+              : rawFilterType === "thumbs" || looksLikeThumbsValues
+                ? "thumbs"
+                : rawFilterType === "categorical"
+                  ? "categorical"
+                  : rawFilterType === "text" && rawColType === "ANNOTATION"
+                    ? "text"
+                    : "string",
+        apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
         operator: isNumberOp ? rawOp : opReverseMap[rawOp] || rawOp,
         value,
       };
@@ -429,66 +437,7 @@ const ObserveToolbar = ({
                 }
                 return;
               }
-              const opMap = {
-                is: "equals",
-                is_not: "not_equals",
-                contains: "contains",
-                not_contains: "not_contains",
-                equals: "equals",
-                // Number operators — pass through directly
-                equal_to: "equal_to",
-                not_equal_to: "not_equal_to",
-                greater_than: "greater_than",
-                greater_than_or_equal: "greater_than_or_equal",
-                less_than: "less_than",
-                less_than_or_equal: "less_than_or_equal",
-                between: "between",
-                not_between: "not_between",
-              };
-              const typeMap = {
-                string: "text",
-                number: "number",
-                boolean: "boolean",
-                categorical: "categorical",
-                thumbs: "thumbs",
-                text: "text",
-              };
-              const colTypeMap = {
-                attribute: "SPAN_ATTRIBUTE",
-                system: "SYSTEM_METRIC",
-                eval: "EVAL_METRIC",
-                annotation: "ANNOTATION",
-              };
-              const apiFilters = newFilters.map((f) => {
-                const baseOp = opMap[f.operator] || f.operator;
-                // Multi-value picks (enum / choices) come in as arrays. For
-                // the `is`/`is_not` (equals/not_equals) ops, promote to
-                // `in`/`not_in` so the backend sees a proper IN clause
-                // instead of an equality check against a joined string.
-                let filterOp = baseOp;
-                let filterValue = f.value;
-                if (Array.isArray(filterValue)) {
-                  if (filterValue.length === 1) {
-                    filterValue = filterValue[0];
-                  } else if (filterValue.length > 1) {
-                    if (baseOp === "equals") filterOp = "in";
-                    else if (baseOp === "not_equals") filterOp = "not_in";
-                    else filterValue = filterValue.join(",");
-                  }
-                }
-                return {
-                  column_id: f.field,
-                  ...(f.fieldName && { display_name: f.fieldName }),
-                  filter_config: {
-                    filter_type: typeMap[f.fieldType] || "text",
-                    filter_op: filterOp,
-                    filter_value: filterValue,
-                    ...(colTypeMap[f.fieldCategory] && {
-                      col_type: colTypeMap[f.fieldCategory],
-                    }),
-                  },
-                };
-              });
+              const apiFilters = panelFiltersToApiFilters(newFilters);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
                 onApplyCompareExtraFilters(apiFilters);

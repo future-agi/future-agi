@@ -562,7 +562,15 @@ export default function QueueItemsTable({
   );
 
   const selectionColumnDef = useMemo(
-    () => ({ pinned: true, lockPinned: true }),
+    () => ({
+      pinned: true,
+      lockPinned: true,
+      width: 44,
+      minWidth: 44,
+      maxWidth: 44,
+      resizable: false,
+      suppressHeaderMenuButton: true,
+    }),
     [],
   );
 

@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Chip, Typography } from "@mui/material";
+import { Box, Button, Chip, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import _ from "lodash";
 
@@ -96,6 +96,10 @@ const FilterChips = ({
         display: "flex",
         alignItems: "center",
         gap: 0.75,
+        flexWrap: "wrap",
+        maxWidth: "100%",
+        minWidth: 0,
+        overflow: "hidden",
         px: 2,
         py: 0.5,
         borderBottom: "1px solid",
@@ -112,61 +116,114 @@ const FilterChips = ({
           gap: 0.75,
           flex: 1,
           flexWrap: "wrap",
+          maxWidth: "100%",
+          minWidth: 0,
+          overflow: "hidden",
         }}
       >
         {chips.map((chip) => (
-          <Chip
+          <Tooltip
             key={chip._idx}
-            size="small"
-            onDelete={() => onRemoveFilter(chip._idx)}
-            onClick={
-              onChipClick
-                ? (e) => onChipClick(chip._idx, e.currentTarget)
-                : undefined
-            }
-            clickable={!!onChipClick}
-            label={
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                  {chip.parts.field}
-                </Typography>
-                <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
-                  {chip.parts.op}
-                </Typography>
-                <Typography
-                  sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
+            title={`${chip.parts.field} ${chip.parts.op} ${chip.parts.value}`}
+            placement="top"
+            arrow
+          >
+            <Chip
+              size="small"
+              onDelete={() => onRemoveFilter(chip._idx)}
+              onClick={
+                onChipClick
+                  ? (e) => onChipClick(chip._idx, e.currentTarget)
+                  : undefined
+              }
+              clickable={!!onChipClick}
+              label={
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    maxWidth: "100%",
+                    minWidth: 0,
+                  }}
                 >
-                  {chip.parts.value}
-                </Typography>
-              </Box>
-            }
-            sx={{
-              height: 26,
-              bgcolor: "background.neutral",
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "6px",
-              transition: (theme) =>
-                theme.transitions.create(["background-color", "border-color"], {
-                  duration: theme.transitions.duration.shortest,
-                }),
-              "&:hover": {
-                bgcolor: "action.hover",
-                borderColor: "text.disabled",
-              },
-              "& .MuiChip-label": { px: 0.75 },
-              "& .MuiChip-deleteIcon": {
-                fontSize: 14,
-                color: "text.secondary",
-                "&:hover": { color: "text.primary" },
-              },
-            }}
-          />
+                  <Typography
+                    sx={{
+                      flexShrink: 0,
+                      fontSize: 12,
+                      color: "text.secondary",
+                      maxWidth: 180,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {chip.parts.field}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      flexShrink: 0,
+                      fontSize: 11,
+                      color: "text.disabled",
+                    }}
+                  >
+                    {chip.parts.op}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "text.primary",
+                    }}
+                  >
+                    {chip.parts.value}
+                  </Typography>
+                </Box>
+              }
+              sx={{
+                height: 26,
+                maxWidth: "100%",
+                minWidth: 0,
+                bgcolor: "background.neutral",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "6px",
+                transition: (theme) =>
+                  theme.transitions.create(
+                    ["background-color", "border-color"],
+                    {
+                      duration: theme.transitions.duration.shortest,
+                    },
+                  ),
+                "&:hover": {
+                  bgcolor: "action.hover",
+                  borderColor: "text.disabled",
+                },
+                "& .MuiChip-label": {
+                  display: "block",
+                  maxWidth: "100%",
+                  minWidth: 0,
+                  px: 0.75,
+                },
+                "& .MuiChip-deleteIcon": {
+                  flexShrink: 0,
+                  fontSize: 14,
+                  color: "text.secondary",
+                  "&:hover": { color: "text.primary" },
+                },
+              }}
+            />
+          </Tooltip>
         ))}
 
         {/* Add filter button — opens filter popup */}
         <Box
           component="button"
+          aria-label="Add filter"
           onClick={(e) => onAddFilter?.(e.currentTarget)}
           sx={(theme) => ({
             display: "flex",
@@ -200,7 +257,13 @@ const FilterChips = ({
 
       {/* Clear + Save buttons */}
       <Box
-        sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          flexShrink: 0,
+          ml: "auto",
+        }}
       >
         <Button
           size="small"

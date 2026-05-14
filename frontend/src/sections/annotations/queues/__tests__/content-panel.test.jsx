@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "src/utils/test-utils";
+import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
 vi.mock("src/components/iconify", () => ({
@@ -40,7 +41,14 @@ vi.mock("src/components/VoiceDetailDrawerV2/ScenarioView", () => ({
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2", () => ({
-  default: () => <div data-testid="voice-drawer" />,
+  default: ({ data, embedded, hideAnnotationTab }) => (
+    <div
+      data-testid="voice-drawer"
+      data-scenario={data?.scenario}
+      data-embedded={String(embedded)}
+      data-hide-annotation={String(hideAnnotationTab)}
+    />
+  ),
 }));
 
 vi.mock("src/sections/test-detail/TestDetailDrawer/AudioPlayerCustom", () => ({
@@ -109,7 +117,22 @@ vi.mock("src/components/imagine/useImagineStore", () => ({
 }));
 
 describe("Annotation queue ContentPanel", () => {
-  it("uses the new scenario view for call execution queue items", async () => {
+  beforeEach(() => {
+    axios.get.mockResolvedValue({
+      data: {
+        status: "completed",
+        simulation_call_type: "voice",
+        scenario: "Greet the customer",
+        scenario_columns: {
+          persona: { column_name: "persona", value: "Impatient customer" },
+        },
+        transcript: [],
+        eval_outputs: {},
+      },
+    });
+  });
+
+  it("uses the voice drawer for voice call execution queue items", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -128,9 +151,56 @@ describe("Annotation queue ContentPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("new-scenario-view")).toHaveTextContent(
+      expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+        "data-scenario",
         "Greet the customer",
       );
     });
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-embedded",
+      "true",
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-hide-annotation",
+      "true",
+    );
+    expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
+  });
+
+  it("keeps chat call execution queue items on the chat detail layout", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        status: "completed",
+        simulation_call_type: "text",
+        scenario: "Answer the customer",
+        scenario_columns: {},
+        transcript: [],
+        eval_outputs: {},
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContentPanel
+          item={{
+            source_type: "call_execution",
+            source_content: { call_id: "chat-call-1" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-scenario-view")).toHaveTextContent(
+        "Answer the customer",
+      );
+    });
+    expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
   });
 });

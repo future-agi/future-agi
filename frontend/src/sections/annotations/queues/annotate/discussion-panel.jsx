@@ -181,6 +181,21 @@ function neutralChipSx(theme) {
   };
 }
 
+const WRAP_TEXT_SX = {
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+const CHIP_TRUNCATE_SX = {
+  maxWidth: "100%",
+  minWidth: 0,
+  flexShrink: 1,
+  "& .MuiChip-label": {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+};
+
 function actionButtonSx(color) {
   return (theme) => {
     const tone = statusTone(theme, color);
@@ -631,7 +646,7 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
     <Typography
       component="div"
       variant="body2"
-      sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}
+      sx={{ mt: 0.5, whiteSpace: "pre-wrap", ...WRAP_TEXT_SX }}
     >
       {parts.map((part, index) =>
         part.type === "mention" ? (
@@ -645,6 +660,7 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
               color: (theme) => statusTone(theme, "info").text,
               bgcolor: (theme) => statusTone(theme, "info").bg,
               fontWeight: 700,
+              ...WRAP_TEXT_SX,
             }}
           >
             {part.text}
@@ -672,6 +688,7 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
               font: "inherit",
               fontWeight: 700,
               cursor: "pointer",
+              ...WRAP_TEXT_SX,
               "&:hover": {
                 textDecoration: "underline",
               },
@@ -690,6 +707,7 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
               color: (theme) => statusTone(theme, "info").text,
               bgcolor: (theme) => statusTone(theme, "info").bg,
               fontWeight: 700,
+              ...WRAP_TEXT_SX,
             }}
           >
             {part.text}
@@ -1020,7 +1038,13 @@ function CommentComposer({
         </Paper>
       )}
 
-      <Stack direction="row" alignItems="center" spacing={1}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        useFlexGap
+        flexWrap="wrap"
+      >
         {scopedLabelId && (
           <Chip
             size="small"
@@ -1029,7 +1053,7 @@ function CommentComposer({
               (labels || []).find((label) => labelId(label) === scopedLabelId)
                 ?.name || "Label"
             }
-            sx={(theme) => neutralChipSx(theme)}
+            sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
         )}
         {mentionedUserIds.length > 0 && (
@@ -1045,7 +1069,10 @@ function CommentComposer({
             size="small"
             variant="outlined"
             label={`For @${memberLabel(targetMember)}`}
-            sx={(theme) => statusChipSx("warning")(theme)}
+            sx={(theme) => ({
+              ...statusChipSx("warning")(theme),
+              ...CHIP_TRUNCATE_SX,
+            })}
           />
         )}
         <LoadingButton
@@ -1057,7 +1084,8 @@ function CommentComposer({
           disabled={!canSubmit}
           startIcon={<Iconify icon="eva:paper-plane-fill" width={16} />}
           sx={{
-            ml: "auto",
+            ml: { xs: 0, sm: "auto" },
+            flexShrink: 0,
             borderRadius: 0.75,
             bgcolor: "text.primary",
             color: "background.paper",
@@ -1416,8 +1444,18 @@ function ThreadComment({
           {commentAuthor(comment).slice(0, 1).toUpperCase()}
         </Avatar>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Typography variant="caption" fontWeight={700} noWrap>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            useFlexGap
+            flexWrap="wrap"
+          >
+            <Typography
+              variant="caption"
+              fontWeight={700}
+              sx={{ minWidth: 0, ...WRAP_TEXT_SX }}
+            >
               {commentAuthor(comment)}
             </Typography>
             {isSystemAction && (
@@ -1429,6 +1467,7 @@ function ThreadComment({
                   height: 18,
                   fontSize: 10,
                   textTransform: "capitalize",
+                  flexShrink: 0,
                 })}
               />
             )}
@@ -1536,7 +1575,13 @@ function DiscussionThreadCard({
           borderColor: (theme) => neutralBorder(theme, 0.08),
         }}
       >
-        <Stack direction="row" alignItems="center" spacing={1}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          useFlexGap
+          flexWrap="wrap"
+        >
           <Chip
             size="small"
             variant="outlined"
@@ -1548,7 +1593,7 @@ function DiscussionThreadCard({
                 targetAnnotatorId: thread?.target_annotator_id || "",
               })
             }
-            sx={(theme) => ({ ...neutralChipSx(theme), maxWidth: "70%" })}
+            sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
           <Chip
             size="small"
@@ -1560,6 +1605,7 @@ function DiscussionThreadCard({
               height: 20,
               fontSize: 11,
               ml: "auto",
+              flexShrink: 0,
             })}
           />
         </Stack>
@@ -1567,7 +1613,7 @@ function DiscussionThreadCard({
           <Typography
             variant="caption"
             color="text.disabled"
-            sx={{ display: "block", mt: 0.5 }}
+            sx={{ display: "block", mt: 0.5, ...WRAP_TEXT_SX }}
           >
             {timelineParts.map((part, index) => (
               <Fragment key={part.key}>
@@ -1612,7 +1658,13 @@ function DiscussionThreadCard({
       </Box>
 
       <Divider />
-      <Stack direction="row" spacing={1} sx={{ p: 1 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ p: 1 }}
+      >
         {!resolved && (
           <Button
             size="small"
@@ -1636,7 +1688,7 @@ function DiscussionThreadCard({
         )}
         {resolved ? (
           <Tooltip title="Move this thread back to Open threads">
-            <span style={{ marginLeft: "auto" }}>
+            <span style={{ marginLeft: "auto", maxWidth: "100%" }}>
               <LoadingButton
                 size="small"
                 variant="outlined"
@@ -1655,7 +1707,7 @@ function DiscussionThreadCard({
           </Tooltip>
         ) : (
           <Tooltip title="Move this thread to Resolved">
-            <span style={{ marginLeft: "auto" }}>
+            <span style={{ marginLeft: "auto", maxWidth: "100%" }}>
               <LoadingButton
                 size="small"
                 variant="outlined"
@@ -1863,11 +1915,12 @@ export function CollaborationDrawer({
             size="small"
             variant="outlined"
             label={`${activeThreads.length} active`}
-            sx={(theme) =>
-              activeThreads.length
+            sx={(theme) => ({
+              ...(activeThreads.length
                 ? statusChipSx("info")(theme)
-                : neutralChipSx(theme)
-            }
+                : neutralChipSx(theme)),
+              flexShrink: 0,
+            })}
           />
           <Tooltip title="Close comments">
             <IconButton
@@ -2268,8 +2321,18 @@ export default function DiscussionPanel({
                     };
                   }}
                 >
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <Typography variant="caption" color="text.secondary">
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.75}
+                    useFlexGap
+                    flexWrap="wrap"
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ minWidth: 0, ...WRAP_TEXT_SX }}
+                    >
                       {commentAuthor(comment)}
                     </Typography>
                     <Chip
@@ -2280,6 +2343,7 @@ export default function DiscussionPanel({
                         ...neutralChipSx(theme),
                         height: 18,
                         fontSize: 10,
+                        ...CHIP_TRUNCATE_SX,
                       })}
                     />
                     {timestamp && (
@@ -2308,7 +2372,10 @@ export default function DiscussionPanel({
                           size="small"
                           label={`@${memberLabel(user)}`}
                           variant="outlined"
-                          sx={(theme) => statusChipSx("info")(theme)}
+                          sx={(theme) => ({
+                            ...statusChipSx("info")(theme),
+                            ...CHIP_TRUNCATE_SX,
+                          })}
                         />
                       ))}
                     </Stack>
@@ -2362,6 +2429,9 @@ export default function DiscussionPanel({
                     borderRadius: 0.75,
                     minHeight: 30,
                     maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {label.name}
@@ -2414,6 +2484,9 @@ export default function DiscussionPanel({
                       minHeight: 30,
                       maxWidth: "100%",
                       justifyContent: "flex-start",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     @{memberLabel(member)}
@@ -2567,7 +2640,7 @@ export default function DiscussionPanel({
                       ? "info"
                       : "default"
                   }
-                  sx={{ height: 22 }}
+                  sx={{ height: 22, ...CHIP_TRUNCATE_SX }}
                 />
               ))}
             </Stack>

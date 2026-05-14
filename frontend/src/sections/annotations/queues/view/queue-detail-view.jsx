@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
 import { LoadingButton } from "@mui/lab";
@@ -29,6 +30,9 @@ import {
   getAnnotationTabIndicatorProps,
 } from "../../view/annotation-tab-styles";
 import {
+  annotateKeys,
+  annotationQueueKeys,
+  queueItemKeys,
   useAnnotationQueueDetail,
   useQueueItems,
   useQueueProgress,
@@ -82,6 +86,7 @@ const REVIEW_STATUS_OPTIONS = [
 export default function QueueDetailView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const theme = useTheme();
   const { user } = useAuthContext();
   const [filters, setFilters] = useState({
@@ -230,6 +235,24 @@ export default function QueueDetailView() {
     downloadExport({ queueId });
   }, [downloadExport, queueId]);
 
+  const handleOpenAnnotationWorkspace = useCallback(
+    (mode) => {
+      // The annotation workspace chooses its first item from `/next-item/`.
+      // Clear cached entry state so Start/Review sees newly added items,
+      // current roles, progress, and queue metadata before selecting.
+      queryClient.removeQueries({ queryKey: annotateKeys.nextItem(queueId) });
+      queryClient.removeQueries({
+        queryKey: annotationQueueKeys.detail(queueId),
+      });
+      queryClient.removeQueries({
+        queryKey: annotationQueueKeys.progress(queueId),
+      });
+      queryClient.invalidateQueries({ queryKey: queueItemKeys.all(queueId) });
+      navigate(`${paths.dashboard.annotations.annotate(queueId)}?mode=${mode}`);
+    },
+    [navigate, queryClient, queueId],
+  );
+
   const handleOpenDatasetExport = useCallback(() => {
     setExportMenuAnchor(null);
     setExportDialogOpen(true);
@@ -291,7 +314,9 @@ export default function QueueDetailView() {
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 3, pt: 3, pb: 2 }}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ px: 3, pt: 3, pb: 2, minWidth: 0 }}
         flexShrink={0}
       >
         <IconButton
@@ -300,9 +325,11 @@ export default function QueueDetailView() {
         >
           <Iconify icon="eva:arrow-back-fill" />
         </IconButton>
-        <Typography variant="h4">{queue?.name || "Queue"}</Typography>
+        <Typography variant="h4" sx={{ minWidth: 0 }} noWrap>
+          {queue?.name || "Queue"}
+        </Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
-        <Box sx={{ flex: 1 }} />
+        <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
         {isManager && queue?.status && queue.status !== "active" && (
           <Button
             variant="outlined"
@@ -341,11 +368,7 @@ export default function QueueDetailView() {
             variant={canAnnotateQueue ? "outlined" : "contained"}
             color="primary"
             startIcon={<Iconify icon="solar:checklist-bold" />}
-            onClick={() =>
-              navigate(
-                `${paths.dashboard.annotations.annotate(queueId)}?mode=review`,
-              )
-            }
+            onClick={() => handleOpenAnnotationWorkspace("review")}
           >
             Review Items
           </Button>
@@ -355,11 +378,7 @@ export default function QueueDetailView() {
             variant="contained"
             color="primary"
             startIcon={<Iconify icon="eva:edit-2-fill" />}
-            onClick={() =>
-              navigate(
-                `${paths.dashboard.annotations.annotate(queueId)}?mode=annotate`,
-              )
-            }
+            onClick={() => handleOpenAnnotationWorkspace("annotate")}
           >
             {queue?.status === "completed"
               ? "Resume Skipped"
@@ -485,12 +504,21 @@ export default function QueueDetailView() {
           {!isEmpty && (
             <Stack
               direction="row"
-              alignItems="center"
+              alignItems="flex-start"
               justifyContent="space-between"
+              useFlexGap
+              flexWrap="wrap"
               mb={2}
               flexShrink={0}
+              sx={{ gap: 1.5, minWidth: 0 }}
             >
-              <Stack direction="row" spacing={2}>
+              <Stack
+                direction="row"
+                spacing={2}
+                useFlexGap
+                flexWrap="wrap"
+                sx={{ minWidth: 0, flex: "1 1 560px" }}
+              >
                 <FormSearchSelectFieldState
                   size="small"
                   value={filters.status}
@@ -501,7 +529,7 @@ export default function QueueDetailView() {
                   }))}
                   placeholder="All Statuses"
                   showClear={!!filters.status}
-                  sx={{ minWidth: 160 }}
+                  sx={{ minWidth: 140, flex: "1 1 150px" }}
                 />
                 <FormSearchSelectFieldState
                   size="small"
@@ -515,7 +543,7 @@ export default function QueueDetailView() {
                   }))}
                   placeholder="All Sources"
                   showClear={!!filters.source_type}
-                  sx={{ minWidth: 160 }}
+                  sx={{ minWidth: 140, flex: "1 1 150px" }}
                 />
                 {queue?.requires_review && (
                   <FormSearchSelectFieldState
@@ -530,7 +558,7 @@ export default function QueueDetailView() {
                     }))}
                     placeholder="All Reviews"
                     showClear={!!filters.review_status}
-                    sx={{ minWidth: 160 }}
+                    sx={{ minWidth: 140, flex: "1 1 150px" }}
                   />
                 )}
                 <ToggleButton
@@ -543,24 +571,48 @@ export default function QueueDetailView() {
                     )
                   }
                   size="small"
-                  sx={{ textTransform: "none", px: 2 }}
+                  sx={{
+                    textTransform: "none",
+                    px: 2,
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   My Items
                 </ToggleButton>
               </Stack>
 
-              <Stack direction="row" spacing={1}>
+              <Stack
+                direction="row"
+                spacing={1}
+                useFlexGap
+                flexWrap="wrap"
+                justifyContent="flex-end"
+                sx={{
+                  minWidth: 0,
+                  flex: "0 1 auto",
+                  "& .MuiButton-root": {
+                    minWidth: 124,
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                  },
+                  "& .MuiButton-startIcon": {
+                    flexShrink: 0,
+                  },
+                }}
+              >
                 {isManager && selectedIds.size > 0 && (
                   <>
                     {isManager && !queue?.auto_assign && (
-                      <Button
+                      <LoadingButton
                         variant="outlined"
                         size="medium"
                         onClick={handleOpenBulkAssign}
+                        loading={isAssigningItems}
                         disabled={isAssigningItems || isBulkRemoving}
                       >
                         Assign Selected ({selectedIds.size})
-                      </Button>
+                      </LoadingButton>
                     )}
                     <LoadingButton
                       color="error"
@@ -652,6 +704,7 @@ export default function QueueDetailView() {
         open={addDialogOpen}
         onClose={() => setAddDialogOpen(false)}
         queueId={queueId}
+        queue={queue}
       />
 
       <ExportToDatasetDialog

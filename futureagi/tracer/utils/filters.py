@@ -1338,6 +1338,40 @@ class FilterEngine:
             elif col_type == ColType.EVAL_METRIC.value:
                 metric_column_id = f"metric_{column_id}"
 
+            def _values(raw_value):
+                if isinstance(raw_value, (list, tuple)):
+                    return [v for v in raw_value if v not in (None, "")]
+                if raw_value in (None, ""):
+                    return []
+                return [raw_value]
+
+            def _eval_choice_condition(raw_value):
+                values = _values(raw_value)
+                if not values:
+                    return (
+                        Q()
+                        if filter_op in ("not_equals", "not_in", "not_contains")
+                        else Q(id__isnull=True)
+                    )
+
+                positive = Q()
+                for value in values:
+                    text_value = str(value).strip()
+                    if not text_value:
+                        continue
+                    normalized = text_value.lower()
+                    if normalized in ("passed", "pass", "true", "1"):
+                        positive |= Q(**{f"{metric_column_id}__score__gt": 0})
+                    elif normalized in ("failed", "fail", "false", "0"):
+                        positive |= Q(**{f"{metric_column_id}__score": 0})
+                    positive |= Q(
+                        **{f"{metric_column_id}__{text_value}__score__gt": 0}
+                    )
+
+                if filter_op in ("not_equals", "not_in", "not_contains"):
+                    return Q(**{f"{metric_column_id}__isnull": False}) & ~positive
+                return positive
+
             if filter_type == "number":
                 # Append 'metric_' at the beginning and '__score' at the end of column_id
                 if col_type == ColType.ANNOTATION_RUNS.value:
@@ -1415,11 +1449,14 @@ class FilterEngine:
                     eval_filter_conditions &= Q(bool_pass_rate=filter_value)
 
             elif filter_type == "array":
-
                 if col_type in [
                     ColType.PROMPT_METRIC.value,
                     ColType.EVAL_METRIC.value,
                 ]:
+                    if col_type == ColType.EVAL_METRIC.value:
+                        eval_filter_conditions &= _eval_choice_condition(filter_value)
+                        continue
+
                     if isinstance(filter_value, list):
                         array_conditions = Q()
                         for value in filter_value:
@@ -1431,9 +1468,9 @@ class FilterEngine:
                         eval_filter_conditions &= Q(
                             **{f"{metric_column_id}__icontains": filter_value}
                         )
-            elif filter_type == "text":
-                # Skip EVAL_METRIC as it stores numeric scores, not text data
+            elif filter_type in ("text", "categorical"):
                 if col_type == ColType.EVAL_METRIC.value:
+                    eval_filter_conditions &= _eval_choice_condition(filter_value)
                     continue
 
                 eval_filter_conditions &= Q(**{f"{metric_column_id}": filter_value})

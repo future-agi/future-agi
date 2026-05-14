@@ -1477,6 +1477,216 @@ class TestAutomationRulesE2E:
         assert result["added"] == 1
         assert QueueItem.objects.get(queue_id=queue_id).trace_id == match.id
 
+    def test_evaluate_rule_trace_eval_choice_multiselect_filter(
+        self, auth_client, organization, workspace
+    ):
+        """Trace rules must honor eval choice filters sent as multi-select `in`.
+
+        This is the payload produced when a user checks one or more choices in
+        the Observe-style filter picker. It must not collapse to zero matches.
+        """
+        from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalLogger, ObservationSpan
+
+        project = _create_project(organization, workspace, name="Trace Choice Rule")
+        template = EvalTemplate.objects.create(
+            name="Trace Choice Eval",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "choices"},
+            choices=["Fast", "Slow"],
+        )
+        config = CustomEvalConfig.objects.create(
+            name="Trace Choice Config",
+            eval_template=template,
+            project=project,
+        )
+        match = _create_trace(project, "choice-match")
+        skip = _create_trace(project, "choice-skip")
+        match_span = ObservationSpan.objects.create(
+            id=f"choice-root-{match.id.hex}",
+            project=project,
+            trace=match,
+            name="choice-match-root",
+            observation_type="chain",
+            parent_span_id=None,
+        )
+        skip_span = ObservationSpan.objects.create(
+            id=f"choice-root-{skip.id.hex}",
+            project=project,
+            trace=skip,
+            name="choice-skip-root",
+            observation_type="chain",
+            parent_span_id=None,
+        )
+        EvalLogger.objects.create(
+            trace=match,
+            observation_span=match_span,
+            custom_eval_config=config,
+            output_str_list=["Fast"],
+        )
+        EvalLogger.objects.create(
+            trace=skip,
+            observation_span=skip_span,
+            custom_eval_config=config,
+            output_str_list=["Slow"],
+        )
+
+        queue_id = _create_queue(auth_client, name="Trace choice filter rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Fast traces",
+                "source_type": "trace",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": str(config.id),
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "in",
+                                "filter_value": ["Fast"],
+                                "col_type": "EVAL_METRIC",
+                            },
+                        },
+                    ],
+                    "scope": {"project_id": str(project.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).trace_id == match.id
+
+    def test_clickhouse_eval_choice_filter_accepts_config_id_and_multiselect(
+        self, organization, workspace
+    ):
+        """The CH fallback path must not turn eval choice `in` filters into 0=1."""
+        from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        project = _create_project(organization, workspace, name="CH Choice Rule")
+        template = EvalTemplate.objects.create(
+            name="CH Choice Eval",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "choices"},
+            choices=["Fast", "Slow"],
+        )
+        config = CustomEvalConfig.objects.create(
+            name="CH Choice Config",
+            eval_template=template,
+            project=project,
+        )
+
+        builder = ClickHouseFilterBuilder(table="spans")
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": str(config.id),
+                    "filter_config": {
+                        "filter_type": "categorical",
+                        "filter_op": "in",
+                        "filter_value": ["Fast", "Slow"],
+                        "col_type": "EVAL_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "0 = 1" not in where
+        assert "custom_eval_config_id IN" in where
+        assert "output_str_list LIKE" in where
+        assert tuple(params["eval_cfg_1"]) == (str(config.id),)
+
+    def test_evaluate_rule_voice_trace_scope_has_no_implicit_time_window(
+        self, auth_client, organization, workspace
+    ):
+        """Voice rules should scan all matching calls unless date is explicit."""
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+
+        project = _create_project(organization, workspace, name="Voice All Time Rule")
+        old_time = timezone.now() - timedelta(days=4000)
+        old_trace = _create_trace(project, "old-voice-call")
+        new_trace = _create_trace(project, "new-voice-call")
+        old_span = ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=old_trace,
+            name="old-root",
+            observation_type="conversation",
+            parent_span_id=None,
+            start_time=old_time,
+            end_time=old_time + timedelta(minutes=1),
+        )
+        ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=new_trace,
+            name="new-root",
+            observation_type="conversation",
+            parent_span_id=None,
+            start_time=timezone.now(),
+            end_time=timezone.now() + timedelta(minutes=1),
+        )
+        Trace.objects.filter(id=old_trace.id).update(created_at=old_time)
+        ObservationSpan.objects.filter(id=old_span.id).update(created_at=old_time)
+
+        queue_id = _create_queue(auth_client, name="Voice all time rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "All voice calls",
+                "source_type": "trace",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [],
+                    "scope": {
+                        "project_id": str(project.id),
+                        "is_voice_call": True,
+                    },
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch(
+            "model_hub.services.bulk_selection._resolve_voice_call_ids_clickhouse",
+            side_effect=AssertionError("rules without date must not use CH time range"),
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 2
+        assert result["added"] == 2
+        assert set(
+            QueueItem.objects.filter(queue_id=queue_id).values_list(
+                "trace_id", flat=True
+            )
+        ) == {old_trace.id, new_trace.id}
+
     def test_evaluate_rule_span_observe_filter_payload(
         self, auth_client, organization, workspace, user
     ):
@@ -1551,6 +1761,94 @@ class TestAutomationRulesE2E:
                                 "filter_op": "greater_than",
                                 "filter_value": 80,
                                 "col_type": "ANNOTATION",
+                            },
+                        },
+                    ],
+                    "scope": {"project_id": str(project.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).observation_span_id == match.id
+
+    def test_evaluate_rule_span_eval_choice_multiselect_filter(
+        self, auth_client, organization, workspace
+    ):
+        """Span rules must honor eval choice filters sent as multi-select `in`."""
+        from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalLogger, ObservationSpan
+
+        project = _create_project(organization, workspace, name="Span Choice Rule")
+        trace = _create_trace(project, "span-choice-trace")
+        template = EvalTemplate.objects.create(
+            name="Span Choice Eval",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "choices"},
+            choices=["Fast", "Slow"],
+        )
+        config = CustomEvalConfig.objects.create(
+            name="Span Choice Config",
+            eval_template=template,
+            project=project,
+        )
+        match = ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=trace,
+            name="span-choice-match",
+            observation_type="llm",
+            parent_span_id=None,
+        )
+        skip = ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=trace,
+            name="span-choice-skip",
+            observation_type="tool",
+            parent_span_id=None,
+        )
+        EvalLogger.objects.create(
+            trace=trace,
+            observation_span=match,
+            custom_eval_config=config,
+            output_str_list=["Fast"],
+        )
+        EvalLogger.objects.create(
+            trace=trace,
+            observation_span=skip,
+            custom_eval_config=config,
+            output_str_list=["Slow"],
+        )
+
+        queue_id = _create_queue(auth_client, name="Span choice filter rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Fast spans",
+                "source_type": "observation_span",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": str(config.id),
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "in",
+                                "filter_value": ["Fast"],
+                                "col_type": "EVAL_METRIC",
                             },
                         },
                     ],
@@ -1994,10 +2292,6 @@ class TestAutomationRulesE2E:
     # -----------------------------------------------------------------------
     # 32. Queue scope authoritative for dataset_row source too
     # -----------------------------------------------------------------------
-    @pytest.mark.xfail(
-        reason="Pre-existing: automation rule scope can override the parent "
-        "queue's dataset binding. Validator missing in serializer."
-    )
     def test_rule_scope_cannot_override_queue_dataset(
         self, auth_client, organization, workspace
     ):
@@ -2006,13 +2300,13 @@ class TestAutomationRulesE2E:
             name="DS Bound A",
             organization=organization,
             workspace=workspace,
-            source=DatasetSourceChoices.MANUAL.value,
+            source=DatasetSourceChoices.BUILD.value,
         )
         ds_b = Dataset.objects.create(
             name="DS Other B",
             organization=organization,
             workspace=workspace,
-            source=DatasetSourceChoices.MANUAL.value,
+            source=DatasetSourceChoices.BUILD.value,
         )
         Row.objects.create(dataset=ds_b, order=0)
         Row.objects.create(dataset=ds_b, order=1)
@@ -2045,7 +2339,204 @@ class TestAutomationRulesE2E:
         assert "queue's bound dataset" in result.get("error", "")
 
     # -----------------------------------------------------------------------
-    # 33. Concurrent evaluators of the same rule don't double-add
+    # 33. Default queues can add from a selected source outside their default
+    # -----------------------------------------------------------------------
+    def test_default_queue_rule_scope_can_target_selected_project(
+        self, auth_client, organization, workspace
+    ):
+        """Default queues are flexible: their bound project is only the
+        automatic direct-annotation landing source, not a rule hard limit."""
+        project_a = _create_project(organization, workspace, name="Default Project A")
+        project_b = _create_project(organization, workspace, name="Selected Project B")
+        match = _create_trace(project_b, name="default-queue-cross-project")
+
+        queue_id = _create_queue(auth_client, name="Default bound to A")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            project=project_a,
+            is_default=True,
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Selected project rule",
+                "source_type": "trace",
+                "conditions": {
+                    "filter": [],
+                    "scope": {"project_id": str(project_b.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).trace_id == match.id
+
+    def test_default_queue_rule_scope_can_target_selected_dataset(
+        self, auth_client, organization, workspace
+    ):
+        ds_a = Dataset.objects.create(
+            name="Default DS A",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        ds_b = Dataset.objects.create(
+            name="Selected DS B",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        row = Row.objects.create(dataset=ds_b, order=0)
+
+        queue_id = _create_queue(auth_client, name="Default bound to DS A")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            dataset=ds_a,
+            is_default=True,
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Selected dataset rule",
+                "source_type": "dataset_row",
+                "conditions": {
+                    "filter": [],
+                    "scope": {"dataset_id": str(ds_b.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).dataset_row_id == row.id
+
+    def test_default_queue_rule_scope_can_target_selected_agent_definition(
+        self, auth_client, organization, workspace
+    ):
+        from simulate.models import AgentDefinition, Scenarios
+        from simulate.models.run_test import RunTest
+        from simulate.models.simulator_agent import SimulatorAgent
+        from simulate.models.test_execution import CallExecution, TestExecution
+
+        agent_a = AgentDefinition.objects.create(
+            agent_name="Default Agent A",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+10000000000",
+            inbound=True,
+            description="Default agent",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        agent_b = AgentDefinition.objects.create(
+            agent_name="Selected Agent B",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+10000000001",
+            inbound=True,
+            description="Selected agent",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        sim_agent = SimulatorAgent.objects.create(
+            name="Default Queue Sim Agent",
+            prompt="You are a test sim agent.",
+            voice_provider="elevenlabs",
+            voice_name="marissa",
+            model="gpt-4",
+            organization=organization,
+            workspace=workspace,
+        )
+        ds = Dataset.objects.create(
+            name="Selected Agent Scenario DS",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        scenario = Scenarios.objects.create(
+            name="Selected Agent Scenario",
+            description="desc",
+            source="test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            dataset=ds,
+            agent_definition=agent_b,
+            status=StatusType.COMPLETED.value,
+        )
+        run_test = RunTest.objects.create(
+            name="Selected Agent Run",
+            description="desc",
+            agent_definition=agent_b,
+            simulator_agent=sim_agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test.scenarios.add(scenario)
+        test_exec = TestExecution.objects.create(
+            run_test=run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=sim_agent,
+            agent_definition=agent_b,
+        )
+        call = CallExecution.objects.create(
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="voice",
+        )
+
+        queue_id = _create_queue(auth_client, name="Default bound to Agent A")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            agent_definition=agent_a,
+            is_default=True,
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Selected agent rule",
+                "source_type": "call_execution",
+                "conditions": {
+                    "filter": [],
+                    "scope": {"project_id": str(agent_b.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).call_execution_id == call.id
+
+    # -----------------------------------------------------------------------
+    # 34. Concurrent evaluators of the same rule don't double-add
     # -----------------------------------------------------------------------
     @pytest.mark.xfail(
         reason="Pre-existing: concurrent evaluators raise Organization "

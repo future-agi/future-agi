@@ -336,6 +336,7 @@ const LabelPanel = forwardRef(function LabelPanel(
     isPending,
     queueId,
     itemId,
+    detailItemId = null,
     onDirtyChange,
     readOnly = false,
     readOnlyReason = null,
@@ -358,6 +359,8 @@ const LabelPanel = forwardRef(function LabelPanel(
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [errorLabels, setErrorLabels] = useState(new Set());
+  const detailBelongsToItem =
+    !detailItemId || !itemId || String(detailItemId) === String(itemId);
   const visibleReviewComments = useMemo(
     () =>
       (reviewComments || []).filter((comment) =>
@@ -399,7 +402,9 @@ const LabelPanel = forwardRef(function LabelPanel(
   // fetching, and the user can accidentally re-submit those values onto
   // the wrong trace or annotator.
   useEffect(() => {
-    setValues({});
+    const emptyValues = {};
+    setValues(emptyValues);
+    valuesRef.current = emptyValues;
     setLabelNotes({});
     setItemNotes("");
     setErrorLabels(new Set());
@@ -410,6 +415,16 @@ const LabelPanel = forwardRef(function LabelPanel(
   // re-arrive after a refetch). Runs after the itemId-change reset above,
   // so values land on the correct item's prior annotations.
   useEffect(() => {
+    if (!detailBelongsToItem) {
+      const emptyValues = {};
+      setValues(emptyValues);
+      valuesRef.current = emptyValues;
+      setLabelNotes({});
+      setErrorLabels(new Set());
+      onDirtyChange?.(false);
+      return;
+    }
+
     const initial = {};
     const initialNotes = {};
     for (const ann of annotations) {
@@ -422,19 +437,26 @@ const LabelPanel = forwardRef(function LabelPanel(
       }
     }
     setValues(initial);
+    valuesRef.current = initial;
     setLabelNotes(initialNotes);
     setErrorLabels(new Set());
     onDirtyChange?.(false);
-  }, [annotations, onDirtyChange]);
+  }, [annotations, detailBelongsToItem, onDirtyChange]);
 
   useEffect(() => {
+    if (!detailBelongsToItem) {
+      setItemNotes("");
+      onDirtyChange?.(false);
+      return;
+    }
+
     setItemNotes(initialItemNotes || "");
     onDirtyChange?.(false);
-  }, [initialItemNotes, onDirtyChange]);
+  }, [initialItemNotes, detailBelongsToItem, onDirtyChange]);
 
   const handleChange = useCallback(
     (labelId, value) => {
-      if (readOnly) return;
+      if (readOnly || !detailBelongsToItem) return;
       setValues((prev) => {
         const next = { ...prev, [labelId]: value };
         valuesRef.current = next;
@@ -448,29 +470,39 @@ const LabelPanel = forwardRef(function LabelPanel(
       });
       onDirtyChange?.(true);
     },
-    [onDirtyChange, readOnly],
+    [detailBelongsToItem, onDirtyChange, readOnly],
   );
 
   const handleLabelNotesChange = useCallback(
     (labelId, value) => {
-      if (readOnly) return;
+      if (readOnly || !detailBelongsToItem) return;
       setLabelNotes((prev) => ({ ...prev, [labelId]: value }));
       onDirtyChange?.(true);
     },
-    [onDirtyChange, readOnly],
+    [detailBelongsToItem, onDirtyChange, readOnly],
   );
 
   const handleItemNotesChange = useCallback(
     (value) => {
-      if (readOnly) return;
+      if (readOnly || !detailBelongsToItem) return;
       setItemNotes(value);
       onDirtyChange?.(true);
     },
-    [onDirtyChange, readOnly],
+    [detailBelongsToItem, onDirtyChange, readOnly],
   );
 
+  const displayValues = useMemo(
+    () => (detailBelongsToItem ? values : {}),
+    [detailBelongsToItem, values],
+  );
+  const displayLabelNotes = useMemo(
+    () => (detailBelongsToItem ? labelNotes : {}),
+    [detailBelongsToItem, labelNotes],
+  );
+  const displayItemNotes = detailBelongsToItem ? itemNotes : "";
+
   const handleSubmit = useCallback(() => {
-    if (readOnly) return;
+    if (readOnly || !detailBelongsToItem) return;
     // Flush any pending debounced text inputs so valuesRef is up-to-date
     Object.values(textFlushRefs.current).forEach((r) => r?.flush?.());
 
@@ -521,11 +553,19 @@ const LabelPanel = forwardRef(function LabelPanel(
       onDirtyChange?.(false);
       onSubmit({ annotations: annotationsList, itemNotes });
     }
-  }, [itemNotes, labelNotes, onSubmit, labels, onDirtyChange, readOnly]);
+  }, [
+    itemNotes,
+    labelNotes,
+    onSubmit,
+    labels,
+    onDirtyChange,
+    readOnly,
+    detailBelongsToItem,
+  ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
-  const hasValues = Object.values(values).some(
+  const hasValues = Object.values(displayValues).some(
     (v) => v !== null && v !== undefined && v !== "",
   );
 
@@ -568,7 +608,7 @@ const LabelPanel = forwardRef(function LabelPanel(
         const ql = labels[focusedIndex];
         if (!ql) return;
         const labelId = ql.label_id;
-        const currentVal = values[labelId] ?? null;
+        const currentVal = displayValues[labelId] ?? null;
 
         e.preventDefault();
 
@@ -617,7 +657,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [labels, focusedIndex, values, handleChange, readOnly]);
+  }, [labels, focusedIndex, displayValues, handleChange, readOnly]);
 
   return (
     <Box
@@ -671,6 +711,8 @@ const LabelPanel = forwardRef(function LabelPanel(
               borderColor: tone.border,
               borderRadius: 0.75,
               bgcolor: tone.bg,
+              minWidth: 0,
+              overflow: "hidden",
             };
           }}
         >
@@ -680,7 +722,7 @@ const LabelPanel = forwardRef(function LabelPanel(
               width={18}
               sx={(theme) => ({ color: statusTone(theme, "warning").text })}
             />
-            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
               Feedback to address
             </Typography>
             <Chip
@@ -693,14 +735,15 @@ const LabelPanel = forwardRef(function LabelPanel(
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: "block", mt: 0.5 }}
+            sx={{ display: "block", mt: 0.5, overflowWrap: "anywhere" }}
           >
             Update the matching labels, then submit for review. Open feedback is
             marked addressed automatically.
           </Typography>
-          <Stack spacing={0.75} sx={{ mt: 1 }}>
+          <Stack spacing={0.75} sx={{ mt: 1, minWidth: 0 }}>
             {actionableReviewComments.map((comment) => {
               const timestamp = formatReviewTime(comment?.created_at);
+              const targetLabel = reviewCommentTargetLabel(comment);
               return (
                 <Box
                   key={comment.id || comment.created_at}
@@ -710,34 +753,59 @@ const LabelPanel = forwardRef(function LabelPanel(
                     bgcolor: "background.paper",
                     border: "1px solid",
                     borderColor: "divider",
+                    minWidth: 0,
+                    overflow: "hidden",
                   }}
                 >
-                  <Stack direction="row" spacing={0.75} alignItems="center">
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    alignItems="center"
+                    useFlexGap
+                    sx={{ minWidth: 0, flexWrap: "wrap", rowGap: 0.5 }}
+                  >
                     <Chip
                       size="small"
                       variant="outlined"
-                      label={reviewCommentTargetLabel(comment)}
+                      label={targetLabel}
+                      title={targetLabel}
                       sx={(theme) => ({
                         ...statusChipSx("warning")(theme),
                         maxWidth: "100%",
+                        minWidth: 0,
+                        "& .MuiChip-label": {
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          minWidth: 0,
+                        },
                       })}
                     />
                     <Typography
                       variant="caption"
                       color="text.secondary"
-                      sx={{ ml: "auto" }}
+                      noWrap
+                      sx={{ ml: "auto", minWidth: 0, maxWidth: "45%" }}
                     >
                       {reviewAuthorName(comment)}
                     </Typography>
                     {timestamp && (
                       <Tooltip title={timestamp.exact}>
-                        <Typography variant="caption" color="text.disabled">
+                        <Typography
+                          variant="caption"
+                          color="text.disabled"
+                          noWrap
+                          sx={{ flexShrink: 0 }}
+                        >
                           {timestamp.relative}
                         </Typography>
                       </Tooltip>
                     )}
                   </Stack>
-                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ mt: 0.5, overflowWrap: "anywhere" }}
+                  >
                     {normalizeMentionMarkdown(comment.comment)}
                   </Typography>
                 </Box>
@@ -985,12 +1053,12 @@ const LabelPanel = forwardRef(function LabelPanel(
                   required: ql.required,
                   allow_notes: ql.allow_notes ?? false,
                 }}
-                value={values[labelId] ?? null}
+                value={displayValues[labelId] ?? null}
                 onChange={(val) => handleChange(labelId, val)}
                 index={i}
                 focused={focusedIndex === i}
                 hasError={errorLabels.has(labelId)}
-                labelNotes={labelNotes[labelId] ?? ""}
+                labelNotes={displayLabelNotes[labelId] ?? ""}
                 onLabelNotesChange={(val) =>
                   handleLabelNotesChange(labelId, val)
                 }
@@ -1093,7 +1161,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             minRows={3}
             maxRows={6}
             placeholder="Add notes for this item..."
-            value={itemNotes}
+            value={displayItemNotes}
             onChange={(e) => handleItemNotesChange(e.target.value)}
             disabled={readOnly}
           />
@@ -1164,6 +1232,7 @@ LabelPanel.propTypes = {
   isPending: PropTypes.bool,
   queueId: PropTypes.string,
   itemId: PropTypes.string,
+  detailItemId: PropTypes.string,
   onDirtyChange: PropTypes.func,
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,

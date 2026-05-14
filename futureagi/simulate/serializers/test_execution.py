@@ -217,11 +217,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "call_type",
             "status",
             "duration",
+            "duration_seconds",
             "start_time",
             "transcript",
             "scenario",
             "overall_score",
             "response_time",
+            "response_time_ms",
             "audio_url",
             "customer_name",
             "eval_outputs",
@@ -237,6 +239,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "scenario_id",
             # Conversation metrics fields
             "avg_agent_latency",
+            "avg_agent_latency_ms",
             "user_interruption_count",
             "user_interruption_rate",
             "user_wpm",
@@ -263,6 +266,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "rerun_type",
             "original_call_execution_id",
             "tool_outputs",
+            "cost_cents",
             "customer_cost_cents",
             "customer_cost_breakdown",
             "customer_latency_metrics",
@@ -615,9 +619,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             columns_by_dataset = ctx.get("columns_by_dataset")
             cells_by_row = ctx.get("cells_by_row")
 
-            if rows_map is not None:
-                if row_id_str not in rows_map:
-                    return {}
+            if rows_map is not None and row_id_str in rows_map:
                 # Fast path: use prefetched data
                 row = rows_map[row_id_str]
                 ds_id = str(row.dataset.id) if row.dataset else None
@@ -1403,7 +1405,7 @@ class TestExecutionBulkDeleteSerializer(serializers.Serializer):
 
 # Migrated to simulate/serializers/requests/run_test_evals.py
 # Re-exported here for backward compatibility.
-from simulate.serializers.requests.run_test_evals import (
+from simulate.serializers.requests.run_test_evals import (  # noqa: E402
     RunNewEvalsOnTestExecutionSerializer,
 )
 

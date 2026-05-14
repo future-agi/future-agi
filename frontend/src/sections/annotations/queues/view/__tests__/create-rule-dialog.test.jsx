@@ -64,7 +64,7 @@ describe("create rule Observe filter serialization", () => {
         is_voice_call: true,
         remove_simulation_calls: true,
       },
-      { project: "project-1" },
+      {},
     );
 
     expect(conditions.scope).toEqual({
@@ -200,5 +200,97 @@ describe("create rule Observe filter serialization", () => {
         { agent_definition: { id: "agent-1" } },
       ),
     ).toBe(true);
+  });
+
+  it("keeps non-default queue-bound scope authoritative over stale picker values", () => {
+    const filters = [
+      {
+        id: "status",
+        columnId: "status",
+        filterConfig: {
+          filterType: "categorical",
+          filterOp: "in",
+          filterValue: ["OK"],
+          col_type: "SYSTEM_METRIC",
+        },
+      },
+    ];
+
+    expect(
+      buildConditionsForRule(
+        "trace",
+        filters,
+        { project_id: "wrong-project", is_voice_call: true },
+        { project: { id: "queue-project" }, is_default: false },
+      ).scope,
+    ).toEqual({
+      project_id: "queue-project",
+      is_voice_call: true,
+      remove_simulation_calls: false,
+    });
+
+    expect(
+      buildConditionsForRule(
+        "dataset_row",
+        filters,
+        { dataset_id: "wrong-dataset" },
+        { dataset: { id: "queue-dataset" }, is_default: false },
+      ).scope,
+    ).toEqual({ dataset_id: "queue-dataset" });
+
+    expect(
+      buildConditionsForRule(
+        "call_execution",
+        filters,
+        { project_id: "wrong-agent" },
+        { agent_definition: { id: "queue-agent" }, is_default: false },
+      ).scope,
+    ).toEqual({ project_id: "queue-agent" });
+  });
+
+  it("lets default queues target the selected source scope", () => {
+    const filters = [
+      {
+        id: "status",
+        columnId: "status",
+        filterConfig: {
+          filterType: "categorical",
+          filterOp: "in",
+          filterValue: ["OK"],
+          col_type: "SYSTEM_METRIC",
+        },
+      },
+    ];
+
+    expect(
+      buildConditionsForRule(
+        "trace",
+        filters,
+        { project_id: "selected-project", is_voice_call: true },
+        { project: { id: "queue-project" }, is_default: true },
+      ).scope,
+    ).toEqual({
+      project_id: "selected-project",
+      is_voice_call: true,
+      remove_simulation_calls: false,
+    });
+
+    expect(
+      buildConditionsForRule(
+        "dataset_row",
+        filters,
+        { dataset_id: "selected-dataset" },
+        { dataset: { id: "queue-dataset" }, is_default: true },
+      ).scope,
+    ).toEqual({ dataset_id: "selected-dataset" });
+
+    expect(
+      buildConditionsForRule(
+        "call_execution",
+        filters,
+        { project_id: "selected-agent" },
+        { agent_definition: { id: "queue-agent" }, is_default: true },
+      ).scope,
+    ).toEqual({ project_id: "selected-agent" });
   });
 });

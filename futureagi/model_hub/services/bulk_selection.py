@@ -75,6 +75,33 @@ class ResolveResult:
 _USER_SCOPED_COLUMN_IDS = {"my_annotations", "annotator"}
 
 
+def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
+    """Return True only when the saved filter payload includes a real time bound.
+
+    The ClickHouse list builders need a time range and default to an all-ish
+    window when the UI did not send one. That is correct for interactive lists,
+    but automation rules should not inherit an implicit time window: first run
+    means all matching source rows, and later runs rely on QueueItem duplicate
+    checks for the delta.
+    """
+    for filter_item in filters or []:
+        column_id = filter_item.get("column_id") or filter_item.get("columnId")
+        if column_id not in {"created_at", "start_time"}:
+            continue
+        config = (
+            filter_item.get("filter_config")
+            or filter_item.get("filterConfig")
+            or {}
+        )
+        filter_type = config.get("filter_type") or config.get("filterType")
+        if filter_type not in {"datetime", "date"}:
+            continue
+        value = config.get("filter_value", config.get("filterValue"))
+        if value not in (None, "", []):
+            return True
+    return False
+
+
 def _filter_col_type(filter_item: dict) -> str:
     config = filter_item.get("filter_config") or filter_item.get("filterConfig") or {}
     return config.get("col_type") or config.get("colType") or filter_item.get(
@@ -703,23 +730,25 @@ def resolve_filtered_trace_ids(
     # was matching the full project instead of the filtered subset.
     annotation_labels = get_annotation_labels_for_project(project.id, organization)
     annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
-    if is_voice_call:
-        ch_result = _resolve_voice_call_ids_clickhouse(
-            project_id=project_id,
-            filters=filters or [],
-            exclude_ids=set(exclude_ids or ()),
-            cap=cap,
-            remove_simulation_calls=remove_simulation_calls,
-            annotation_label_ids=annotation_label_ids,
-        )
-    else:
-        ch_result = _resolve_trace_ids_clickhouse(
-            project_id=project_id,
-            filters=filters or [],
-            exclude_ids=set(exclude_ids or ()),
-            cap=cap,
-            annotation_label_ids=annotation_label_ids,
-        )
+    ch_result = None
+    if _has_explicit_time_filter(filters):
+        if is_voice_call:
+            ch_result = _resolve_voice_call_ids_clickhouse(
+                project_id=project_id,
+                filters=filters or [],
+                exclude_ids=set(exclude_ids or ()),
+                cap=cap,
+                remove_simulation_calls=remove_simulation_calls,
+                annotation_label_ids=annotation_label_ids,
+            )
+        else:
+            ch_result = _resolve_trace_ids_clickhouse(
+                project_id=project_id,
+                filters=filters or [],
+                exclude_ids=set(exclude_ids or ()),
+                cap=cap,
+                annotation_label_ids=annotation_label_ids,
+            )
     if ch_result is not None:
         return ch_result
 

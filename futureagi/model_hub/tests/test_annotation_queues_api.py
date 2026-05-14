@@ -18,9 +18,11 @@ import pytest
 from django.core.management import call_command
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from model_hub.models.annotation_queues import AnnotationQueue, AnnotationQueueAnnotator
 from model_hub.models.choices import AnnotatorRole
 from tfc.ee_gating import EEResource, FeatureUnavailable
+from tfc.middleware.workspace_context import clear_workspace_context, set_workspace_context
 from tracer.models.project import Project
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -237,6 +239,49 @@ class TestCreateQueue:
             current_count=1,
         )
 
+    def test_create_checks_queue_plan_limit_against_org_wide_queue_count(
+        self, auth_client, organization, user, workspace
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        AnnotationQueue.objects.create(
+            name="Current Workspace Queue",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueue.objects.create(
+            name="Other Workspace Queue",
+            organization=organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+
+        set_workspace_context(
+            workspace=workspace,
+            organization=organization,
+            user=user,
+        )
+        try:
+            with (
+                patch("tfc.ee_gating.is_oss", return_value=False),
+                patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
+            ):
+                resp = create_queue(auth_client, name="Plan Counted Org Queue")
+        finally:
+            clear_workspace_context()
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        check_can_create.assert_called_once_with(
+            EEResource.ANNOTATION_QUEUES,
+            org_id=str(organization.id),
+            current_count=2,
+        )
+
     def test_create_surfaces_queue_plan_limit_message(self, auth_client):
         with (
             patch("tfc.ee_gating.is_oss", return_value=False),
@@ -244,15 +289,26 @@ class TestCreateQueue:
                 "tfc.ee_gating.check_ee_can_create",
                 side_effect=FeatureUnavailable(
                     EEResource.ANNOTATION_QUEUES.value,
-                    detail="You've reached the 3 queues limit",
+                    detail=(
+                        "You've reached the 3 annotation queues limit "
+                        "(3 existing). Archive unused queues or upgrade your plan."
+                    ),
                     code="ENTITLEMENT_LIMIT",
+                    metadata={
+                        "resource": EEResource.ANNOTATION_QUEUES.value,
+                        "current_usage": 3,
+                        "limit": 3,
+                    },
                 ),
             ),
         ):
             resp = create_queue(auth_client, name="Denied Queue")
 
         assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED
-        assert "reached the 3 queues limit" in str(resp.data)
+        assert "reached the 3 annotation queues limit" in str(resp.data)
+        assert resp.data["error"]["code"] == "ENTITLEMENT_LIMIT"
+        assert resp.data["error"]["detail"]["current_usage"] == 3
+        assert resp.data["error"]["detail"]["limit"] == 3
         assert not AnnotationQueue.objects.filter(name="Denied Queue").exists()
 
     def test_get_or_create_default_checks_queue_plan_limit(

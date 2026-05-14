@@ -217,6 +217,15 @@ function getDatasetOptionId(dataset) {
   return dataset?.dataset_id || dataset?.datasetId || dataset?.id || "";
 }
 
+function resolveRuleScopeId(queue, queueScopeId, selectedScopeId) {
+  if (queue?.is_default) return selectedScopeId || queueScopeId;
+  return queueScopeId || selectedScopeId;
+}
+
+function isQueueScopeLocked(queue, queueScopeId) {
+  return Boolean(queueScopeId) && !queue?.is_default;
+}
+
 export function defaultFiltersForSource(sourceType) {
   if (sourceType === "dataset_row") {
     return [{ ...DatasetDefaultFilter, id: getRandomId() }];
@@ -376,7 +385,11 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   const nextScope = {};
 
   if (sourceType === "dataset_row") {
-    const datasetId = scope.dataset_id || queueDatasetId;
+    const datasetId = resolveRuleScopeId(
+      queue,
+      queueDatasetId,
+      scope.dataset_id,
+    );
     if (datasetId) nextScope.dataset_id = datasetId;
     return {
       operator: "and",
@@ -387,7 +400,11 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   }
 
   if (sourceType === "trace" || sourceType === "observation_span") {
-    const projectId = scope.project_id || queueProjectId;
+    const projectId = resolveRuleScopeId(
+      queue,
+      queueProjectId,
+      scope.project_id,
+    );
     if (projectId) nextScope.project_id = projectId;
     if (sourceType === "trace") {
       nextScope.is_voice_call = !!scope.is_voice_call;
@@ -403,7 +420,11 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   }
 
   if (sourceType === "trace_session") {
-    const projectId = scope.project_id || queueProjectId;
+    const projectId = resolveRuleScopeId(
+      queue,
+      queueProjectId,
+      scope.project_id,
+    );
     if (projectId) nextScope.project_id = projectId;
     const apiFilters = toApiFilters(filters);
     return {
@@ -415,7 +436,7 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   }
 
   if (sourceType === "call_execution") {
-    const agentId = scope.project_id || queueAgentId;
+    const agentId = resolveRuleScopeId(queue, queueAgentId, scope.project_id);
     if (agentId) nextScope.project_id = agentId;
     const apiFilters = toApiFilters(filters);
     return {
@@ -448,6 +469,9 @@ export function RuleScopePicker({
   const queueDatasetId = getQueueScopeId(queue, "dataset");
   const queueProjectId = getQueueScopeId(queue, "project");
   const queueAgentId = getQueueScopeId(queue, "agent_definition");
+  const defaultQueueHelperText = queue?.is_default
+    ? "Default queues auto-receive direct annotations; this rule can target any source."
+    : undefined;
 
   const { data: datasets = [], isLoading: datasetsLoading } = useQuery({
     queryKey: ["datasets-list-simple"],
@@ -481,12 +505,15 @@ export function RuleScopePicker({
     });
 
   if (needsDataset) {
-    const effectiveDatasetId = scope.dataset_id || queueDatasetId || "";
+    const effectiveDatasetId =
+      resolveRuleScopeId(queue, queueDatasetId, scope.dataset_id) || "";
+    const isQueueScoped = isQueueScopeLocked(queue, queueDatasetId);
     return (
       <Autocomplete
         size="small"
         options={datasets}
         loading={datasetsLoading}
+        disabled={isQueueScoped}
         noOptionsText={datasetsLoading ? "Loading datasets..." : "No datasets"}
         getOptionLabel={(dataset) => dataset?.name || ""}
         value={
@@ -504,12 +531,18 @@ export function RuleScopePicker({
             dataset_id: getDatasetOptionId(dataset),
           }));
         }}
+        sx={{ minWidth: 0 }}
         renderInput={(params) => (
           <TextField
             {...params}
             label="Dataset"
-            placeholder="Choose dataset"
+            placeholder={
+              isQueueScoped ? "Queue dataset is fixed" : "Choose dataset"
+            }
             onFocus={onInteraction}
+            helperText={
+              isQueueScoped ? "Locked by this queue" : defaultQueueHelperText
+            }
           />
         )}
       />
@@ -517,12 +550,15 @@ export function RuleScopePicker({
   }
 
   if (needsProject) {
-    const effectiveProjectId = scope.project_id || queueProjectId || "";
+    const effectiveProjectId =
+      resolveRuleScopeId(queue, queueProjectId, scope.project_id) || "";
+    const isQueueScoped = isQueueScopeLocked(queue, queueProjectId);
     return (
       <Autocomplete
         size="small"
         options={projects}
         loading={projectsLoading}
+        disabled={isQueueScoped}
         noOptionsText={projectsLoading ? "Loading projects..." : "No projects"}
         getOptionLabel={(project) => project?.name || ""}
         value={
@@ -538,12 +574,18 @@ export function RuleScopePicker({
             remove_simulation_calls: false,
           }));
         }}
+        sx={{ minWidth: 0 }}
         renderInput={(params) => (
           <TextField
             {...params}
             label="Project"
-            placeholder="Choose project"
+            placeholder={
+              isQueueScoped ? "Queue project is fixed" : "Choose project"
+            }
             onFocus={onInteraction}
+            helperText={
+              isQueueScoped ? "Locked by this queue" : defaultQueueHelperText
+            }
           />
         )}
       />
@@ -551,12 +593,15 @@ export function RuleScopePicker({
   }
 
   if (needsAgentDefinition) {
-    const effectiveAgentDefinitionId = scope.project_id || queueAgentId || "";
+    const effectiveAgentDefinitionId =
+      resolveRuleScopeId(queue, queueAgentId, scope.project_id) || "";
+    const isQueueScoped = isQueueScopeLocked(queue, queueAgentId);
     return (
       <Autocomplete
         size="small"
         options={agentDefinitions}
         loading={agentDefinitionsLoading}
+        disabled={isQueueScoped}
         noOptionsText={
           agentDefinitionsLoading
             ? "Loading agent definitions..."
@@ -576,12 +621,20 @@ export function RuleScopePicker({
             project_id: agent?.id || "",
           }));
         }}
+        sx={{ minWidth: 0 }}
         renderInput={(params) => (
           <TextField
             {...params}
             label="Agent Definition"
-            placeholder="Choose agent definition"
+            placeholder={
+              isQueueScoped
+                ? "Queue agent definition is fixed"
+                : "Choose agent definition"
+            }
             onFocus={onInteraction}
+            helperText={
+              isQueueScoped ? "Locked by this queue" : defaultQueueHelperText
+            }
           />
         )}
       />
@@ -599,9 +652,10 @@ function DatasetRuleFilters({
   onInteraction,
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
   const queueDatasetId = getQueueScopeId(queue, "dataset");
-  const datasetId = scope.dataset_id || queueDatasetId;
+  const datasetId = resolveRuleScopeId(queue, queueDatasetId, scope.dataset_id);
   const { data: tableData } = useQuery(
     getDatasetQueryOptions(datasetId, 0, [], [], "", {
       enabled: !!datasetId,
@@ -703,7 +757,7 @@ function DatasetRuleFilters({
   }
 
   return (
-    <Box>
+    <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
       <IconButton
         ref={buttonRef}
         size="small"
@@ -711,6 +765,7 @@ function DatasetRuleFilters({
         data-testid="automation-rule-filter-button"
         onClick={() => {
           onInteraction?.();
+          setFilterAnchorEl(buttonRef.current);
           setFilterOpen((value) => !value);
         }}
         sx={{
@@ -734,7 +789,7 @@ function DatasetRuleFilters({
       </IconButton>
 
       <TraceFilterPanel
-        anchorEl={buttonRef.current}
+        anchorEl={filterAnchorEl || buttonRef.current}
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         currentFilters={panelCurrentFilters}
@@ -752,12 +807,19 @@ function DatasetRuleFilters({
 
       <FilterChips
         extraFilters={chipFilters}
-        onAddFilter={() => {
+        onAddFilter={(anchorEl) => {
           onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
+          setFilterOpen(true);
+        }}
+        onChipClick={(_chipIndex, anchorEl) => {
+          onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
           setFilterOpen(true);
         }}
         onRemoveFilter={(chipIndex) => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           const filterIndex = validFilterIndices[chipIndex];
           if (filterIndex === undefined) return;
           setFilters((prev) => {
@@ -771,6 +833,7 @@ function DatasetRuleFilters({
         }}
         onClearAll={() => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           setFilters([{ ...DatasetDefaultFilter, id: getRandomId() }]);
           setFilterOpen(false);
         }}
@@ -789,9 +852,10 @@ function TraceRuleFilters({
   onInteraction,
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
   const queueProjectId = getQueueScopeId(queue, "project");
-  const projectId = scope.project_id || queueProjectId;
+  const projectId = resolveRuleScopeId(queue, queueProjectId, scope.project_id);
   const { data: projectDetails } = useGetProjectDetails(
     projectId,
     sourceType === "trace" && !!projectId,
@@ -834,7 +898,7 @@ function TraceRuleFilters({
   }
 
   return (
-    <Box>
+    <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
       <IconButton
         ref={buttonRef}
         size="small"
@@ -842,6 +906,7 @@ function TraceRuleFilters({
         data-testid="automation-rule-filter-button"
         onClick={() => {
           onInteraction?.();
+          setFilterAnchorEl(buttonRef.current);
           setFilterOpen((value) => !value);
         }}
         sx={{
@@ -865,7 +930,7 @@ function TraceRuleFilters({
       </IconButton>
 
       <TraceFilterPanel
-        anchorEl={buttonRef.current}
+        anchorEl={filterAnchorEl || buttonRef.current}
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
@@ -890,12 +955,19 @@ function TraceRuleFilters({
 
       <FilterChips
         extraFilters={snakeFilters}
-        onAddFilter={() => {
+        onAddFilter={(anchorEl) => {
           onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
+          setFilterOpen(true);
+        }}
+        onChipClick={(_index, anchorEl) => {
+          onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
           setFilterOpen(true);
         }}
         onRemoveFilter={(index) => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           const target = snakeFilters[index];
           if (!target) return;
           setFilters((prev) =>
@@ -910,6 +982,7 @@ function TraceRuleFilters({
         }}
         onClearAll={() => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           setFilters([{ ...DEFAULT_FILTER, id: getRandomId() }]);
           setFilterOpen(false);
         }}
@@ -920,6 +993,7 @@ function TraceRuleFilters({
 
 function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
 
   const panelCurrentFilters = useMemo(
@@ -933,7 +1007,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
   );
 
   return (
-    <Box>
+    <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
       <IconButton
         ref={buttonRef}
         size="small"
@@ -941,6 +1015,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
         data-testid="automation-rule-filter-button"
         onClick={() => {
           onInteraction?.();
+          setFilterAnchorEl(buttonRef.current);
           setFilterOpen((value) => !value);
         }}
         sx={{
@@ -964,7 +1039,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
       </IconButton>
 
       <TraceFilterPanel
-        anchorEl={buttonRef.current}
+        anchorEl={filterAnchorEl || buttonRef.current}
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         currentFilters={panelCurrentFilters}
@@ -989,12 +1064,19 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
 
       <FilterChips
         extraFilters={snakeFilters}
-        onAddFilter={() => {
+        onAddFilter={(anchorEl) => {
           onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
+          setFilterOpen(true);
+        }}
+        onChipClick={(_index, anchorEl) => {
+          onInteraction?.();
+          setFilterAnchorEl(anchorEl || buttonRef.current);
           setFilterOpen(true);
         }}
         onRemoveFilter={(index) => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           const target = snakeFilters[index];
           if (!target) return;
           setFilters((prev) =>
@@ -1009,6 +1091,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
         }}
         onClearAll={() => {
           onInteraction?.();
+          setFilterAnchorEl(null);
           setFilters([{ ...DEFAULT_FILTER, id: getRandomId() }]);
           setFilterOpen(false);
         }}
@@ -1170,8 +1253,8 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Create Automation Rule</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2.5} sx={{ mt: 1 }}>
+      <DialogContent sx={{ overflowX: "hidden" }}>
+        <Stack spacing={2.5} sx={{ mt: 1, minWidth: 0 }}>
           {serverError && (
             <Alert
               severity="error"
@@ -1179,6 +1262,13 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
               data-testid="automation-rule-server-error"
             >
               {serverError}
+            </Alert>
+          )}
+          {queue?.is_default && (
+            <Alert severity="info" variant="outlined">
+              This is a default queue. Direct annotations still land here
+              automatically, and this rule can add items from any selected
+              source.
             </Alert>
           )}
           <TextField
@@ -1195,7 +1285,11 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
             inputProps={{ "data-testid": "automation-rule-name-input" }}
           />
 
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={2}
+            sx={{ minWidth: 0 }}
+          >
             <TextField
               select
               label="Source type"
@@ -1251,7 +1345,7 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
             onInteraction={markNameTouched}
           />
 
-          <Box>
+          <Box sx={{ minWidth: 0 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>
               Conditions
             </Typography>
@@ -1267,7 +1361,7 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
           </Box>
         </Stack>
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ flexWrap: "wrap", gap: 1 }}>
         <Button onClick={onClose} disabled={isPending}>
           Cancel
         </Button>

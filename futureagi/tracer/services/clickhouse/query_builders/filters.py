@@ -211,6 +211,18 @@ class ClickHouseFilterBuilder:
         self._param_counter += 1
         return f"{prefix}_{self._param_counter}"
 
+    def _uuid_in_clause(self, values: Any, prefix: str) -> Optional[str]:
+        """Return a ClickHouse UUID IN-list with individually bound params."""
+        clean_values = [str(v) for v in values if v]
+        if not clean_values:
+            return None
+        placeholders = []
+        for value in clean_values:
+            param = self._next_param(prefix)
+            self._params[param] = value
+            placeholders.append(f"toUUID(%({param})s)")
+        return ", ".join(placeholders)
+
     @classmethod
     def _sql_op(cls, filter_op: Optional[str]) -> Optional[str]:
         """Return a SQL comparison operator for canonical filter ops only."""
@@ -809,19 +821,29 @@ class ClickHouseFilterBuilder:
 
         project_ids = getattr(self, "project_ids", None)
 
-        # Resolve eval_template_id → [custom_eval_config_id, ...] for project
+        # Resolve either custom_eval_config_id (what Observe metrics usually
+        # emit) or eval_template_id (older saved filters) to config ids.
         config_ids = []
         output_type = "SCORE"
         try:
-            cfg_qs = CustomEvalConfig.objects.filter(
-                eval_template_id=eval_id, deleted=False
-            )
+            cfg_qs = CustomEvalConfig.objects.filter(id=eval_id, deleted=False)
+            if not cfg_qs.exists():
+                cfg_qs = CustomEvalConfig.objects.filter(
+                    eval_template_id=eval_id, deleted=False
+                )
             if project_ids:
                 cfg_qs = cfg_qs.filter(project_id__in=project_ids)
             config_ids = [str(x) for x in cfg_qs.values_list("id", flat=True)]
 
+            template_id = (
+                cfg_qs.values_list("eval_template_id", flat=True).first()
+                if config_ids
+                else eval_id
+            )
             tmpl = (
-                EvalTemplate.no_workspace_objects.filter(id=eval_id, deleted=False)
+                EvalTemplate.no_workspace_objects.filter(
+                    id=template_id, deleted=False
+                )
                 .values("config")
                 .first()
             )
@@ -845,12 +867,14 @@ class ClickHouseFilterBuilder:
         param_cfg = self._next_param("eval_cfg")
         self._params[param_cfg] = tuple(config_ids)
 
-        op = self._sql_op(filter_op)
-        if op is None:
-            return "0 = 1"
         _fv = filter_value
-        if isinstance(_fv, (list, tuple)):
-            _fv = _fv[0] if _fv and _fv[0] not in (None, "") else _fv
+        values = (
+            list(_fv)
+            if isinstance(_fv, (list, tuple))
+            else ([] if _fv in (None, "") else [_fv])
+        )
+        values = [v for v in values if v not in (None, "")]
+        single_value = values[0] if values else _fv
 
         # Exclude errored eval rows from all value-match filters — an errored
         # eval has no meaningful Passed/Failed/score/choice value, so it
@@ -870,11 +894,23 @@ class ClickHouseFilterBuilder:
 
         if output_type == "PASS_FAIL":
             # UI sends "Passed"/"Failed" — map to output_bool.
-            bool_val = str(_fv).strip().lower() in ("passed", "pass", "true", "1")
-            if filter_op in ("not_equals", "ne", "!="):
-                cmp = f"output_bool != {1 if bool_val else 0}"
-            else:
-                cmp = f"output_bool = {1 if bool_val else 0}"
+            bool_values = []
+            for value in values:
+                token = str(value).strip().lower()
+                if token in ("passed", "pass", "true", "1"):
+                    bool_values.append(1)
+                elif token in ("failed", "fail", "false", "0"):
+                    bool_values.append(0)
+            bool_values = list(dict.fromkeys(bool_values))
+            if not bool_values:
+                return "0 = 1"
+            param_bool = self._next_param("eval_bool")
+            self._params[param_bool] = tuple(bool_values)
+            cmp = (
+                f"output_bool NOT IN %({param_bool})s"
+                if filter_op in ("not_equals", "not_in", "ne", "!=")
+                else f"output_bool IN %({param_bool})s"
+            )
             return (
                 f"{outer_col} IN ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
@@ -888,25 +924,47 @@ class ClickHouseFilterBuilder:
         if output_type in ("CHOICE", "CHOICES"):
             # output_str_list is a String column containing a serialized list;
             # output_str holds the canonical single value. Match against both.
-            param_like = self._next_param("eval_like")
-            param_eq = self._next_param("eval_eq")
-            self._params[param_like] = f"%{_fv}%"
-            self._params[param_eq] = str(_fv)
+            if not values:
+                return (
+                    "1 = 1"
+                    if filter_op in ("not_equals", "not_in", "not_contains")
+                    else "0 = 1"
+                )
+            choice_conditions = []
+            for value in values:
+                param_like = self._next_param("eval_like")
+                param_eq = self._next_param("eval_eq")
+                self._params[param_like] = f"%{value}%"
+                self._params[param_eq] = str(value)
+                choice_conditions.append(
+                    f"(output_str_list LIKE %({param_like})s "
+                    f"OR output_str = %({param_eq})s)"
+                )
+            combined = " OR ".join(choice_conditions)
+            if filter_op in ("not_equals", "not_in", "not_contains"):
+                combined = f"NOT ({combined})"
             return (
                 f"{outer_col} IN ("
                 f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND _peerdb_is_deleted = 0 "
                 f"{error_clause} "
-                f"AND (output_str_list LIKE %({param_like})s OR output_str = %({param_eq})s)"
+                f"AND {combined}"
                 f")"
             )
 
+        op = self._sql_op(filter_op)
+        if op is None:
+            return "0 = 1"
         # SCORE (default) — numeric on output_float. UI displays scores as
         # 0-100, raw storage is 0-1; divide user-supplied value by 100.
         param = self._next_param("eval")
         try:
-            raw_val = float(_fv) if not isinstance(_fv, (int, float)) else _fv
+            raw_val = (
+                float(single_value)
+                if not isinstance(single_value, (int, float))
+                else single_value
+            )
             self._params[param] = raw_val / 100.0
         except (ValueError, TypeError):
             self._params[param] = filter_value
@@ -1151,11 +1209,12 @@ class ClickHouseFilterBuilder:
             # Per-label annotator filter: check if specific user(s) annotated
             # this label.
             if isinstance(filter_value, list):
-                param = self._next_param("ann")
-                self._params[param] = tuple(filter_value)
+                uuid_list = self._uuid_in_clause(filter_value, "ann")
+                if not uuid_list:
+                    return None
                 return (
                     f"trace_id IN ({base_where} "
-                    f"AND {score_annotator} IN %({param})s)"
+                    f"AND {score_annotator} IN ({uuid_list}))"
                 )
             elif filter_value:
                 param = self._next_param("ann")
@@ -1283,9 +1342,10 @@ class ClickHouseFilterBuilder:
         if not filter_value:
             return None
         if isinstance(filter_value, list):
-            param = self._next_param("uid")
-            self._params[param] = tuple(filter_value)
-            user_clause = f"AND s.annotator_id IN %({param})s"
+            uuid_list = self._uuid_in_clause(filter_value, "uid")
+            if not uuid_list:
+                return None
+            user_clause = f"AND s.annotator_id IN ({uuid_list})"
             return f"trace_id IN ({self._score_trace_select(user_clause)})"
         else:
             param = self._next_param("uid")

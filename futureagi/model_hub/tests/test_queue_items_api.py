@@ -19,6 +19,7 @@ from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
     QueueItem,
+    QueueItemAssignment,
     QueueItemReviewThread,
 )
 from model_hub.models.choices import AnnotatorRole
@@ -321,6 +322,12 @@ class TestListItems:
             str(item.id) for item in reversed(created_items)
         ]
 
+        default_resp = auth_client.get(items_url(queue))
+        assert default_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in default_resp.data["results"]] == [
+            str(item.id) for item in reversed(created_items)
+        ]
+
         asc_resp = auth_client.get(items_url(queue), {"ordering": "created_at"})
         assert asc_resp.status_code == status.HTTP_200_OK
         assert [row["id"] for row in asc_resp.data["results"]] == [
@@ -362,10 +369,10 @@ class TestRemoveItems:
         list_resp = auth_client.get(items_url(queue))
         assert list_resp.data["count"] == 1
 
-    def test_manage_item_actions_require_queue_manager(
+    def test_annotator_can_self_claim_unassigned_item_but_not_manage_items(
         self, auth_client, queue, dataset_with_rows, user
     ):
-        """Annotators cannot delete, bulk-remove, or assign queue items."""
+        """Annotators can self-claim unassigned items, but cannot manage items."""
         _, rows = dataset_with_rows
         item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
         demote_queue_creator_to_annotator(queue, user)
@@ -376,7 +383,16 @@ class TestRemoveItems:
             {"item_ids": item_ids[:1]},
             format="json",
         )
-        assign_resp = auth_client.post(
+        assign_other_resp = auth_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(uuid.uuid4())],
+                "action": "set",
+            },
+            format="json",
+        )
+        self_assign_resp = auth_client.post(
             assign_items_url(queue),
             {
                 "item_ids": item_ids[:1],
@@ -388,7 +404,61 @@ class TestRemoveItems:
 
         assert delete_resp.status_code == status.HTTP_403_FORBIDDEN
         assert bulk_resp.status_code == status.HTTP_403_FORBIDDEN
-        assert assign_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert assign_other_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert self_assign_resp.status_code == status.HTTP_200_OK
+        item = QueueItem.objects.get(pk=item_ids[0])
+        assert item.assigned_to_id == user.id
+        assert QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0],
+            user=user,
+            deleted=False,
+        ).exists()
+
+    def test_annotator_cannot_self_assign_item_owned_by_another_user(
+        self, auth_client, queue, dataset_with_rows, user, organization
+    ):
+        """Self-claim is only for unassigned items; managers handle reassignment."""
+        from accounts.models.user import User
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
+        other_user = User.objects.create_user(
+            email=f"queue-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Owner",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=other_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+        QueueItemAssignment.objects.create(
+            queue_item_id=item_ids[0],
+            user=other_user,
+        )
+        QueueItem.objects.filter(pk=item_ids[0]).update(assigned_to=other_user)
+        demote_queue_creator_to_annotator(queue, user)
+
+        resp = auth_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(user.id)],
+                "action": "add",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert not QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0],
+            user=user,
+            deleted=False,
+        ).exists()
 
 
 # ---------------------------------------------------------------------------

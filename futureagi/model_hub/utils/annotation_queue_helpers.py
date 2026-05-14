@@ -1476,14 +1476,16 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
     filters = _normalize_filter_payload(filters)
     source_type = rule.source_type
     queue = rule.queue
+    queue_scope_locked = not getattr(queue, "is_default", False)
 
     if source_type == QueueItemSourceType.DATASET_ROW.value:
-        # Queue scope is authoritative. A rule on a dataset-bound queue may
-        # not redirect inserts at a different dataset by passing a rogue
-        # `scope.dataset_id` — that would silently break queue isolation.
+        # Custom queues stay scoped to their configured source. Default queues
+        # are only the landing place for direct annotations, so rules may add
+        # items from another selected source.
         scope_dataset_id = scope.get("dataset_id")
         if (
-            queue.dataset_id
+            queue_scope_locked
+            and queue.dataset_id
             and scope_dataset_id
             and str(scope_dataset_id) != str(queue.dataset_id)
         ):
@@ -1493,7 +1495,11 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
                 "duplicates": 0,
                 "error": "rule scope dataset_id must match the queue's bound dataset",
             }
-        dataset_id = queue.dataset_id or scope_dataset_id
+        dataset_id = (
+            queue.dataset_id
+            if queue_scope_locked and queue.dataset_id
+            else scope_dataset_id or queue.dataset_id
+        )
         if not dataset_id:
             return {
                 "matched": 0,
@@ -1520,14 +1526,14 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
             }
         return _add_source_ids_to_queue(rule, ids, total_matching, dry_run=dry_run)
 
-    # Queue scope is authoritative for trace/span/session/call_execution
-    # too. If both queue and rule pass an id and they disagree, reject the
-    # evaluation rather than silently following the rule.
+    # Custom queue scope is authoritative for trace/span/session/call_execution
+    # too. Default queues are flexible and prefer the rule's selected scope.
     resolver = None
     scope_project_id = scope.get("project_id")
     if source_type == QueueItemSourceType.CALL_EXECUTION.value:
         if (
-            queue.agent_definition_id
+            queue_scope_locked
+            and queue.agent_definition_id
             and scope_project_id
             and str(scope_project_id) != str(queue.agent_definition_id)
         ):
@@ -1540,10 +1546,15 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
                     "agent_definition for call_execution rules"
                 ),
             }
-        project_id = queue.agent_definition_id or scope_project_id
+        project_id = (
+            queue.agent_definition_id
+            if queue_scope_locked and queue.agent_definition_id
+            else scope_project_id or queue.agent_definition_id
+        )
     else:
         if (
-            queue.project_id
+            queue_scope_locked
+            and queue.project_id
             and scope_project_id
             and str(scope_project_id) != str(queue.project_id)
         ):
@@ -1553,7 +1564,11 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
                 "duplicates": 0,
                 "error": "rule scope project_id must match the queue's bound project",
             }
-        project_id = queue.project_id or scope_project_id
+        project_id = (
+            queue.project_id
+            if queue_scope_locked and queue.project_id
+            else scope_project_id or queue.project_id
+        )
     if source_type == QueueItemSourceType.TRACE.value:
         from model_hub.services.bulk_selection import resolve_filtered_trace_ids
 

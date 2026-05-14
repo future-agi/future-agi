@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildTraceFilterProperties,
   getTraceFilterFields,
   normalizeFilterRowOperator,
 } from "../TraceFilterPanel";
+import { panelFiltersToApiFilters } from "../filterTransforms";
+import {
+  getPickerOptionSearchText,
+  getPickerOptionSecondaryLabel,
+} from "../filterValuePickerUtils";
 
 describe("getTraceFilterFields (TH-4571)", () => {
   it("prepends Trace ID when tab is 'trace'", () => {
@@ -89,5 +95,97 @@ describe("normalizeFilterRowOperator", () => {
         value: "abc",
       }).operator,
     ).toBe("is");
+  });
+});
+
+describe("annotator annotation filter (TH-4710)", () => {
+  it("adds a global Annotator property inside annotation filters", () => {
+    const properties = buildTraceFilterProperties([
+      {
+        name: "latency",
+        display_name: "Latency",
+        category: "system_metric",
+        source: "traces",
+        type: "number",
+      },
+      {
+        name: "label-1",
+        display_name: "Quality",
+        category: "annotation_metric",
+        source: "both",
+        output_type: "numeric",
+      },
+    ]);
+
+    const annotator = properties.find(
+      (property) => property.id === "annotator",
+    );
+    expect(annotator).toMatchObject({
+      name: "Annotator",
+      category: "annotation",
+      type: "annotator",
+      apiColType: "SYSTEM_METRIC",
+      allowCustomValue: false,
+    });
+
+    const annotatorIndex = properties.findIndex(
+      (property) => property.id === "annotator",
+    );
+    const labelIndex = properties.findIndex(
+      (property) => property.id === "label-1",
+    );
+    expect(annotatorIndex).toBeLessThan(labelIndex);
+  });
+
+  it("serializes multiple annotators as a global IN filter, not a label filter", () => {
+    const apiFilters = panelFiltersToApiFilters([
+      {
+        field: "annotator",
+        fieldName: "Annotator",
+        fieldCategory: "annotation",
+        fieldType: "annotator",
+        apiColType: "SYSTEM_METRIC",
+        operator: "is",
+        value: ["user-a", "user-b"],
+      },
+    ]);
+
+    expect(apiFilters).toEqual([
+      {
+        column_id: "annotator",
+        display_name: "Annotator",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "in",
+          filter_value: ["user-a", "user-b"],
+          col_type: "SYSTEM_METRIC",
+        },
+      },
+    ]);
+  });
+
+  it("uses annotator email as secondary display text and searchable text", () => {
+    const option = {
+      value: "user-1",
+      label: "Kartik",
+      name: "Kartik",
+      email: "kartik.nvj@futureagi.com",
+      description: "kartik.nvj@futureagi.com",
+    };
+
+    expect(getPickerOptionSecondaryLabel(option)).toBe(
+      "kartik.nvj@futureagi.com",
+    );
+    expect(getPickerOptionSearchText(option)).toContain("Kartik");
+    expect(getPickerOptionSearchText(option)).toContain(
+      "kartik.nvj@futureagi.com",
+    );
+    expect(
+      getPickerOptionSecondaryLabel({
+        value: "user-2",
+        label: "reviewer@futureagi.com",
+        email: "reviewer@futureagi.com",
+      }),
+    ).toBe("");
   });
 });

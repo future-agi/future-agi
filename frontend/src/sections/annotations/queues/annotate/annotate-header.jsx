@@ -5,9 +5,11 @@ import {
   Box,
   Button,
   Chip,
+  FormControlLabel,
   IconButton,
   LinearProgress,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -109,6 +111,12 @@ AnnotateHeader.propTypes = {
   openFeedbackCount: PropTypes.number,
   addressedFeedbackCount: PropTypes.number,
   resolvedFeedbackCount: PropTypes.number,
+  showCompletedToggle: PropTypes.bool,
+  includeCompleted: PropTypes.bool,
+  onIncludeCompletedChange: PropTypes.func,
+  completedToggleDisabled: PropTypes.bool,
+  isItemCompleted: PropTypes.bool,
+  completedByCurrentUser: PropTypes.bool,
 };
 
 export default function AnnotateHeader({
@@ -127,6 +135,12 @@ export default function AnnotateHeader({
   openFeedbackCount = 0,
   addressedFeedbackCount = 0,
   resolvedFeedbackCount = 0,
+  showCompletedToggle = false,
+  includeCompleted = false,
+  onIncludeCompletedChange,
+  completedToggleDisabled = false,
+  isItemCompleted = false,
+  completedByCurrentUser = false,
 }) {
   const userProgress = progress?.user_progress;
   const hasUserProgress = userProgress && userProgress.total > 0;
@@ -158,16 +172,108 @@ export default function AnnotateHeader({
         py: 1.5,
         borderBottom: 1,
         borderColor: "divider",
+        gap: 1.5,
+        flexWrap: "wrap",
+        "@media (min-width:1000px)": {
+          flexWrap: "nowrap",
+        },
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ minWidth: 0, flex: "1 1 260px" }}
+      >
         <IconButton onClick={onBack} size="small">
           <Iconify icon="eva:arrow-back-fill" />
         </IconButton>
-        <Typography variant="h6">{queueName || "Queue"}</Typography>
+        <Typography variant="h6" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
+          {queueName || "Queue"}
+        </Typography>
+        {isItemCompleted && (
+          <Tooltip
+            title={
+              completedByCurrentUser
+                ? "You already completed this item. Saving will update your annotation."
+                : "This item is already completed."
+            }
+          >
+            <Chip
+              size="small"
+              variant="outlined"
+              icon={<Iconify icon="eva:checkmark-circle-2-fill" width={14} />}
+              label={completedByCurrentUser ? "Done by you" : "Done"}
+              sx={(theme) => {
+                const tone = statusTone(theme, "success");
+                return {
+                  height: 24,
+                  flexShrink: 0,
+                  borderRadius: 0.75,
+                  borderColor: tone.border,
+                  bgcolor: tone.bg,
+                  color: tone.text,
+                  fontWeight: 700,
+                  "& .MuiChip-label": { px: 0.75 },
+                  "& .MuiChip-icon": {
+                    color: tone.text,
+                    ml: 0.75,
+                    mr: -0.25,
+                  },
+                };
+              }}
+            />
+          </Tooltip>
+        )}
       </Stack>
 
-      <Stack direction="row" alignItems="center" spacing={1.5}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        useFlexGap
+        sx={{
+          minWidth: 0,
+          flex: "1 1 100%",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          "@media (min-width:1000px)": {
+            flex: "0 0 auto",
+            flexWrap: "nowrap",
+          },
+        }}
+      >
+        {showCompletedToggle && (
+          <Tooltip
+            title={
+              includeCompleted
+                ? "Previous and Next include completed items."
+                : "Previous and Next skip completed items."
+            }
+          >
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={includeCompleted}
+                  onChange={onIncludeCompletedChange}
+                  disabled={completedToggleDisabled}
+                  inputProps={{ "aria-label": "show completed items" }}
+                />
+              }
+              label="Show completed"
+              sx={{
+                m: 0,
+                color: "text.secondary",
+                "& .MuiFormControlLabel-label": {
+                  fontSize: 12,
+                  fontWeight: 700,
+                  whiteSpace: "nowrap",
+                },
+              }}
+            />
+          </Tooltip>
+        )}
         {onOpenComments && (
           <Tooltip
             arrow
@@ -294,7 +400,7 @@ export default function AnnotateHeader({
             </span>
           </Tooltip>
         )}
-        <Box sx={{ minWidth: 180 }}>
+        <Box sx={{ minWidth: 150, flex: "0 1 172px" }}>
           <Stack
             direction="row"
             justifyContent="space-between"

@@ -143,13 +143,11 @@ export default function ContentPanel({ item }) {
     // Fallback to simple view if no trace_id
   }
 
-  // For call_execution, show the full Call Log Details view inline
+  // For call_execution, show the full simulation detail view inline.
+  // Voice calls use the shared VoiceDetailDrawerV2; chat simulations keep
+  // the chat-specific detail layout.
   if (sourceType === "call_execution") {
-    return (
-      <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
-        <SimulationContent hideAnnotationTab={true} content={content} />
-      </Box>
-    );
+    return <SimulationContent hideAnnotationTab={true} content={content} />;
   }
 
   return (
@@ -1201,7 +1199,9 @@ PrototypeContent.propTypes = {
 };
 
 // ---------------------------------------------------------------------------
-// Simulation Content — reuses the same components as the Call Log Details drawer
+// Simulation Content — voice calls reuse VoiceDetailDrawerV2 so simulation
+// queue items stay aligned with the main voice drawer. Chat simulations keep
+// the chat detail layout below.
 // ---------------------------------------------------------------------------
 function SimulationContent({ content, hideAnnotationTab = false }) {
   const callId = content?.call_id;
@@ -1215,7 +1215,7 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
 
   if (isLoading) {
     return (
-      <Box sx={{ py: 4 }}>
+      <Box sx={{ p: 3, py: 4, overflow: "auto", height: "100%" }}>
         <LinearProgress />
       </Box>
     );
@@ -1224,7 +1224,7 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
   // Fallback to minimal view if call data fetch fails
   if (!callData) {
     return (
-      <Stack spacing={1}>
+      <Stack spacing={1} sx={{ p: 3, overflow: "auto", height: "100%" }}>
         <Stack direction="row" spacing={1}>
           {content.simulation_call_type && (
             <Chip label={content.simulation_call_type} size="small" />
@@ -1249,35 +1249,95 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
   const drawerData = {
     module: "simulate",
     id: callId,
+    trace_id: callData.trace_id || callData.trace_details?.trace_id,
+    project_id: callData.project_id || content?.project_id,
     status: callData.status || callData.overall_status,
     simulationCallType,
+    simulation_call_type: simulationCallType,
     callType: callData.call_type,
+    call_type: callData.call_type,
     timestamp: callData.timestamp || callData.started_at,
-    duration: callData.duration || callData.duration_seconds,
+    duration: callData.duration ?? callData.duration_seconds,
+    duration_seconds: callData.duration_seconds ?? callData.duration,
     scenario: callData.scenario || callData.scenario_name,
     scenarioId: callData.scenario_id,
+    scenario_id: callData.scenario_id,
     scenario_columns: callData.scenario_columns || {},
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name,
+    customer_name: callData.customer_name,
     phoneNumber: callData.phone_number,
+    phone_number: callData.phone_number,
     endedReason: callData.ended_reason,
+    ended_reason: callData.ended_reason,
     overallScore: callData.overall_score,
+    overall_score: callData.overall_score,
     transcript: callData.transcripts || callData.transcript || [],
     recordings: callData.recordings,
+    recording: callData.recording,
+    recording_url: callData.recording_url,
     audioUrl: callData.recording_url || callData.stereo_recording_url,
+    audio_url: callData.audio_url ?? callData.recording_url,
     agentName: callData.agent_definition_used_name,
     simulatorName: callData.simulator_agent_name,
     callSummary: callData.call_summary,
+    call_summary: callData.call_summary,
     customerLatencyMetrics: callData.customer_latency_metrics,
+    customer_latency_metrics: callData.customer_latency_metrics,
     customerCostBreakdown: callData.customer_cost_breakdown,
+    customer_cost_breakdown: callData.customer_cost_breakdown,
     evalMetrics: callData.eval_outputs || callData.eval_metrics || {},
+    eval_metrics: callData.eval_metrics,
+    eval_outputs: callData.eval_outputs,
     overallStatus: callData.overall_status || callData.status,
     sessionId: callData.session_id,
+    session_id: callData.session_id,
     serviceProviderCallId: callData.service_provider_call_id,
+    service_provider_call_id: callData.service_provider_call_id,
     customerCallId: callData.customer_call_id,
+    customer_call_id: callData.customer_call_id,
+    provider: callData.provider,
+    attributes: callData.attributes,
+    trace_details: callData.trace_details,
+    observation_span: callData.observation_span || [],
+    turn_count: callData.turn_count,
+    talk_ratio: callData.talk_ratio,
+    agent_talk_percentage: callData.agent_talk_percentage,
+    avg_agent_latency_ms:
+      callData.avg_agent_latency_ms ?? callData.avg_agent_latency,
+    user_wpm: callData.user_wpm,
+    bot_wpm: callData.bot_wpm,
+    user_interruption_count: callData.user_interruption_count,
+    ai_interruption_count: callData.ai_interruption_count,
   };
 
   const isVoice = simulationCallType !== AGENT_TYPES.CHAT;
+
+  if (isVoice) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          width: "100%",
+          height: "100%",
+        }}
+      >
+        <VoiceDetailDrawerV2
+          data={drawerData}
+          onClose={() => {}}
+          hasPrev={false}
+          hasNext={false}
+          scenarioId={drawerData.scenarioId}
+          hideAnnotationTab={hideAnnotationTab}
+          embedded
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -1285,6 +1345,9 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
+        p: 3,
+        overflow: "auto",
+        height: "100%",
       }}
     >
       {/* Header — same style as CustomCallLogHeader without nav/close buttons */}

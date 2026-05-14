@@ -35,6 +35,7 @@ function MockAgGridReact({
   onCellClicked,
   noRowsOverlayComponent: NoRowsOverlay,
   rowSelection,
+  selectionColumnDef,
   onSelectionChanged,
 }) {
   if (!rowData || rowData.length === 0) {
@@ -42,6 +43,14 @@ function MockAgGridReact({
   }
   return (
     <div data-testid="ag-grid">
+      {rowSelection && selectionColumnDef && (
+        <div
+          data-testid="selection-column-def"
+          data-width={selectionColumnDef.width}
+          data-min-width={selectionColumnDef.minWidth}
+          data-max-width={selectionColumnDef.maxWidth}
+        />
+      )}
       <div data-testid="ag-grid-header">
         {rowSelection && <input type="checkbox" aria-label="select-all" />}
         {columnDefs
@@ -98,6 +107,7 @@ MockAgGridReact.propTypes = {
   onCellClicked: PropTypes.func,
   noRowsOverlayComponent: PropTypes.elementType,
   rowSelection: PropTypes.object,
+  selectionColumnDef: PropTypes.object,
   onSelectionChanged: PropTypes.func,
 };
 
@@ -304,6 +314,24 @@ describe("QueueItemsTable", () => {
     );
     expect(screen.getAllByText("All annotators").length).toBeGreaterThan(0);
     expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
+  });
+
+  it("shows the annotator name in auto-assign mode when only one annotator exists", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        autoAssign
+        annotators={[
+          { user_id: "user-1", name: "Alice", role: "annotator" },
+          { user_id: "user-3", name: "Reviewer", role: "reviewer" },
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("Alice").length).toBeGreaterThan(0);
+    expect(screen.queryByText("All annotators")).not.toBeInTheDocument();
+    expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
   });
 
   it("shows review status chip when present", () => {
@@ -352,5 +380,14 @@ describe("QueueItemsTable", () => {
     // First checkbox is select-all, subsequent ones are per-row
     await user.click(checkboxes[1]);
     expect(onSelectToggle).toHaveBeenCalledWith("item-1");
+  });
+
+  it("keeps the selection checkbox column at a stable width", () => {
+    render(<QueueItemsTable {...tableProps} />);
+
+    const selectionColumn = screen.getByTestId("selection-column-def");
+    expect(selectionColumn).toHaveAttribute("data-width", "44");
+    expect(selectionColumn).toHaveAttribute("data-min-width", "44");
+    expect(selectionColumn).toHaveAttribute("data-max-width", "44");
   });
 });

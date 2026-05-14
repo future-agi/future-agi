@@ -30,6 +30,7 @@ export const WebSocketProvider = ({ children }) => {
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
   const createWebSocketConnectionRef = useRef(null);
+  const messageListenersRef = useRef(new Set());
 
   // Store event handlers to properly remove them later
   const eventHandlersRef = useRef({
@@ -151,7 +152,22 @@ export const WebSocketProvider = ({ children }) => {
       startHeartbeat();
     };
 
-    const messageHandler = () => {};
+    const messageHandler = (event) => {
+      let message = event.data;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        // Some websocket producers may send plain text. Forward it unchanged.
+      }
+
+      messageListenersRef.current.forEach((listener) => {
+        try {
+          listener(message);
+        } catch (e) {
+          logger.error("WebSocket message listener failed", e);
+        }
+      });
+    };
 
     const errorHandler = () => {
       // WebSocket error events don't provide detailed error information.
@@ -254,6 +270,13 @@ export const WebSocketProvider = ({ children }) => {
     [attemptReconnect],
   );
 
+  const addMessageListener = useCallback((listener) => {
+    messageListenersRef.current.add(listener);
+    return () => {
+      messageListenersRef.current.delete(listener);
+    };
+  }, []);
+
   // Consolidated authentication state handling
   useEffect(() => {
     if (authenticated && user?.accessToken) {
@@ -316,11 +339,12 @@ export const WebSocketProvider = ({ children }) => {
     () => ({
       socket: socketRef.current,
       sendMessage,
+      addMessageListener,
       isConnected,
       error,
       closeConnection,
     }),
-    [sendMessage, isConnected, error, closeConnection],
+    [sendMessage, addMessageListener, isConnected, error, closeConnection],
   );
 
   return (

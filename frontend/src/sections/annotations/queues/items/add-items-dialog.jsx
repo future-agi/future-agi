@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { enqueueSnackbar } from "notistack";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -369,7 +370,7 @@ async function fetchAllSpanIds(
 // ---------------------------------------------------------------------------
 // Main component – Drawer-based
 // ---------------------------------------------------------------------------
-export default function AddItemsDialog({ open, onClose, queueId }) {
+export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   const [sourceType, setSourceType] = useState(null);
   // Selection can be in two modes:
   // 'manual' – individual IDs tracked in selectedIds
@@ -384,6 +385,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
   const [isResolving, setIsResolving] = useState(false);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
+  const isDefaultQueue = !!queue?.is_default;
 
   const selectionCount =
     selectionMode === "selectAll" && selectAllInfo
@@ -630,7 +632,11 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
     >
       {/* Source type selection (step 1) */}
       {!sourceType && (
-        <SourceTypeSelection onClose={handleClose} onSelect={setSourceType} />
+        <SourceTypeSelection
+          onClose={handleClose}
+          onSelect={setSourceType}
+          isDefaultQueue={isDefaultQueue}
+        />
       )}
 
       {/* Dataset / Trace selection (step 2) */}
@@ -651,17 +657,29 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gap: 1.5,
+              flexWrap: "wrap",
               borderBottom: "1px solid",
               borderColor: "divider",
               flexShrink: 0,
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                minWidth: 0,
+                flex: "1 1 280px",
+              }}
+            >
               <IconButton size="small" onClick={handleBack}>
                 <Iconify icon="eva:arrow-ios-back-fill" width={20} />
               </IconButton>
-              <Box>
-                <Typography variant="h6">{sourceLabel}</Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6" noWrap sx={{ minWidth: 0 }}>
+                  {sourceLabel}
+                </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {sourceSubtitle}
                 </Typography>
@@ -692,6 +710,12 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               px: 3,
             }}
           >
+            {isDefaultQueue && (
+              <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
+                This is a default queue. Direct annotations still land here
+                automatically, and you can add items from any selected source.
+              </Alert>
+            )}
             {sourceType === "dataset_row" && (
               <DatasetRowSelector
                 onSetSelection={handleSetSelection}
@@ -729,13 +753,14 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               display: "flex",
               alignItems: "center",
               gap: 1.5,
+              flexWrap: "wrap",
               flexShrink: 0,
             }}
           >
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ flex: 1 }}
+              sx={{ flex: "1 1 220px", minWidth: 0 }}
             >
               {selectionCount === 0
                 ? "Select rows with the checkbox column to add them."
@@ -746,7 +771,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               color="primary"
               onClick={handleClose}
               disabled={isPending || isResolving}
-              sx={{ minWidth: 160 }}
+              sx={{ minWidth: 140, flexShrink: 0 }}
             >
               Cancel
             </Button>
@@ -760,7 +785,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
                   <CircularProgress size={16} />
                 ) : undefined
               }
-              sx={{ minWidth: 160 }}
+              sx={{ minWidth: 140, flexShrink: 0 }}
             >
               {selectionCount > 0
                 ? `(${selectionCount}) Add to queue`
@@ -777,12 +802,13 @@ AddItemsDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   queueId: PropTypes.string.isRequired,
+  queue: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
 // Source Type Selection (Step 1)
 // ---------------------------------------------------------------------------
-function SourceTypeSelection({ onSelect, onClose }) {
+function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <Box
@@ -838,6 +864,16 @@ function SourceTypeSelection({ onSelect, onClose }) {
             Check docs
           </Typography>
         </Typography>
+        {isDefaultQueue && (
+          <Alert
+            severity="info"
+            variant="outlined"
+            sx={{ width: "100%", maxWidth: 560, mb: 2 }}
+          >
+            This default queue auto-receives direct annotations for its default
+            source, but you can add items from any source here.
+          </Alert>
+        )}
 
         <Box
           sx={{
@@ -925,6 +961,7 @@ function SourceTypeSelection({ onSelect, onClose }) {
 SourceTypeSelection.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
+  isDefaultQueue: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -1404,6 +1441,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           display: "flex",
           alignItems: "center",
           gap: 2,
+          flexWrap: "wrap",
           flexShrink: 0,
         }}
       >
@@ -1413,7 +1451,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           label="Dataset"
           value={datasetId}
           onChange={handleDatasetChange}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 260px" }}
           required
           SelectProps={{
             MenuProps: {
@@ -1449,7 +1487,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
         {datasetId && (
           <>
-            <Box sx={{ flex: 1 }} />
+            <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
             <IconButton
               size="small"
               onClick={() => setFilterOpen((v) => !v)}
@@ -1479,7 +1517,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              sx={{ minWidth: 220 }}
+              sx={{ minWidth: 180, flex: "1 1 220px" }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -1639,6 +1677,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   }));
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
@@ -1919,6 +1958,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
     onSetSelection([]);
   };
@@ -1927,6 +1967,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
@@ -2008,7 +2049,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -2018,7 +2059,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2061,7 +2102,10 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             <IconButton
               ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
@@ -2090,7 +2134,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           page (ObserveToolbar mounts it via `setIsPrimaryFilterOpen`). */}
       {canShowGrid && (
         <TraceFilterPanel
-          anchorEl={filterButtonRef.current}
+          anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
@@ -2118,8 +2162,16 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
-          onAddFilter={() => setFilterOpen(true)}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
           onRemoveFilter={(idx) => {
+            setFilterAnchorEl(null);
             // FilterChips indexes into the *snake-case validated* list which
             // already stripped empty rows. Map back to the original filters
             // state by matching on columnId + filterConfig.
@@ -2139,6 +2191,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             );
           }}
           onClearAll={() => {
+            setFilterAnchorEl(null);
             setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
             setFilterOpen(false);
           }}
@@ -2306,6 +2359,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   }));
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
@@ -2546,6 +2600,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
@@ -2553,6 +2608,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
@@ -2631,7 +2687,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -2641,7 +2697,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2684,7 +2740,10 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             <IconButton
               ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
@@ -2711,7 +2770,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {canShowGrid && (
         <TraceFilterPanel
-          anchorEl={filterButtonRef.current}
+          anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
@@ -2737,8 +2796,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
-          onAddFilter={() => setFilterOpen(true)}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
           onRemoveFilter={(idx) => {
+            setFilterAnchorEl(null);
             const snakeChips = (
               objectCamelToSnake(validatedMainFilters) || []
             ).filter((f) => f?.column_id && f.column_id !== "created_at");
@@ -2755,6 +2822,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             );
           }}
           onClearAll={() => {
+            setFilterAnchorEl(null);
             setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
             setFilterOpen(false);
           }}
@@ -3137,7 +3205,7 @@ function SessionSelector({ onSetSelection }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -3147,7 +3215,7 @@ function SessionSelector({ onSetSelection }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -3309,9 +3377,25 @@ function getNestedValue(source, key) {
 }
 
 function getCallValue(data, keys) {
-  const sources = [data, data?.call_details, data?.call_metadata].filter(
-    Boolean,
-  );
+  const latencyMetrics =
+    data?.customer_latency_metrics ||
+    data?.customerLatencyMetrics ||
+    data?.call_details?.customer_latency_metrics ||
+    data?.callDetails?.customerLatencyMetrics;
+  const sources = [
+    data,
+    data?.call_details,
+    data?.callDetails,
+    data?.call_metadata,
+    data?.callMetadata,
+    data?.conversation_metrics_data,
+    data?.conversationMetricsData,
+    latencyMetrics,
+    latencyMetrics?.systemMetrics,
+    latencyMetrics?.system_metrics,
+    latencyMetrics?.detailed_data,
+    latencyMetrics?.detailedData,
+  ].filter(Boolean);
 
   for (const key of keys) {
     for (const source of sources) {
@@ -3364,6 +3448,16 @@ function formatCurrencyCents(value) {
   })}`;
 }
 
+function formatCurrencyDollars(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return `$${formatNumber(numeric, {
+    minimumFractionDigits: numeric ? 2 : 0,
+    maximumFractionDigits: 4,
+  })}`;
+}
+
 function formatGenericSimulationValue(value) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -3380,15 +3474,77 @@ function formatGenericSimulationValue(value) {
   return String(value);
 }
 
-function formatResponseTime(data) {
-  const seconds = getCallValue(data, [
-    "response_time",
-    "response_time_seconds",
-  ]);
-  if (seconds !== null) return formatSeconds(seconds);
+function formatLatency(data) {
+  return formatMilliseconds(
+    getCallValue(data, [
+      "avg_agent_latency",
+      "avg_agent_latency_ms",
+      "avgAgentLatencyMs",
+      "avg_latency_ms",
+      "average_latency_ms",
+      "latency",
+      "latency_ms",
+      "turnLatencyAverage",
+      "turn_latency_average",
+    ]),
+  );
+}
 
-  const milliseconds = getCallValue(data, ["response_time_ms"]);
-  return milliseconds !== null ? formatMilliseconds(milliseconds) : "-";
+function formatAgentTalkPercentage(data) {
+  const direct = getCallValue(data, [
+    "agent_talk_percentage",
+    "agentTalkPercentage",
+    "bot_pct",
+    "botPct",
+  ]);
+  if (direct !== null) {
+    return `${formatNumber(direct, { maximumFractionDigits: 1 })}%`;
+  }
+
+  const ratio = getCallValue(data, ["talk_ratio", "talkRatio"]);
+  if (ratio === null) return "-";
+
+  if (ratio && typeof ratio === "object") {
+    const objectValue = ratio.bot_pct ?? ratio.botPct ?? ratio.agent_pct;
+    return objectValue == null
+      ? "-"
+      : `${formatNumber(objectValue, { maximumFractionDigits: 1 })}%`;
+  }
+
+  const numericRatio = Number(ratio);
+  if (Number.isFinite(numericRatio) && numericRatio >= 0) {
+    const denominator = numericRatio + 1;
+    if (denominator > 0) {
+      return `${formatNumber((numericRatio / denominator) * 100, {
+        maximumFractionDigits: 1,
+      })}%`;
+    }
+  }
+
+  return "-";
+}
+
+function formatCost(data) {
+  const cents = getCallValue(data, [
+    "customer_cost_cents",
+    "customerCostCents",
+    "cost_cents",
+    "costCents",
+    "total_cost_cents",
+    "totalCostCents",
+  ]);
+  if (cents !== null) return formatCurrencyCents(cents);
+
+  const dollars = getCallValue(data, [
+    "customer_cost_breakdown.total",
+    "customerCostBreakdown.total",
+    "cost_breakdown.total",
+    "costBreakdown.total",
+    "total_cost",
+    "totalCost",
+    "cost",
+  ]);
+  return dollars !== null ? formatCurrencyDollars(dollars) : "-";
 }
 
 function SimulationTextCellRenderer({ value, valueFormatted }) {
@@ -3556,26 +3712,11 @@ const SIMULATION_STATIC_COLUMNS = [
       ),
   },
   {
-    id: "response_time",
-    headerName: "Response Time",
-    flex: 0.8,
-    minWidth: 135,
-    valueGetter: (params) => formatResponseTime(params.data),
-  },
-  {
     id: "latency",
     headerName: "Latency",
     flex: 0.7,
     minWidth: 115,
-    valueGetter: (params) =>
-      formatMilliseconds(
-        getCallValue(params.data, [
-          "avg_agent_latency",
-          "avg_agent_latency_ms",
-          "latency",
-          "latency_ms",
-        ]),
-      ),
+    valueGetter: (params) => formatLatency(params.data),
   },
   {
     id: "turn_count",
@@ -3590,22 +3731,14 @@ const SIMULATION_STATIC_COLUMNS = [
     headerName: "Agent Talk (%)",
     flex: 0.8,
     minWidth: 135,
-    valueGetter: (params) => {
-      const value = getCallValue(params.data, ["agent_talk_percentage"]);
-      return value == null
-        ? "-"
-        : `${formatNumber(value, { maximumFractionDigits: 1 })}%`;
-    },
+    valueGetter: (params) => formatAgentTalkPercentage(params.data),
   },
   {
     id: "cost_cents",
     headerName: "Cost",
     flex: 0.7,
     minWidth: 105,
-    valueGetter: (params) =>
-      formatCurrencyCents(
-        getCallValue(params.data, ["cost_cents", "customer_cost_cents"]),
-      ),
+    valueGetter: (params) => formatCost(params.data),
   },
   {
     id: "ended_reason",
@@ -3634,6 +3767,42 @@ const SIMULATION_STATIC_COLUMNS = [
       ),
   },
 ];
+
+const SIMULATION_COLUMN_ALIASES = {
+  avg_agent_latency: "latency",
+  avg_agent_latency_ms: "latency",
+  avgAgentLatencyMs: "latency",
+  avg_latency_ms: "latency",
+  avgLatencyMs: "latency",
+  average_latency_ms: "latency",
+  latency_ms: "latency",
+  customer_cost_cents: "cost_cents",
+  customerCostCents: "cost_cents",
+  cost: "cost_cents",
+  costCents: "cost_cents",
+  total_cost: "cost_cents",
+  total_cost_cents: "cost_cents",
+  totalCost: "cost_cents",
+  totalCostCents: "cost_cents",
+  responseTime: "response_time",
+  avg_response_time_ms: "response_time",
+  average_response_time_ms: "response_time",
+  response_time_ms: "response_time",
+  responseTimeMs: "response_time",
+  response_time_seconds: "response_time",
+  responseTimeSeconds: "response_time",
+  agentTalkPercentage: "agent_talk_percentage",
+};
+
+function normalizeSimulationColumnId(columnId) {
+  return SIMULATION_COLUMN_ALIASES[columnId] || columnId;
+}
+
+const SIMULATION_HIDDEN_COLUMN_IDS = new Set([
+  // Voice observability keeps Response Time hidden, so do not surface it in the
+  // Add Items picker even when older execution column orders include aliases.
+  "response_time",
+]);
 
 function createDynamicSimulationColumn(col) {
   const columnId = col.id;
@@ -3692,17 +3861,27 @@ function createDynamicSimulationColumn(col) {
   };
 }
 
-function buildSimulationSelectorColumnDefs(columnOrder = []) {
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildSimulationSelectorColumnDefs(columnOrder = []) {
   const staticById = new Map(
-    SIMULATION_STATIC_COLUMNS.map((column) => [column.id, column]),
+    SIMULATION_STATIC_COLUMNS.flatMap((column) => [
+      [column.id, column],
+      [normalizeSimulationColumnId(column.id), column],
+    ]),
   );
   const seen = new Set();
   const columns = [];
 
   const addColumn = (column) => {
     const columnId = column.colId || column.field || column.id;
-    if (!columnId || seen.has(columnId)) return;
-    seen.add(columnId);
+    const normalizedColumnId = normalizeSimulationColumnId(columnId);
+    if (
+      !columnId ||
+      SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId) ||
+      seen.has(normalizedColumnId)
+    )
+      return;
+    seen.add(normalizedColumnId);
     columns.push({
       cellRenderer: SimulationTextCellRenderer,
       ...column,
@@ -3716,8 +3895,14 @@ function buildSimulationSelectorColumnDefs(columnOrder = []) {
   columnOrder.forEach((col) => {
     if (!col?.id) return;
     const columnId = col.id;
-    if (seen.has(columnId)) return;
-    const staticColumn = staticById.get(columnId);
+    const normalizedColumnId = normalizeSimulationColumnId(columnId);
+    if (
+      SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId) ||
+      seen.has(normalizedColumnId)
+    )
+      return;
+    const staticColumn =
+      staticById.get(columnId) || staticById.get(normalizedColumnId);
     addColumn(
       staticColumn
         ? {
@@ -3929,7 +4114,7 @@ function SimulationSelector({ onSetSelection }) {
           label="Test"
           value={testId}
           onChange={handleTestChange}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
           required
           InputLabelProps={{ shrink: true }}
           InputProps={{
@@ -3998,7 +4183,7 @@ function SimulationSelector({ onSetSelection }) {
             label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
-            sx={{ minWidth: 340 }}
+            sx={{ minWidth: 220, flex: "1 1 320px" }}
             required
             InputLabelProps={{ shrink: true }}
             InputProps={{

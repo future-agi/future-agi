@@ -344,6 +344,130 @@ export const useQueueProgress = (queueId, options = {}) => {
   });
 };
 
+const getAssignmentUserId = (user) => user?.id ?? user?.user_id ?? user?.userId;
+
+const normalizeAssignmentUser = (user, fallbackId) => {
+  const id = String(getAssignmentUserId(user) ?? fallbackId ?? "");
+  if (!id) return null;
+  return {
+    ...(user || {}),
+    id,
+    user_id: user?.user_id ?? id,
+    name: user?.name || user?.email || id,
+  };
+};
+
+const optimisticAssignmentUsers = (variables) => {
+  const ids = (
+    variables.userIds || (variables.userId ? [variables.userId] : [])
+  )
+    .map((id) => String(id))
+    .filter(Boolean);
+  const assignees = variables.assignees || [];
+
+  return ids
+    .map((id) => {
+      const assignee = assignees.find(
+        (candidate) => String(getAssignmentUserId(candidate)) === id,
+      );
+      return normalizeAssignmentUser(assignee, id);
+    })
+    .filter(Boolean);
+};
+
+const applyOptimisticAssignment = (assignedUsers = [], variables) => {
+  const action = variables.action || "add";
+  const nextUsers = optimisticAssignmentUsers(variables);
+
+  if (action === "set") return nextUsers;
+
+  const nextUserIds = new Set(nextUsers.map((user) => String(user.id)));
+  if (!nextUserIds.size) return assignedUsers;
+
+  const usersById = new Map();
+  assignedUsers.forEach((user) => {
+    const normalized = normalizeAssignmentUser(user);
+    if (normalized) usersById.set(String(normalized.id), normalized);
+  });
+
+  if (action === "remove") {
+    nextUserIds.forEach((id) => usersById.delete(id));
+  } else {
+    nextUsers.forEach((user) => usersById.set(String(user.id), user));
+  }
+
+  return Array.from(usersById.values());
+};
+
+const patchAssignmentItem = (item, variables) => {
+  if (!item?.id) return item;
+  const targetIds = new Set((variables.itemIds || []).map((id) => String(id)));
+  if (!targetIds.has(String(item.id))) return item;
+
+  const assignedUsers = applyOptimisticAssignment(
+    item.assigned_users || [],
+    variables,
+  );
+  return {
+    ...item,
+    assigned_users: assignedUsers,
+    assigned_to_name:
+      assignedUsers
+        .map((user) => user.name || user.email)
+        .filter(Boolean)
+        .join(", ") || null,
+  };
+};
+
+const patchAssignmentCacheValue = (value, variables) => {
+  if (!value || typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => patchAssignmentCacheValue(entry, variables));
+  }
+
+  if (Array.isArray(value.pages)) {
+    return {
+      ...value,
+      pages: value.pages.map((page) =>
+        patchAssignmentCacheValue(page, variables),
+      ),
+    };
+  }
+
+  if (value.data) {
+    return {
+      ...value,
+      data: patchAssignmentCacheValue(value.data, variables),
+    };
+  }
+
+  if (value.result) {
+    return {
+      ...value,
+      result: patchAssignmentCacheValue(value.result, variables),
+    };
+  }
+
+  if (Array.isArray(value.results)) {
+    return {
+      ...value,
+      results: value.results.map((item) =>
+        patchAssignmentItem(item, variables),
+      ),
+    };
+  }
+
+  if (value.item) {
+    return {
+      ...value,
+      item: patchAssignmentItem(value.item, variables),
+    };
+  }
+
+  return patchAssignmentItem(value, variables);
+};
+
 export const useAssignQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -354,13 +478,71 @@ export const useAssignQueueItems = () => {
           ? { user_ids: userIds, action: action || "add" }
           : { user_id: userId }),
       }),
+    onMutate: async (variables) => {
+      const itemIds = variables.itemIds || [];
+
+      await Promise.all([
+        queryClient.cancelQueries({
+          queryKey: queueItemKeys.all(variables.queueId),
+          exact: false,
+        }),
+        ...itemIds.map((itemId) =>
+          queryClient.cancelQueries({
+            queryKey: annotateKeys.detail(variables.queueId, itemId),
+            exact: false,
+          }),
+        ),
+      ]);
+
+      const previousQueueItems = queryClient.getQueriesData({
+        queryKey: queueItemKeys.all(variables.queueId),
+        exact: false,
+      });
+      const previousDetails = itemIds.flatMap((itemId) =>
+        queryClient.getQueriesData({
+          queryKey: annotateKeys.detail(variables.queueId, itemId),
+          exact: false,
+        }),
+      );
+
+      queryClient.setQueriesData(
+        { queryKey: queueItemKeys.all(variables.queueId), exact: false },
+        (old) => patchAssignmentCacheValue(old, variables),
+      );
+      itemIds.forEach((itemId) => {
+        queryClient.setQueriesData(
+          {
+            queryKey: annotateKeys.detail(variables.queueId, itemId),
+            exact: false,
+          },
+          (old) => patchAssignmentCacheValue(old, variables),
+        );
+      });
+
+      return { previousQueueItems, previousDetails };
+    },
     onSuccess: (data, variables) => {
       enqueueSnackbar("Assignees updated", { variant: "success" });
+      (variables.itemIds || []).forEach((itemId) => {
+        invalidateAnnotateItem(queryClient, variables.queueId, itemId);
+      });
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotateKeys.nextItem(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
     },
-    onError: () => {
+    onError: (_error, _variables, context) => {
+      context?.previousQueueItems?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      context?.previousDetails?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       enqueueSnackbar("Failed to assign items", { variant: "error" });
     },
   });
@@ -389,10 +571,13 @@ export const useUpdateQueueItemStatus = () => {
 // ---------------------------------------------------------------------------
 
 export const annotateKeys = {
-  detail: (queueId, itemId, annotatorId) =>
-    annotatorId
+  detail: (queueId, itemId, annotatorId, filters) => {
+    const key = annotatorId
       ? ["annotate-detail", queueId, itemId, annotatorId]
-      : ["annotate-detail", queueId, itemId],
+      : ["annotate-detail", queueId, itemId];
+    return filters && Object.keys(filters).length ? [...key, filters] : key;
+  },
+  discussion: (queueId, itemId) => ["annotate-discussion", queueId, itemId],
   nextItem: (queueId, filters) =>
     filters && Object.keys(filters).length
       ? ["annotate-next-item", queueId, filters]
@@ -408,19 +593,44 @@ const invalidateAnnotateItem = (queryClient, queueId, itemId) => {
   queryClient.invalidateQueries({
     queryKey: annotateKeys.annotations(queueId, itemId),
   });
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.discussion(queueId, itemId),
+  });
 };
 
 export const useAnnotateDetail = (
   queueId,
   itemId,
-  { annotatorId, ...options } = {},
+  {
+    annotatorId,
+    includeCompleted,
+    reviewStatus,
+    excludeReviewStatus,
+    ...options
+  } = {},
 ) => {
+  const params = {
+    ...(annotatorId ? { annotator_id: annotatorId } : {}),
+    ...(includeCompleted ? { include_completed: true } : {}),
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+  };
+  const requestOptions = Object.keys(params).length ? { params } : undefined;
+  const detailFilters = {
+    ...(includeCompleted ? { include_completed: true } : {}),
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+  };
   return useQuery({
-    queryKey: annotateKeys.detail(queueId, itemId, annotatorId),
+    queryKey: annotateKeys.detail(queueId, itemId, annotatorId, detailFilters),
     queryFn: () =>
       axios.get(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotate-detail/`,
-        annotatorId ? { params: { annotator_id: annotatorId } } : undefined,
+        requestOptions,
       ),
     select: (d) => extractData(d),
     enabled: !!queueId && !!itemId,
@@ -430,12 +640,18 @@ export const useAnnotateDetail = (
 };
 
 export const useNextItem = (queueId, options = {}) => {
-  const { reviewStatus, excludeReviewStatus, ...queryOptions } = options;
+  const {
+    reviewStatus,
+    excludeReviewStatus,
+    includeCompleted,
+    ...queryOptions
+  } = options;
   const params = {
     ...(reviewStatus ? { review_status: reviewStatus } : {}),
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(includeCompleted ? { include_completed: true } : {}),
   };
   const requestOptions = Object.keys(params).length ? { params } : undefined;
   return useQuery({
@@ -447,6 +663,8 @@ export const useNextItem = (queueId, options = {}) => {
       ),
     select: (d) => extractData(d)?.item,
     enabled: !!queueId,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...queryOptions,
   });
 };
@@ -489,12 +707,19 @@ export const useSubmitAnnotations = () => {
 export const useCompleteItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude, excludeReviewStatus }) => {
+    mutationFn: ({
+      queueId,
+      itemId,
+      exclude,
+      excludeReviewStatus,
+      includeCompleted,
+    }) => {
       const payload = {
         ...(exclude ? { exclude } : {}),
         ...(excludeReviewStatus
           ? { exclude_review_status: excludeReviewStatus }
           : {}),
+        ...(includeCompleted ? { include_completed: true } : {}),
       };
       return axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/complete/`,
@@ -510,6 +735,9 @@ export const useCompleteItem = () => {
         queryKey: annotateKeys.nextItem(variables.queueId),
       });
       queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
+      queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.all,
       });
       queryClient.invalidateQueries({ queryKey: scoreKeys.all });
@@ -523,12 +751,19 @@ export const useCompleteItem = () => {
 export const useSkipItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude, excludeReviewStatus }) => {
+    mutationFn: ({
+      queueId,
+      itemId,
+      exclude,
+      excludeReviewStatus,
+      includeCompleted,
+    }) => {
       const payload = {
         ...(exclude ? { exclude } : {}),
         ...(excludeReviewStatus
           ? { exclude_review_status: excludeReviewStatus }
           : {}),
+        ...(includeCompleted ? { include_completed: true } : {}),
       };
       return axios.post(
         `/model-hub/annotation-queues/${queueId}/items/${itemId}/skip/`,
@@ -608,6 +843,36 @@ export const useReviewItem = () => {
     onError: () => {
       enqueueSnackbar("Failed to review item", { variant: "error" });
     },
+  });
+};
+
+export const useItemDiscussion = (queueId, itemId, options = {}) => {
+  return useQuery({
+    queryKey: annotateKeys.discussion(queueId, itemId),
+    queryFn: () =>
+      axios.get(
+        `/model-hub/annotation-queues/${queueId}/items/${itemId}/discussion/`,
+      ),
+    select: (d) => {
+      const payload = extractData(d, {
+        review_comments: [],
+        review_threads: [],
+      });
+      // Older backend responses returned the discussion endpoint as a bare
+      // comments array. Normalize both shapes so the collaboration drawer can
+      // poll this endpoint without caring which backend build served it.
+      if (Array.isArray(payload)) {
+        return { review_comments: payload, review_threads: [] };
+      }
+      return {
+        review_comments: payload?.review_comments || [],
+        review_threads: payload?.review_threads || [],
+      };
+    },
+    enabled: !!queueId && !!itemId,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    ...options,
   });
 };
 
@@ -793,16 +1058,24 @@ export const useEvaluateRule = () => {
       ),
     onSuccess: (data, variables) => {
       const result = data?.data?.result || data?.data;
-      enqueueSnackbar(
-        `Rule evaluated: ${result?.added || 0} items added, ${result?.duplicates || 0} duplicates skipped`,
-        { variant: "success" },
-      );
+      if (result?.error) {
+        enqueueSnackbar(result.error, { variant: "error" });
+      } else {
+        enqueueSnackbar(
+          `Rule evaluated: ${result?.added || 0} items added, ${result?.duplicates || 0} duplicates skipped`,
+          { variant: "success" },
+        );
+      }
       queryClient.invalidateQueries({
         queryKey: automationRuleKeys.all(variables.queueId),
       });
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
       enqueueSnackbar("Failed to evaluate rule", { variant: "error" });
@@ -912,7 +1185,8 @@ export const useOrgMembers = (orgId, options = {}) => {
     queryFn: () => axios.get(`/model-hub/organizations/${orgId}/users/`),
     select: (d) => extractData(d, []),
     enabled: !!orgId,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -933,7 +1207,8 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
     },
     select: (d) => d?.pages?.flatMap((p) => p?.data?.results ?? []) ?? [],
     enabled: !!orgId,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };

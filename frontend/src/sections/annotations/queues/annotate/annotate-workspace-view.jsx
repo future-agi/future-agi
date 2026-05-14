@@ -21,6 +21,7 @@ import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
 import axios from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
+import { useSocket } from "src/hooks/use-socket";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   annotateKeys,
@@ -32,6 +33,8 @@ import {
   useSkipItem,
   useQueueProgress,
   useReviewItem,
+  useAssignQueueItems,
+  useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
 import AnnotateFooter from "./annotate-footer";
@@ -39,6 +42,7 @@ import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
 import { CollaborationDrawer } from "./discussion-panel";
+import ItemAssignmentPanel from "./item-assignment-panel";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
@@ -143,6 +147,7 @@ export default function AnnotateWorkspaceView() {
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
+  const { addMessageListener } = useSocket();
   const initialItemId = searchParams.get("itemId");
 
   const [navState, dispatch] = useReducer(historyReducer, {
@@ -179,6 +184,10 @@ export default function AnnotateWorkspaceView() {
   const canAnnotate =
     hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) ||
     hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canManageAssignments = hasQueueRole(
+    myQueueMembership,
+    QUEUE_ROLES.MANAGER,
+  );
   const canDiscuss = canAnnotate || canReview;
   const requiresReview = queueDetail?.requires_review === true;
   const requestedMode = searchParams.get("mode");
@@ -191,37 +200,73 @@ export default function AnnotateWorkspaceView() {
           ? WORKSPACE_MODES.REVIEW
           : WORKSPACE_MODES.ANNOTATE;
   const isReviewWorkspaceMode = workspaceMode === WORKSPACE_MODES.REVIEW;
+  const includeCompletedItems =
+    !isReviewWorkspaceMode && searchParams.get("includeCompleted") === "true";
   const nextItemModeFilters = useMemo(
     () =>
       isReviewWorkspaceMode
         ? { reviewStatus: "pending_review" }
         : requiresReview
-          ? { excludeReviewStatus: "pending_review" }
-          : {},
-    [isReviewWorkspaceMode, requiresReview],
+          ? {
+              excludeReviewStatus: "pending_review",
+              includeCompleted: includeCompletedItems,
+            }
+          : { includeCompleted: includeCompletedItems },
+    [isReviewWorkspaceMode, requiresReview, includeCompletedItems],
   );
   const navigationModeParams = useMemo(
     () =>
       isReviewWorkspaceMode
         ? { review_status: "pending_review" }
         : requiresReview
-          ? { exclude_review_status: "pending_review" }
-          : {},
+          ? {
+              exclude_review_status: "pending_review",
+              ...(includeCompletedItems ? { include_completed: true } : {}),
+            }
+          : includeCompletedItems
+            ? { include_completed: true }
+            : {},
+    [isReviewWorkspaceMode, requiresReview, includeCompletedItems],
+  );
+  const openOnlyNavigationParams = useMemo(
+    () =>
+      !isReviewWorkspaceMode && requiresReview
+        ? { exclude_review_status: "pending_review" }
+        : {},
     [isReviewWorkspaceMode, requiresReview],
   );
+  const isResolvingInitialItem = !initialItemId && !currentItemId;
 
   // Fetch next item on mount (only if no specific item was requested).
-  const { data: nextItemData, isLoading: nextLoading } = useNextItem(queueId, {
+  const {
+    data: nextItemData,
+    isLoading: nextLoading,
+    isFetching: nextFetching,
+    isFetchedAfterMount: nextFetchedAfterMount,
+  } = useNextItem(queueId, {
     ...nextItemModeFilters,
-    enabled: !currentItemId && !!queueDetail,
+    enabled: isResolvingInitialItem && !!queueDetail,
   });
+  const isInitialItemLoading =
+    isResolvingInitialItem &&
+    (nextLoading || nextFetching || !nextFetchedAfterMount);
 
   // Set initial item from next-item query.
   useEffect(() => {
-    if (nextItemData?.id && !currentItemId) {
+    if (
+      isResolvingInitialItem &&
+      nextFetchedAfterMount &&
+      !nextFetching &&
+      nextItemData?.id
+    ) {
       dispatch({ type: "init", id: nextItemData.id });
     }
-  }, [nextItemData, currentItemId]);
+  }, [
+    isResolvingInitialItem,
+    nextFetchedAfterMount,
+    nextFetching,
+    nextItemData?.id,
+  ]);
 
   const queueAnnotators = useMemo(
     () => (queueDetail?.annotators || []).filter(isQueueAnnotatorRole),
@@ -281,8 +326,39 @@ export default function AnnotateWorkspaceView() {
     error: detailError,
   } = useAnnotateDetail(queueId, currentItemId, {
     annotatorId: scopedAnnotatorId,
+    includeCompleted: includeCompletedItems,
+    reviewStatus: isReviewWorkspaceMode ? "pending_review" : undefined,
+    excludeReviewStatus:
+      !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     enabled: detailEnabled,
   });
+  const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
+    enabled: detailEnabled,
+    refetchInterval: commentsOpen ? 3000 : 10000,
+    refetchIntervalInBackground: false,
+  });
+
+  useEffect(() => {
+    if (!addMessageListener || !queueId || !currentItemId) {
+      return undefined;
+    }
+
+    return addMessageListener((message) => {
+      if (message?.type !== "annotation_discussion_updated") {
+        return;
+      }
+      const data = message.data || {};
+      if (
+        String(data.queue_id) !== String(queueId) ||
+        String(data.item_id) !== String(currentItemId)
+      ) {
+        return;
+      }
+      queryClient.invalidateQueries({
+        queryKey: annotateKeys.discussion(queueId, currentItemId),
+      });
+    });
+  }, [addMessageListener, currentItemId, queueId, queryClient]);
 
   const lastLoadedAnnotatorIdRef = useRef(null);
   useEffect(() => {
@@ -302,12 +378,24 @@ export default function AnnotateWorkspaceView() {
     if (!detail || !queueId) return;
     const nextId = detail.next_item_id;
     const prevId = detail.prev_item_id;
-    const requestOptions = scopedAnnotatorId
-      ? { params: { annotator_id: scopedAnnotatorId } }
+    const prefetchParams = {
+      ...(scopedAnnotatorId ? { annotator_id: scopedAnnotatorId } : {}),
+      ...navigationModeParams,
+    };
+    const requestOptions = Object.keys(prefetchParams).length
+      ? { params: prefetchParams }
+      : undefined;
+    const detailFilters = Object.keys(navigationModeParams).length
+      ? navigationModeParams
       : undefined;
     if (nextId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, nextId, scopedAnnotatorId),
+        queryKey: annotateKeys.detail(
+          queueId,
+          nextId,
+          scopedAnnotatorId,
+          detailFilters,
+        ),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${nextId}/annotate-detail/`,
@@ -318,7 +406,12 @@ export default function AnnotateWorkspaceView() {
     }
     if (prevId) {
       queryClient.prefetchQuery({
-        queryKey: annotateKeys.detail(queueId, prevId, scopedAnnotatorId),
+        queryKey: annotateKeys.detail(
+          queueId,
+          prevId,
+          scopedAnnotatorId,
+          detailFilters,
+        ),
         queryFn: () =>
           axios.get(
             `/model-hub/annotation-queues/${queueId}/items/${prevId}/annotate-detail/`,
@@ -327,7 +420,14 @@ export default function AnnotateWorkspaceView() {
         staleTime: 1000 * 60 * 2,
       });
     }
-  }, [detail, queueId, queryClient, scopedAnnotatorId]);
+  }, [
+    detail,
+    queueId,
+    queryClient,
+    scopedAnnotatorId,
+    includeCompletedItems,
+    navigationModeParams,
+  ]);
 
   const labelPanelRef = useRef(null);
   const isDirtyRef = useRef(false);
@@ -348,11 +448,44 @@ export default function AnnotateWorkspaceView() {
   const { mutate: completeItem, isPending: isCompleting } = useCompleteItem();
   const { mutate: skipItem, isPending: isSkipping } = useSkipItem();
   const { mutate: reviewItem, isPending: isReviewing } = useReviewItem();
+  const { mutate: assignItems, isPending: isAssigningItem } =
+    useAssignQueueItems();
 
   const isPendingReview = detail?.item?.review_status === "pending_review";
-  const showReviewActions = isReviewWorkspaceMode && isPendingReview;
+  const hasSubmittedAnnotations = (detail?.annotations || []).length > 0;
+  const isCurrentItemCompleted = detail?.item?.status === "completed";
+  const completedByCurrentUser =
+    !isReviewWorkspaceMode &&
+    isCurrentItemCompleted &&
+    (detail?.annotations || []).length > 0;
+  const showReviewActions =
+    isReviewWorkspaceMode && isPendingReview && hasSubmittedAnnotations;
+  const currentUserHasAnnotations = (detail?.annotations || []).some(
+    (annotation) => String(annotation?.annotator) === String(currentUserId),
+  );
+  const hasOpenReworkForCurrentUser = (detail?.review_comments || []).some(
+    (comment) => {
+      const isOpen =
+        !comment?.thread_status ||
+        ["open", "reopened"].includes(comment.thread_status);
+      const targetsCurrentUser =
+        !comment?.target_annotator_id ||
+        String(comment.target_annotator_id) === String(currentUserId);
+      return (
+        comment?.action === "request_changes" &&
+        comment?.blocking !== false &&
+        isOpen &&
+        targetsCurrentUser
+      );
+    },
+  );
+  const canAnnotatePendingReview =
+    !currentUserHasAnnotations || hasOpenReworkForCurrentUser;
   const isAnnotateLockedForReview =
-    !isReviewWorkspaceMode && requiresReview && isPendingReview;
+    !isReviewWorkspaceMode &&
+    requiresReview &&
+    isPendingReview &&
+    !canAnnotatePendingReview;
 
   // Item is explicitly assigned to someone else (only blocks in manual-assignment mode)
   const assignedUsers = detail?.item?.assigned_users || [];
@@ -368,9 +501,10 @@ export default function AnnotateWorkspaceView() {
           .filter(Boolean)
           .join(", ") || "other annotators"
       : null;
-  // In manual-assignment queues, only explicitly assigned users may annotate.
-  // Auto-assign queues implicitly assign everyone, so they never block.
-  const cannotAnnotate = isManualAssignment && !isAssignedToMe;
+  // Unassigned manual items are claimable. Only explicitly assigned-to-other
+  // items should become read-only/blocked in the annotate workspace.
+  const cannotAnnotate =
+    isManualAssignment && hasAssignments && !isAssignedToMe;
   // Reviewers/managers see assigned-to-other items in read-only mode (when
   // not actively reviewing). Other members are fully blocked.
   const isViewOnlyForReviewer =
@@ -398,6 +532,8 @@ export default function AnnotateWorkspaceView() {
             : null;
 
   const isSubmittingRef = useRef(false);
+  const [isChangingCompletedVisibility, setIsChangingCompletedVisibility] =
+    useState(false);
 
   const handleViewingAnnotatorChange = useCallback(
     (id) => {
@@ -417,6 +553,20 @@ export default function AnnotateWorkspaceView() {
     [viewingAnnotatorId, confirmDiscardUnsaved],
   );
 
+  const handleAssignCurrentItem = useCallback(
+    ({ itemIds, userId, userIds, action }) => {
+      assignItems({
+        queueId,
+        itemIds,
+        userId,
+        userIds,
+        action,
+        assignees: queueAnnotators,
+      });
+    },
+    [assignItems, queueAnnotators, queueId],
+  );
+
   const handleWorkspaceModeChange = useCallback(
     (_, nextMode) => {
       if (!nextMode || nextMode === workspaceMode) return;
@@ -428,11 +578,122 @@ export default function AnnotateWorkspaceView() {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.set("mode", nextMode);
       nextParams.delete("itemId");
+      if (nextMode === WORKSPACE_MODES.REVIEW) {
+        nextParams.delete("includeCompleted");
+      }
       setSearchParams(nextParams, { replace: true });
       isDirtyRef.current = false;
       dispatch({ type: "clear" });
     },
     [workspaceMode, searchParams, setSearchParams, confirmDiscardUnsaved],
+  );
+
+  const handleIncludeCompletedChange = useCallback(
+    async (event) => {
+      const nextIncludeCompleted = event.target.checked;
+      if (
+        !confirmDiscardUnsaved(
+          "You have unsaved changes. Change navigation mode anyway?",
+        )
+      ) {
+        return;
+      }
+
+      const nextParams = new URLSearchParams(searchParams);
+      if (nextIncludeCompleted) {
+        nextParams.set("includeCompleted", "true");
+      } else {
+        nextParams.delete("includeCompleted");
+      }
+      if (currentItemId) {
+        nextParams.set("itemId", currentItemId);
+      } else {
+        nextParams.delete("itemId");
+      }
+      setSearchParams(nextParams, { replace: true });
+      isDirtyRef.current = false;
+
+      if (nextIncludeCompleted || !currentItemId) {
+        return;
+      }
+
+      // Leaving "Show completed" should also leave the all-items browsing
+      // history. Otherwise a completed item visited while the toggle was on
+      // remains reachable through local Previous/Next even though the mode now
+      // says completed work is hidden.
+      if (detail?.item?.status !== "completed") {
+        dispatch({ type: "init", id: currentItemId });
+        return;
+      }
+
+      setIsChangingCompletedVisibility(true);
+      try {
+        const nextRes = await axios.get(
+          `/model-hub/annotation-queues/${queueId}/items/next-item/`,
+          {
+            params: {
+              exclude: currentItemId,
+              ...openOnlyNavigationParams,
+            },
+          },
+        );
+        const nextItem =
+          nextRes?.data?.data?.item ||
+          nextRes?.data?.result?.item ||
+          nextRes?.data?.item;
+        if (nextItem?.id) {
+          const itemParams = new URLSearchParams(nextParams);
+          itemParams.set("itemId", nextItem.id);
+          setSearchParams(itemParams, { replace: true });
+          dispatch({ type: "init", id: nextItem.id });
+          return;
+        }
+
+        const prevRes = await axios.get(
+          `/model-hub/annotation-queues/${queueId}/items/next-item/`,
+          {
+            params: {
+              before: currentItemId,
+              ...openOnlyNavigationParams,
+            },
+          },
+        );
+        const prevItem =
+          prevRes?.data?.data?.item ||
+          prevRes?.data?.result?.item ||
+          prevRes?.data?.item;
+        if (prevItem?.id) {
+          const itemParams = new URLSearchParams(nextParams);
+          itemParams.set("itemId", prevItem.id);
+          setSearchParams(itemParams, { replace: true });
+          dispatch({ type: "init", id: prevItem.id });
+        } else {
+          const emptyParams = new URLSearchParams(nextParams);
+          emptyParams.delete("itemId");
+          setSearchParams(emptyParams, { replace: true });
+          dispatch({ type: "clear" });
+        }
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.detail ||
+            err?.message ||
+            "Couldn't update completed item visibility.",
+          { variant: "error" },
+        );
+      } finally {
+        setIsChangingCompletedVisibility(false);
+      }
+    },
+    [
+      searchParams,
+      setSearchParams,
+      confirmDiscardUnsaved,
+      currentItemId,
+      detail?.item?.status,
+      queueId,
+      openOnlyNavigationParams,
+      enqueueSnackbar,
+    ],
   );
 
   const handleSubmitAndNext = useCallback(
@@ -453,6 +714,7 @@ export default function AnnotateWorkspaceView() {
                 excludeReviewStatus: requiresReview
                   ? "pending_review"
                   : undefined,
+                includeCompleted: includeCompletedItems,
               },
               {
                 onSuccess: (data) => {
@@ -462,7 +724,9 @@ export default function AnnotateWorkspaceView() {
                   if (nextItem?.id) {
                     dispatch({ type: "push", id: nextItem.id });
                   } else {
-                    dispatch({ type: "clear" });
+                    enqueueSnackbar("Saved. No more items in this queue.", {
+                      variant: "success",
+                    });
                   }
                 },
                 onError: () => {
@@ -484,6 +748,8 @@ export default function AnnotateWorkspaceView() {
       submitAnnotations,
       completeItem,
       requiresReview,
+      includeCompletedItems,
+      enqueueSnackbar,
     ],
   );
 
@@ -495,6 +761,7 @@ export default function AnnotateWorkspaceView() {
         itemId: currentItemId,
         exclude: itemHistory.join(","),
         excludeReviewStatus: requiresReview ? "pending_review" : undefined,
+        includeCompleted: includeCompletedItems,
       },
       {
         onSuccess: (data) => {
@@ -515,6 +782,7 @@ export default function AnnotateWorkspaceView() {
     skipItem,
     requiresReview,
     isAnnotateLockedForReview,
+    includeCompletedItems,
   ]);
 
   const handleReviewSuccess = useCallback(
@@ -636,9 +904,7 @@ export default function AnnotateWorkspaceView() {
       return;
     }
 
-    // Only use the precomputed adjacent item when there is no mode-specific
-    // review filter. Review/annotation queues need the API filter below.
-    if (detail?.next_item_id && !requiresReview) {
+    if (detail?.next_item_id) {
       dispatch({ type: "push", id: detail.next_item_id });
       return;
     }
@@ -687,7 +953,6 @@ export default function AnnotateWorkspaceView() {
     isFetchingNext,
     enqueueSnackbar,
     detail,
-    requiresReview,
     navigationModeParams,
     confirmDiscardUnsaved,
   ]);
@@ -724,8 +989,10 @@ export default function AnnotateWorkspaceView() {
     detailEnabled && !detail && (detailLoading || detailFetching);
   const isWaitingForAnnotatorSelection =
     !!queueDetail && isReviewWorkspaceMode && !viewingAnnotatorId;
-  const reviewComments = detail?.review_comments || [];
-  const reviewThreads = detail?.review_threads || [];
+  const reviewComments =
+    liveDiscussion?.review_comments || detail?.review_comments || [];
+  const reviewThreads =
+    liveDiscussion?.review_threads || detail?.review_threads || [];
   const decisionReviewComments = reviewComments.filter(
     (comment) => !isDiscussionComment(comment),
   );
@@ -787,7 +1054,7 @@ export default function AnnotateWorkspaceView() {
 
   // Loading state
   if (
-    nextLoading ||
+    isInitialItemLoading ||
     !queueDetail ||
     isWaitingForAnnotatorSelection ||
     isInitialDetailLoading
@@ -843,7 +1110,14 @@ export default function AnnotateWorkspaceView() {
   const queueStatus = detail?.queue?.status;
   const canResumeCompletedSkipped =
     queueStatus === "completed" && detail?.item?.status === "skipped";
-  if (queueStatus && queueStatus !== "active" && !canResumeCompletedSkipped) {
+  const canEditCompletedItem =
+    queueStatus === "completed" && detail?.item?.status === "completed";
+  if (
+    queueStatus &&
+    queueStatus !== "active" &&
+    !canResumeCompletedSkipped &&
+    !canEditCompletedItem
+  ) {
     return (
       <Box
         sx={{
@@ -869,7 +1143,7 @@ export default function AnnotateWorkspaceView() {
   }
 
   // No items / all done
-  if (!currentItemId && !nextLoading) {
+  if (!currentItemId && !isInitialItemLoading) {
     const userProgress = progress?.user_progress;
     const hasUserProgress = userProgress && userProgress.total > 0;
     const skippedCount = hasUserProgress
@@ -941,6 +1215,12 @@ export default function AnnotateWorkspaceView() {
         isReviewMode={isReviewWorkspaceMode}
         isAssignedToOther={isAssignedToOther}
         isSkipDisabled={isAnnotateLockedForReview}
+        showCompletedToggle={!isReviewWorkspaceMode}
+        includeCompleted={includeCompletedItems}
+        onIncludeCompletedChange={handleIncludeCompletedChange}
+        completedToggleDisabled={isChangingCompletedVisibility}
+        isItemCompleted={isCurrentItemCompleted}
+        completedByCurrentUser={completedByCurrentUser}
         onOpenComments={() => setCommentsOpen(true)}
         commentsDisabled={!currentItemId || !detail || !canDiscuss}
         commentBadgeCount={commentBadgeCount}
@@ -950,12 +1230,22 @@ export default function AnnotateWorkspaceView() {
         resolvedFeedbackCount={resolvedFeedbackCount}
       />
 
-      <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <Box
+        sx={{
+          display: "flex",
+          flex: 1,
+          overflow: "hidden",
+          minWidth: 0,
+          flexDirection: { xs: "column", md: "row" },
+        }}
+      >
         {/* Left: Content */}
         <Box
           sx={{
             flex: 1,
-            borderRight: 1,
+            minWidth: 0,
+            borderRight: { xs: 0, md: 1 },
+            borderBottom: { xs: 1, md: 0 },
             borderColor: "divider",
             overflow: "auto",
           }}
@@ -967,11 +1257,15 @@ export default function AnnotateWorkspaceView() {
         <Box
           sx={{
             flex: isReviewWorkspaceMode
-              ? "0 0 clamp(560px, 52vw, 820px)"
-              : "0 0 400px",
-            width: isReviewWorkspaceMode ? "clamp(560px, 52vw, 820px)" : 400,
-            minWidth: isReviewWorkspaceMode ? 560 : 360,
-            maxWidth: isReviewWorkspaceMode ? 820 : 440,
+              ? { xs: "1 1 auto", md: "0 1 clamp(440px, 52vw, 820px)" }
+              : { xs: "1 1 auto", md: "0 0 400px" },
+            width: isReviewWorkspaceMode
+              ? { xs: "100%", md: "clamp(440px, 52vw, 820px)" }
+              : { xs: "100%", md: 400 },
+            minWidth: 0,
+            maxWidth: isReviewWorkspaceMode
+              ? { xs: "100%", md: 820 }
+              : { xs: "100%", md: 440 },
             overflow: "auto",
             bgcolor: isReviewWorkspaceMode
               ? "background.default"
@@ -1004,6 +1298,17 @@ export default function AnnotateWorkspaceView() {
                 </ToggleButton>
               </ToggleButtonGroup>
             </Box>
+          )}
+          {!isReviewWorkspaceMode && isManualAssignment && detail?.item && (
+            <ItemAssignmentPanel
+              item={detail.item}
+              annotators={queueAnnotators}
+              currentUserId={currentUserId}
+              canAnnotate={canAnnotate}
+              canManageAssignments={canManageAssignments}
+              onAssign={handleAssignCurrentItem}
+              isPending={isAssigningItem}
+            />
           )}
           {isReviewWorkspaceMode ? (
             <>
@@ -1094,6 +1399,7 @@ export default function AnnotateWorkspaceView() {
               isPending={isSubmitting || isCompleting}
               queueId={queueId}
               itemId={currentItemId}
+              detailItemId={detail?.item?.id}
               onDirtyChange={handleDirtyChange}
               readOnly={labelPanelReadOnly}
               readOnlyReason={labelPanelReadOnlyReason}
@@ -1104,7 +1410,11 @@ export default function AnnotateWorkspaceView() {
               onViewingAnnotatorChange={handleViewingAnnotatorChange}
               focusedCommentScope={focusedCommentScope}
               submitLabel={
-                requiresReview ? "Submit for Review" : "Submit & Next"
+                isCurrentItemCompleted
+                  ? "Update & Next"
+                  : requiresReview
+                    ? "Submit for Review"
+                    : "Submit & Next"
               }
             />
           )}
@@ -1121,17 +1431,10 @@ export default function AnnotateWorkspaceView() {
           total={detail?.progress?.total || 0}
           onPrev={handlePrev}
           onNext={handleNext}
-          hasPrev={
-            historyIndex > 0 ||
-            (detail?.progress?.currentPosition ||
-              detail?.progress?.current_position ||
-              0) > 1
-          }
+          hasPrev={historyIndex > 0 || Boolean(detail?.prev_item_id)}
           hasNext={
             historyIndex < itemHistory.length - 1 ||
-            (detail?.progress?.currentPosition ||
-              detail?.progress?.current_position ||
-              0) < (detail?.progress?.total || 0)
+            Boolean(detail?.next_item_id)
           }
           isLoadingNext={isFetchingNext}
         />
