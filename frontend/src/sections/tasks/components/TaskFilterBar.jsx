@@ -88,14 +88,21 @@ function convertNewToOld(newFilters) {
         ? "number"
         : fieldType === "boolean"
           ? "boolean"
-          : "text";
+          : fieldType === "thumbs"
+            ? "thumbs"
+            : fieldType === "categorical"
+              ? "categorical"
+              : "text";
     const op = LEGACY_OP_ALIAS[f.operator] || f.operator || "equals";
 
     const base = {
       property: isAttribute ? "attributes" : f.field,
       propertyId: f.field,
       fieldCategory: f.fieldCategory || "system",
-      fieldLabel: f.fieldLabel || f.field,
+      // Panel rows store the display name under `fieldName` (set by
+      // PropertyPicker → handlePropertySelect). Fall back to `fieldLabel`
+      // for any caller still using the older key, then the raw id.
+      fieldLabel: f.fieldName || f.fieldLabel || f.field,
     };
 
     if (NO_VALUE_OPS.has(op)) {
@@ -243,7 +250,7 @@ const FilterChip = ({ filter, onRemove }) => {
         sx={{ color: "text.disabled" }}
       />
       <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-        {filter.fieldLabel || filter.field}
+        {filter.fieldName || filter.fieldLabel || filter.field}
       </Typography>
       <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
         {opLabel}
