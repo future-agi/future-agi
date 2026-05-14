@@ -381,7 +381,9 @@ def run_eval_func(
         api_call_log_row.input_token_count = (
             metadata.get("usage", {}).get("prompt_tokens") or 0 if metadata else 0
         )
-        api_call_log_row.config = json.dumps(config_dict)
+        # default=str so trace/span values mapped into inputs (Decimal from
+        # clickhouse-driver, datetime, UUID) don't blow up the usage logger.
+        api_call_log_row.config = json.dumps(config_dict, default=str)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
 
@@ -487,7 +489,7 @@ def run_eval_func(
                         "required_keys": list(mappings.keys()),
                     }
                 )
-                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.config = json.dumps(current_config, default=str)
                 api_call_log_row.save()
         except Exception as exc:
             logger.exception(f"Error updating api call log row status: {str(exc)}")
@@ -597,7 +599,7 @@ def process_eval_for_single_row(
             data_type = col_map.get(str(base_col_id)) if base_col_id else None
             input_types[key] = data_type if data_type in ["image", "audio"] else "text"
         config_dict.update({"input_data_types": input_types})
-        api_call_log_row.config = json.dumps(config_dict)
+        api_call_log_row.config = json.dumps(config_dict, default=str)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
 
@@ -622,7 +624,7 @@ def process_eval_for_single_row(
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             current_config = json.loads(api_call_log_row.config)
             current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
+            api_call_log_row.config = json.dumps(current_config, default=str)
             api_call_log_row.save()
         except Exception:
             pass

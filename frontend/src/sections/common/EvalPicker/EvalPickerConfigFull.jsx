@@ -274,18 +274,28 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       [];
 
     if (evalType === "code") {
-      // Live-parse the user's `def evaluate(...)` signature so adding /
-      // renaming a parameter immediately surfaces a new mapping row.
-      // Fall back to the saved mapping + template required_keys when the
-      // code can't be parsed (non-python language, no `def evaluate`).
-      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
-      if (liveParams.length > 0) {
-        return [...new Set([...liveParams, ...requiredKeys])];
-      }
       const savedMapping = normalizedEvalData?.mapping || {};
       const savedStdvars = ["input", "output", "expected"].filter(
         (v) => v in savedMapping,
       );
+
+      // System code evals always have the canonical
+      // `evaluate(input, output, expected, context, **kwargs)` signature —
+      // the real keys live in required_keys, so trust them directly and
+      // never live-parse (would surface input/output/expected/context).
+      if (isSystemEval) {
+        if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
+        return savedStdvars;
+      }
+
+      // User-authored code: live-parse the `def evaluate(...)` signature
+      // so adding / renaming a param immediately surfaces a mapping row.
+      // Fall back to saved mapping + template required_keys when the code
+      // can't be parsed (non-python language, no `def evaluate`).
+      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+      if (liveParams.length > 0) {
+        return [...new Set([...liveParams, ...requiredKeys])];
+      }
       return [...new Set([...savedStdvars, ...requiredKeys])];
     }
 
@@ -1726,6 +1736,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     templateId={templateId}
                     instructions={evalType === "code" ? "" : instructions}
                     evalType={evalType}
+                    isSystemEval={isSystemEval}
                     requiredKeys={variables}
                     showVersions={!(isSystemEval && evalType === "code")}
                     onTestResult={handleTestResult}
