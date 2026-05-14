@@ -2102,7 +2102,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -2248,10 +2248,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
@@ -2370,7 +2370,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
