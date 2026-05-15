@@ -594,7 +594,7 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [req for req in requests if now - req < 3600]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"rate_limit_{client_ip}", True, IP_BLOCK_DURATION)
@@ -603,7 +603,7 @@ class AuthMonitoringMiddleware:
                 )
 
             requests.append(now)
-            cache.set(f"rate_limit_requests_{client_ip}", requests, 1200)
+            cache.set(f"rate_limit_requests_{client_ip}", requests, 3600)
 
         if (
             request.path.endswith("login/")
@@ -621,14 +621,14 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [req for req in requests if now - req < 3600]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"blocked_ip_{client_ip}", True, IP_BLOCK_DURATION)
                 return HttpResponseForbidden("Too many login attempts")
 
             requests.append(now)
-            cache.set(f"ip_requests_{client_ip}", requests, 1200)
+            cache.set(f"ip_requests_{client_ip}", requests, 3600)
 
         return self.get_response(request)
 
