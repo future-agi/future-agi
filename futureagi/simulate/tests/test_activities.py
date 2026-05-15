@@ -82,8 +82,9 @@ def source_dataset(db, organization, workspace, user):
     dataset.column_order = [str(col1.id), str(col2.id)]
     dataset.save()
 
-    # Create rows with cells
-    for i in range(3):
+    # Create rows with cells. Seed at least the scenario-create minimum
+    # (no_of_rows.min_value) so the Import Dataset path passes validation.
+    for i in range(10):
         row = Row.objects.create(dataset=dataset, order=i)
         Cell.objects.create(dataset=dataset, column=col1, row=row, value=f"Input {i}")
         Cell.objects.create(dataset=dataset, column=col2, row=row, value=f"Output {i}")
