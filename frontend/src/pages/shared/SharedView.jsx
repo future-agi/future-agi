@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useResolveSharedLink } from "src/api/shared-links";
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
@@ -18,6 +18,132 @@ import { isVoiceCall } from "./sharedViewHelpers";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
+}
+
+/**
+ * Read-only dashboard view for shared links. Renders the dashboard's
+ * widget layout (titles, descriptions, chart type) but not live data —
+ * widget queries require workspace auth, which public viewers lack.
+ * Recipients see structure plus a hint to sign in for live data.
+ */
+function SharedDashboardView({ dashboard }) {
+  const widgets = dashboard?.widgets || [];
+  const sortedWidgets = useMemo(
+    () => [...widgets].sort((a, b) => (a.position || 0) - (b.position || 0)),
+    [widgets],
+  );
+
+  return (
+    <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography
+          sx={{ fontSize: 20, fontWeight: 600, color: "text.primary", mb: 0.5 }}
+        >
+          {dashboard?.name || "Untitled dashboard"}
+        </Typography>
+        {dashboard?.description && (
+          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
+            {dashboard.description}
+          </Typography>
+        )}
+      </Box>
+
+      <Alert severity="info" sx={{ mb: 3 }}>
+        View only — sign in to load live widget data.
+      </Alert>
+
+      {sortedWidgets.length === 0 ? (
+        <Box sx={{ textAlign: "center", py: 6, color: "text.disabled" }}>
+          <Iconify icon="mdi:view-dashboard-outline" width={48} sx={{ mb: 1 }} />
+          <Typography sx={{ fontSize: 13 }}>No widgets in this dashboard.</Typography>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(12, 1fr)",
+            gap: 2,
+          }}
+        >
+          {sortedWidgets.map((w) => {
+            const chartType = w.chart_config?.type || w.chart_config?.chart_type;
+            const iconMap = {
+              line: "mdi:chart-line",
+              stacked_line: "mdi:chart-areaspline",
+              column: "mdi:chart-bar",
+              stacked_column: "mdi:chart-bar-stacked",
+              bar: "mdi:chart-bar",
+              stacked_bar: "mdi:chart-bar-stacked",
+              pie: "mdi:chart-pie",
+              table: "mdi:table",
+            };
+            const widgetIcon = iconMap[chartType] || "mdi:chart-box-outline";
+            return (
+              <Box
+                key={w.id}
+                sx={{
+                  gridColumn: `span ${Math.min(12, Math.max(1, w.width || 12))}`,
+                  minHeight: 160,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "8px",
+                  bgcolor: "background.paper",
+                  p: 2,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+                  <Iconify
+                    icon={widgetIcon}
+                    width={16}
+                    sx={{ color: "primary.main" }}
+                  />
+                  <Typography
+                    sx={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "text.primary",
+                    }}
+                  >
+                    {w.name || "Untitled widget"}
+                  </Typography>
+                </Box>
+                {w.description && (
+                  <Typography
+                    sx={{ fontSize: 11, color: "text.disabled", mb: 1 }}
+                  >
+                    {w.description}
+                  </Typography>
+                )}
+                <Box
+                  sx={{
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "text.disabled",
+                    bgcolor: "background.default",
+                    borderRadius: "6px",
+                    minHeight: 100,
+                  }}
+                >
+                  <Stack alignItems="center" spacing={0.5}>
+                    <Iconify icon={widgetIcon} width={28} sx={{ opacity: 0.4 }} />
+                    <Typography sx={{ fontSize: 11 }}>
+                      {chartType
+                        ? `${chartType.replace("_", " ")} chart`
+                        : "Chart preview"}
+                    </Typography>
+                  </Stack>
+                </Box>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+    </Box>
+  );
 }
 
 export default function SharedView() {
@@ -368,8 +494,11 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          /* Dashboard view — read-only structure (widget data requires auth) */
+          <SharedDashboardView dashboard={resourceData} />
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Other resource types — fall back to raw data dump */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}
