@@ -26,6 +26,7 @@ const SmartPreview = ({
   ContentCard,
   AttributesCard,
   JsonPreviewBlock,
+  drawerOpen = true,
 }) => {
   const type = (span?.observation_type || "").toLowerCase();
   const model = span?.model;
@@ -108,6 +109,9 @@ const SmartPreview = ({
           attributes={attributes}
           searchQuery={searchQuery}
           hideInlineSearch
+          spanId={span?.id}
+          traceId={span?.trace}
+          drawerOpen={drawerOpen}
         />
       </Stack>
     );
@@ -255,6 +259,9 @@ const SmartPreview = ({
         attributes={attributes}
         searchQuery={searchQuery}
         hideInlineSearch
+        spanId={span?.id}
+        traceId={span?.trace}
+        drawerOpen={drawerOpen}
       />
     </Stack>
   );
@@ -908,6 +915,7 @@ SmartPreview.propTypes = {
   ContentCard: PropTypes.elementType.isRequired,
   AttributesCard: PropTypes.elementType.isRequired,
   JsonPreviewBlock: PropTypes.elementType.isRequired,
+  drawerOpen: PropTypes.bool,
 };
 
 export default React.memo(SmartPreview);

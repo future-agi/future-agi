@@ -14,36 +14,13 @@ import { transformSafeJson } from "src/utils/utils";
 import Iconify from "src/components/iconify";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
-import Image from "src/components/image";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
-import { useSingleImageViewContext } from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageContext";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import CustomVideoPlayer from "src/components/VideoPlayer/CustomVideoPlayer";
 import TestAudioPlayer from "../../custom-audio/TestAudioPlayer";
-
-const ImageCard = ({ image }) => {
-  const { setImageUrl } = useSingleImageViewContext();
-  return (
-    <Box
-      sx={{
-        borderRadius: (theme) => theme.spacing(1),
-        overflow: "hidden",
-        cursor: "pointer",
-      }}
-      onClick={() => {
-        setImageUrl(image);
-      }}
-    >
-      <Image key={image} src={image} alt="image" width={200} />
-    </Box>
-  );
-};
-
-ImageCard.propTypes = {
-  image: PropTypes.string,
-};
+import ImageCard from "src/components/multimodal/ImageCard";
 
 const CustomDataPointCard = ({ value, label, allowCopy = false }) => {
   const [tabValue, setTabValue] = useState("raw");
