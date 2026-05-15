@@ -450,3 +450,76 @@ class TestEvalTaskRowTypePersistence:
 
         eval_task.refresh_from_db()
         assert eval_task.row_type == original_row_type
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCompositeEvalAcrossRowTypes:
+    """Composite eval templates are now valid on every row_type (TH-5158).
+
+    Earlier the runtime raised ``NotImplementedError`` for composite + non-span
+    row_type; the API layer never blocked it, so these tests pin the new
+    behaviour: composite + traces / sessions creates a task cleanly.
+    """
+
+    @pytest.fixture
+    def composite_custom_eval_config(self, db, project, organization, workspace):
+        from model_hub.models.evals_metric import (
+            CompositeEvalChild,
+            EvalTemplate,
+        )
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        parent = EvalTemplate.objects.create(
+            name="Composite (api test)",
+            description="composite parent",
+            organization=organization,
+            workspace=workspace,
+            template_type="composite",
+            aggregation_enabled=True,
+            aggregation_function="weighted_avg",
+            pass_threshold=0.5,
+            config={"type": "composite"},
+        )
+        child = EvalTemplate.objects.create(
+            name="Child (api test)",
+            description="composite child",
+            organization=organization,
+            workspace=workspace,
+            template_type="single",
+            config={"type": "pass_fail", "criteria": "ok"},
+            pass_threshold=0.5,
+        )
+        CompositeEvalChild.objects.create(parent=parent, child=child, order=0, weight=1.0)
+        return CustomEvalConfig.objects.create(
+            name="Composite custom config",
+            project=project,
+            eval_template=parent,
+            config={"threshold": 0.5},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+
+    @pytest.mark.parametrize("row_type", ["traces", "sessions"])
+    def test_composite_template_now_allowed_for_row_type(
+        self, auth_client, project, composite_custom_eval_config, row_type
+    ):
+        """Creating a composite-eval task with row_type=traces|sessions succeeds."""
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": f"composite {row_type} task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "row_type": row_type,
+                "evals": [str(composite_custom_eval_config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        task_id = get_result(response)["id"]
+        task = EvalTask.objects.get(id=task_id)
+        assert task.row_type == row_type
+        assert task.evals.filter(id=composite_custom_eval_config.id).exists()

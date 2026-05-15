@@ -1522,6 +1522,14 @@ class RunTestKPIsView(APIView):
                         # Numeric choice: already averaged
                         field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
                         eval_averages[field_name] = float(avg_value)
+                    else:
+                        # Fully-errored choices metric: register it so the UI
+                        # renders a zeroed chart card instead of dropping the
+                        # whole eval bar.
+                        choice_metric_ids.add(metric_id)
+                        base_name = metric_name.lower().replace(" ", "_")
+                        if base_name not in choice_counts:
+                            choice_counts[base_name] = {"_metric_id": metric_id}
 
             # Fetch choices config for choice-type eval metrics
             if choice_metric_ids:

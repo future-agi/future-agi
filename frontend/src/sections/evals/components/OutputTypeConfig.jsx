@@ -94,6 +94,27 @@ const OutputTypeConfig = ({
         >
           Select your preferred evaluation output format.
         </Typography>
+        {radioDisabled && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.75,
+              mb: 1,
+            }}
+          >
+            <Iconify
+              icon="solar:info-circle-bold"
+              width={14}
+              height={14}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Output type is fixed for system-level evaluations and can&apos;t
+              be changed.
+            </Typography>
+          </Box>
+        )}
         <RadioGroup
           row
           value={outputType}
