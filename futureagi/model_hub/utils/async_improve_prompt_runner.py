@@ -19,9 +19,7 @@ except ImportError:
 try:
     from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallTypeChoices = None
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from futureagi._ee_stubs import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
 
 
 async def improve_prompt_async(

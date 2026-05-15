@@ -45,14 +45,11 @@ from tracer.models.observation_span import EvalLogger
 try:
     from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallLog = None
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallLog, APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
+    from futureagi._ee_stubs import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 
 
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):

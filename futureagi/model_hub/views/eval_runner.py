@@ -75,14 +75,11 @@ from tfc.utils.parse_errors import parse_serialized_errors
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
+    from futureagi._ee_stubs import count_tiktoken_tokens, log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 
 
 def _format_messages_to_prompt_chain(messages):

@@ -85,12 +85,11 @@ from tfc.utils.storage import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
+    from futureagi._ee_stubs import log_and_deduct_cost_for_api_request
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
 

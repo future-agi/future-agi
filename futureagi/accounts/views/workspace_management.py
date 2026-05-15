@@ -72,14 +72,11 @@ try:
         SubscriptionTierChoices,
     )
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
-    OrganizationSubscription = None
-    SubscriptionTierChoices = None
+    from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices, OrganizationSubscription, SubscriptionTierChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+    from futureagi._ee_stubs import log_and_deduct_cost_for_resource_request
 
 
 def clear_user_redis_cache(user_id):

@@ -19,7 +19,7 @@ except ImportError:
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
-    log_and_deduct_cost_for_api_request = None
+    from futureagi._ee_stubs import log_and_deduct_cost_for_api_request
 
 
 def _run_external_platform_evaluation(

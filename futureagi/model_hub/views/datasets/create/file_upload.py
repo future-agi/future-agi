@@ -51,13 +51,11 @@ from tfc.utils.storage_client import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from futureagi._ee_stubs import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
 except ImportError:
-    ROW_LIMIT_REACHED_MESSAGE = None
-    log_and_deduct_cost_for_resource_request = None
+    from futureagi._ee_stubs import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
 
 
 def normalize_cell_value(value):
