@@ -1704,6 +1704,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     localFilters={localApiFilters}
                     pickerSourceColumns={sourceColumns}
+                    allowCustomFieldPath
                     {...compositeSourceModeProps}
                   />
                 )}
