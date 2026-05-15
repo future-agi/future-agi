@@ -6,6 +6,7 @@ Tests for /tracer/observation-span/ endpoints.
 
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -308,9 +309,28 @@ class TestObservationSpanListSpansObserveAPI:
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_list_spans_observe_missing_project(self, auth_client):
-        """List spans observe fails without project ID."""
+    def test_list_spans_observe_org_scoped(
+        self, auth_client, observe_project, trace_session, session_trace
+    ):
+        """Without project_id, returns spans org-scoped (user-detail page use case)."""
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Org Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
         response = auth_client.get("/tracer/observation-span/list_spans_observe/")
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_list_spans_observe_invalid_project_id(self, auth_client):
+        """Non-existent project_id returns 400."""
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {"project_id": str(uuid.uuid4())},
+        )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_list_spans_observe_success(
@@ -333,6 +353,199 @@ class TestObservationSpanListSpansObserveAPI:
             {"project_id": str(observe_project.id)},
         )
         assert response.status_code == status.HTTP_200_OK
+
+    def test_list_spans_observe_org_scoped_cross_project(
+        self, auth_client, observe_project, project, trace_session, session_trace, trace
+    ):
+        """Org-scoped call returns spans from all projects in the org."""
+        span1 = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Span from observe project",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+        span2 = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="Span from experiment project",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+        response = auth_client.get("/tracer/observation-span/list_spans_observe/")
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        returned_ids = {row["span_id"] for row in result["table"]}
+        assert span1.id in returned_ids
+        assert span2.id in returned_ids
+
+    def test_list_spans_observe_ch_falls_back_to_pg(
+        self, auth_client, observe_project, trace_session, session_trace
+    ):
+        """When ClickHouse fails for a single-project query, falls back to PostgreSQL."""
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="CH Fallback Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+
+        with (
+            patch.object(
+                AnalyticsQueryService, "should_use_clickhouse", return_value=True
+            ),
+            patch.object(
+                AnalyticsQueryService,
+                "execute_ch_query",
+                side_effect=Exception("clickhouse unavailable"),
+            ) as ch_query,
+        ):
+            response = auth_client.get(
+                "/tracer/observation-span/list_spans_observe/",
+                {"project_id": str(observe_project.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        ch_query.assert_called()
+
+    def test_list_spans_observe_org_scoped_ch_falls_back_to_pg(
+        self, auth_client, observe_project, trace_session, session_trace
+    ):
+        """Org-scoped mode: ClickHouse IS called (not bypassed), falls back to PG on failure."""
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Org CH Fallback Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+
+        with (
+            patch.object(
+                AnalyticsQueryService, "should_use_clickhouse", return_value=True
+            ),
+            patch.object(
+                AnalyticsQueryService,
+                "execute_ch_query",
+                side_effect=Exception("clickhouse unavailable"),
+            ) as ch_query,
+        ):
+            # No project_id → org-scoped mode
+            response = auth_client.get("/tracer/observation-span/list_spans_observe/")
+
+        assert response.status_code == status.HTTP_200_OK
+        # Verify CH was attempted in org-scoped mode (not bypassed like before the fix)
+        ch_query.assert_called()
+
+    def test_list_spans_observe_user_id_filter_single_project(
+        self, auth_client, observe_project, trace_session, session_trace
+    ):
+        """user_id filter in single-project mode returns only that user's spans."""
+        from tracer.models.observation_span import EndUser
+
+        end_user = EndUser.objects.create(
+            organization=observe_project.organization,
+            project=observe_project,
+            user_id="filter-user@example.com",
+        )
+        user_span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="User Span",
+            observation_type="llm",
+            end_user=end_user,
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+        other_span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Other Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {
+                "project_id": str(observe_project.id),
+                "user_id": "filter-user@example.com",
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        returned_ids = {row["span_id"] for row in result["table"]}
+        assert user_span.id in returned_ids
+        assert other_span.id not in returned_ids
+
+    def test_list_spans_observe_user_id_filter_org_scoped(
+        self, auth_client, observe_project, trace_session, session_trace
+    ):
+        """user_id filter in org-scoped mode returns only that user's spans across all projects."""
+        from tracer.models.observation_span import EndUser
+
+        end_user = EndUser.objects.create(
+            organization=observe_project.organization,
+            project=observe_project,
+            user_id="org-filter-user@example.com",
+        )
+        user_span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="User Span",
+            observation_type="llm",
+            end_user=end_user,
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+        other_span = ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Other Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+
+        # No project_id → org-scoped, still filters by user_id
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {"user_id": "org-filter-user@example.com"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        returned_ids = {row["span_id"] for row in result["table"]}
+        assert user_span.id in returned_ids
+        assert other_span.id not in returned_ids
+
+    def test_list_spans_observe_user_id_not_found(self, auth_client, observe_project):
+        """Non-existent user_id returns 400."""
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {
+                "project_id": str(observe_project.id),
+                "user_id": "nonexistent-user@example.com",
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration

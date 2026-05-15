@@ -53,7 +53,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: str,
+        project_id: Optional[str] = None,
+        project_ids: Optional[List[str]] = None,
         page_number: int = 0,
         page_size: int = 50,
         filters: Optional[List[Dict]] = None,
@@ -64,7 +65,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         project_version_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(project_id, **kwargs)
+        super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -355,9 +356,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {
-                    k: round(100.0 * v / total, 2) for k, v in counts.items()
-                }
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(span_id, {})[config_id] = per_choice
                 continue
 
