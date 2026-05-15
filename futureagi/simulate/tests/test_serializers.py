@@ -17,7 +17,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices
-from model_hub.models.develop_dataset import Dataset
+from model_hub.models.develop_dataset import Dataset, Row
 from simulate.serializers.scenarios import (
     AddScenarioColumnsSerializer,
     AddScenarioRowsSerializer,
@@ -52,14 +52,37 @@ def mock_request(request_factory, user):
 
 @pytest.fixture
 def source_dataset(db, organization, workspace, user):
-    """Create a source dataset for scenario creation tests."""
-    return Dataset.no_workspace_objects.create(
+    """Create a source dataset with the minimum required rows for scenario creation tests.
+
+    The Import Dataset path requires the source dataset to have at least
+    ``no_of_rows.min_value`` rows, so the fixture seeds enough rows to
+    satisfy that floor by default.
+    """
+    dataset = Dataset.no_workspace_objects.create(
         name="Source Dataset",
         organization=organization,
         workspace=workspace,
         user=user,
         source=DatasetSourceChoices.BUILD.value,
     )
+    Row.objects.bulk_create(
+        [Row(dataset=dataset, order=i) for i in range(10)]
+    )
+    return dataset
+
+
+@pytest.fixture
+def too_small_source_dataset(db, organization, workspace, user):
+    """Create a source dataset with fewer rows than the required minimum."""
+    dataset = Dataset.no_workspace_objects.create(
+        name="Tiny Source Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=DatasetSourceChoices.BUILD.value,
+    )
+    Row.objects.create(dataset=dataset, order=0)
+    return dataset
 
 
 # ============================================================================
@@ -91,6 +114,26 @@ class TestCreateScenarioSerializer:
         assert validated["name"] == "Test Dataset Scenario"
         assert validated["kind"] == "dataset"
         assert validated["dataset_id"] == source_dataset.id
+
+    def test_create_scenario_serializer_dataset_below_min_rows_rejected(
+        self, mock_request, too_small_source_dataset
+    ):
+        """Dataset kind with a source dataset below the row floor must be rejected."""
+        data = {
+            "name": "Too small dataset",
+            "kind": "dataset",
+            "dataset_id": str(too_small_source_dataset.id),
+        }
+
+        serializer = CreateScenarioSerializer(
+            data=data, context={"request": mock_request}
+        )
+        assert not serializer.is_valid()
+        assert "dataset_id" in serializer.errors
+        # Message should reference the actual count so users understand the gap.
+        rendered_error = str(serializer.errors["dataset_id"])
+        assert "10" in rendered_error
+        assert "1" in rendered_error
 
     def test_create_scenario_serializer_script_valid(self, mock_request):
         """Valid script scenario input should pass validation."""
@@ -209,8 +252,8 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "non_field_errors" in serializer.errors
-        assert "dataset_id" in str(serializer.errors["non_field_errors"][0]).lower()
+        assert "dataset_id" in serializer.errors
+        assert "dataset_id" in str(serializer.errors["dataset_id"][0]).lower()
 
     def test_create_scenario_serializer_script_missing_url(self, mock_request):
         """Script kind without script_url should fail validation."""
@@ -223,8 +266,8 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "non_field_errors" in serializer.errors
-        assert "script_url" in str(serializer.errors["non_field_errors"][0]).lower()
+        assert "script_url" in serializer.errors
+        assert "script_url" in str(serializer.errors["script_url"][0]).lower()
 
     def test_create_scenario_serializer_graph_missing_requirements(self, mock_request):
         """Graph kind without graph data or generate_graph should fail validation."""

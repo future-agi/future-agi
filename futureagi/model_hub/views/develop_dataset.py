@@ -3323,14 +3323,24 @@ class GetDatasetsNamesView(APIView):
             if search_text:
                 queryset = queryset.filter(name__icontains=search_text)
 
+            # Annotate row_count so callers (e.g. Import Dataset scenario
+            # form) can show inline minimum-rows feedback without a follow-up
+            # request. Use a separate annotated qs so the downstream
+            # ``dataset__in=queryset`` subquery used for experiments is not
+            # forced to carry the COUNT subquery / GROUP BY.
+            annotated_datasets = queryset.annotate(
+                row_count=Count("row", filter=Q(row__deleted=False), distinct=True)
+            ).select_related("organization")
+
             # Format response
             datasets.extend(
                 {
                     "dataset_id": str(dataset.id),
                     "name": dataset.name,
                     "model_type": dataset.model_type,
+                    "row_count": dataset.row_count,
                 }
-                for dataset in queryset.select_related("organization")
+                for dataset in annotated_datasets
             )
 
             if include_experiments:

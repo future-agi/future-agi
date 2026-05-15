@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { AGENT_TYPES } from "../agents/constants";
 
+// Minimum number of rows a source dataset must have for the Import Dataset
+// scenario path. Kept in lockstep with the BE `no_of_rows.min_value` so the
+// Workflow Builder and Import Dataset paths agree on the floor.
+export const MIN_DATASET_ROWS = 10;
+
 export const CreateScenarioType = {
   DATASET: "dataset",
   SCRIPT: "script",
