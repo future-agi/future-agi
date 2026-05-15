@@ -42,6 +42,7 @@ import {
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
 } from "./filterValuePickerUtils";
+import { ID_ONLY_FIELDS } from "./idFields";
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
@@ -173,10 +174,6 @@ const THUMBS_OPS = [
 
 const ANNOTATOR_OPS = [{ value: "is", label: "is" }];
 
-// Direct ID columns on `spans` — the dashboard filter pipeline resolves
-// them via equality only (no col_type, no LIKE/IN expansion), so any
-// other operator silently no-ops. Restrict the UI accordingly.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
 const ID_ONLY_OPS = [{ value: "is", label: "is" }];
 
 const ARRAY_OPS = [
@@ -904,9 +901,42 @@ function ValuePicker({
             {isLoading
               ? "Loading..."
               : options.length === 0
-                ? "Select values..."
-                : "Select values..."}
+                ? singleSelect
+                  ? "No value available"
+                  : "No values available"
+                : singleSelect
+                  ? "Select a value..."
+                  : "Select values..."}
           </Typography>
+        ) : singleSelect ? (
+          // Plain text instead of a chip — chips read as "removable token
+          // in a list", which mis-signals multi-select.
+          (() => {
+            const v = selectedValues[0];
+            const match = options.find((o) => {
+              const ov = typeof o === "string" ? o : o.value;
+              return ov === v;
+            });
+            const displayLabel =
+              (typeof match === "string" ? match : match?.label) || v;
+            return (
+              <Typography
+                key={v}
+                noWrap
+                title={displayLabel}
+                sx={{
+                  fontSize: 12,
+                  color: "text.primary",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                {displayLabel}
+              </Typography>
+            );
+          })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
             // Resolve the display label from static choices or rendered
@@ -943,7 +973,7 @@ function ValuePicker({
             );
           })
         )}
-        {selectedValues.length > 3 && (
+        {!singleSelect && selectedValues.length > 3 && (
           <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
             +{selectedValues.length - 3}
           </Typography>
@@ -1045,9 +1075,13 @@ function ValuePicker({
               >
                 <Iconify
                   icon={
-                    isSelected
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
+                    singleSelect
+                      ? isSelected
+                        ? "mdi:radiobox-marked"
+                        : "mdi:radiobox-blank"
+                      : isSelected
+                        ? "mdi:checkbox-marked"
+                        : "mdi:checkbox-blank-outline"
                   }
                   width={18}
                   sx={{
@@ -1600,7 +1634,6 @@ const TraceFilterPanel = ({
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const ID_FIELDS = new Set(["trace_id", "span_id"]);
     const staticProps = getTraceFilterFields(tab).map((f) => {
       if (isSpansView && f.value === "name") {
         return {
@@ -1615,7 +1648,7 @@ const TraceFilterPanel = ({
         name: f.label,
         // trace_id / span_id are direct column filters — omit category so
         // col_type is not injected (the backend handles them without it).
-        ...(!ID_FIELDS.has(f.value) && { category: "system" }),
+        ...(!ID_ONLY_FIELDS.has(f.value) && { category: "system" }),
         type: f.type === "enum" ? "string" : f.type,
         ...(f.choices ? { choices: f.choices } : {}),
       };

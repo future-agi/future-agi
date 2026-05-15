@@ -22,6 +22,7 @@ import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
+import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 
@@ -231,8 +232,9 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const rawColType =
-        gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      const rawColType = ID_ONLY_FIELDS.has(gf.column_id)
+        ? undefined
+        : gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
       const rawFilterType = gf.filter_config?.filter_type;
       const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
@@ -452,7 +454,9 @@ const ObserveToolbar = ({
               const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
               const apiFilters = newFilters.map((f) => {
                 const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
-                const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
+                const apiColType = ID_ONLY_FIELDS.has(f.field)
+                  ? undefined
+                  : f.apiColType || colTypeMap[f.fieldCategory];
                 let filterValue = f.value;
                 if (Array.isArray(filterValue)) {
                   if (RANGE_OPS.has(filterOp)) {
