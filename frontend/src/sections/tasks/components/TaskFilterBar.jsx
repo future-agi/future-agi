@@ -99,9 +99,7 @@ function convertNewToOld(newFilters) {
       property: isAttribute ? "attributes" : f.field,
       propertyId: f.field,
       fieldCategory: f.fieldCategory || "system",
-      // Panel rows store the display name under `fieldName` (set by
-      // PropertyPicker → handlePropertySelect). Fall back to `fieldLabel`
-      // for any caller still using the older key, then the raw id.
+      // Panel rows expose the display name as `fieldName`; fall back for legacy callers.
       fieldLabel: f.fieldName || f.fieldLabel || f.field,
     };
 

@@ -273,10 +273,7 @@ const DEFAULT_OP_FOR_TYPE = {
 // Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
-// Save path translates `is`/`is_not` → `equals`/`not_equals` (LEGACY_OP_ALIAS
-// in ObserveToolbar) so the backend gets canonical names. Reverse the map for
-// categorical / thumbs fieldTypes so the operator Select can find a matching
-// MenuItem on rehydrate (CATEGORICAL_OPS / THUMBS_OPS use value `is`/`is_not`).
+// Categorical / thumbs ops in saved views — reverse the save-side LEGACY_OP_ALIAS so the menu renders.
 const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
 
 const NO_VALUE_OPS = new Set([
@@ -1073,8 +1070,7 @@ function FilterRow({
         prop.type === "text"
           ? prop.type
           : normalizeFieldType(prop.type);
-      // ID-only fields use ID_ONLY_OPS = [{ value: "is" }] — pick "is" up
-      // front so the operator Select isn't blank on first selection.
+      // ID-only fields only support "is"; fallback would render blank.
       const defaultOp = ID_ONLY_FIELDS.has(prop.id)
         ? "is"
         : DEFAULT_OP_FOR_TYPE[nt] || "equals";
@@ -1563,12 +1559,7 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = properties.find((p) => p.id === f.field);
           const fieldType = f.fieldType || prop?.type || "string";
-          // ID-only fields (trace_id / span_id) bypass the per-type rewrite —
-          // ID_ONLY_OPS = [{ value: "is" }] so any other op renders blank.
-          // For categorical / thumbs: save path translated `is`/`is_not` →
-          // `equals`/`not_equals` (LEGACY_OP_ALIAS), so reverse it here.
-          // For string / text: legacy saves used `equals`/`not_equals` for
-          // what the picker now calls `in`/`not_in`.
+          // Translate wire ops to the picker's MenuItem values, per fieldType.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
             ? "is"
             : (fieldType === "categorical" || fieldType === "thumbs") &&
