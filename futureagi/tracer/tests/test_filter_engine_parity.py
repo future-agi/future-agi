@@ -111,6 +111,38 @@ class TestLegacyOpsRejected:
         assert q.children == []
 
 
+class TestSystemMetricAliases:
+    @pytest.mark.parametrize(
+        ("column_id", "orm_field"),
+        [
+            ("latency_ms", "row_avg_latency_ms"),
+            ("latency", "row_avg_latency_ms"),
+            ("cost", "row_avg_cost"),
+            ("tokens", "total_tokens"),
+            ("prompt_tokens", "avg_input_tokens"),
+            ("completion_tokens", "avg_output_tokens"),
+        ],
+    )
+    def test_pg_filter_engine_accepts_frontend_and_canonical_ids(
+        self, column_id, orm_field
+    ):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [
+                {
+                    "column_id": column_id,
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 0,
+                        "col_type": ColType.SYSTEM_METRIC.value,
+                    },
+                }
+            ]
+        )
+
+        assert orm_field in str(q)
+
+
 class TestInMemoryFilterOps:
     """In-memory `_filter_*` methods accept the canonical vocabulary."""
 

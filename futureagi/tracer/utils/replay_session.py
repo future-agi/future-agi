@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 import structlog
-from django.db.models import Exists, F, OuterRef, QuerySet, Subquery
+from django.db.models import F, OuterRef, QuerySet, Subquery
 from django.db.models.functions import Coalesce
 
 from model_hub.models.choices import StatusType
@@ -21,6 +21,9 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.span_attribute_lookups import (
+    trace_ids_with_simulator_call_execution_id,
+)
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.sql_queries import SQL_query_handler
 
@@ -457,23 +460,24 @@ def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[d
     Returns:
         Dictionary with trace IDs as keys and transcript lists as values.
     """
-    # Use span_attributes (canonical) - eval_attributes is deprecated
-    has_simulator_call_execution_id = Exists(
-        ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-        .filter(span_attributes__has_key="fi.simulator.call_execution_id")
-        .exclude(span_attributes__contains={"fi.simulator.call_execution_id": None})
-    )
+    # The has-key check used to run as a Django Exists() subquery against
+    # ``span_attributes`` (PG JSONB). The 77 GB GIN that backed it was
+    # dropped (see migration 0074); the lookup now goes to ClickHouse which
+    # has the same data shredded into ``span_attr_str`` maps.
+    traces = list(trace_query.values("id", "input", "output"))
+    if not traces:
+        return {}
 
-    traces = trace_query.annotate(
-        has_simulator_call_execution_id=has_simulator_call_execution_id
-    ).values("id", "input", "output", "has_simulator_call_execution_id")
+    simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
+        str(t["id"]) for t in traces
+    )
 
     return {
         str(t["id"]): [
             {
                 "input": (
                     parse_trace_input_for_graph_chat_scenario(t["input"])
-                    if t["has_simulator_call_execution_id"]
+                    if str(t["id"]) in simulator_trace_ids
                     else t["input"]
                 ),
                 "output": t["output"],
@@ -497,29 +501,27 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
         ).values("start_time")[:1]
     )
 
-    # Use span_attributes (canonical) - eval_attributes is deprecated
-    has_simulator_call_execution_id = Exists(
-        ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-        .filter(span_attributes__has_key="fi.simulator.call_execution_id")
-        .exclude(span_attributes__contains={"fi.simulator.call_execution_id": None})
-    )
-
-    traces = (
+    # The has-key check used to run as a Django Exists() subquery against
+    # ``span_attributes`` (PG JSONB). Now sourced from ClickHouse — see
+    # migration 0074 / span_attribute_lookups.
+    traces = list(
         trace_query.annotate(
             span_start_time=Coalesce(root_span_start_time, F("created_at")),
-            has_simulator_call_execution_id=has_simulator_call_execution_id,
         )
         .order_by("span_start_time")
-        .values("session_id", "input", "output", "has_simulator_call_execution_id")
+        .values("id", "session_id", "input", "output")
+    )
+
+    simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
+        str(t["id"]) for t in traces
     )
 
     sessions_map: dict[str, list[dict]] = {}
 
     for trace in traces:
         session_id = str(trace["session_id"])
-        has_simulator_call_execution_id = trace["has_simulator_call_execution_id"]
         trace_input = trace["input"]
-        if has_simulator_call_execution_id:
+        if str(trace["id"]) in simulator_trace_ids:
             trace_input = parse_trace_input_for_graph_chat_scenario(trace_input)
 
         if session_id not in sessions_map:

@@ -16,22 +16,15 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
 const LABEL_COLORS = {
-  star: "#ef4444",
-  categorical: "#22c55e",
-  numeric: "#3b82f6",
-  text: "#a855f7",
-  thumbs_up_down: "#f59e0b",
-};
-
-const LABEL_BG = {
-  star: "rgba(239,68,68,0.06)",
-  categorical: "rgba(34,197,94,0.06)",
-  numeric: "rgba(59,130,246,0.06)",
-  text: "rgba(168,85,247,0.06)",
-  thumbs_up_down: "rgba(245,158,11,0.06)",
+  star: "#d26464",
+  categorical: "#2e9469",
+  numeric: "#5278c7",
+  text: "#8067c9",
+  thumbs_up_down: "#b7772a",
 };
 
 const Kbd = ({ children }) => (
@@ -72,22 +65,28 @@ export default function LabelInput({
 }) {
   const { type, settings = {} } = label;
   const color = LABEL_COLORS[type] || "#888";
-  const bg = LABEL_BG[type] || "transparent";
   const inputRef = useRef(null);
 
   return (
     <Box
       sx={{
         borderRadius: 0.5,
-        bgcolor: bg,
+        bgcolor: (theme) =>
+          alpha(color, theme.palette.mode === "dark" ? 0.07 : 0.045),
         border: "1px solid",
-        borderColor: hasError ? "#ef4444" : focused ? color : "transparent",
+        borderColor: (theme) =>
+          hasError
+            ? alpha(theme.palette.error.main, 0.55)
+            : focused
+              ? alpha(color, 0.5)
+              : alpha(theme.palette.text.primary, 0.06),
         transition: "border-color 0.15s, box-shadow 0.15s",
-        boxShadow: hasError
-          ? "0 0 0 2px #ef444433"
-          : focused
-            ? `0 0 0 1px ${color}22`
-            : "none",
+        boxShadow: (theme) =>
+          hasError
+            ? `0 0 0 2px ${alpha(theme.palette.error.main, 0.16)}`
+            : focused
+              ? `0 0 0 2px ${alpha(color, theme.palette.mode === "dark" ? 0.18 : 0.12)}`
+              : "none",
         overflow: "hidden",
       }}
     >
@@ -107,7 +106,7 @@ export default function LabelInput({
             width: 3,
             height: 14,
             borderRadius: 0.5,
-            bgcolor: hasError ? "#ef4444" : color,
+            bgcolor: hasError ? "error.main" : color,
             flexShrink: 0,
             transition: "bgcolor 0.15s",
           }}
@@ -143,9 +142,10 @@ export default function LabelInput({
               minWidth: 24,
               height: 24,
               borderRadius: "50%",
-              border: "1.5px solid",
-              borderColor: "primary.main",
-              color: "primary.main",
+              border: "1px solid",
+              borderColor: (theme) => alpha(theme.palette.text.primary, 0.16),
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.045),
+              color: "text.secondary",
               fontSize: 12,
               fontWeight: 700,
               flexShrink: 0,

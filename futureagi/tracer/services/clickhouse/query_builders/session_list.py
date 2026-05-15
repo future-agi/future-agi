@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.utils.filter_operators import normalize_filter_op
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -384,8 +385,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 continue
 
             config = f.get("filter_config") or f.get("filterConfig", {})
-            filter_op = config.get("filter_op")
-            filter_value = config.get("filter_value")
+            filter_op = normalize_filter_op(
+                config.get("filter_op") or config.get("filterOp")
+            )
+            filter_value = config.get("filter_value", config.get("filterValue"))
             ch_col = self.SESSION_FILTER_MAP[col_id]
 
             op_map = {
@@ -396,7 +399,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 "greater_than_or_equal": ">=",
                 "less_than_or_equal": "<=",
             }
-            op = op_map.get(filter_op, "=")
+            op = op_map.get(filter_op)
+            if op is None:
+                conditions.append("0 = 1")
+                continue
 
             param_counter += 1
             param_name = f"having_{param_counter}"

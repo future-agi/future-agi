@@ -234,6 +234,7 @@ const ObserveToolbar = ({
       const rawColType =
         gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
       const rawFilterType = gf.filter_config?.filter_type;
+      const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
       // stored as filter_type=categorical with values like ["Thumbs Up",
       // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
@@ -249,9 +250,14 @@ const ObserveToolbar = ({
       })();
       return {
         field: gf.column_id,
-        fieldName: gf.display_name,
-        fieldCategory: colTypeReverseMap[rawColType] || "system",
-        fieldType: isBooleanType
+        fieldName:
+          gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
+        fieldCategory: isGlobalAnnotatorFilter
+          ? "annotation"
+          : colTypeReverseMap[rawColType] || "system",
+        fieldType: isGlobalAnnotatorFilter
+          ? "annotator"
+          : isBooleanType
           ? "boolean"
           : isNumberType
             ? "number"
@@ -264,6 +270,7 @@ const ObserveToolbar = ({
                   : rawFilterType === "text" && rawColType === "ANNOTATION"
                     ? "text"
                     : "string",
+        apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
         operator: rawOp,
         value,
       };
@@ -430,6 +437,7 @@ const ObserveToolbar = ({
                 categorical: "categorical",
                 thumbs: "thumbs",
                 text: "text",
+                annotator: "text",
               };
               const colTypeMap = {
                 attribute: "SPAN_ATTRIBUTE",
@@ -444,6 +452,7 @@ const ObserveToolbar = ({
               const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
               const apiFilters = newFilters.map((f) => {
                 const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
+                const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
                 let filterValue = f.value;
                 if (Array.isArray(filterValue)) {
                   if (RANGE_OPS.has(filterOp)) {
@@ -495,8 +504,8 @@ const ObserveToolbar = ({
                     filter_type: typeMap[f.fieldType] || "text",
                     filter_op: filterOp,
                     filter_value: filterValue,
-                    ...(colTypeMap[f.fieldCategory] && {
-                      col_type: colTypeMap[f.fieldCategory],
+                    ...(apiColType && {
+                      col_type: apiColType,
                     }),
                   },
                 };

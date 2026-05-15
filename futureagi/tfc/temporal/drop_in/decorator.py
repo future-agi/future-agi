@@ -290,7 +290,9 @@ def get_all_activity_functions() -> list[Callable]:
         import sys
 
         for module in sys.modules.values():
-            if module and hasattr(module, func.__name__):
+            try:
+                if not module or not hasattr(module, func.__name__):
+                    continue
                 attr = getattr(module, func.__name__)
                 if (
                     hasattr(attr, "_activity_name")
@@ -298,6 +300,11 @@ def get_all_activity_functions() -> list[Callable]:
                 ):
                     activities.append(attr)
                     break
+            except Exception:
+                # Some imported modules implement dynamic __getattr__ hooks
+                # that raise for unknown names (for example torch custom
+                # classes). They are unrelated to Temporal activity discovery.
+                continue
     return activities
 
 

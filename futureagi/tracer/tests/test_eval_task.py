@@ -44,7 +44,7 @@ class TestEvalTaskCreateAPI:
                 "project": str(project.id),
                 "name": "New Eval Task",
                 "run_type": "continuous",
-                "sampling_rate": 0.5,
+                "sampling_rate": 1.0,
                 "evals": [str(custom_eval_config.id)],
             },
             format="json",
@@ -162,6 +162,9 @@ class TestEvalTaskPauseAPI:
 
     def test_pause_eval_task_success(self, auth_client, eval_task):
         """Pause an eval task."""
+        eval_task.status = EvalTaskStatus.RUNNING
+        eval_task.save(update_fields=["status"])
+
         # API expects eval_task_id as query param, NOT body
         response = auth_client.post(
             f"/tracer/eval-task/pause_eval_task/?eval_task_id={eval_task.id}",

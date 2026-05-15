@@ -27,6 +27,7 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingTraceDetailDrawer from "./LLMTracingTraceDetailDrawer";
 import { useLLMTracingStoreShallow, useTraceGridStore } from "./states";
 import _ from "lodash";
@@ -186,14 +187,16 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...objectCamelToSnake([
-                    ...filters,
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds([
+                    ...objectCamelToSnake([
+                      ...filters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ]),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
                   ]),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 

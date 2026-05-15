@@ -33,8 +33,9 @@ from tfc.temporal.experiments import get_activities, get_workflows
 from tfc.temporal.experiments.types import RunExperimentInput, RunExperimentOutput
 from tfc.temporal.experiments.workflows import RunExperimentV2Workflow
 
-# All tests in this module must run on the same xdist worker (sequential).
-pytestmark = pytest.mark.xdist_group("temporal_experiment_e2e")
+# All tests in this module must run on the same xdist worker (sequential), and
+# are excluded from the default non-e2e backend run.
+pytestmark = [pytest.mark.e2e, pytest.mark.xdist_group("temporal_experiment_e2e")]
 
 TASK_QUEUE = "test-experiment-v2"
 

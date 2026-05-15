@@ -23,9 +23,11 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import { getInitials } from "../annotation-queue-table";
+import { isQueueAnnotatorRole } from "../constants";
 import SourceBadge from "./source-badge";
 import ItemStatusBadge from "./item-status-badge";
 import { fToNow } from "src/utils/format-time";
@@ -48,6 +50,7 @@ const REVIEW_COLORS = {
   pending_review: "warning",
   approved: "success",
   rejected: "error",
+  resubmitted: "info",
 };
 
 function getPreviewText(preview) {
@@ -105,10 +108,13 @@ PreviewCellRenderer.propTypes = {
 
 function StatusCellRenderer({ data }) {
   if (!data) return null;
+  const workflowStatus =
+    data.workflow_status ||
+    (data.review_status === "pending_review" ? "in_review" : data.status);
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Stack direction="row" alignItems="center" spacing={0.5}>
-        <ItemStatusBadge status={data.status} />
+        <ItemStatusBadge status={workflowStatus} />
         {data.reserved_by && (
           <Tooltip title={`Reserved by ${data.reserved_by_name || "someone"}`}>
             <Iconify
@@ -134,9 +140,34 @@ function AssignedCellRenderer({ data, context }) {
   if (!data) return null;
 
   const assignedUsers = data.assigned_users || [];
-  const annotators = context?.annotators || [];
+  const annotators = (context?.annotators || []).filter(isQueueAnnotatorRole);
   const assignItems = context?.onAssign;
-  const canAssign = Boolean(assignItems);
+  const isAutoAssign = Boolean(context?.autoAssign);
+  const canAssign = Boolean(assignItems) && !isAutoAssign;
+
+  if (isAutoAssign) {
+    const title =
+      annotators.length > 0
+        ? annotators.map((a) => a.name || a.email).join(", ")
+        : "All annotators";
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Tooltip title={title}>
+          <Chip
+            label={
+              annotators.length === 1
+                ? annotators[0].name || annotators[0].email
+                : "All annotators"
+            }
+            size="small"
+            variant="outlined"
+            color="primary"
+            sx={{ height: 24, fontSize: 12 }}
+          />
+        </Tooltip>
+      </Box>
+    );
+  }
 
   const handleClick = (e) => {
     if (!canAssign) return;
@@ -236,7 +267,11 @@ function AssignedCellRenderer({ data, context }) {
             height: 24,
             fontSize: 12,
             borderStyle: "dashed",
-            "&:hover": canAssign ? { bgcolor: "primary.lighter" } : {},
+            "&:hover": canAssign
+              ? {
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                }
+              : {},
           }}
         />
       )}
@@ -386,7 +421,7 @@ AddedCellRenderer.propTypes = {
 };
 
 function ActionsCellRenderer({ data, context }) {
-  if (!data) return null;
+  if (!data || !context?.onRemoveConfirm) return null;
   return (
     <Box
       sx={{
@@ -441,70 +476,77 @@ export default function QueueItemsTable({
   onAssign,
   autoAssign = false,
   gridRef = null,
+  canManageItems = true,
+  addedSortDirection = "desc",
+  onAddedSortChange,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
 
   const [removeTarget, setRemoveTarget] = useState(null);
 
   const columnDefs = useMemo(
-    () => [
-      {
-        field: "source_type",
-        headerName: "Source",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : SourceCellRenderer,
-      },
-      {
-        field: "preview",
-        headerName: "Preview",
-        flex: 2.5,
-        minWidth: 250,
-        cellRenderer: loading ? SkeletonCell : PreviewCellRenderer,
-      },
-      {
-        field: "status",
-        headerName: "Status",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
-      },
-      {
-        field: "assignedTo",
-        headerName: "Assigned To",
-        flex: 1,
-        minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : AssignedCellRenderer,
-        valueGetter: (params) => {
-          const users = params.data?.assigned_users || [];
-          return users.map((u) => u.id).join(",");
+    () =>
+      [
+        {
+          field: "source_type",
+          headerName: "Source",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : SourceCellRenderer,
         },
-      },
-      {
-        field: "review_status",
-        headerName: "Review",
-        flex: 0.8,
-        minWidth: 110,
-        cellRenderer: loading ? SkeletonCell : ReviewCellRenderer,
-      },
-      {
-        field: "created_at",
-        headerName: "Added",
-        flex: 1,
-        minWidth: 140,
-        cellRenderer: loading ? SkeletonCell : AddedCellRenderer,
-      },
-      {
-        field: "actions",
-        headerName: "",
-        width: 60,
-        maxWidth: 60,
-        cellRenderer: loading ? SkeletonCell : ActionsCellRenderer,
-        sortable: false,
-        resizable: false,
-      },
-    ],
-    [loading],
+        {
+          field: "preview",
+          headerName: "Preview",
+          flex: 2.5,
+          minWidth: 250,
+          cellRenderer: loading ? SkeletonCell : PreviewCellRenderer,
+        },
+        {
+          field: "status",
+          headerName: "Status",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+        },
+        {
+          field: "assignedTo",
+          headerName: "Assigned To",
+          flex: 1,
+          minWidth: 130,
+          cellRenderer: loading ? SkeletonCell : AssignedCellRenderer,
+          valueGetter: (params) => {
+            const users = params.data?.assigned_users || [];
+            return users.map((u) => u.id).join(",");
+          },
+        },
+        {
+          field: "review_status",
+          headerName: "Review",
+          flex: 0.8,
+          minWidth: 110,
+          cellRenderer: loading ? SkeletonCell : ReviewCellRenderer,
+        },
+        {
+          field: "created_at",
+          headerName: "Added",
+          flex: 1,
+          minWidth: 140,
+          sortable: true,
+          sort: addedSortDirection,
+          sortingOrder: ["desc", "asc"],
+          cellRenderer: loading ? SkeletonCell : AddedCellRenderer,
+        },
+        {
+          field: "actions",
+          headerName: "",
+          width: 60,
+          maxWidth: 60,
+          cellRenderer: loading ? SkeletonCell : ActionsCellRenderer,
+          sortable: false,
+          resizable: false,
+        },
+      ].filter((column) => canManageItems || column.field !== "actions"),
+    [loading, canManageItems, addedSortDirection],
   );
 
   const defaultColDef = useMemo(
@@ -520,19 +562,27 @@ export default function QueueItemsTable({
   );
 
   const selectionColumnDef = useMemo(
-    () => ({ pinned: true, lockPinned: true }),
+    () => ({
+      pinned: true,
+      lockPinned: true,
+      width: 44,
+      minWidth: 44,
+      maxWidth: 44,
+      resizable: false,
+      suppressHeaderMenuButton: true,
+    }),
     [],
   );
 
   const gridContext = useMemo(
     () => ({
-      onRemoveConfirm: (item) => setRemoveTarget(item),
+      onRemoveConfirm: canManageItems ? (item) => setRemoveTarget(item) : null,
       annotators,
       onAssign,
       autoAssign,
       gridRef,
     }),
-    [annotators, onAssign, autoAssign, gridRef],
+    [annotators, onAssign, autoAssign, gridRef, canManageItems],
   );
 
   const onCellClicked = useCallback(
@@ -583,6 +633,16 @@ export default function QueueItemsTable({
     [data, selectedIds, onSelectAll, onSelectToggle],
   );
 
+  const onSortChanged = useCallback(
+    (event) => {
+      const addedColumn = event.api
+        .getColumnState()
+        .find((column) => column.colId === "created_at");
+      onAddedSortChange?.(addedColumn?.sort === "asc" ? "asc" : "desc");
+    },
+    [onAddedSortChange],
+  );
+
   const getRowId = useCallback((params) => params.data?.id, []);
 
   const CustomNoRowsOverlay = useCallback(
@@ -604,7 +664,7 @@ export default function QueueItemsTable({
   );
 
   const handleConfirmRemove = () => {
-    if (removeTarget) {
+    if (removeTarget && onRemove) {
       onRemove(removeTarget);
       setRemoveTarget(null);
     }
@@ -632,12 +692,13 @@ export default function QueueItemsTable({
             headerHeight={42}
             pagination={false}
             animateRows={false}
-            rowSelection={{ mode: "multiRow" }}
+            rowSelection={canManageItems ? { mode: "multiRow" } : undefined}
             selectionColumnDef={selectionColumnDef}
-            suppressRowClickSelection
+            suppressRowClickSelection={canManageItems}
             rowStyle={{ cursor: onItemClick ? "pointer" : "default" }}
             onCellClicked={onCellClicked}
-            onSelectionChanged={onSelectionChanged}
+            onSelectionChanged={canManageItems ? onSelectionChanged : undefined}
+            onSortChanged={onSortChanged}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
             onBodyScroll={(e) => {
@@ -714,10 +775,13 @@ QueueItemsTable.propTypes = {
   selectedIds: PropTypes.object.isRequired,
   onSelectToggle: PropTypes.func,
   onSelectAll: PropTypes.func,
-  onRemove: PropTypes.func.isRequired,
+  onRemove: PropTypes.func,
   onItemClick: PropTypes.func,
   annotators: PropTypes.array,
   onAssign: PropTypes.func,
   autoAssign: PropTypes.bool,
   gridRef: PropTypes.object,
+  canManageItems: PropTypes.bool,
+  addedSortDirection: PropTypes.oneOf(["asc", "desc"]),
+  onAddedSortChange: PropTypes.func,
 };

@@ -113,6 +113,18 @@ class AnnotationQueueStatusChoices(Enum):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
 
 
+class AutomationRuleTriggerFrequency(Enum):
+    MANUAL = "manual"
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+    @classmethod
+    def get_choices(cls):
+        return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+
+
 class QueueItemSourceType(Enum):
     DATASET_ROW = "dataset_row"
     TRACE = "trace"

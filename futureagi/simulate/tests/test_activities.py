@@ -32,6 +32,13 @@ def _ee_voice_mapper():
 
 
 @pytest.fixture
+def allow_ee_feature_checks():
+    """These tests target workflow behavior, not plan entitlement checks."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+        yield
+
+
+@pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
     return AgentDefinition.objects.create(
@@ -202,7 +209,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_dataset_scenario_starts_workflow(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """Creating a dataset scenario should trigger the workflow."""
         mock_workflow.return_value = "workflow-id-123"
@@ -238,7 +250,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_script_scenario_workflow_sync")
     def test_create_script_scenario_starts_workflow(
-        self, mock_workflow, auth_client, agent_definition
+        self, mock_workflow, auth_client, agent_definition, allow_ee_feature_checks
     ):
         """Creating a script scenario should trigger the script workflow."""
         mock_workflow.return_value = "workflow-id-456"
@@ -262,7 +274,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_graph_scenario_workflow_sync")
     def test_create_graph_scenario_starts_workflow(
-        self, mock_workflow, auth_client, agent_definition
+        self, mock_workflow, auth_client, agent_definition, allow_ee_feature_checks
     ):
         """Creating a graph scenario should trigger the graph workflow."""
         mock_workflow.return_value = "workflow-id-789"
@@ -292,7 +304,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_creates_simulator_agent(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """Creating a scenario with agent fields should create SimulatorAgent."""
         mock_workflow.return_value = "workflow-id-123"
@@ -332,7 +349,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_workflow_failure_handling(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """When workflow starter fails, scenario should still be created but may fail later."""
         mock_workflow.side_effect = Exception("Temporal connection failed")
@@ -363,14 +385,14 @@ class TestAddRowsAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_add_scenario_rows_workflow_sync")
     def test_add_rows_starts_generation_workflow(
-        self, mock_workflow, auth_client, existing_scenario
+        self, mock_workflow, auth_client, existing_scenario, allow_ee_feature_checks
     ):
         """Adding rows should trigger the generation workflow."""
         mock_workflow.return_value = "generation-workflow-123"
 
         payload = {
-            "num_rows": 5,
-            "description": "Generate 5 new rows",
+            "num_rows": 10,
+            "description": "Generate 10 new rows",
         }
 
         response = auth_client.post(

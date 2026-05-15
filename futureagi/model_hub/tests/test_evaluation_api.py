@@ -783,7 +783,7 @@ class TestStopUserEvalView:
     """Tests for StopUserEvalView - POST /develops/<dataset_id>/stop_user_eval/<eval_id>/"""
 
     def test_stop_user_eval_running(self, auth_client, dataset, user_eval_metric):
-        """Running evals transition to COMPLETED and return the stop message."""
+        """Running evals transition to ERROR and return the stop message."""
         user_eval_metric.status = StatusType.RUNNING.value
         user_eval_metric.save(update_fields=["status"])
 
@@ -797,10 +797,10 @@ class TestStopUserEvalView:
         assert response.json()["result"] == "User evaluation stopped"
 
         user_eval_metric.refresh_from_db()
-        assert user_eval_metric.status == StatusType.COMPLETED.value
+        assert user_eval_metric.status == StatusType.ERROR.value
 
     def test_stop_user_eval_not_started(self, auth_client, dataset, user_eval_metric):
-        """NOT_STARTED evals also transition to COMPLETED."""
+        """NOT_STARTED evals also transition to ERROR."""
         assert user_eval_metric.status == StatusType.NOT_STARTED.value
 
         response = auth_client.post(
@@ -813,7 +813,7 @@ class TestStopUserEvalView:
         assert response.json()["result"] == "User evaluation stopped"
 
         user_eval_metric.refresh_from_db()
-        assert user_eval_metric.status == StatusType.COMPLETED.value
+        assert user_eval_metric.status == StatusType.ERROR.value
 
     def test_stop_user_eval_already_completed_is_noop(
         self, auth_client, dataset, user_eval_metric

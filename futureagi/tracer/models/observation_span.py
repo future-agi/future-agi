@@ -239,8 +239,6 @@ class ObservationSpan(BaseModel):
             GinIndex(fields=["metadata"]),
             models.Index(fields=["start_time"]),
             models.Index(fields=["trace", "start_time"]),
-            # GenAI Schema Foundation indexes
-            GinIndex(fields=["span_attributes"], name="tracer_obse_span_at_gin"),
         ]
 
 

@@ -32,7 +32,7 @@ class TestOrgConfigCostTrackingDefaults:
         response = auth_client.get("/agentcc/gateways/default/config/")
 
         assert response.status_code == 200, response.json()
-        assert response.json()["result"]["costTracking"] == {"enabled": True}
+        assert response.json()["result"]["cost_tracking"] == {"enabled": True}
 
     @patch("agentcc.views.gateway.push_org_config", return_value=True)
     def test_gateway_reload_backfills_empty_cost_tracking(
@@ -63,4 +63,4 @@ class TestOrgConfigCostTrackingDefaults:
         response = auth_client.get("/agentcc/gateways/default/config/")
 
         assert response.status_code == 200, response.json()
-        assert response.json()["result"]["costTracking"] == {"enabled": True}
+        assert response.json()["result"]["cost_tracking"] == {"enabled": True}
