@@ -1331,6 +1331,14 @@ class EvalTemplateListView(APIView):
             if eval_type_filter:
                 qs = qs.filter(eval_type__in=eval_type_filter)
 
+            eval_type_not_filter = (
+                filters.get("eval_type_not")
+                if isinstance(filters, dict)
+                else getattr(filters, "eval_type_not", None)
+            )
+            if eval_type_not_filter:
+                qs = qs.exclude(eval_type__in=eval_type_not_filter)
+
             total = qs.count()
             page = req.get("page", 0)
             page_size = req.get("page_size", 25)

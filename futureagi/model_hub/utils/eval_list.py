@@ -388,14 +388,20 @@ def build_eval_list_queryset(
         # Tags filter
         if _f("tags"):
             qs = qs.filter(eval_tags__overlap=_f("tags"))
+        if _f("tags_not"):
+            qs = qs.exclude(eval_tags__overlap=_f("tags_not"))
 
         # Template type filter (single/composite)
         if _f("template_type"):
             qs = qs.filter(template_type__in=_f("template_type"))
+        if _f("template_type_not"):
+            qs = qs.exclude(template_type__in=_f("template_type_not"))
 
         # Exact-name multi-select (dropdown picker)
         if _f("names"):
             qs = qs.filter(name__in=_f("names"))
+        if _f("names_not"):
+            qs = qs.exclude(name__in=_f("names_not"))
 
         # Created by filter (user names)
         if _f("created_by"):
@@ -428,6 +434,33 @@ def build_eval_list_queryset(
                     | Q(id__in=version_template_ids_email)
                     | org_q
                 )
+
+        # Output type negation filter
+        if _f("output_type_not"):
+            excluded_types = set(_f("output_type_not"))
+            exclude_raw = [
+                raw for raw, normalized in _OUTPUT_TYPE_MAP.items()
+                if normalized in excluded_types
+            ]
+            if exclude_raw:
+                qs = qs.exclude(config__output__in=exclude_raw)
+
+        # Created by exclusion filter
+        if _f("created_by_not"):
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            excluded_by_list = _f("created_by_not")
+            exc_ids = EvalTemplateVersion.all_objects.filter(
+                is_default=True,
+                deleted=False,
+            ).filter(
+                Q(created_by__name__in=excluded_by_list)
+                | Q(created_by__email__in=excluded_by_list)
+            ).values_list("eval_template_id", flat=True)
+            org_q = Q(organization__display_name__in=excluded_by_list) | Q(
+                organization__name__in=excluded_by_list
+            )
+            qs = qs.exclude(Q(id__in=exc_ids) | org_q)
 
         # Note: eval_type filter is applied in-memory after fetching because
         # eval_type is derived from multiple fields (config + tags), not a single
