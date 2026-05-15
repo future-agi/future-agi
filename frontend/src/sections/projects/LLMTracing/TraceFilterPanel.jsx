@@ -296,8 +296,7 @@ const SINGLE_VALUE_OPS = new Set([
   "ends_with",
 ]);
 
-// List ops — multi-select picker. `is`/`is_not` (categorical/thumbs) also
-// use a multi-select picker, so they belong here too.
+// List ops — multi-select picker.
 const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
 
 // ---------------------------------------------------------------------------
