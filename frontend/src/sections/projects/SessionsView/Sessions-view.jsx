@@ -202,6 +202,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     "sessionFilterOpen",
     false,
   );
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
 
@@ -954,7 +958,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onSaveView={handleSaveView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         filterFields={sessionFilterFields}
         onApplyExtraFilters={setExtraFilters}
         // Columns
@@ -1061,9 +1071,23 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }))}
         fieldLabelMap={filterChipLabelMap}
         onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
         }}
-        onClearAll={() => setExtraFilters([])}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       {/* Graph — hidden in user mode (no project context) */}
