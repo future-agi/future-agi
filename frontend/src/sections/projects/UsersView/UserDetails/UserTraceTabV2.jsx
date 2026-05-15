@@ -174,11 +174,12 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       />
 
       <FilterChips
-        extraFilters={/** @type {any[]} */ (extraFilters).map((f) => ({
-          ...f,
-          display_name:
-            columnLabelLookup[f?.column_id] ?? f?.display_name,
-        }))}
+        extraFilters={
+          /** @type {any[]} */ (extraFilters).map((f) => ({
+            ...f,
+            display_name: columnLabelLookup[f?.column_id] ?? f?.display_name,
+          }))
+        }
         onRemoveFilter={(idx) =>
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx))
         }

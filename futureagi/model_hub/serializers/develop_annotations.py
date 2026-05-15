@@ -280,6 +280,7 @@ class AnnotationsSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
+        ref_name = "DevelopAnnotationsUser"
         fields = ["id", "email", "name", "organization_role", "is_active", "is_staff"]
 
 

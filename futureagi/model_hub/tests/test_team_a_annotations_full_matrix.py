@@ -819,7 +819,8 @@ class TestAutoCompleteQueueItems:
         assert item.status == QueueItemStatus.PENDING.value
         baseline_qi_count = QueueItem.objects.filter(deleted=False).count()
 
-        # Score one — should NOT complete
+        # Score one — should NOT complete. Pass queue_item_id explicitly so the
+        # score lands in this queue's context (per-queue Score uniqueness).
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -828,13 +829,14 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(star_label.id),
                     "value": {"rating": 5},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score the second required → completes
+        # Score the second required in the same queue → completes
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -843,13 +845,15 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(thumbs_label.id),
                     "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 
-        # No spurious queue items created
+        # No spurious queue items created — we attributed the scores to the
+        # test queue's item, so no default-queue item is auto-created.
         assert (
             QueueItem.objects.filter(deleted=False).count() == baseline_qi_count
         )

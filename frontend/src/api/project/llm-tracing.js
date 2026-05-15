@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 
 /**
  * Fetch root span IDs for the given trace IDs.
@@ -13,7 +14,7 @@ export async function fetchRootSpans(traceIds) {
   const params = new URLSearchParams();
   traceIds.forEach((id) => params.append("trace_ids", id));
   const res = await axios.get(
-    `/tracer/observation-span/root-spans/?${params.toString()}`,
+    `${apiPath("/tracer/observation-span/root-spans/")}?${params.toString()}`,
   );
   return res.data?.result || {};
 }

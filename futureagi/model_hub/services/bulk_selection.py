@@ -505,8 +505,10 @@ def _resolve_voice_call_ids_clickhouse(
         annotation_label_ids=annotation_label_ids,
         remove_simulation_calls=remove_simulation_calls,
     )
-    # build() must run before build_count_query() because the former is
-    # what populates self.params with start_date / end_date.
+    # Skip the separate `uniqExact(trace_id)` count query — on large filter
+    # results it was the dominant /preview timeout. ``build()`` already adds
+    # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
+    # us "≥ cap" without a second scan.
     ids_query, ids_params = builder.build()
     ids_result = analytics.execute_ch_query(
         ids_query, ids_params, timeout_ms=15_000
@@ -516,14 +518,7 @@ def _resolve_voice_call_ids_clickhouse(
         for r in ids_result.data
         if r.get("trace_id")
     ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    raw_truncated = len(ids) > cap
 
     # VoiceCallListQueryBuilder's SQL simulation filter is a no-op (the
     # phone numbers live in the heavy span_attributes_raw blob). The list
@@ -531,14 +526,17 @@ def _resolve_voice_call_ids_clickhouse(
     # toggle is on.
     if remove_simulation_calls and ids:
         ids = _filter_out_simulator_calls_ch(ids, project_id, analytics)
-        total_matching = len(ids) + len(exclude_ids or set())
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -632,8 +630,9 @@ def _resolve_trace_ids_clickhouse(
         # Phase 1 light columns are all we need — we only want trace_id.
         columns=["trace_id"],
     )
-    # build() must run before build_count_query() because it populates
-    # self.params with start_date / end_date that the count query reads.
+    # Skip the separate count query — the builder already does ``LIMIT cap + 1``
+    # (trace_list.py:134) so the cap+1 sentinel tells us "≥ cap" without a
+    # second uniqExact scan that was the dominant /preview timeout source.
     ids_query, ids_params = builder.build()
     ids_result = analytics.execute_ch_query(
         ids_query, ids_params, timeout_ms=15_000
@@ -643,21 +642,18 @@ def _resolve_trace_ids_clickhouse(
         for r in ids_result.data
         if r.get("trace_id")
     ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    raw_truncated = len(ids) > cap
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -800,10 +796,14 @@ def resolve_filtered_trace_ids(
         )
     ).order_by("-start_time", "-id")
 
-    # One COUNT + one SELECT for the capped IDs. Two queries total.
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # Capped fetch — one LIMIT cap+1 SELECT instead of COUNT(*) + SELECT.
+    # The exact total_matching on huge results was the primary /preview timeout
+    # source (full-table scan on 10M+ row trace tables); the caller only needs
+    # "≥ cap" to decide truncation.
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace",
@@ -996,9 +996,11 @@ def resolve_filtered_span_ids(
     # ObservationSpan has real start_time / id columns — order directly.
     qs = qs.order_by("-start_time", "-id")
 
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_span",
@@ -1232,12 +1234,14 @@ def resolve_filtered_session_ids(
 
     aggregated = aggregated.order_by("-start_time", "-trace__session_id")
 
-    total_matching = aggregated.count()
-    ids = [
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = [
         row["trace__session_id"]
-        for row in aggregated.values("trace__session_id")[:cap]
+        for row in aggregated.values("trace__session_id")[: cap + 1]
     ]
-    truncated = total_matching > cap
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_session",
@@ -1417,9 +1421,11 @@ def resolve_filtered_call_execution_ids(
 
     qs = qs.order_by("-created_at", "-id")
 
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_call_execution",

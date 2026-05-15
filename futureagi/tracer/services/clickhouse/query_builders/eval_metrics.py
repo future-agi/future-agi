@@ -117,7 +117,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             ClickHouseFilterBuilder,
         )
 
-        fb = ClickHouseFilterBuilder(project_ids=[self.project_id])
+        fb = ClickHouseFilterBuilder(project_id=self.project_id)
         extra_where, extra_params = fb.translate(self.filters)
         if extra_where:
             self.params.update(extra_params)

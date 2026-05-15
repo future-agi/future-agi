@@ -113,7 +113,10 @@ const RunsList = React.forwardRef(
       }
 
       const columnDefsResult = Object.entries(grouping)
-        .map(([group, cols]) => {
+        .flatMap(([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => getRunListColumnDefs(c));
+          }
           if (!AllowedGroups.includes(group) && cols.length === 1) {
             const c = cols[0];
             // bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;

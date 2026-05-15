@@ -228,17 +228,108 @@ class ClickHouseFilterBuilder:
         query_mode: str = QUERY_MODE_TRACE,
         project_id: Optional[str] = None,
         project_ids: Optional[List[str]] = None,
+        score_date_scope: bool = True,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
         self.query_mode = query_mode
+        # Track which mode the outer caller bound in their params dict.
+        # The outer ``BaseQueryBuilder`` binds either ``project_id`` (scalar)
+        # OR ``project_ids`` (tuple), not both — see ``base.py``. The
+        # filter builder must mirror that choice when emitting placeholders
+        # inside score subqueries, otherwise execution fails with a
+        # missing-parameter error. Don't collapse the two into a single list.
+        self._org_scoped = project_ids is not None
         self.project_ids = (
             [str(p) for p in project_ids]
             if project_ids
             else ([str(project_id)] if project_id else None)
         )
+        # When True, score subqueries (annotator / has_annotation /
+        # my_annotations / per-label annotator) inject a lower-bound filter
+        # on s.created_at using ``%(start_date)s`` from the outer params.
+        # Callers that don't populate ``%(start_date)s`` must pass False.
+        self.score_date_scope = score_date_scope
         self._param_counter: int = 0
         self._params: Dict[str, Any] = {}
+
+    def _score_date_filter(self, alias: str = "s") -> str:
+        """Return a lower-bound ``created_at`` filter for ``model_hub_score``.
+
+        ``model_hub_score`` is ``PARTITION BY toYYYYMM(created_at)``; the
+        lower bound prunes to the partitions in the visible window. We
+        deliberately do **not** filter on ``s.project_id`` because in prod
+        100% of score rows have ``project_id = 0000…`` (the column is
+        Nullable and was never backfilled). Project scoping is enforced
+        downstream via the spans join + the outer ``trace_id IN (…)``
+        wrapper.
+        """
+        if not self.score_date_scope:
+            return ""
+        return f" AND {alias}.created_at >= %(start_date)s - INTERVAL 1 DAY"
+
+    def _scoped_spans_subquery(
+        self,
+        *,
+        select_cols: str,
+        extra_where: str = "",
+        score_side_where: str = "",
+    ) -> str:
+        """Return a ``spans`` subquery pre-filtered to the current project + date window.
+
+        Wrapping spans in a subquery (vs. adding the same predicates to a
+        ``LEFT JOIN spans ON …`` clause) is what actually prunes the spans
+        partitions. ON-clause predicates filter *after* the read, so the
+        full 12M+ row spans table is still scanned. Wrapping in
+        ``SELECT … FROM spans WHERE project_id = X AND created_at >= Y``
+        unlocks partition pruning by ``project_id`` and ``toYYYYMM(created_at)``.
+
+        When ``score_side_where`` is provided, also gate on
+        ``id IN (SELECT observation_span_id FROM model_hub_score WHERE … {score_side_where})``.
+        For trace-only score data (where 100% of scores have
+        ``observation_span_id = ''``) this collapses the inner set to zero
+        and the JOIN becomes free — getting the annotator filter to ~65 ms
+        end-to-end vs ~12 s without it. For span-scoped data it bounds the
+        spans-side read to only span ids that actually have a matching
+        score for this annotator / label / etc.
+        """
+        # Mirror the placeholder shape the caller put in self.params. When
+        # constructed in org-scoped mode the outer query exposes
+        # ``%(project_ids)s`` (a tuple) and never ``%(project_id)s``, even
+        # for a single-project org. Using ``project_id =`` with a single-
+        # element ``project_ids`` was a real bug: the binding lookup
+        # missed ``project_id`` at execution time. Track which mode the
+        # outer query bound rather than inferring from list length.
+        if self._org_scoped:
+            project_pred = "project_id IN %(project_ids)s"
+        else:
+            project_pred = "project_id = %(project_id)s"
+        date_pred = (
+            "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
+            if self.score_date_scope
+            else ""
+        )
+        extra = f" AND {extra_where}" if extra_where else ""
+        if score_side_where:
+            score_date = self._score_date_filter()
+            id_filter = (
+                f" AND id IN ("
+                f"SELECT observation_span_id FROM model_hub_score AS s FINAL "
+                f"WHERE s._peerdb_is_deleted = 0 AND s.deleted = false "
+                f"AND notEmpty(s.observation_span_id)"
+                f"{score_date}"
+                f" {score_side_where})"
+            )
+        else:
+            id_filter = ""
+        return (
+            f"(SELECT {select_cols} FROM spans "
+            f"WHERE {project_pred} "
+            f"{date_pred} "
+            f"AND _peerdb_is_deleted = 0"
+            f"{extra}"
+            f"{id_filter})"
+        )
 
     def _next_param(self, prefix: str = "p") -> str:
         """Generate a unique parameter name."""
@@ -295,16 +386,26 @@ class ClickHouseFilterBuilder:
         score_trace_expr = self._score_trace_id_expr()
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
+        date_clause = self._score_date_filter("s")
+        # Wrap spans in a project + date-scoped subquery, also gated by
+        # ``id IN (score rows matching extra_where)`` — see
+        # ``_scoped_spans_subquery``. For trace-only scoring (100% empty
+        # observation_span_id) this collapses the spans read to zero rows
+        # and the annotator filter returns in ~65 ms.
+        spans_subq = self._scoped_spans_subquery(
+            select_cols="id, trace_id",
+            score_side_where=extra_where,
+        )
         return (
             f"{select_keyword} {score_trace_expr} AS {alias} "
             f"FROM model_hub_score AS s FINAL "
-            f"LEFT JOIN spans AS sp "
+            f"LEFT JOIN {spans_subq} AS sp "
             f"ON sp.id = s.observation_span_id "
-            f"AND sp._peerdb_is_deleted = 0 "
             f"WHERE s._peerdb_is_deleted = 0 "
             f"AND s.deleted = false "
             f"AND isNotNull({score_trace_expr}) "
             f"AND {score_trace_expr} != ''"
+            f"{date_clause}"
             f"{extra_clause}"
         )
 
@@ -333,17 +434,27 @@ class ClickHouseFilterBuilder:
         score_span_expr = self._score_span_id_expr()
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
+        date_clause = self._score_date_filter("s")
+        # Same rationale as ``_score_trace_select``: pre-filter spans via a
+        # subquery so the root-span lookup actually prunes partitions.
+        # Restrict to root spans (parent_span_id IS NULL/'') inside the
+        # subquery so the LEFT JOIN's ``trace_id =`` match doesn't have to
+        # scan every span row for that trace.
+        spans_subq = self._scoped_spans_subquery(
+            select_cols="id, trace_id",
+            extra_where="(parent_span_id IS NULL OR parent_span_id = '')",
+            score_side_where=extra_where,
+        )
         return (
             f"{select_keyword} {score_span_expr} AS {alias} "
             f"FROM model_hub_score AS s FINAL "
-            f"LEFT JOIN spans AS root_sp "
+            f"LEFT JOIN {spans_subq} AS root_sp "
             f"ON root_sp.trace_id = toString(s.trace_id) "
-            f"AND (root_sp.parent_span_id IS NULL OR root_sp.parent_span_id = '') "
-            f"AND root_sp._peerdb_is_deleted = 0 "
             f"WHERE s._peerdb_is_deleted = 0 "
             f"AND s.deleted = false "
             f"AND isNotNull({score_span_expr}) "
             f"AND {score_span_expr} != ''"
+            f"{date_clause}"
             f"{extra_clause}"
         )
 

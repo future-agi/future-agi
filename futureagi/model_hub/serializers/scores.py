@@ -68,6 +68,13 @@ class CreateScoreSerializer(serializers.Serializer):
         required=False,
         default=ScoreSource.HUMAN.value,
     )
+    # Optional explicit queue context. When omitted, the view falls back to
+    # the source's default queue (auto-created if missing) so every Score
+    # row has a non-null queue_item — required by the new (source, label,
+    # annotator, queue_item) uniqueness.
+    queue_item_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
 
 
 class BulkCreateScoresSerializer(serializers.Serializer):
@@ -88,6 +95,10 @@ class BulkCreateScoresSerializer(serializers.Serializer):
     )
     span_notes_source_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
+    )
+    # Optional explicit queue context — same rationale as in CreateScoreSerializer.
+    queue_item_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
     )
 
     def validate_scores(self, value):

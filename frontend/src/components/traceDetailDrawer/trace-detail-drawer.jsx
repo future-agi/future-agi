@@ -33,6 +33,7 @@ import { TraceDetailContext } from "./TraceDetailContext";
 import AddAnnotationsDrawer from "./add-annotations-drawer";
 import AnnotationSidebarContent from "./AnnotationSidebarContent";
 import AddLabelDrawer from "./AddLabelDrawer";
+import { buildTraceAnnotationSources } from "../voiceAnnotationSources";
 import _ from "lodash";
 import SvgColor from "../svg-color";
 import { useTraceErrorAnalysis } from "./common";
@@ -781,12 +782,11 @@ const TraceDetailDrawerChild = ({
           }}
         >
           <AnnotationSidebarContent
-            sources={[
-              {
-                sourceType: "observation_span",
-                sourceId: selectedNode?.id || rootSpanId,
-              },
-            ]}
+            sources={buildTraceAnnotationSources({
+              traceId: traceData?.trace_id,
+              spanId: selectedNode?.id || rootSpanId,
+              sessionId: traceDetail?.trace?.session,
+            })}
             onClose={() => setAnnotationSidebarOpen(false)}
             onAddLabel={() => setAddLabelDrawerOpen(true)}
             onScoresChanged={() => {

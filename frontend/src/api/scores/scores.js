@@ -1,6 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
+import { apiPath } from "src/api/contracts/api-surface";
+import {
+  modelHubScoresBulkCreate,
+  modelHubScoresCreate,
+  modelHubScoresDelete,
+  modelHubScoresForSource,
+} from "src/generated/api-contracts/api";
+
+export const scoreEndpoints = {
+  list: apiPath("/model-hub/scores/"),
+  detail: (id) => apiPath("/model-hub/scores/{id}/", { id }),
+  bulk: apiPath("/model-hub/scores/bulk/"),
+  forSource: apiPath("/model-hub/scores/for-source/"),
+};
 
 // ---------------------------------------------------------------------------
 // Query keys
@@ -21,10 +34,8 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
   return useQuery({
     queryKey: scoreKeys.forSource(sourceType, sourceId),
     queryFn: () =>
-      axios.get("/model-hub/scores/for-source/", {
-        params: { source_type: sourceType, source_id: sourceId },
-      }),
-    select: (d) => d.data?.result || d.data,
+      modelHubScoresForSource({ source_type: sourceType, source_id: sourceId }),
+    select: (d) => d?.result || d,
     enabled: !!sourceType && !!sourceId,
     staleTime: 1000 * 60,
     ...options,
@@ -39,10 +50,11 @@ export const useSpanNotes = (spanId, options = {}) => {
   return useQuery({
     queryKey: ["span-notes", spanId],
     queryFn: () =>
-      axios.get("/model-hub/scores/for-source/", {
-        params: { source_type: "observation_span", source_id: spanId },
+      modelHubScoresForSource({
+        source_type: "observation_span",
+        source_id: spanId,
       }),
-    select: (d) => d.data?.span_notes || [],
+    select: (d) => d?.span_notes || [],
     enabled: !!spanId,
     staleTime: 1000 * 60,
     ...options,
@@ -58,18 +70,22 @@ export const useCreateScore = () => {
     mutationFn: ({
       sourceType,
       sourceId,
+      queueItemId,
       labelId,
       value,
       notes,
       scoreSource,
     }) =>
-      axios.post("/model-hub/scores/", {
+      modelHubScoresCreate({
         source_type: sourceType,
         source_id: sourceId,
         label_id: labelId,
         value,
         notes,
         score_source: scoreSource || "human",
+        // queue_item_id pins the score to a specific queue review context;
+        // see useBulkCreateScores for rationale.
+        ...(queueItemId ? { queue_item_id: queueItemId } : {}),
       }),
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({
@@ -98,6 +114,7 @@ export const useBulkCreateScores = () => {
     mutationFn: ({
       sourceType,
       sourceId,
+      queueItemId,
       scores,
       notes,
       spanNotes,
@@ -112,13 +129,20 @@ export const useBulkCreateScores = () => {
         notes: notes || "",
         score_source: scoreSource || "human",
       };
+      // queue_item_id is the queue review context the caller wants the
+      // scores attributed to. Required for per-queue scoring (one score
+      // per (source, label, annotator, queue)) — otherwise the backend
+      // falls back to the source's default queue.
+      if (queueItemId) {
+        payload.queue_item_id = queueItemId;
+      }
       if (includeSpanNotes || spanNotes) {
         payload.span_notes = spanNotes || "";
         if (spanNotesSourceId) {
           payload.span_notes_source_id = spanNotesSourceId;
         }
       }
-      return axios.post("/model-hub/scores/bulk/", payload);
+      return modelHubScoresBulkCreate(payload);
     },
     onSuccess: (data, variables) => {
       // Backend returns { scores: [...saved], errors: [...failed] } per
@@ -127,7 +151,7 @@ export const useBulkCreateScores = () => {
       // label) — without inspecting `errors[]` the UI used to claim success
       // even when some labels were silently dropped. Surface partial
       // failures explicitly so the user can retry the failed ones.
-      const result = data?.data?.result || {};
+      const result = data?.result || data || {};
       const errors = result.errors || [];
       const savedCount = (result.scores || []).length;
 
@@ -184,7 +208,7 @@ export const useBulkCreateScores = () => {
 export const useDeleteScore = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ scoreId }) => axios.delete(`/model-hub/scores/${scoreId}/`),
+    mutationFn: ({ scoreId }) => modelHubScoresDelete(scoreId),
     onSuccess: (data, variables) => {
       if (variables.sourceType && variables.sourceId) {
         queryClient.invalidateQueries({

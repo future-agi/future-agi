@@ -387,8 +387,109 @@ class TestClickHouseFilterBuilder:
         assert where.strip().startswith("id IN")
         assert "trace_id IN" not in where
         assert "s.annotator_id = toUUID(%(uid_1)s)" in where
-        assert "LEFT JOIN spans AS root_sp" in where
+        assert "FROM spans WHERE" in where
         assert params == {"uid_1": user_id}
+
+    def test_scoped_spans_subquery_org_mode_uses_project_ids(self):
+        """Org-scoped mode (project_ids set) must emit ``project_id IN
+        %(project_ids)s``, even for a single-element list. Earlier the
+        single-element case fell through to ``project_id = %(project_id)s``
+        which fails at execution because the outer query only binds
+        ``project_ids``. Regression guard for the Codex P1 finding.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        # Single-element list — the buggy branch.
+        single = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where_single, _ = single.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_single
+        assert "project_id = %(project_id)s" not in where_single
+
+        # Two-element list — same shape.
+        multi = ClickHouseFilterBuilder(
+            project_ids=[
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ]
+        )
+        where_multi, _ = multi.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_multi
+
+        # Single-project mode — should still emit the single-project shape.
+        single_pid = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111"
+        )
+        where_pid, _ = single_pid.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id = %(project_id)s" in where_pid
+        assert "project_id IN %(project_ids)s" not in where_pid
+
+    def test_score_date_scope_can_be_disabled_for_monitor_builders(self):
+        """Monitor queries bind start_time/end_time, not start_date/end_date."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            score_date_scope=False,
+        )
+        where, _ = builder.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "model_hub_score" in where
+        assert "%(start_date)s" not in where
+        assert "project_id = %(project_id)s" in where
 
     def test_span_mode_my_annotations_filter_targets_span_id(self):
         """my_annotations uses span ids in span mode and trace ids elsewhere."""
@@ -1227,7 +1328,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "model_hub_score AS s FINAL" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
         assert "sp.trace_id" in where
         assert "toString(s.trace_id)" in where
@@ -1261,8 +1362,8 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "model_hub_score AS s FINAL" in where
         assert "s.observation_span_id" in where
-        assert "LEFT JOIN spans AS root_sp" in where
-        assert "root_sp.parent_span_id" in where
+        assert "FROM spans WHERE" in where
+        assert "parent_span_id" in where
         assert params["ann_label_1"] == "00000000-0000-0000-0000-000000000044"
 
     def test_span_mode_annotation_text_in_filter_targets_span_id(self):
@@ -1475,7 +1576,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
         assert "model_hub_score" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
         assert "_peerdb_is_deleted = 0" in where
         assert params == {}
@@ -1510,7 +1611,7 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "GROUP BY entity_id" in where
         assert "uniq(s.label_id) >= 2" in where
-        assert "root_sp.parent_span_id" in where
+        assert "parent_span_id" in where
         assert params["lbl_1"] == "00000000-0000-0000-0000-000000000011"
         assert params["lbl_2"] == "00000000-0000-0000-0000-000000000022"
 
@@ -3635,7 +3736,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         assert "model_hub_score" in query
         assert "label_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "s.deleted = false" in query
         assert "GROUP BY" in query
@@ -5908,7 +6009,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
         query, _ = builder.build_annotation_query(["trace-1"], ["label-1"])
         assert "model_hub_score" in query
         assert "trace_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "toString(s.trace_id)" in query
         assert "s.deleted = false" in query

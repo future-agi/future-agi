@@ -88,6 +88,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             table=self.TABLE,
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -165,6 +167,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             table=self.TABLE,
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)

@@ -31,7 +31,9 @@ from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, JSONObject, Round
 from django.http import FileResponse
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from litellm import cost_per_token
+from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -108,6 +110,20 @@ from tracer.utils.otel import (
     calculate_cost_from_tokens,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+
+class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    annotation_values = serializers.DictField(child=serializers.JSONField())
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("observation_span_id") and not attrs.get("trace_id"):
+            raise serializers.ValidationError(
+                "observation_span_id or trace_id is required."
+            )
+        return attrs
 
 
 def _validate_add_annotation_value(
@@ -3309,13 +3325,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error in exporting the spans list of observe: {str(e)}")
             return self._gm.bad_request(get_error_message(""))
 
+    @swagger_auto_schema(request_body=AddObservationSpanAnnotationsSerializer)
     @action(detail=False, methods=["post"])
     def add_annotations(self, request, *args, **kwargs):
         try:
-            observation_span_id = self.request.data.get("observation_span_id")
-            annotation_values = self.request.data.get("annotation_values")
-            trace_id = self.request.data.get("trace_id")
-            notes = self.request.data.get("notes")
+            serializer = AddObservationSpanAnnotationsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            observation_span_id = data.get("observation_span_id")
+            annotation_values = data.get("annotation_values")
+            trace_id = data.get("trace_id")
+            notes = data.get("notes")
 
             if (not observation_span_id and not trace_id) or not annotation_values:
                 raise Exception(
@@ -3378,10 +3398,43 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # LEFT JOIN on nullable workspace FK that triggers
                     # PostgreSQL's "FOR UPDATE cannot be applied to the
                     # nullable side of an outer join".
+                    #
+                    # Resolve a default queue item up-front so the upsert
+                    # lookup keys on queue_item — the per-queue Score
+                    # uniqueness ``(source, label, annotator, queue_item)``
+                    # would otherwise produce duplicate orphan rows on
+                    # repeated writes from this legacy endpoint. Falls
+                    # back to NULL if the source has no resolvable scope
+                    # (rare, e.g. orphaned span).
+                    from model_hub.utils.annotation_queue_helpers import (
+                        resolve_default_queue_item_for_source,
+                    )
+
+                    default_item = resolve_default_queue_item_for_source(
+                        "observation_span",
+                        observation_span,
+                        request.user.organization,
+                        request.user,
+                    )
+                    if default_item is None:
+                        # Per-queue Score uniqueness requires a queue_item.
+                        # Skip rather than insert with queue_item=NULL —
+                        # NULL ≠ NULL in Postgres, so a silent orphan
+                        # insert could accumulate duplicates the on_commit
+                        # auto-attach hook can no longer migrate safely.
+                        failed_labels.append(label_id)
+                        logger.warning(
+                            "score_skip_no_default_queue_scope",
+                            source_type="observation_span",
+                            source_id=str(observation_span.pk),
+                            label_id=str(annotation_label.pk),
+                        )
+                        continue
                     score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
                         annotator_id=request.user.pk,
+                        queue_item=default_item,
                         deleted=False,
                         defaults={
                             "source_type": "observation_span",

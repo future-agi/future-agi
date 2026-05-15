@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
@@ -31,9 +32,9 @@ const AddTagsPopover = ({
   }, [open, currentTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
-    axios.patch(`/tracer/trace/${id}/tags/`, { tags: newTags });
+    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
   const patchSpan = (id, newTags) =>
-    axios.post(`/tracer/observation-span/update-tags/`, {
+    axios.post(apiPath("/tracer/observation-span/update-tags/"), {
       span_id: id,
       tags: newTags,
     });

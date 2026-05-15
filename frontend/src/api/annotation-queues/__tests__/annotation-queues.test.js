@@ -14,6 +14,7 @@ import {
   extractErrorMessage,
   useCreateAutomationRule,
   useCreateAnnotationQueue,
+  useEvaluateRule,
   useCreateDiscussionComment,
   useAnnotateDetail,
   useAssignQueueItems,
@@ -1143,6 +1144,28 @@ describe("Annotation Queues API", () => {
         expect(enqueueSnackbar).toHaveBeenCalledWith(
           "automation_rules limit reached for this workspace",
           { variant: "error" },
+        );
+      });
+    });
+  });
+
+  describe("useEvaluateRule", () => {
+    it("surfaces flattened 409 duplicate-run errors as warning", async () => {
+      axios.post.mockRejectedValueOnce({
+        statusCode: 409,
+        result: "A run is already in progress for this rule.",
+      });
+
+      const { result } = renderHook(() => useEvaluateRule(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({ queueId: "queue-1", ruleId: "rule-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "A run is already in progress for this rule.",
+          { variant: "warning" },
         );
       });
     });

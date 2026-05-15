@@ -16,7 +16,7 @@ from model_hub.models.annotation_queues import (
     normalize_annotator_roles,
     primary_annotator_role,
 )
-from model_hub.models.choices import AnnotatorRole
+from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
@@ -525,6 +525,245 @@ class AddItemsSerializer(serializers.Serializer):
                 "Provide exactly one of 'items' or 'selection'."
             )
         return attrs
+
+
+class BulkRemoveItemsSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+    )
+
+
+class EmptyRequestSerializer(serializers.Serializer):
+    pass
+
+
+class AnnotationQueueListQuerySerializer(serializers.Serializer):
+    status = serializers.CharField(required=False, allow_blank=True)
+    search = serializers.CharField(required=False, allow_blank=True)
+    include_counts = serializers.BooleanField(required=False)
+
+
+class QueueHardDeleteRequestSerializer(serializers.Serializer):
+    force = serializers.BooleanField()
+    confirm_name = serializers.CharField()
+
+
+class QueueStatusRequestSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[choice.value for choice in AnnotationQueueStatusChoices]
+    )
+
+
+class QueueDefaultRequestSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(required=False)
+    dataset_id = serializers.UUIDField(required=False)
+    agent_definition_id = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        selected = [
+            key
+            for key in ("project_id", "dataset_id", "agent_definition_id")
+            if attrs.get(key)
+        ]
+        if len(selected) != 1:
+            raise serializers.ValidationError(
+                "Provide exactly one of project_id, dataset_id, or agent_definition_id."
+            )
+        return attrs
+
+
+class QueueLabelRequestSerializer(serializers.Serializer):
+    label_id = serializers.UUIDField()
+    required = serializers.BooleanField(required=False, default=True)
+
+
+class QueueExportColumnMappingSerializer(serializers.Serializer):
+    field = serializers.CharField(required=False, allow_blank=True)
+    id = serializers.CharField(required=False, allow_blank=True)
+    column = serializers.CharField(required=False, allow_blank=True)
+    enabled = serializers.BooleanField(required=False, default=True)
+
+
+class QueueExportToDatasetRequestSerializer(serializers.Serializer):
+    dataset_id = serializers.UUIDField(required=False)
+    dataset_name = serializers.CharField(required=False, allow_blank=True)
+    status_filter = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="completed",
+    )
+    column_mapping = QueueExportColumnMappingSerializer(
+        many=True,
+        required=False,
+        default=list,
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("dataset_id") and not str(attrs.get("dataset_name") or "").strip():
+            raise serializers.ValidationError(
+                "Either dataset_id or dataset_name is required."
+            )
+        return attrs
+
+
+class QueueExportQuerySerializer(serializers.Serializer):
+    export_format = serializers.ChoiceField(
+        choices=["json", "csv"],
+        required=False,
+    )
+    format = serializers.ChoiceField(
+        choices=["json", "csv"],
+        required=False,
+    )
+    status = serializers.CharField(required=False, allow_blank=True)
+
+
+class QueueForSourceQuerySerializer(serializers.Serializer):
+    source_type = serializers.CharField(required=False, allow_blank=True)
+    source_id = serializers.UUIDField(required=False)
+    sources = serializers.CharField(required=False, allow_blank=True)
+
+
+class QueueItemListQuerySerializer(serializers.Serializer):
+    status = serializers.CharField(required=False, allow_blank=True)
+    source_type = serializers.CharField(required=False, allow_blank=True)
+    assigned_to = serializers.CharField(required=False, allow_blank=True)
+    review_status = serializers.CharField(required=False, allow_blank=True)
+    ordering = serializers.ChoiceField(
+        choices=["created_at", "-created_at"],
+        required=False,
+    )
+
+
+class QueueItemNextQuerySerializer(serializers.Serializer):
+    exclude = serializers.CharField(required=False, allow_blank=True)
+    before = serializers.UUIDField(required=False)
+    review_status = serializers.CharField(required=False, allow_blank=True)
+    exclude_review_status = serializers.CharField(required=False, allow_blank=True)
+    include_completed = serializers.BooleanField(required=False)
+    view_mode = serializers.CharField(required=False, allow_blank=True)
+
+
+class QueueItemAnnotateDetailQuerySerializer(serializers.Serializer):
+    annotator_id = serializers.UUIDField(required=False)
+    include_completed = serializers.BooleanField(required=False)
+    view_mode = serializers.CharField(required=False, allow_blank=True)
+    mode = serializers.CharField(required=False, allow_blank=True)
+    review_status = serializers.CharField(required=False, allow_blank=True)
+    exclude_review_status = serializers.CharField(required=False, allow_blank=True)
+    include_all_annotations = serializers.BooleanField(required=False)
+
+
+class QueueItemNavigationRequestSerializer(serializers.Serializer):
+    exclude = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+    )
+    exclude_review_status = serializers.CharField(required=False, allow_blank=True)
+    include_completed = serializers.BooleanField(required=False, default=False)
+
+
+class AssignItemsSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+    )
+    user_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    # Legacy single-user assignment shape. Kept explicit in the request
+    # contract so OpenAPI does not document this endpoint as QueueItem writes.
+    user_id = serializers.UUIDField(required=False, allow_null=True)
+    action = serializers.ChoiceField(
+        choices=["add", "set", "remove"],
+        required=False,
+        default="add",
+    )
+
+
+class MentionReferencesField(serializers.Field):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+
+    def to_internal_value(self, data):
+        return data
+
+    def to_representation(self, value):
+        return value
+
+
+class DiscussionCommentRequestSerializer(serializers.Serializer):
+    comment = serializers.CharField(required=False, allow_blank=True)
+    content = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.UUIDField(required=False)
+    label = serializers.UUIDField(required=False)
+    target_annotator_id = serializers.UUIDField(required=False)
+    thread_id = serializers.UUIDField(required=False)
+    thread = serializers.UUIDField(required=False)
+    # Mentions are normalized in the view because the endpoint still supports
+    # legacy string payloads while returning the older API error text for bad
+    # shapes.
+    mentioned_user_ids = MentionReferencesField(required=False)
+    mentions = MentionReferencesField(required=False)
+
+    def validate(self, attrs):
+        if not str(attrs.get("comment") or attrs.get("content") or "").strip():
+            raise serializers.ValidationError("Comment text is required.")
+        return attrs
+
+
+class DiscussionThreadStatusRequestSerializer(serializers.Serializer):
+    comment = serializers.CharField(required=False, allow_blank=True)
+
+
+class DiscussionReactionRequestSerializer(serializers.Serializer):
+    emoji = serializers.CharField(required=False, allow_blank=True, max_length=16)
+    reaction = serializers.CharField(required=False, allow_blank=True, max_length=16)
+
+    def validate(self, attrs):
+        if not str(attrs.get("emoji") or attrs.get("reaction") or "").strip():
+            raise serializers.ValidationError("emoji is required.")
+        return attrs
+
+
+class ReviewLabelCommentRequestSerializer(serializers.Serializer):
+    label_id = serializers.UUIDField(required=False)
+    label = serializers.UUIDField(required=False)
+    target_annotator_id = serializers.UUIDField(required=False)
+    annotator_id = serializers.UUIDField(required=False)
+    comment = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class ReviewItemRequestSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=["approve", "request_changes", "reject", "comment"]
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+    label_comments = ReviewLabelCommentRequestSerializer(
+        many=True,
+        required=False,
+        default=list,
+    )
+
+
+class ImportAnnotationEntrySerializer(serializers.Serializer):
+    label_id = serializers.UUIDField()
+    value = serializers.JSONField()
+    notes = serializers.CharField(required=False, allow_blank=True)
+    score_source = serializers.CharField(required=False, allow_blank=True)
+
+
+class ImportAnnotationsSerializer(serializers.Serializer):
+    annotations = ImportAnnotationEntrySerializer(many=True)
+    annotator_id = serializers.UUIDField(required=False)
 
 
 # ---------------------------------------------------------------------------

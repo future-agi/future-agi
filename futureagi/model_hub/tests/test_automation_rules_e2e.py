@@ -31,7 +31,10 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.tasks.annotation_automation import run_due_automation_rules
-from model_hub.utils.annotation_queue_helpers import is_automation_rule_due
+from model_hub.utils.annotation_queue_helpers import (
+    evaluate_rule,
+    is_automation_rule_due,
+)
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
@@ -147,6 +150,86 @@ class TestAutomationRulesE2E:
             "ee.usage.services.entitlements.Entitlements.can_create",
             return_value=SimpleNamespace(allowed=True),
         ):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def _run_automation_rule_activity_inline(self):
+        """Run the rule evaluation inline + embed the result in the 202 body.
+
+        Production /evaluate hands the work to a Temporal activity and returns
+        202 with ``{status, workflow_id, message}`` (the activity emails the
+        result later). These tests pre-date that change and assert on
+        ``resp.data["matched"]`` etc., so we keep the original ``evaluate_rule``
+        semantics — call it synchronously, embed its result under
+        ``response.data["result"]`` so ``resp.data.get("result", resp.data)``
+        in the tests sees the legacy keys.
+
+        ``test_evaluate_rule_returns_202_with_workflow_id`` skips this fixture
+        and exercises the real async path.
+        """
+        if getattr(self, "_skip_inline_evaluate", False):
+            yield
+            return
+
+        from model_hub.tasks.annotation_automation import (
+            evaluate_rule_manual_async,
+        )
+
+        # The ``@temporal_activity`` decorator wraps the function so it calls
+        # ``close_old_connections()`` before+after each invocation, which
+        # closes the test transaction's DB connection. In tests we invoke
+        # the original function directly to keep the test DB session alive.
+        target_fn = getattr(
+            evaluate_rule_manual_async,
+            "_original_func",
+            evaluate_rule_manual_async,
+        )
+
+        # Holds the result of the most recent inline activity run so the
+        # test client can read it from the 202 response (see the response
+        # wrapper below). One slot is enough: tests run sequentially within
+        # a single fixture scope.
+        _inline_result_holder = {"result": None}
+
+        def _inline_run(
+            activity_name,
+            args=(),
+            kwargs=None,
+            queue="default",
+            task_id=None,
+        ):
+            if activity_name == "evaluate_rule_manual_async":
+                _inline_result_holder["result"] = target_fn(**(kwargs or {}))
+            return task_id or "inline-workflow-id"
+
+        # Wrap the test client's ``post`` so any 202 from the evaluate
+        # endpoint gets the inline result merged into ``response.data``.
+        # This keeps legacy tests (``assert result["matched"] == N``) green
+        # without rewriting them — they read ``resp.data["result"]`` (or
+        # the top-level fallback) which is now populated.
+        from rest_framework.test import APIClient
+
+        original_post = APIClient.post
+
+        def _post(self, path, data=None, *args, **kwargs):
+            _inline_result_holder["result"] = None
+            response = original_post(self, path, data, *args, **kwargs)
+            if (
+                response.status_code == status.HTTP_202_ACCEPTED
+                and "/automation-rules/" in path
+                and path.rstrip("/").endswith("/evaluate")
+                and _inline_result_holder["result"] is not None
+            ):
+                response.data = {
+                    **response.data,
+                    "result": _inline_result_holder["result"],
+                }
+            return response
+
+        with patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync",
+            side_effect=_inline_run,
+        ), patch.object(APIClient, "post", _post):
             yield
 
     # -----------------------------------------------------------------------
@@ -386,6 +469,74 @@ class TestAutomationRulesE2E:
         # Verify no queue items were created
         assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
 
+    def test_filter_mode_dry_run_propagates_truncated_flag(
+        self, auth_client, organization, workspace
+    ):
+        """Filter-mode dry-run must propagate ``truncated`` from the resolver.
+
+        Found via browser E2E: ``_add_source_ids_to_queue`` was dropping the
+        flag in its dry-run early return, so the manual-run endpoint's peek
+        never saw truncation and every filter-mode rule fell to the sync
+        path — even huge ones.
+        """
+        from datetime import datetime as _dt
+
+        from unittest.mock import patch as _patch
+
+        project = _create_project(organization, workspace, name="Trunc Project")
+        # Two traces, but we'll cap to 1 to force truncation.
+        _create_trace(project, name="trunc-trace-1")
+        _create_trace(project, name="trunc-trace-2")
+
+        queue_id = _create_queue(auth_client, name="Trunc Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        # Filter-mode rule (`conditions.filter` payload) → resolver path
+        # → _add_source_ids_to_queue. Use an explicit time filter so the
+        # CH path engages if CH is available; the PG fallback also exercises
+        # the same dry-run early return.
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Trunc rule",
+                "source_type": "trace",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": "created_at",
+                            "filter_config": {
+                                "filter_type": "datetime",
+                                "filter_op": "greater_than",
+                                "filter_value": "2020-01-01T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        # Force the peek to see truncation by patching the evaluator's cap.
+        from model_hub.utils import annotation_queue_helpers as _h
+
+        original_eval = _h.evaluate_rule
+
+        def _capped_eval(rule, dry_run=False, user=None, cap=None):
+            return original_eval(rule, dry_run=dry_run, user=user, cap=1)
+
+        with _patch.object(_h, "evaluate_rule", side_effect=_capped_eval):
+            from model_hub.models.annotation_queues import AutomationRule
+
+            rule = AutomationRule.objects.get(pk=rule_id)
+            result = _h.evaluate_rule(rule, dry_run=True, cap=1)
+
+        assert result.get("truncated") is True, (
+            f"dry_run with cap=1 against 2 matches must set truncated=True; "
+            f"got {result!r}"
+        )
+
     def test_preview_rule_requires_queue_manager(
         self, auth_client, organization, workspace
     ):
@@ -607,6 +758,16 @@ class TestAutomationRulesE2E:
         assert rule.last_triggered_at is not None
         assert rule.trigger_count == 1
 
+        # Back-date last_triggered_at past the 30s multi-click guard so the
+        # next evaluation isn't 409'd as a duplicate run.
+        from datetime import timedelta as _td
+
+        from django.utils import timezone as _tz
+
+        AutomationRule.objects.filter(pk=rule_id).update(
+            last_triggered_at=_tz.now() - _td(minutes=5)
+        )
+
         # Evaluate again — trigger_count should increment
         resp = auth_client.post(
             f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
@@ -616,6 +777,45 @@ class TestAutomationRulesE2E:
 
         rule.refresh_from_db()
         assert rule.trigger_count == 2
+
+    def test_manual_rule_ignores_last_triggered_as_data_watermark(
+        self, auth_client, organization, workspace, user
+    ):
+        """Manual reservations must not hide existing backlog rows.
+
+        The manual endpoint reserves async runs by bumping ``last_triggered_at``
+        before the worker starts. If manual evaluation treats that timestamp as
+        a high-watermark, old matching rows are skipped entirely.
+        """
+        project = _create_project(organization, workspace, name="Manual Backlog")
+        trace = _create_trace(project, name="old matching trace")
+        old_time = timezone.now() - timedelta(hours=1)
+        type(trace).objects.filter(pk=trace.pk).update(
+            created_at=old_time,
+            updated_at=old_time,
+        )
+
+        queue_id = _create_queue(auth_client, name="Manual Backlog Q")
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        queue.project = project
+        queue.save(update_fields=["project", "updated_at"])
+
+        rule = AutomationRule.objects.create(
+            queue=queue,
+            organization=organization,
+            name="Manual backlog rule",
+            source_type="trace",
+            conditions={},
+            enabled=True,
+            trigger_frequency=AutomationRuleTriggerFrequency.MANUAL.value,
+            last_triggered_at=timezone.now(),
+        )
+
+        result = evaluate_rule(rule, user=user, cap=100)
+
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.filter(queue=queue, trace_id=trace.id).exists()
 
     # -----------------------------------------------------------------------
     # 11. Long-form operators from frontend LLMFilterBox
@@ -2786,3 +2986,292 @@ class TestAutomationRulesE2E:
         assert result["matched"] == 0
         assert result["added"] == 0
         assert "totally_made_up_column" in result.get("error", "")
+
+
+@pytest.mark.django_db
+class TestAutomationRuleEvaluateAsyncContract:
+    """Verifies the real 202 contract — bypasses the inline-evaluate fixture
+    used by the legacy test class so we exercise the actual production path.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow_entitlements(self):
+        with patch(
+            "ee.usage.services.entitlements.Entitlements.can_create",
+            return_value=SimpleNamespace(allowed=True),
+        ):
+            yield
+
+    def test_evaluate_returns_202_with_workflow_id(
+        self, auth_client, organization, workspace
+    ):
+        """Manual /evaluate must schedule async + return 202 when the rule's
+        filter resolves to more than ``RULE_RUN_SYNC_THRESHOLD`` items.
+
+        Below the threshold it runs inline (covered by other tests). To force
+        the async path here without seeding thousands of traces we patch the
+        threshold down to 0 so any non-empty match triggers it.
+        """
+        project = _create_project(organization, workspace, name="Async Project")
+        # Two traces — anything > 0 trips the patched threshold.
+        _create_trace(project, name="async-trace-1")
+        _create_trace(project, name="async-trace-2")
+
+        queue_id = _create_queue(auth_client, name="Async Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Async rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch(
+            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+            0,
+        ), patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync",
+            return_value="wf-test-12345",
+        ) as mock_start:
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_202_ACCEPTED
+        assert resp.data["status"] == "scheduled"
+        assert resp.data["workflow_id"] == "wf-test-12345"
+        assert "email" in resp.data["message"].lower()
+
+        mock_start.assert_called_once()
+        call_kwargs = mock_start.call_args.kwargs
+        assert call_kwargs["activity_name"] == "evaluate_rule_manual_async"
+        assert call_kwargs["queue"] == "tasks_l"
+        assert call_kwargs["kwargs"]["rule_id"] == rule_id
+        assert call_kwargs["task_id"].startswith(
+            f"automation-rule-eval-{rule_id}-"
+        )
+
+    def test_evaluate_small_run_returns_200_inline(
+        self, auth_client, organization, workspace
+    ):
+        """Below ``RULE_RUN_SYNC_THRESHOLD`` the endpoint runs inline and
+        returns 200 with the eval result — no Temporal scheduling, no email.
+        """
+        project = _create_project(organization, workspace, name="Sync Project")
+        _create_trace(project, name="sync-trace-1")
+        _create_trace(project, name="sync-trace-2")
+
+        queue_id = _create_queue(auth_client, name="Sync Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Sync rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync"
+        ) as mock_start:
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 2
+        assert result["added"] == 2
+        assert result["duplicates"] == 0
+        # Sync path must not touch Temporal at all.
+        mock_start.assert_not_called()
+
+    def test_evaluate_second_click_within_30s_returns_409(
+        self, auth_client, organization, workspace
+    ):
+        """Rapid double-click on Run Now should 409, not fire a second run.
+
+        Backend uses the rule's ``last_triggered_at`` as a 30s lockout. The
+        QueueItem unique constraint already prevents data corruption, but
+        without this guard a double-click on the async path would spawn two
+        workflows + two completion emails, which is both confusing and
+        wasteful.
+        """
+        project = _create_project(organization, workspace, name="Spam Project")
+        _create_trace(project, name="spam-trace-1")
+
+        queue_id = _create_queue(auth_client, name="Spam Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Spam rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch("tfc.temporal.drop_in.runner.start_activity_sync"):
+            first = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+            second = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_409_CONFLICT
+        # 409 body should carry a human-readable message so the FE can
+        # surface it as a warning toast rather than a generic error.
+        body = second.data
+        msg = body.get("result") or body.get("detail") or ""
+        assert "in progress" in str(msg).lower() or "already" in str(msg).lower()
+
+    def test_evaluate_again_after_30s_lockout_succeeds(
+        self, auth_client, organization, workspace
+    ):
+        """After the 30s lockout expires, the rule can be re-run normally."""
+        project = _create_project(organization, workspace, name="ReRun Project")
+        _create_trace(project, name="rerun-trace-1")
+
+        queue_id = _create_queue(auth_client, name="ReRun Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "ReRun rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch("tfc.temporal.drop_in.runner.start_activity_sync"):
+            first = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+        assert first.status_code == status.HTTP_200_OK
+
+        # Simulate clock advancing past the 30s window.
+        from datetime import timedelta as _td
+
+        from django.utils import timezone as _tz
+
+        AutomationRule.objects.filter(pk=rule_id).update(
+            last_triggered_at=_tz.now() - _td(minutes=1)
+        )
+
+        with patch("tfc.temporal.drop_in.runner.start_activity_sync"):
+            second = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+        assert second.status_code == status.HTTP_200_OK
+
+    def test_async_path_reserves_rule_before_scheduling(
+        self, auth_client, organization, workspace
+    ):
+        """For async runs, ``last_triggered_at`` must be bumped *before* the
+        workflow is scheduled, not later inside the activity. Otherwise two
+        clicks arriving within the worker's pickup window both pass the 30s
+        multi-click guard and spawn duplicate workflows/emails. Regression
+        guard for Codex P2 finding.
+        """
+        project = _create_project(organization, workspace, name="Reserve Project")
+        _create_trace(project, name="reserve-trace")
+
+        queue_id = _create_queue(auth_client, name="Reserve Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Reserve rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        rule_before = AutomationRule.objects.get(pk=rule_id)
+        assert rule_before.last_triggered_at is None
+
+        with patch(
+            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+            0,
+        ), patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync",
+            return_value="wf-async",
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
+                format="json",
+            )
+        assert resp.status_code == status.HTTP_202_ACCEPTED
+
+        # last_triggered_at was reserved synchronously by the view, not by
+        # the (mocked-away) worker. The 30s guard now has something to fire on.
+        rule_after = AutomationRule.objects.get(pk=rule_id)
+        assert rule_after.last_triggered_at is not None
+
+    def test_async_schedule_failure_releases_reservation(
+        self, auth_client, organization, workspace
+    ):
+        """If start_activity_sync fails, the reservation must be rolled back
+        so the user can retry immediately instead of waiting out the 30s
+        lockout."""
+        project = _create_project(organization, workspace, name="Rollback Project")
+        _create_trace(project, name="rollback-trace")
+
+        queue_id = _create_queue(auth_client, name="Rollback Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Rollback rule",
+                "source_type": "trace",
+                "conditions": {},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        with patch(
+            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+            0,
+        ), patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync",
+            side_effect=RuntimeError("temporal unreachable"),
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        rule_after = AutomationRule.objects.get(pk=rule_id)
+        # Schedule failed → reservation rolled back so user can retry now.
+        assert rule_after.last_triggered_at is None

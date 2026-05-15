@@ -22,7 +22,7 @@ import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { isCellValueEmpty } from "src/components/table/utils";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
-import headerComponentLabels from "../../agents/headerComponetLabels";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 export const AllowedGroups = [
   "Evaluation Metrics",
@@ -359,17 +359,12 @@ export const applyQuickFilters =
     }
 
     if (filter) {
-      // Convert to extraFilters format (snake_case) for the new filter state
-      const extraFilter = {
-        column_id: filter.columnId,
-        filter_config: {
-          filter_type: filter.filterConfig?.filterType || "text",
-          filter_op: filter.filterConfig?.filterOp || "equals",
-          filter_value: Array.isArray(filter.filterConfig?.filterValue)
-            ? filter.filterConfig.filterValue.join(",")
-            : filter.filterConfig?.filterValue,
-        },
-      };
+      const extraFilter = buildApiFilterFromPanelRow({
+        field: filter.columnId,
+        fieldType: filter.filterConfig?.filterType,
+        operator: filter.filterConfig?.filterOp,
+        value: filter.filterConfig?.filterValue,
+      });
       setFilters((prev) => {
         const exists = (prev || []).some(
           (f) =>
@@ -689,9 +684,8 @@ export const generateAnnotationColumnsForTracing = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotationLabelType;
@@ -700,7 +694,6 @@ export const generateAnnotationColumnsForTracing = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: metricId,
@@ -711,6 +704,7 @@ export const generateAnnotationColumnsForTracing = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.[metricId];
@@ -729,7 +723,8 @@ export const generateAnnotationColumnsForTracing = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -737,10 +732,14 @@ export const generateAnnotationColumnsForTracing = (
         field: `${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.[metricId];
@@ -764,10 +763,14 @@ export const generateAnnotationColumnsForTracing = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -786,21 +789,12 @@ export const generateAnnotationColumnsForTracing = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 export const DOC_LINKS = {

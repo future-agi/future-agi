@@ -60,4 +60,23 @@ MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
         queue="default",
         description="Evaluate due annotation automation rules",
     ),
+    ScheduleConfig(
+        schedule_id="annotation-realtime-digest",
+        activity_name="send_annotation_realtime_digest_task",
+        # 15-min cron. Per-user throttle of 1/hour is enforced in the
+        # activity body so users see at most 4 ticks/hour but at most one
+        # email/hour even if they accrue items continuously.
+        interval_seconds=900,
+        queue="default",
+        description="Realtime annotation digest (new items since last email)",
+    ),
+    ScheduleConfig(
+        schedule_id="annotation-daily-digest",
+        activity_name="send_annotation_daily_digest_task",
+        # Hourly cron; the activity decides per-user whether the user's
+        # local hour matches their preferred digest hour (default 9).
+        interval_seconds=3600,
+        queue="default",
+        description="Daily annotation digest at user-local morning",
+    ),
 ]

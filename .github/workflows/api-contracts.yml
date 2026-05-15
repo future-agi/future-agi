@@ -1,0 +1,145 @@
+name: API Contracts
+
+on:
+  pull_request:
+    branches: [main, develop, dev]
+    paths:
+      - "api_contracts/**"
+      - "frontend/src/api/contracts/**"
+      - "frontend/src/api/annotation-queues/**"
+      - "frontend/src/api/scores/**"
+      - "frontend/src/utils/axios.js"
+      - "frontend/src/sections/annotations/**"
+      - "frontend/src/sections/projects/**"
+      - "frontend/scripts/generate-filter-contract.mjs"
+      - "frontend/scripts/generate-api-surface-contract.mjs"
+      - "frontend/scripts/generate-openapi-client.mjs"
+      - "frontend/scripts/generate-openapi-contract.mjs"
+      - "frontend/scripts/check-api-surface-usage.mjs"
+      - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/scores.py"
+      - "futureagi/model_hub/views/annotation_queues.py"
+      - "futureagi/model_hub/views/scores.py"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/services/clickhouse/query_builders/**"
+      - "futureagi/tracer/utils/filter_operators.py"
+      - "futureagi/tracer/utils/filters.py"
+      - "futureagi/tracer/utils/helper.py"
+      - "futureagi/tracer/views/**"
+      - ".github/workflows/api-contracts.yml"
+  push:
+    branches: [main, develop, dev]
+    paths:
+      - "api_contracts/**"
+      - "frontend/src/api/contracts/**"
+      - "frontend/src/api/annotation-queues/**"
+      - "frontend/src/api/scores/**"
+      - "frontend/src/utils/axios.js"
+      - "frontend/src/sections/annotations/**"
+      - "frontend/src/sections/projects/**"
+      - "frontend/scripts/generate-filter-contract.mjs"
+      - "frontend/scripts/generate-api-surface-contract.mjs"
+      - "frontend/scripts/generate-openapi-client.mjs"
+      - "frontend/scripts/generate-openapi-contract.mjs"
+      - "frontend/scripts/check-api-surface-usage.mjs"
+      - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/scores.py"
+      - "futureagi/model_hub/views/annotation_queues.py"
+      - "futureagi/model_hub/views/scores.py"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/services/clickhouse/query_builders/**"
+      - "futureagi/tracer/utils/filter_operators.py"
+      - "futureagi/tracer/utils/filters.py"
+      - "futureagi/tracer/utils/helper.py"
+      - "futureagi/tracer/views/**"
+      - ".github/workflows/api-contracts.yml"
+  workflow_dispatch:
+
+jobs:
+  frontend-contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.17"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Check generated filter contract
+        run: yarn contracts:check
+
+      - name: Run annotation/filter contract tests
+        run: >
+          yarn test:run
+          src/api/contracts/__tests__/filter-contract.test.js
+          src/api/contracts/__tests__/api-surface.test.js
+          src/api/annotation-queues/__tests__/annotation-queues.test.js
+          src/api/scores/__tests__/scores.test.js
+          src/sections/projects/LLMTracing/__tests__/TraceFilterPanel.test.jsx
+
+  backend-contracts:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_DB: postgres
+      PG_TEST_DB: test_tfc_test
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      TESTING: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Check generated Swagger schema
+        working-directory: .
+        run: |
+          ./scripts/generate-openapi-schema.sh
+          git diff --exit-code api_contracts/openapi/swagger.json
+
+      - name: Run annotation/filter contract tests
+        run: >
+          uv run pytest -q
+          tracer/tests/test_filter_contract.py
+          tracer/tests/test_validate_filters_helper.py
+          tracer/tests/test_filter_engine_parity.py
+          model_hub/tests/test_annotation_api_contract.py
+          model_hub/tests/test_annotation_workflow_api.py

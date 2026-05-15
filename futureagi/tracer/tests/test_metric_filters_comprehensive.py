@@ -238,7 +238,7 @@ class TestCHMetricFilters:
     def test_has_annotation_joins_through_span(self):
         """Score.trace_id is often NULL — must join via observation_span to resolve trace_id."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
 
     def test_has_eval_casts_to_string(self):

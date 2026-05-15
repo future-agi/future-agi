@@ -896,3 +896,38 @@ class AutomationRule(BaseModel):
 
     def __str__(self):
         return f"AutomationRule: {self.name} (queue={self.queue_id})"
+
+
+class AnnotationNotificationState(BaseModel):
+    """Per-user state for the annotation digest emails.
+
+    Tracks two cadences:
+    - **Realtime (every 15min cron):** when ``last_realtime_digest_at`` is
+      older than the 60-minute throttle, eligible to fire if there are new
+      pending items since that timestamp.
+    - **Daily (hourly cron):** when local-time-now matches
+      ``daily_digest_hour_local`` and ``last_daily_digest_at`` is older
+      than ~12h, eligible to fire with a current-state snapshot.
+
+    ``digest_enabled = False`` opts the user out of both tracks
+    (unsubscribe link in the email footer flips this). ``realtime_snoozed_until``
+    pauses just the realtime track for N days when the user clicks Snooze.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="annotation_notification_state",
+    )
+    last_realtime_digest_at = models.DateTimeField(null=True, blank=True)
+    last_daily_digest_at = models.DateTimeField(null=True, blank=True)
+    digest_enabled = models.BooleanField(default=True)
+    realtime_snoozed_until = models.DateTimeField(null=True, blank=True)
+    daily_digest_hour_local = models.IntegerField(
+        default=9,
+        help_text="Hour of day (0-23) to send the daily digest in the user's local TZ.",
+    )
+
+    def __str__(self):
+        return f"AnnotationNotificationState({self.user_id})"

@@ -160,21 +160,31 @@ const SessionGrid = React.forwardRef(
         }
       }
 
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (cols.length === 1) {
-          const c = cols[0];
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          return getSessionListColumnDef(c);
-        } else {
-          return {
-            headerName: group,
-            children: cols.map((c) => {
-              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+      const columnDefsResult = Object.entries(grouping).flatMap(
+        ([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
               return getSessionListColumnDef(c);
-            }),
-          };
-        }
-      });
+            });
+          }
+          if (cols.length === 1) {
+            const c = cols[0];
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getSessionListColumnDef(c);
+          } else {
+            return {
+              headerName: group,
+              children: cols.map((c) => {
+                bottomRowObj[c?.id] = c?.average
+                  ? `Average ${c?.average}`
+                  : null;
+                return getSessionListColumnDef(c);
+              }),
+            };
+          }
+        },
+      );
 
       return {
         columnDefs: columnDefsResult,

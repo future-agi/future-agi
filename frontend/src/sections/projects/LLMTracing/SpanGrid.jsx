@@ -315,7 +315,13 @@ const SpanGrid = React.forwardRef(
         }
       });
       if (annotationColumns?.length > 0) {
-        columnDefsResult.push(annotationColumns[0]);
+        for (const group of annotationColumns) {
+          if (group.children) {
+            columnDefsResult.push(...group.children);
+          } else {
+            columnDefsResult.push(group);
+          }
+        }
       }
       return {
         columnDefs: columnDefsResult,

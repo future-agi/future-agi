@@ -118,9 +118,36 @@ class CreateScoreTool(BaseTool):
         raw_value = _get_raw_value(params)
         score_value = _to_score_value(label.type, raw_value)
 
+        # Resolve a default queue item so this agent-tool score is scoped
+        # under the per-queue uniqueness contract — otherwise repeated
+        # tool invocations on the same (source, label, annotator) would
+        # leave orphan duplicates that the on_commit auto-attach can't
+        # safely move into a default queue (it would IntegrityError on
+        # the destination key).
+        from model_hub.utils.annotation_queue_helpers import (
+            resolve_default_queue_item_for_source,
+        )
+
+        score_source_type = "observation_span" if span else "trace"
+        score_source_obj = span if span else trace
+        default_item = resolve_default_queue_item_for_source(
+            score_source_type,
+            score_source_obj,
+            context.organization,
+            context.user,
+        )
+        if default_item is None:
+            return ToolResult.error(
+                "Cannot resolve a default annotation queue for this source. "
+                "Per-queue Score uniqueness requires every score to live "
+                "in a queue context.",
+                error_code="NO_DEFAULT_QUEUE_SCOPE",
+            )
+
         score_lookup = {
             "label_id": label.pk,
             "annotator_id": context.user.pk,
+            "queue_item": default_item,
             "deleted": False,
         }
         score_defaults = {
@@ -128,14 +155,12 @@ class CreateScoreTool(BaseTool):
             "score_source": "human",
             "notes": "",
             "organization": context.organization,
+            "source_type": score_source_type,
         }
-
         if span:
             score_lookup["observation_span_id"] = span.pk
-            score_defaults["source_type"] = "observation_span"
         else:
             score_lookup["trace_id"] = trace.pk
-            score_defaults["source_type"] = "trace"
 
         annotation, created = Score.no_workspace_objects.update_or_create(
             **score_lookup, defaults=score_defaults

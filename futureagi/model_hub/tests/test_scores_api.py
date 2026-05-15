@@ -360,7 +360,7 @@ class TestBulkCreateScores:
             created_by_user=user,
         ).exists()
 
-    def test_for_source_prefills_span_notes_for_trace_queue_item(
+    def test_for_source_does_not_prefill_orphan_span_notes(
         self,
         auth_client,
         observe_project,
@@ -370,7 +370,12 @@ class TestBulkCreateScores:
         user,
         workspace,
     ):
-        """Reopening trace call annotation should prefill notes from root span."""
+        """A pre-existing SpanNote on the root span must NOT prefill a
+        fresh queue's editable ``existing_notes`` box. The SpanNote
+        belongs to a different (or no) queue context — bleeding it into
+        every queue containing the same span is the leak the per-queue
+        scoping work removes. The note is still surfaced as read-only
+        context in the ``span_notes`` list."""
         import json
 
         from tracer.models.span_notes import SpanNotes
@@ -417,7 +422,17 @@ class TestBulkCreateScores:
         result = resp.data["result"]
         assert len(result) == 1
         assert result[0]["item"]["source_id"] == str(trace.id)
-        assert result[0]["existing_notes"] == "whole call note"
+        # Editable existing_notes is empty for this queue — the SpanNote
+        # was not written via this queue's flow.
+        assert result[0]["existing_notes"] == ""
+        # The requester's own SpanNote is filtered out of the read-only
+        # span_notes list to avoid the "you see your note but can't edit
+        # it" UX trap — they'd only see this if a *different* user had
+        # written a SpanNote on the same span.
+        assert not any(
+            note.get("notes") == "whole call note"
+            for note in result[0]["span_notes"]
+        )
         assert result[0]["span_notes_source_id"] == observation_span.id
 
     def test_queue_annotate_detail_prefills_and_saves_item_notes(
@@ -462,7 +477,17 @@ class TestBulkCreateScores:
 
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
         detail = detail_resp.data["result"]
-        assert detail["existing_notes"] == "existing whole item note"
+        # Editable existing_notes is strictly per-queue: pre-existing
+        # SpanNote does not prefill this queue's notes box anymore.
+        # The requester's own SpanNote is also filtered from the read-only
+        # span_notes list (would otherwise be a "see-but-can't-edit"
+        # UX trap). It would appear there only if a *different* user
+        # had created the SpanNote on the same span.
+        assert detail["existing_notes"] == ""
+        assert not any(
+            note.get("notes") == "existing whole item note"
+            for note in detail.get("span_notes", [])
+        )
         assert detail["span_notes_source_id"] == observation_span.id
 
         submit_resp = auth_client.post(
@@ -716,19 +741,27 @@ class TestAutoCompleteQueueItems:
         thumbs_label,
         queue_setup,
     ):
-        """Queue item auto-completes when all required labels are scored.
+        """Queue item auto-completes when all required labels are scored
+        *in that queue's context*.
 
-        Auto-complete now runs in ``transaction.on_commit`` (so a side-effect
-        failure can't poison the Score write transaction). Pytest's default
-        ``django_db`` mark wraps the test in a transaction that rolls back,
-        so on_commit hooks never fire. Wrap calls in
-        ``captureOnCommitCallbacks(execute=True)`` to force them to run.
+        Scores are now per-queue: the caller must pass ``queue_item_id``
+        (or score via the queue's submit endpoint) so the Score lands in
+        the right queue. An "inline" /scores/ POST without queue_item_id
+        attributes the score to the source's default queue, which leaves
+        a non-default test queue's item pending — that's the intended
+        per-queue isolation, exercised by ``test_no_auto_complete_partial_scoring``.
+
+        Auto-complete still runs in ``transaction.on_commit`` (so a
+        side-effect failure can't poison the Score write transaction).
+        Pytest's default ``django_db`` mark wraps the test in a
+        transaction that rolls back, so on_commit hooks never fire. Wrap
+        calls in ``captureOnCommitCallbacks(execute=True)`` to force them.
         """
         from django.test import TestCase
 
         queue, item = queue_setup
 
-        # Score first label
+        # Score first label (attribute to the test queue's item explicitly).
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -737,13 +770,14 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(star_label.id),
                     "value": {"rating": 4},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score second required label → should auto-complete
+        # Score second required label in the same queue → should auto-complete.
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -752,6 +786,7 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(thumbs_label.id),
                     "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )

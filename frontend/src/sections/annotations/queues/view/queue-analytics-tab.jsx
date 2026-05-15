@@ -16,7 +16,10 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useQueueAnalytics } from "src/api/annotation-queues/annotation-queues";
+import {
+  annotationQueueEndpoints,
+  useQueueAnalytics,
+} from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
 
 function StatCard({ title, value, color = "text.primary" }) {
@@ -249,7 +252,7 @@ export default function QueueAnalyticsTab({ queueId }) {
     try {
       const { default: axiosInstance } = await import("src/utils/axios");
       const response = await axiosInstance.get(
-        `/model-hub/annotation-queues/${queueId}/export/`,
+        annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
       );
       const blob = new Blob([response.data]);

@@ -2727,7 +2727,12 @@ describe("AnnotateFooter", () => {
         hasNext={true}
       />,
     );
-    expect(screen.getByText("Item 3 of 10")).toBeInTheDocument();
+    // The position is rendered as "<pos> / <total>" split across spans
+    // for typographic styling, so assert each part is present rather than
+    // matching the full string against a single text node.
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText("/")).toBeInTheDocument();
   });
 
   it("renders Previous and Next buttons", () => {

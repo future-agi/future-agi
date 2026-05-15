@@ -32,6 +32,8 @@ from django.db.models import (
 from django.db.models.functions import Cast, Coalesce, Floor, JSONObject, NullIf, Round
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -84,6 +86,10 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import DECODER, CallAttributes, ConversationAttributes
 from tracer.views.observation_span import get_observation_spans
+
+
+class TraceTagsUpdateSerializer(serializers.Serializer):
+    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
 
 
 def _sanitize_nonfinite_floats(value):
@@ -198,23 +204,28 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
                 score_val = float(score_val) if score_val is not None else None
             except (ValueError, TypeError):
                 score_val = None
+            if score_val is None:
+                continue
             entry = annotation_map[tid].setdefault(
-                lid, {"score": None, "annotators": {}}
+                lid, {"score": None, "_sum": 0.0, "_count": 0, "annotators": {}}
             )
-            if uid and score_val is not None:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "score": score_val,
-                }
-            scores_list = [
-                a["score"]
-                for a in entry["annotators"].values()
-                if a.get("score") is not None
-            ]
-            entry["score"] = (
-                int(sum(scores_list) / len(scores_list)) if scores_list else None
-            )
+            entry["_sum"] += score_val
+            entry["_count"] += 1
+            entry["score"] = int(entry["_sum"] / entry["_count"])
+            if uid:
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "_sum": 0.0,
+                        "_count": 0,
+                        "score": None,
+                    },
+                )
+                anno["_sum"] += score_val
+                anno["_count"] += 1
+                anno["score"] = anno["_sum"] / anno["_count"]
 
         elif ltype == "thumbs_up_down":
             thumb_val = val.get("value") if isinstance(val, dict) else val
@@ -223,15 +234,26 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
                 lid, {"thumbs_up": 0, "thumbs_down": 0, "annotators": {}}
             )
             if is_up:
-                entry["thumbs_up"] = entry.get("thumbs_up", 0) + 1
+                entry["thumbs_up"] += 1
             else:
-                entry["thumbs_down"] = entry.get("thumbs_down", 0) + 1
+                entry["thumbs_down"] += 1
             if uid:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "score": 100.0 if is_up else 0.0,
-                }
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "_up": 0,
+                        "_down": 0,
+                        "score": None,
+                    },
+                )
+                if is_up:
+                    anno["_up"] += 1
+                else:
+                    anno["_down"] += 1
+                total = anno["_up"] + anno["_down"]
+                anno["score"] = (anno["_up"] / total) * 100.0 if total else None
 
         elif ltype == "categorical":
             selected = (
@@ -243,17 +265,22 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
             for choice in selected:
                 entry[choice] = entry.get(choice, 0) + 1
             if uid:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "value": selected,
-                }
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "value": [],
+                    },
+                )
+                anno["value"] = list({*anno["value"], *selected})
 
         elif ltype == "text":
             text_val = val.get("text", val) if isinstance(val, dict) else val
             entry = annotation_map[tid].setdefault(
                 lid, {"score": text_val, "annotators": {}}
             )
+            entry["score"] = text_val
             if uid:
                 entry["annotators"][uid] = {
                     "user_id": uid,
@@ -263,11 +290,32 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
         else:
             annotation_map[tid].setdefault(lid, {"score": val, "annotators": {}})
 
+    # Strip internal accumulators before returning — same rationale as
+    # the PG path.
+    for trace_entry in annotation_map.values():
+        for label_entry in trace_entry.values():
+            label_entry.pop("_sum", None)
+            label_entry.pop("_count", None)
+            for anno in label_entry.get("annotators", {}).values():
+                anno.pop("_sum", None)
+                anno.pop("_count", None)
+                anno.pop("_up", None)
+                anno.pop("_down", None)
+
     return annotation_map
 
 
 def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_types):
-    """PG fallback implementation of annotation map builder."""
+    """PG fallback implementation of annotation map builder.
+
+    Per-queue scoring means a single (trace, label, annotator) can now
+    have multiple Score rows — one per queue review context. The trace
+    list aggregate must average across *every* contribution, not collapse
+    them by annotator. We accumulate counts/sums while iterating and
+    average per-annotator within their queues as well so the per-annotator
+    breakdown stays meaningful (one number per annotator, averaging their
+    queues).
+    """
     from django.db.models import Q
 
     from model_hub.models.score import Score
@@ -311,40 +359,61 @@ def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_
                 score_val = float(score_val) if score_val is not None else None
             except (ValueError, TypeError):
                 score_val = None
+            if score_val is None:
+                continue
             entry = annotation_map[tid].setdefault(
-                lid, {"score": None, "annotators": {}}
+                lid, {"score": None, "_sum": 0.0, "_count": 0, "annotators": {}}
             )
-            if uid and score_val is not None:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "score": score_val,
-                }
-            scores_list = [
-                a["score"]
-                for a in entry["annotators"].values()
-                if a.get("score") is not None
-            ]
-            entry["score"] = (
-                int(sum(scores_list) / len(scores_list)) if scores_list else None
-            )
+            entry["_sum"] += score_val
+            entry["_count"] += 1
+            entry["score"] = int(entry["_sum"] / entry["_count"])
+            if uid:
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "_sum": 0.0,
+                        "_count": 0,
+                        "score": None,
+                    },
+                )
+                anno["_sum"] += score_val
+                anno["_count"] += 1
+                anno["score"] = anno["_sum"] / anno["_count"]
 
         elif ltype == "thumbs_up_down":
             thumb_val = val.get("value") if isinstance(val, dict) else val
             is_up = thumb_val in (True, "up", 1, "true")
             entry = annotation_map[tid].setdefault(
-                lid, {"thumbs_up": 0, "thumbs_down": 0, "annotators": {}}
+                lid,
+                {
+                    "thumbs_up": 0,
+                    "thumbs_down": 0,
+                    "annotators": {},
+                },
             )
             if is_up:
-                entry["thumbs_up"] = entry.get("thumbs_up", 0) + 1
+                entry["thumbs_up"] += 1
             else:
-                entry["thumbs_down"] = entry.get("thumbs_down", 0) + 1
+                entry["thumbs_down"] += 1
             if uid:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "score": 100.0 if is_up else 0.0,
-                }
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "_up": 0,
+                        "_down": 0,
+                        "score": None,
+                    },
+                )
+                if is_up:
+                    anno["_up"] += 1
+                else:
+                    anno["_down"] += 1
+                total = anno["_up"] + anno["_down"]
+                anno["score"] = (anno["_up"] / total) * 100.0 if total else None
 
         elif ltype == "categorical":
             selected = (
@@ -356,17 +425,23 @@ def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_
             for choice in selected:
                 entry[choice] = entry.get(choice, 0) + 1
             if uid:
-                entry["annotators"][uid] = {
-                    "user_id": uid,
-                    "user_name": user_name,
-                    "value": selected,
-                }
+                anno = entry["annotators"].setdefault(
+                    uid,
+                    {
+                        "user_id": uid,
+                        "user_name": user_name,
+                        "value": [],
+                    },
+                )
+                anno["value"] = list({*anno["value"], *selected})
 
         elif ltype == "text":
             text_val = val.get("text", val) if isinstance(val, dict) else val
             entry = annotation_map[tid].setdefault(
                 lid, {"score": text_val, "annotators": {}}
             )
+            # Keep latest text as the aggregate display (text doesn't average)
+            entry["score"] = text_val
             if uid:
                 entry["annotators"][uid] = {
                     "user_id": uid,
@@ -375,6 +450,19 @@ def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_
                 }
         else:
             annotation_map[tid].setdefault(lid, {"score": val, "annotators": {}})
+
+    # Strip internal aggregation accumulators so the JSON payload stays
+    # clean. The frontend only needs `score`, per-annotator scores, and
+    # the categorical/thumbs counts.
+    for trace_entry in annotation_map.values():
+        for label_entry in trace_entry.values():
+            label_entry.pop("_sum", None)
+            label_entry.pop("_count", None)
+            for anno in label_entry.get("annotators", {}).values():
+                anno.pop("_sum", None)
+                anno.pop("_count", None)
+                anno.pop("_up", None)
+                anno.pop("_down", None)
 
     return annotation_map
 
@@ -1332,17 +1420,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         return eval_configs, base_query
 
+    @swagger_auto_schema(request_body=TraceTagsUpdateSerializer)
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a trace."""
         try:
             trace_id = kwargs.get("pk")
             trace = Trace.objects.get(id=trace_id)
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
+            serializer = TraceTagsUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            tags = serializer.validated_data["tags"]
             trace.tags = tags
             trace.save(update_fields=["tags", "updated_at"])
             return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})

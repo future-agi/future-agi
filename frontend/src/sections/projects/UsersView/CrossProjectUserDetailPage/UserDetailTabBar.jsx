@@ -72,10 +72,7 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
           const display = config.display || {};
           if (subTab === "sessions") {
             if (display.dateFilter) {
-              next.set(
-                "sessionDateFilter",
-                JSON.stringify(display.dateFilter),
-              );
+              next.set("sessionDateFilter", JSON.stringify(display.dateFilter));
             }
             if (display.cellHeight) {
               next.set("sessionCellHeight", JSON.stringify(display.cellHeight));
@@ -160,7 +157,8 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
     const cachedResult = cached?.data?.result;
     const cachedList =
       cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
-    const view = cachedList.find((v) => v.id === id) ??
+    const view =
+      cachedList.find((v) => v.id === id) ??
       customViews.find((v) => v.id === id);
     if (view?.config) {
       const subTab = view.config.sub_tab || view.config.subTab || "sessions";

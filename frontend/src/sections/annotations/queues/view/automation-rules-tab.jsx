@@ -236,7 +236,20 @@ export default function AutomationRulesTab({ queueId, queue }) {
         setEvaluatingRuleId(rule.id);
         evaluateRule(
           { queueId, ruleId: rule.id },
-          { onSettled: () => setEvaluatingRuleId(null) },
+          {
+            onSettled: (_data, error) => {
+              if (error) {
+                setEvaluatingRuleId(null);
+                return;
+              }
+              // Keep the button disabled for 30s after the request settles —
+              // matches the backend's 30s "already running" 409 guard so a
+              // second click can't fire a duplicate workflow or land on the
+              // 409 path. 30s is short enough that legitimate re-runs aren't
+              // impacted; users see a brief "Running…" / disabled state.
+              setTimeout(() => setEvaluatingRuleId(null), 30_000);
+            },
+          },
         );
       },
       onDeleteConfirm: (rule) => setDeleteTarget(rule),

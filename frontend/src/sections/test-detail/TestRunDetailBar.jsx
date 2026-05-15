@@ -100,6 +100,8 @@ const transformColumnStructureToColDef = (columnStructure) => {
   groupOrder.forEach((groupName) => {
     if (groupName === DEFAULT_GROUP_NAME) {
       colDefs.push(...groupMap[DEFAULT_GROUP_NAME]);
+    } else if (groupName === "Annotation Metrics") {
+      colDefs.push(...(groupMap[groupName] || []));
     } else {
       colDefs.push({
         headerName: groupName,

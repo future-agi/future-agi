@@ -1236,7 +1236,11 @@ function FilterRow({
       }
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
       // Multi → single: drop stale extra picks.
-      if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
+      if (
+        SINGLE_VALUE_OPS.has(newOp) &&
+        Array.isArray(newVal) &&
+        newVal.length > 1
+      ) {
         newVal = [newVal[0]];
       }
       // Single → list: picker expects an array.
@@ -1461,8 +1465,7 @@ function FilterRow({
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
         singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) ||
-          SINGLE_VALUE_OPS.has(safeOperator)
+          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
         }
         onChange={(newVal) => updateRow({ value: newVal })}
       />

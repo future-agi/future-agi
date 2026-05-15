@@ -5,7 +5,9 @@
   "description": "Repo-level tooling for Future AGI (hooks + formatters). App code lives in frontend/ and futureagi/.",
   "scripts": {
     "prepare": "husky",
-    "lint-staged": "lint-staged"
+    "lint-staged": "lint-staged",
+    "contracts:generate": "scripts/generate-openapi-schema.sh && yarn --cwd frontend contracts:generate",
+    "contracts:check": "scripts/generate-openapi-schema.sh && yarn --cwd frontend contracts:check && git diff --exit-code api_contracts/openapi/swagger.json frontend/src/api/contracts/filter-contract.generated.js frontend/src/api/contracts/api-surface.generated.js frontend/src/api/contracts/openapi-contract.generated.js frontend/src/api/contracts/openapi-client.generated.js"
   },
   "devDependencies": {
     "husky": "^9.1.7",

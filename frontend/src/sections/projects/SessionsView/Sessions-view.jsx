@@ -335,8 +335,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
     const baselineExtraFilters = activeViewConfig.extraFilters || [];
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption =
-      baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -623,10 +622,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // Push visibility into AG Grid directly when the api is available so
     // the display matches without waiting for re-render. Done before the
     // snapshot below so canSaveView's baseline matches the just-applied state.
-    if (
-      display.visibleColumns &&
-      typeof display.visibleColumns === "object"
-    ) {
+    if (display.visibleColumns && typeof display.visibleColumns === "object") {
       const next = { ...display.visibleColumns };
       setUpdateObj(next);
       const api = sessionGridApiRef.current?.api;
