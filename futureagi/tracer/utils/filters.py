@@ -252,8 +252,8 @@ class FilterEngine:
             tuple: (column_id, filter_config) with normalized parameter names
         """
         column_id = filter_item.get("columnId") or filter_item.get("column_id")
-        filter_config = filter_item.get("filterConfig") or filter_item.get(
-            "filter_config", {}
+        filter_config = (
+            filter_item.get("filterConfig") or filter_item.get("filter_config") or {}
         )
 
         if filter_config:
