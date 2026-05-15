@@ -1,0 +1,31 @@
+name: Gateway CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentcc-gateway
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      - name: go test
+        run: go test ./... -count=1 -timeout 120s
+
+      - name: go test -race (server pkg)
+        run: go test -race ./internal/server/... -count=1 -timeout 120s
+
+      - name: go vet
+        run: go vet ./...

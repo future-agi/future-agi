@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import { Alert, Box, Card, CardContent, CircularProgress, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useResolveSharedLink } from "src/api/shared-links";
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
@@ -18,6 +18,91 @@ import { isVoiceCall } from "./sharedViewHelpers";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
+}
+
+// ---------------------------------------------------------------------------
+// SharedDashboardView — read-only dashboard layout for public share links.
+// Renders widget cards in their configured grid positions. Chart data is not
+// loaded (requires auth); each card shows the widget name and type instead.
+// ---------------------------------------------------------------------------
+function SharedDashboardView({ data }) {
+  const widgets = data?.widgets || [];
+  const sorted = [...widgets].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+
+  // Group into rows (same logic as DashboardDetailView.computeRows)
+  const rows = [];
+  let row = [];
+  let rowWidth = 0;
+  for (const w of sorted) {
+    const width = w.width ?? 12;
+    if (rowWidth + width > 12 && row.length > 0) {
+      rows.push(row);
+      row = [];
+      rowWidth = 0;
+    }
+    row.push(w);
+    rowWidth += width;
+  }
+  if (row.length > 0) rows.push(row);
+
+  const chartTypeLabel = (cfg) => {
+    const t = cfg?.chart_type || cfg?.chartType;
+    return t ? t.replace(/_/g, " ") : "chart";
+  };
+
+  return (
+    <Box sx={{ flex: 1, overflow: "auto", p: 3 }}>
+      <Alert severity="info" sx={{ mb: 3 }}>
+        This is a read-only shared dashboard. Sign in to view live chart data.
+      </Alert>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        {data?.name || "Dashboard"}
+      </Typography>
+      {widgets.length === 0 && (
+        <Typography color="text.secondary">No widgets in this dashboard.</Typography>
+      )}
+      {rows.map((rowWidgets, ri) => (
+        <Box key={ri} sx={{ display: "flex", gap: 1, mb: 1 }}>
+          {rowWidgets.map((w) => (
+            <Card
+              key={w.id}
+              variant="outlined"
+              sx={{
+                flex: `0 0 ${((w.width ?? 12) / 12) * 100}%`,
+                maxWidth: `${((w.width ?? 12) / 12) * 100}%`,
+                height: w.height && w.height > 50 ? w.height : 220,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <CardContent sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <Typography variant="subtitle2" fontWeight="fontWeightSemiBold" noWrap>
+                  {w.name || "Untitled"}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1 }}>
+                  {chartTypeLabel(w.chart_config)}
+                </Typography>
+                <Box
+                  sx={{
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    bgcolor: "action.hover",
+                    borderRadius: 1,
+                  }}
+                >
+                  <Typography variant="caption" color="text.disabled">
+                    Sign in to view data
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 export default function SharedView() {
@@ -368,6 +453,8 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          <SharedDashboardView data={resourceData} />
         ) : (
           /* Non-trace resource — just show the raw data */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
