@@ -50,7 +50,7 @@ import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
 import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
-import { EvalPickerDrawer } from "../../EvalPicker";
+import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 
 // ── Configured Eval Card ──
 
@@ -321,6 +321,8 @@ const EditTaskDrawerV2Content = ({
     async (evalConfig) => {
       const tplId = evalConfig.templateId || evalConfig.template_id;
       const existingId = evalConfig.id;
+      // Use serializeEvalConfig so function-params land at config.params.
+      const serialized = serializeEvalConfig(evalConfig);
       try {
         let id;
         if (existingId) {
@@ -331,7 +333,7 @@ const EditTaskDrawerV2Content = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -345,7 +347,7 @@ const EditTaskDrawerV2Content = ({
               eval_template: tplId,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               filters: getNewTaskFilters(formValues, observeId, true).filters,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },

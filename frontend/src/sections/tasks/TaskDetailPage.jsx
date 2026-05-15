@@ -72,6 +72,7 @@ const TaskDetailPage = () => {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task updated successfully", { variant: "success" });
     },
     onError: (err) => {
@@ -85,6 +86,7 @@ const TaskDetailPage = () => {
     mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task paused", { variant: "success" });
     },
   });
@@ -93,6 +95,7 @@ const TaskDetailPage = () => {
     mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task resumed", { variant: "success" });
     },
   });
@@ -105,6 +108,7 @@ const TaskDetailPage = () => {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task renamed", { variant: "success" });
     },
   });

@@ -89,8 +89,11 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.eval_output_type = eval_output_type
         self.eval_name = eval_name or "Unknown"
         self.choices = choices or []
-        self.use_preaggregated = use_preaggregated
         self.filters = filters or []
+        # Pre-aggregated eval rows do not carry arbitrary trace/span filter
+        # dimensions. If filters are present, force the raw logger path so the
+        # graph reflects the filtered result set.
+        self.use_preaggregated = use_preaggregated and not self.filters
 
         # Default time range
         if start_date is None or end_date is None:
@@ -115,9 +118,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         )
 
         fb = ClickHouseFilterBuilder(project_ids=[self.project_id])
-        extra_where = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(self.filters)
         if extra_where:
-            self.params.update(fb.params)
+            self.params.update(extra_params)
             return (
                 f"AND trace_id IN ("
                 f"SELECT DISTINCT trace_id FROM spans "
@@ -282,14 +285,17 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             # No choices defined -- return a simple count query
             return self._build_score_raw()
 
-        # Build per-choice columns:
-        # countIf(has(output_str_list, 'choice_name')) * 100.0 / count()
+        # Build per-choice columns. ClickHouse stores output_str_list as a JSON
+        # string, so parse it before calling has(); output_str is kept as the
+        # single-choice fallback for older rows/imports.
         choice_cols: List[str] = []
+        choice_array_expr = "JSONExtract(output_str_list, 'Array(String)')"
         for i, choice in enumerate(self.choices):
             param_name = f"choice_{i}"
             self.params[param_name] = choice
             choice_cols.append(
-                f"countIf(has(output_str_list, %({param_name})s)) * 100.0 "
+                f"countIf(has({choice_array_expr}, %({param_name})s) "
+                f"OR output_str = %({param_name})s) * 100.0 "
                 f"/ greatest(count(), 1) AS `choice_{i}`"
             )
 

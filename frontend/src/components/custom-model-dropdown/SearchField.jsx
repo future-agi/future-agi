@@ -23,6 +23,9 @@ const SearchField = forwardRef(
       logoUrl,
       multiple,
       onClick,
+      // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+      // eslint-disable-next-line no-unused-vars
+      shrink: _shrink,
       ...rest
     },
     ref,
@@ -230,4 +233,5 @@ SearchField.propTypes = {
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,
+  shrink: PropTypes.bool,
 };

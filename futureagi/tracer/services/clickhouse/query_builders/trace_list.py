@@ -467,14 +467,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT
-            toString(trace_id) AS trace_id,
-            toString(label_id) AS label_id,
-            anyLast(value) AS value,
-            toString(anyLast(annotator_id)) AS annotator_id
-        FROM {self.ANNOTATION_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND trace_id IN %(trace_ids)s
-          AND label_id IN %(label_ids)s
+            if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+            ) AS trace_id,
+            toString(s.label_id) AS label_id,
+            anyLast(s.value) AS value,
+            toString(anyLast(s.annotator_id)) AS annotator_id
+        FROM {self.ANNOTATION_TABLE} AS s FINAL
+        LEFT JOIN {self.TABLE} AS sp
+          ON sp.id = s.observation_span_id
+         AND sp._peerdb_is_deleted = 0
+        WHERE s._peerdb_is_deleted = 0
+          AND s.deleted = false
+          AND if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+              ) IN %(trace_ids)s
+          AND s.label_id IN %(label_ids)s
         GROUP BY trace_id, label_id
         """
         return query, params

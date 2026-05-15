@@ -631,6 +631,7 @@ const TestPlayground = React.forwardRef(
       configParamsDesc = null,
       code = "",
       codeLanguage = "python",
+      isSystemEval = false,
       onReadyChange,
     },
     ref,
@@ -744,19 +745,22 @@ const TestPlayground = React.forwardRef(
         return Array.isArray(requiredKeys) ? [...new Set(requiredKeys)] : [];
       }
 
-      // For code evals: live-parse the user's `def evaluate(...)` / JS
-      // destructuring signature so new params surface in the mapping panel
-      // as soon as they're typed. Fall back to explicit requiredKeys
-      // (system evals define these) and finally to the standard trio.
+      // For code evals: system evals always have the canonical signature
+      // `evaluate(input, output, expected, context, **kwargs)` and store
+      // the real keys in YAML required_keys — use those directly.
+      // User-authored code is live-parsed so newly typed kwargs surface
+      // as mapping rows. Standard trio is the last-resort fallback.
       let codeStdVars = [];
       if (evalType === "code") {
-        const liveParams = extractCodeEvaluateParams(code, codeLanguage);
-        if (liveParams.length > 0) {
-          codeStdVars = liveParams;
-        } else if (Array.isArray(requiredKeys) && requiredKeys.length > 0) {
-          codeStdVars = requiredKeys;
+        if (isSystemEval) {
+          codeStdVars =
+            Array.isArray(requiredKeys) && requiredKeys.length > 0
+              ? requiredKeys
+              : ["input", "output", "expected"];
         } else {
-          codeStdVars = ["input", "output", "expected"];
+          const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+          codeStdVars =
+            liveParams.length > 0 ? liveParams : ["input", "output", "expected"];
         }
       }
 
@@ -779,6 +783,7 @@ const TestPlayground = React.forwardRef(
       templateFormat,
       code,
       codeLanguage,
+      isSystemEval,
     ]);
 
     // Custom input values
@@ -1458,9 +1463,19 @@ const TestPlayground = React.forwardRef(
                                 : String(schema?.default ?? "")
                             }
                             value={codeParams[key] ?? ""}
-                            onChange={(e) =>
-                              handleCodeParamChange(key, e.target.value)
-                            }
+                            onChange={(e) => {
+                              // BE's `type: number` schema rejects strings; coerce here.
+                              const raw = e.target.value;
+                              const isNumeric =
+                                schema?.type === "integer" ||
+                                schema?.type === "number";
+                              let next = raw;
+                              if (isNumeric && raw !== "") {
+                                const n = Number(raw);
+                                if (!Number.isNaN(n)) next = n;
+                              }
+                              handleCodeParamChange(key, next);
+                            }}
                             sx={{
                               flex: 1,
                               px: 1,
@@ -1859,6 +1874,7 @@ TestPlayground.propTypes = {
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
+  isSystemEval: PropTypes.bool,
 };
 
 export default TestPlayground;

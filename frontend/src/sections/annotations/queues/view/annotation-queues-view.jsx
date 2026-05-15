@@ -113,18 +113,27 @@ export default function AnnotationQueuesView() {
     deleteQueue(archiveQueue.id, {
       onSuccess: () => {
         const queueId = archiveQueue.id;
-        enqueueSnackbar("Queue deleted", {
-          variant: "info",
-          action: () => (
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => restoreQueue(queueId)}
-            >
-              Undo
-            </Button>
-          ),
-        });
+        // Soft archive — explicit Undo button so users who clicked the
+        // wrong queue can recover instantly. The default-queue
+        // restore-on-recreate happens server-side too, but this is the
+        // explicit one-click path.
+        enqueueSnackbar(
+          archiveQueue.is_default
+            ? "Default queue archived. Rules paused; will restore on next visit."
+            : "Queue archived. Rules paused.",
+          {
+            variant: "info",
+            action: () => (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => restoreQueue(queueId)}
+              >
+                Undo
+              </Button>
+            ),
+          },
+        );
         setArchiveQueue(null);
       },
     });
@@ -327,15 +336,18 @@ export default function AnnotationQueuesView() {
       <ConfirmDialog
         open={!!archiveQueue}
         onClose={() => setArchiveQueue(null)}
-        title="Delete Queue"
+        title="Archive Queue"
         content={
           <>
             <Typography>
-              Are you sure you want to delete{" "}
-              <strong>{archiveQueue?.name}</strong>?
+              Archive <strong>{archiveQueue?.name}</strong>?
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Deleting will stop all annotation work on this queue.
+              Automation rules will pause and items will be hidden, but
+              everything stays recoverable.
+              {archiveQueue?.is_default
+                ? " Visiting the project page again will restore this queue automatically."
+                : " You can restore from the archived tab any time."}
             </Typography>
           </>
         }
@@ -343,11 +355,11 @@ export default function AnnotationQueuesView() {
           <LoadingButton
             size="small"
             variant="contained"
-            color="error"
+            color="warning"
             loading={isDeleting}
             onClick={handleConfirmDelete}
           >
-            Delete
+            Archive
           </LoadingButton>
         }
       />

@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -131,6 +132,41 @@ class TestGetEvalTemplate:
             "get_eval_template", {"eval_template_id": str(uuid.uuid4())}, tool_context
         )
         assert result.is_error
+
+
+class TestTestEvalTemplateTool:
+    def test_uses_target_template_without_deterministic_base(self, tool_context):
+        template = make_eval_template(
+            tool_context,
+            name="dry-run-eval",
+            owner="user",
+            eval_type="llm",
+            config={
+                "eval_type_id": "CustomPromptEvaluator",
+                "required_keys": ["input"],
+                "output": "Pass/Fail",
+                "rule_prompt": "Judge {{input}}",
+            },
+            criteria="Judge {{input}}",
+            model="turing_large",
+        )
+
+        with patch(
+            "model_hub.views.separate_evals.run_eval_func",
+            return_value={"data": "Passed", "reason": "ok"},
+        ) as mock_run:
+            result = run_tool(
+                "test_eval_template",
+                {
+                    "eval_template_id": str(template.id),
+                    "mapping": {"input": "hello"},
+                },
+                tool_context,
+            )
+
+        assert not result.is_error
+        assert result.data["template_id"] == str(template.id)
+        assert mock_run.call_args.args[2].id == template.id
 
 
 # ===================================================================

@@ -172,9 +172,13 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = mock_agent_def
 
-        exists, suggestions, agent_def = get_agent_suggestions(
-            mock_project, "trace", [str(uuid.uuid4())], False
-        )
+        with patch(
+            "tracer.utils.replay_session._get_next_replay_scenario_version",
+            return_value=1,
+        ):
+            exists, suggestions, agent_def = get_agent_suggestions(
+                mock_project, "trace", [str(uuid.uuid4())], False
+            )
 
         assert exists is True
         assert suggestions["agent_name"] == "Existing Agent"
@@ -197,9 +201,15 @@ class TestGetAgentSuggestions:
         mock_get_agent_def_from_sessions.return_value = None
         mock_get_prompt.return_value = "System prompt from traces"
 
-        exists, suggestions, agent_def = get_agent_suggestions(
-            mock_project, "trace", [str(uuid.uuid4())], False
-        )
+        with patch(
+            "tracer.utils.replay_session._get_next_replay_scenario_version",
+            return_value=1,
+        ), patch(
+            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        ):
+            exists, suggestions, agent_def = get_agent_suggestions(
+                mock_project, "trace", [str(uuid.uuid4())], False
+            )
 
         assert exists is False
         assert "New Project" in suggestions["agent_name"]
@@ -222,9 +232,15 @@ class TestGetAgentSuggestions:
         mock_get_agent_def_from_sessions.return_value = None
         mock_get_prompt.return_value = None
 
-        exists, suggestions, agent_def = get_agent_suggestions(
-            mock_project, "trace", [], False
-        )
+        with patch(
+            "tracer.utils.replay_session._get_next_replay_scenario_version",
+            return_value=1,
+        ), patch(
+            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        ):
+            exists, suggestions, agent_def = get_agent_suggestions(
+                mock_project, "trace", [], False
+            )
 
         assert exists is False
         assert suggestions["agent_description"] == ""
@@ -245,9 +261,13 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = mock_agent_def
 
-        exists, suggestions, agent_def = get_agent_suggestions(
-            mock_project, "session", [], False
-        )
+        with patch(
+            "tracer.utils.replay_session._get_next_replay_scenario_version",
+            return_value=1,
+        ):
+            exists, suggestions, agent_def = get_agent_suggestions(
+                mock_project, "session", [], False
+            )
 
         assert exists is True
         assert suggestions["version_name"] is None
@@ -343,6 +363,7 @@ class TestGetOrCreateAgentDefinition:
             agent_name="Updated Agent",
             agent_description="New description",
             agent_type="voice",
+            voice_config=None,
         )
 
     @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
@@ -395,6 +416,7 @@ class TestGetOrCreateAgentDefinition:
             agent_type="voice",
             inbound=True,
             organization=mock_project.organization,
+            workspace=mock_project.workspace,
             languages=["en"],
         )
 
@@ -520,24 +542,24 @@ class TestGetTranscriptsFromTraceQuery:
         trace_id_2 = uuid.uuid4()
 
         mock_queryset = MagicMock()
-        mock_annotated = MagicMock()
-        mock_queryset.annotate.return_value = mock_annotated
-        mock_annotated.values.return_value = [
+        mock_queryset.values.return_value = [
             {
                 "id": trace_id_1,
                 "input": "Input 1",
                 "output": "Output 1",
-                "has_simulator_call_execution_id": False,
             },
             {
                 "id": trace_id_2,
                 "input": "Input 2",
                 "output": "Output 2",
-                "has_simulator_call_execution_id": False,
             },
         ]
 
-        result = _get_transcripts_from_trace_query(mock_queryset)
+        with patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_trace_query(mock_queryset)
 
         assert str(trace_id_1) in result
         assert str(trace_id_2) in result
@@ -547,9 +569,7 @@ class TestGetTranscriptsFromTraceQuery:
     def test_returns_empty_dict_for_empty_queryset(self):
         """Should return empty dict when queryset is empty."""
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.values.return_value = []
+        mock_queryset.values.return_value = []
 
         result = _get_transcripts_from_trace_query(mock_queryset)
 
@@ -559,18 +579,19 @@ class TestGetTranscriptsFromTraceQuery:
         """Should have single turn per trace."""
         trace_id = uuid.uuid4()
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.values.return_value = [
+        mock_queryset.values.return_value = [
             {
                 "id": trace_id,
                 "input": "Hello",
                 "output": "Hi",
-                "has_simulator_call_execution_id": False,
             }
         ]
 
-        result = _get_transcripts_from_trace_query(mock_queryset)
+        with patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_trace_query(mock_queryset)
 
         assert len(result[str(trace_id)]) == 1
 
@@ -591,20 +612,24 @@ class TestGetTranscriptsFromSessionQuery:
         mock_annotate.order_by.return_value = mock_order
         mock_order.values.return_value = [
             {
+                "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 1 input",
                 "output": "Turn 1 output",
-                "has_simulator_call_execution_id": False,
             },
             {
+                "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 2 input",
                 "output": "Turn 2 output",
-                "has_simulator_call_execution_id": False,
             },
         ]
 
-        result = _get_transcripts_from_session_query(mock_queryset)
+        with patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(mock_queryset)
 
         assert str(session_id) in result
         assert len(result[str(session_id)]) == 2
@@ -622,20 +647,24 @@ class TestGetTranscriptsFromSessionQuery:
         mock_annotate.order_by.return_value = mock_order
         mock_order.values.return_value = [
             {
+                "id": uuid.uuid4(),
                 "session_id": session_id_1,
                 "input": "S1 Input",
                 "output": "S1 Output",
-                "has_simulator_call_execution_id": False,
             },
             {
+                "id": uuid.uuid4(),
                 "session_id": session_id_2,
                 "input": "S2 Input",
                 "output": "S2 Output",
-                "has_simulator_call_execution_id": False,
             },
         ]
 
-        result = _get_transcripts_from_session_query(mock_queryset)
+        with patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(mock_queryset)
 
         assert len(result) == 2
         assert str(session_id_1) in result
@@ -674,8 +703,12 @@ class TestGetTranscriptsFromSessionQuery:
 class TestCreateScenario:
     """Tests for create_scenario function."""
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_creates_scenario_with_correct_fields(self, mock_scenarios):
+    def test_creates_scenario_with_correct_fields(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should create scenario with correct field values."""
         mock_project = MagicMock()
         mock_project.id = uuid.uuid4()
@@ -684,8 +717,11 @@ class TestCreateScenario:
 
         mock_agent_def = MagicMock()
         mock_agent_def.agent_name = "Test Agent"
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         mock_scenario = MagicMock()
+        mock_sim_agent = MagicMock()
+        mock_simulator_agent.objects.create.return_value = mock_sim_agent
         mock_scenarios.objects.create.return_value = mock_scenario
 
         result = create_scenario(
@@ -705,23 +741,34 @@ class TestCreateScenario:
         assert call_kwargs["organization"] == mock_project.organization
         assert call_kwargs["workspace"] == mock_project.workspace
         assert call_kwargs["agent_definition"] == mock_agent_def
+        assert call_kwargs["simulator_agent"] == mock_sim_agent
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_sets_processing_status(self, mock_scenarios):
+    def test_sets_processing_status(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should set status to PROCESSING."""
         mock_project = MagicMock()
         mock_agent_def = MagicMock()
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         create_scenario(mock_project, mock_agent_def, "Name", "Desc")
 
         call_kwargs = mock_scenarios.objects.create.call_args[1]
         assert call_kwargs["status"] == StatusType.PROCESSING.value
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_sets_graph_scenario_type(self, mock_scenarios):
+    def test_sets_graph_scenario_type(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should set scenario_type to GRAPH."""
         mock_project = MagicMock()
         mock_agent_def = MagicMock()
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         mock_scenarios.ScenarioTypes.GRAPH = "graph"
 
@@ -730,12 +777,17 @@ class TestCreateScenario:
         call_kwargs = mock_scenarios.objects.create.call_args[1]
         assert call_kwargs["scenario_type"] == mock_scenarios.ScenarioTypes.GRAPH
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_includes_project_id_in_metadata(self, mock_scenarios):
+    def test_includes_project_id_in_metadata(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should include project_id in metadata."""
         mock_project = MagicMock()
         mock_project.id = uuid.uuid4()
         mock_agent_def = MagicMock()
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         create_scenario(mock_project, mock_agent_def, "Name", "Desc")
 
@@ -743,12 +795,17 @@ class TestCreateScenario:
         assert call_kwargs["metadata"]["project_id"] == str(mock_project.id)
         assert call_kwargs["metadata"]["created_from"] == "replay_session"
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_uses_fallback_description_when_empty(self, mock_scenarios):
+    def test_uses_fallback_description_when_empty(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should use fallback description when agent_description is empty."""
         mock_project = MagicMock()
         mock_agent_def = MagicMock()
         mock_agent_def.agent_name = "My Agent"
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         create_scenario(mock_project, mock_agent_def, "Name", "")
 
@@ -757,11 +814,16 @@ class TestCreateScenario:
             "Generated from replay session for My Agent" in call_kwargs["description"]
         )
 
+    @patch("tracer.utils.replay_session.generate_simulator_agent_prompt")
+    @patch("tracer.utils.replay_session.SimulatorAgent")
     @patch("tracer.utils.replay_session.Scenarios")
-    def test_uses_provided_description(self, mock_scenarios):
+    def test_uses_provided_description(
+        self, mock_scenarios, mock_simulator_agent, mock_generate_prompt
+    ):
         """Should use provided description when not empty."""
         mock_project = MagicMock()
         mock_agent_def = MagicMock()
+        mock_generate_prompt.return_value = "Generated simulator prompt"
 
         create_scenario(mock_project, mock_agent_def, "Name", "Custom description")
 

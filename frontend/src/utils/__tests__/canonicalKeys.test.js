@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { canonicalKeys, canonicalEntries, canonicalValues } from "../utils";
 
-// Helper that simulates the axios response interceptor: add a camelCase
-// alias alongside every snake_case key so iteration sees both.
+// Helper that simulates a legacy object containing both canonical keys and
+// old alias keys so iteration sees both.
 const withAliases = (obj) => {
   const out = { ...obj };
   Object.keys(obj).forEach((k) => {

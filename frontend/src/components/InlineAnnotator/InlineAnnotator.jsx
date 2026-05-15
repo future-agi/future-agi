@@ -169,7 +169,18 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
     bulkCreate(
       { sourceType, sourceId, scores, notes, spanNotes: notes },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          // Inspect errors[] before exiting edit mode. The mutation hook
+          // already shows a partial-failure snackbar; here we just keep the
+          // user in edit mode so they can retry the failed labels without
+          // having to re-open the annotator.
+          const result = response?.data?.result || {};
+          const errors = result.errors || [];
+          if (errors.length > 0) {
+            // Keep editing open; values stay populated for retry.
+            onScoresChanged?.();
+            return;
+          }
           setEditing(false);
           setNotes("");
           onScoresChanged?.();

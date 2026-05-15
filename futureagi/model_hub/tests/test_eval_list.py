@@ -44,6 +44,7 @@ def user_eval_template(organization, workspace, user):
         organization=organization,
         workspace=workspace,
         owner=OwnerChoices.USER.value,
+        eval_type="code",
         config={"output": "score", "eval_type_id": "Regex"},
         eval_tags=["code", "function"],
         visible_ui=True,
@@ -58,6 +59,7 @@ def agent_eval_template(organization, workspace):
         organization=organization,
         workspace=workspace,
         owner=OwnerChoices.USER.value,
+        eval_type="agent",
         config={"output": "choices", "eval_type_id": "AgentEval"},
         eval_tags=["agent", "agentic"],
         visible_ui=True,
@@ -124,6 +126,8 @@ class TestDeriveEvalType:
             eval_tags=["function"],
             visible_ui=True,
         )
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(eval_type="")
+        template.refresh_from_db()
         assert derive_eval_type(template) == "code"
 
     def test_deterministic_evaluator_is_llm(self, db, organization):
@@ -148,6 +152,8 @@ class TestDeriveEvalType:
             eval_tags=["FUNCTION", "RAG"],
             visible_ui=True,
         )
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(eval_type="")
+        template.refresh_from_db()
         assert derive_eval_type(template) == "code"
 
 

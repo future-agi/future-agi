@@ -88,10 +88,10 @@ class TestListAgentVersions:
         # Verify version fields present
         version_data = data["results"][0]
         assert "id" in version_data
-        assert "versionNumber" in version_data
-        assert "versionNameDisplay" in version_data
-        assert "isActive" in version_data
-        assert "isLatest" in version_data
+        assert "version_number" in version_data
+        assert "version_name_display" in version_data
+        assert "is_active" in version_data
+        assert "is_latest" in version_data
 
     def test_agent_not_found(self, auth_client):
         response = auth_client.get(_url(uuid.uuid4()))
@@ -128,7 +128,7 @@ class TestCreateAgentVersion:
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
             {
-                "commitMessage": "Updated prompts",
+                "commit_message": "Updated prompts",
                 "description": "Better refund handling",
             },
             format="json",
@@ -137,12 +137,12 @@ class TestCreateAgentVersion:
         data = response.json()
         assert data["message"] == "Agent version created successfully"
         assert "version" in data
-        assert data["version"]["versionNumber"] == 2
+        assert data["version"]["version_number"] == 2
 
     def test_creates_snapshot(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
-            {"commitMessage": "Snapshot test"},
+            {"commit_message": "Snapshot test"},
             format="json",
         )
         assert response.status_code == status.HTTP_201_CREATED
@@ -156,8 +156,8 @@ class TestCreateAgentVersion:
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
             {
-                "agentName": "Renamed Agent",
-                "commitMessage": "Renamed",
+                "agent_name": "Renamed Agent",
+                "commit_message": "Renamed",
             },
             format="json",
         )
@@ -168,7 +168,7 @@ class TestCreateAgentVersion:
     def test_agent_not_found(self, auth_client):
         response = auth_client.post(
             _url(uuid.uuid4(), "create/"),
-            {"commitMessage": "Test"},
+            {"commit_message": "Test"},
             format="json",
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -176,7 +176,7 @@ class TestCreateAgentVersion:
     def test_invalid_data(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
-            {"agentName": "   "},
+            {"agent_name": "   "},
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -184,7 +184,7 @@ class TestCreateAgentVersion:
     def test_unauthenticated(self, api_client, agent_definition):
         response = api_client.post(
             _url(agent_definition.id, "create/"),
-            {"commitMessage": "Test"},
+            {"commit_message": "Test"},
             format="json",
         )
         assert response.status_code in [
@@ -208,8 +208,8 @@ class TestGetAgentVersion:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["id"] == str(agent_version.id)
-        assert "configurationSnapshot" in data
-        assert isinstance(data["configurationSnapshot"], dict)
+        assert "configuration_snapshot" in data
+        assert isinstance(data["configuration_snapshot"], dict)
 
     def test_agent_not_found(self, auth_client, agent_version):
         response = auth_client.get(_version_url(uuid.uuid4(), agent_version.id))
@@ -224,7 +224,7 @@ class TestGetAgentVersion:
     ):
         response = auth_client.get(_version_url(agent_definition.id, agent_version.id))
         data = response.json()
-        snapshot = data["configurationSnapshot"]
+        snapshot = data["configuration_snapshot"]
         for key, value in snapshot.items():
             if value is not None:
                 assert isinstance(

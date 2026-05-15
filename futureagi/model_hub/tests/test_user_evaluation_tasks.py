@@ -9,6 +9,14 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _allow_usage_metering():
+    """Unit tests in this file mock eval execution; usage metering is covered elsewhere."""
+    with patch("ee.usage.services.metering.check_usage") as mock_check_usage:
+        mock_check_usage.return_value = MagicMock(allowed=True)
+        yield mock_check_usage
+
+
 class TestProcessSingleEvaluation:
     """Tests for process_single_evaluation function."""
 
@@ -438,8 +446,15 @@ class TestProcessSingleErrorLocalization:
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("ee.usage.services.metering.check_usage")
     def test_processes_error_localization_successfully(
-        self, mock_close, mock_error_task, mock_workspace, mock_log_cost, mock_localizer
+        self,
+        mock_check_usage,
+        mock_close,
+        mock_error_task,
+        mock_workspace,
+        mock_log_cost,
+        mock_localizer,
     ):
         """Test successful error localization processing."""
         from model_hub.models.error_localizer_model import ErrorLocalizerStatus
@@ -448,6 +463,8 @@ class TestProcessSingleErrorLocalization:
             from ee.usage.models.usage import APICallStatusChoices
         except ImportError:
             APICallStatusChoices = None
+
+        mock_check_usage.return_value = MagicMock(allowed=True)
 
         mock_task = MagicMock()
         mock_task.id = "task-123"
@@ -486,8 +503,9 @@ class TestProcessSingleErrorLocalization:
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("ee.usage.services.metering.check_usage")
     def test_fails_when_api_call_not_allowed(
-        self, mock_close, mock_error_task, mock_workspace, mock_log_cost
+        self, mock_check_usage, mock_close, mock_error_task, mock_workspace, mock_log_cost
     ):
         """Test that task is marked failed when API call is not allowed."""
         from model_hub.models.error_localizer_model import ErrorLocalizerStatus
@@ -499,6 +517,7 @@ class TestProcessSingleErrorLocalization:
         mock_task.workspace = MagicMock()
         mock_task.organization = MagicMock()
         mock_error_task.objects.get.return_value = mock_task
+        mock_check_usage.return_value = MagicMock(allowed=True)
 
         mock_log_cost.return_value = None  # API call not allowed
 

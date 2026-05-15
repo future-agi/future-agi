@@ -85,6 +85,15 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         self._filter_params: Dict[str, Any] = {}
         self._translate_filters()
 
+    @staticmethod
+    def _eval_choice_match_expr(param_name: str = "choice_val") -> str:
+        """Return exact choice membership against CH's JSON-string list column."""
+        choice_array = "JSONExtract(output_str_list, 'Array(String)')"
+        return (
+            f"(has({choice_array}, %({param_name})s) "
+            f"OR output_str = %({param_name})s)"
+        )
+
     def _translate_filters(self) -> None:
         """Translate raw monitor filter JSON into CH WHERE clause fragments."""
         ch_conditions: List[str] = []
@@ -321,9 +330,10 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS value", params
             params["choice_val"] = self.threshold_metric_value
+            choice_match = self._eval_choice_match_expr()
             query = f"""
                 SELECT avg(
-                    CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END
+                    CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END
                 ) AS value
                 FROM {EVAL_TABLE} FINAL
                 {eval_where}
@@ -493,13 +503,14 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS mean, NULL AS stddev", params
             params["choice_val"] = self.threshold_metric_value
+            choice_match = self._eval_choice_match_expr()
             query = f"""
                 SELECT
                     avg(choice_value) AS mean,
                     stddevSamp(choice_value) AS stddev
                 FROM (
                     SELECT
-                        CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END AS choice_value
+                        CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END AS choice_value
                     FROM {EVAL_TABLE} FINAL
                     {eval_where}
                       AND created_at BETWEEN %(start_time)s AND %(end_time)s
@@ -685,7 +696,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
             params["choice_val"] = self.threshold_metric_value
-            agg = "avg(CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END)"
+            choice_match = self._eval_choice_match_expr()
+            agg = f"avg(CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END)"
         else:
             return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
 

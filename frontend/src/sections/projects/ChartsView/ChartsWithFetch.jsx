@@ -7,6 +7,7 @@ import { transformEvaluationPayload } from "./common";
 import { Skeleton } from "@mui/material";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { getStorage } from "src/hooks/use-local-storage";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
 
@@ -31,7 +32,9 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
         project_id: observeId,
         property: "average",
         interval: selectedInterval?.toLowerCase(),
-        filters: JSON.stringify(objectCamelToSnake(filters)),
+        filters: JSON.stringify(
+          canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
+        ),
         ...transformEvaluationPayload(evaluation),
       };
 

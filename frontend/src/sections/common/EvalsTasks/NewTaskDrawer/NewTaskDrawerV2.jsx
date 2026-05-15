@@ -39,7 +39,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { objectCamelToSnake } from "src/utils/utils";
-import { EvalPickerDrawer } from "../../EvalPicker";
+import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 
 // ── Configured Eval Card ──
 
@@ -285,6 +285,8 @@ const NewTaskDrawerV2 = ({
     async (evalConfig) => {
       const tplId = evalConfig.templateId || evalConfig.template_id;
       const existingId = evalConfig.id;
+      // Use serializeEvalConfig so function-params land at config.params.
+      const serialized = serializeEvalConfig(evalConfig);
       try {
         let id;
         if (existingId) {
@@ -295,7 +297,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -309,7 +311,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );

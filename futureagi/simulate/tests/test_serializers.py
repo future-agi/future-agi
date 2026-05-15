@@ -479,8 +479,8 @@ class TestAddScenarioRowsSerializer:
         assert serializer.validated_data["num_rows"] == 10
 
     def test_add_rows_serializer_min_valid(self):
-        """Minimum valid num_rows (1) should pass validation."""
-        data = {"num_rows": 1}
+        """Minimum valid num_rows (10) should pass validation."""
+        data = {"num_rows": 10}
 
         serializer = AddScenarioRowsSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
@@ -493,8 +493,8 @@ class TestAddScenarioRowsSerializer:
         assert serializer.is_valid(), serializer.errors
 
     def test_add_rows_serializer_min_rows_violation(self):
-        """num_rows less than 1 should fail validation."""
-        data = {"num_rows": 0}
+        """num_rows less than 10 should fail validation."""
+        data = {"num_rows": 9}
 
         serializer = AddScenarioRowsSerializer(data=data)
         assert not serializer.is_valid()
@@ -526,7 +526,7 @@ class TestAddScenarioRowsSerializer:
 
     def test_add_rows_serializer_description_optional(self):
         """Description should be optional."""
-        data = {"num_rows": 5}
+        data = {"num_rows": 10}
 
         serializer = AddScenarioRowsSerializer(data=data)
         assert serializer.is_valid(), serializer.errors

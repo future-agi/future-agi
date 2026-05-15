@@ -28,6 +28,8 @@ import {
   useVoiceCallDetail,
 } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
+
 const BaselineVsReplayHeader = lazy(() => import("./BasLineCompare/Header"));
 
 const TestDetailSideDrawerChild = ({
@@ -131,7 +133,10 @@ const TestDetailSideDrawerChild = ({
       return {
         ...base,
         ...callExecDetail,
-        transcript: mergeTranscripts(base.transcript, callExecDetail.transcript),
+        transcript: mergeTranscripts(
+          base.transcript,
+          callExecDetail.transcript,
+        ),
       };
     }
     return base;
@@ -427,6 +432,16 @@ const TestDetailSideDrawerChild = ({
     );
   }, [mergedData?.observation_span]);
 
+  const annotationSources = useMemo(
+    () =>
+      buildVoiceCallAnnotationSources({
+        traceId,
+        rootSpanId: rootObsSpanId,
+        module: urlModule,
+        callExecutionId: data?.id,
+      }),
+    [traceId, rootObsSpanId, urlModule, data?.id],
+  );
 
   if (!data || isFetching === "initial") {
     return null;
@@ -648,27 +663,7 @@ const TestDetailSideDrawerChild = ({
         }}
       >
         <AnnotationSidebarContent
-          sources={
-            urlModule === "project"
-              ? [
-                  ...(rootObsSpanId
-                    ? [
-                        {
-                          sourceType: "observation_span",
-                          sourceId: rootObsSpanId,
-                        },
-                      ]
-                    : (data?.trace_id || data?.id)
-                    ? [
-                        {
-                          sourceType: "trace",
-                          sourceId: data?.trace_id || data?.id,
-                        },
-                      ]
-                    : []),
-                ]
-              : [{ sourceType: "call_execution", sourceId: data?.id }]
-          }
+          sources={annotationSources}
           onClose={() => setAnnotationSidebarOpen(false)}
           onScoresChanged={() => {
             queryClient.invalidateQueries({
@@ -730,7 +725,6 @@ const TestDetailSideDrawer = ({
   const handleClose = () => {
     removeRowIndex();
   };
-
 
   const hasUrlRowIndex =
     updatedRowIndex !== undefined && updatedRowIndex !== null;

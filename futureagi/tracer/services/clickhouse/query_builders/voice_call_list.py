@@ -261,13 +261,27 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT
-            toString(s.trace_id) AS trace_id,
+            if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+            ) AS trace_id,
             toString(s.label_id) AS label_id,
             toString(s.annotator_id) AS user_id,
             s.value
         FROM {self.ANNOTATION_TABLE} AS s FINAL
+        LEFT JOIN {self.TABLE} AS sp
+          ON sp.id = s.observation_span_id
+         AND sp._peerdb_is_deleted = 0
         WHERE s._peerdb_is_deleted = 0
-          AND s.trace_id IN %(trace_ids)s
+          AND s.deleted = false
+          AND if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+              ) IN %(trace_ids)s
           AND s.label_id IN %(label_ids)s
         """
         return query, params

@@ -303,6 +303,46 @@ class TestMetricsEndpoint:
         assert "cost" in metric_names
 
     @pytest.mark.django_db
+    def test_metrics_includes_span_backed_annotation_labels(
+        self, auth_client, project, observation_span, user, organization, workspace
+    ):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+        from model_hub.models.score import Score
+
+        label = AnnotationsLabels.objects.create(
+            name="Quality",
+            type=AnnotationTypeChoices.NUMERIC.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            settings={
+                "min": 0,
+                "max": 10,
+                "step_size": 1,
+                "display_type": "slider",
+            },
+        )
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=observation_span,
+            label=label,
+            annotator=user,
+            value={"value": 7},
+            score_source="human",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={project.id}"
+        )
+
+        assert response.status_code == 200
+        metric_names = [m["name"] for m in response.json()["result"]["metrics"]]
+        assert str(label.id) in metric_names
+
+    @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
     @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
     def test_metrics_suppresses_customer_attribute_aliases_when_canonical_metric_exists(
@@ -406,8 +446,8 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         assert len(queries) == 1
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
-        assert "output_float" in sql
+        assert "usage_apicalllog" in sql
+        assert "eval_score" in sql
 
     def test_eval_metric_pass_fail(self):
         config = {
@@ -428,7 +468,8 @@ class TestDashboardQueryBuilder:
         builder = DashboardQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
-        assert "output_bool" in sql
+        assert "eval_output_str" in sql
+        assert "eval_score" in sql
 
     def test_system_metric_sum_aggregation(self):
         config = {
@@ -592,7 +633,7 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         assert "model_hub_score" in sql
-        assert "JSONExtractFloat(a.value, 'value')" in sql
+        assert "JSONExtract(a.value, 'value', 'Nullable(Float64)')" in sql
         assert params["annotation_label_id"]
 
     def test_annotation_star_metric_uses_rating_value(self):
@@ -615,7 +656,7 @@ class TestDashboardQueryBuilder:
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         assert "model_hub_score" in sql
-        assert "JSONExtractFloat(a.value, 'rating')" in sql
+        assert "JSONExtract(a.value, 'rating', 'Nullable(Float64)')" in sql
 
     def test_custom_attribute_query(self):
         config = {
@@ -1292,6 +1333,111 @@ class TestDashboardQueryExecution:
         assert "c.duration_seconds IS NOT NULL" in sql
         assert "c.duration_seconds != ''" not in sql
 
+    @pytest.mark.django_db
+    def test_filter_values_annotation_annotator_returns_project_annotators(
+        self, auth_client, project, observation_span, user, organization, workspace
+    ):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+        from model_hub.models.score import Score
+
+        label = AnnotationsLabels.objects.create(
+            name="Quality",
+            type=AnnotationTypeChoices.NUMERIC.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            settings={
+                "min": 0,
+                "max": 10,
+                "step_size": 1,
+                "display_type": "slider",
+            },
+        )
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=observation_span,
+            label=label,
+            annotator=user,
+            value={"value": 7},
+            score_source="human",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": "annotator",
+                "metric_type": "annotation_metric",
+                "project_ids": str(project.id),
+            },
+        )
+
+        assert response.status_code == 200
+        values = response.json()["result"]["values"]
+        assert values == [
+            {
+                "value": str(user.id),
+                "label": user.name,
+                "name": user.name,
+                "email": user.email,
+                "description": user.email,
+            }
+        ]
+
+    @pytest.mark.django_db
+    def test_filter_values_annotation_categorical_uses_stored_score_values(
+        self, auth_client, project, observation_span, user, organization, workspace
+    ):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+        from model_hub.models.score import Score
+
+        label = AnnotationsLabels.objects.create(
+            name="Matrix",
+            type=AnnotationTypeChoices.CATEGORICAL.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            settings={
+                "options": [{"label": "accuracy"}, {"label": "coverage"}],
+                "strategy": None,
+                "auto_annotate": False,
+                "multi_choice": True,
+                "rule_prompt": "",
+            },
+        )
+        Score.objects.create(
+            source_type="observation_span",
+            observation_span=observation_span,
+            label=label,
+            annotator=user,
+            value={"selected": ["matrix"]},
+            score_source="human",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": str(label.id),
+                "metric_type": "annotation_metric",
+                "project_ids": str(project.id),
+            },
+        )
+
+        assert response.status_code == 200
+        values = response.json()["result"]["values"]
+        assert values == [
+            {"value": "accuracy", "label": "accuracy"},
+            {"value": "coverage", "label": "coverage"},
+            {"value": "matrix", "label": "matrix"},
+        ]
+
 
 class TestDashboardTraceTimeoutSelection:
     def test_default_trace_timeout_is_short(self):
@@ -1682,8 +1828,8 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         assert len(queries) == 1
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
-        assert params["eval_config_id"] == eval_uuid
+        assert "usage_apicalllog" in sql
+        assert params["eval_template_id"] == eval_uuid
 
     # --- Annotation metrics ---
 
@@ -1888,7 +2034,7 @@ class TestFrontendPayloadSimulation:
         builder = DashboardQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
-        assert "tracer_eval_logger" in sql
+        assert "eval_score" in sql
         assert "trace_id IN" in sql
 
     # --- Breakdowns ---
