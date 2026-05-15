@@ -38,6 +38,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationInput,
     RunToolCallEvaluationOutput,
 )
+from simulate.utils.eval_summary import derive_kpi_output_type
 
 logger = structlog.get_logger(__name__)
 
@@ -717,6 +718,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     "error": "error",
                     "name": eval_config.name,
                     "timestamp": timezone.now().isoformat(),
+                    "output": None,
+                    "output_type": derive_kpi_output_type(eval_template),
                 }
                 call_execution.eval_outputs[str(eval_config.id)] = error_result
                 call_execution.save(update_fields=["eval_outputs"])
@@ -837,6 +840,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             "error": "error",
             "name": eval_config.name,
             "timestamp": timezone.now().isoformat(),
+            "output": None,
+            "output_type": derive_kpi_output_type(eval_config.eval_template),
         }
         call_execution.eval_outputs[str(eval_config.id)] = error_result
         call_execution.save(update_fields=["eval_outputs"])
@@ -977,11 +982,11 @@ def _run_evaluations_standalone(
         if eval_config_ids:
             eval_configs = SimulateEvalConfig.objects.filter(
                 id__in=eval_config_ids, deleted=False
-            )
+            ).select_related("eval_template")
         else:
             eval_configs = SimulateEvalConfig.objects.filter(
                 run_test=run_test, deleted=False
-            )
+            ).select_related("eval_template")
 
         if not eval_configs.exists():
             logger.info(f"No evaluation configs found for run test {run_test.id}")
@@ -1005,7 +1010,7 @@ def _run_evaluations_standalone(
                 call_execution.eval_outputs[str(eval_config.id)] = {
                     "output": None,
                     "reason": "No transcript data available",
-                    "output_type": None,
+                    "output_type": derive_kpi_output_type(eval_config.eval_template),
                     "name": eval_config.name,
                 }
             if not call_execution.call_metadata:

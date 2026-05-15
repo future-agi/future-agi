@@ -100,6 +100,7 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
@@ -4819,6 +4820,8 @@ class TestExecutor:
                             "error": "error",
                             "name": eval_config.name,
                             "timestamp": timezone.now().isoformat(),
+                            "output": None,
+                            "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
                         call_execution.eval_outputs[str(eval_config.id)][
@@ -4931,6 +4934,8 @@ class TestExecutor:
                 "error": "error",
                 "name": eval_config.name,
                 "timestamp": timezone.now().isoformat(),
+                "output": None,
+                "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
             call_execution.eval_outputs[str(eval_config.id)][
