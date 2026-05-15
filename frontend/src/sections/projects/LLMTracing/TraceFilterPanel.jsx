@@ -296,12 +296,9 @@ const SINGLE_VALUE_OPS = new Set([
   "ends_with",
 ]);
 
-// Ops whose value picker is multi-select. Used by the hydrate path and the
-// operator-change handler to wrap scalar values into arrays when switching
-// to one of these. `is`/`is_not` (categorical/thumbs) aren't in
-// SINGLE_VALUE_OPS, so the picker defaults to multi-select — and a scalar
-// value from the wire breaks it.
-const MULTI_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
+// List ops — multi-select picker. `is`/`is_not` (categorical/thumbs) also
+// use a multi-select picker, so they belong here too.
+const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -1115,9 +1112,8 @@ function FilterRow({
       if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
         newVal = [newVal[0]];
       }
-      // Scalar → array: any multi-select op (in/not_in/is/is_not) needs
-      // its value as an array, otherwise the picker chokes.
-      if (MULTI_VALUE_OPS.has(newOp) && !Array.isArray(newVal)) {
+      // Single → list: picker expects an array.
+      if (LIST_VALUE_OPS.has(newOp) && !Array.isArray(newVal)) {
         newVal =
           newVal === "" || newVal === null || newVal === undefined
             ? []
@@ -1587,7 +1583,7 @@ const TraceFilterPanel = ({
           let value = f.value;
           if (
             hydratedOp !== f.operator &&
-            MULTI_VALUE_OPS.has(hydratedOp) &&
+            LIST_VALUE_OPS.has(hydratedOp) &&
             !Array.isArray(value)
           ) {
             value =
