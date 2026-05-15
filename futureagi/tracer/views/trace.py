@@ -3242,11 +3242,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     data = getattr(trace, f"metric_{config.id}")
                     if data and "score" in data:
                         score = data["score"]
-                        result[str(config.id)] = round(score, 2) if score is not None else None
+                        result[str(config.id)] = (
+                            round(score, 2) if score is not None else None
+                        )
                     elif data:
                         for key, value in data.items():
-                            score = value["score"] if isinstance(value, dict) and "score" in value else None
-                            result[str(config.id) + "**" + key] = round(score, 2) if score is not None else None
+                            score = (
+                                value["score"]
+                                if isinstance(value, dict) and "score" in value
+                                else None
+                            )
+                            result[str(config.id) + "**" + key] = (
+                                round(score, 2) if score is not None else None
+                            )
 
                 # Add Root Span Annotations
                 for label in annotation_labels:
@@ -4745,11 +4753,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             org = getattr(request, "organization", None) or request.user.organization
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col, _cfg = FilterEngine._normalize_filter_params(_f)
+            _col_type = _cfg.get("col_type", "NORMAL")
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:
@@ -4786,9 +4793,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_config_ids = []
         if org_scope:
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    trace__project_id__in=org_project_ids
-                )
+                id__in=EvalLogger.objects.filter(trace__project_id__in=org_project_ids)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -5263,9 +5268,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
-                                    k
-                                    for k, v in scores["per_choice"].items()
-                                    if v > 0
+                                    k for k, v in scores["per_choice"].items() if v > 0
                                 ]
                                 metric_entry["output_type"] = "str_list"
                             elif "str_list" in scores and scores["str_list"]:
