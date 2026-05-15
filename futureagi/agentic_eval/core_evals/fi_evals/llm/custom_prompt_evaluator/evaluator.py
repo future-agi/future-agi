@@ -209,12 +209,12 @@ class CustomPromptEvaluator(LLM):
                 raise ValueError(f"Missing required key in kwargs: {key}")
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
-            if isinstance(value, str) and len(value) > 15000:
-                value = fit_to_context(value, max_total_chars=15000, label=key)
+            if isinstance(value, str) and len(value) > 200000:
+                value = fit_to_context(value, max_total_chars=200000, label=key)
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
-                if len(serialized) > 15000:
-                    value = fit_to_context(value, max_total_chars=15000, label=key)
+                if len(serialized) > 200000:
+                    value = fit_to_context(value, max_total_chars=200000, label=key)
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -291,12 +291,12 @@ class CustomPromptEvaluator(LLM):
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
                 rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=15000
+                    row_context, max_chars=200000
                 )
             else:
                 ctx_str = str(row_context)
-                if len(ctx_str) > 15000:
-                    ctx_str = fit_to_context(ctx_str, max_total_chars=15000, label="data")
+                if len(ctx_str) > 200000:
+                    ctx_str = fit_to_context(ctx_str, max_total_chars=200000, label="data")
                 rendered_prompt += ctx_str
 
         logger.info(
