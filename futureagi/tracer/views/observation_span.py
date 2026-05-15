@@ -3,11 +3,11 @@ import io
 import json
 import traceback
 from collections import defaultdict
-from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime
 from time import time
+from typing import Dict, List
 
 import pandas as pd
 import structlog
@@ -70,10 +70,6 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.services.clickhouse.query_service import (
-    AnalyticsQueryService,
-    QueryType,
-)
 from tracer.serializers.observation_span import (
     ObservationSpanSerializer,
     SpanExportSerializer,
@@ -81,6 +77,10 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    QueryType,
+)
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -852,9 +852,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            org = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            org = getattr(request, "organization", None) or request.user.organization
             spans = ObservationSpan.objects.filter(
                 trace_id__in=trace_ids,
                 parent_span_id__isnull=True,
@@ -2005,18 +2003,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # the filter to `end_user_id` scoped to this project + organization.
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col, _cfg = FilterEngine._normalize_filter_params(_f)
+            _col_type = _cfg.get("col_type", "NORMAL")
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:
                     _resolved.append(_f)
                     continue
                 _ids = [
-                    str(u) for u in EndUser.objects.filter(
+                    str(u)
+                    for u in EndUser.objects.filter(
                         user_id__in=_vals,
                         organization=request.user.organization,
                         project_id=project_id,
@@ -2025,15 +2023,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 ]
                 if not _ids:
                     _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append({
-                    "column_id": "end_user_id",
-                    "filter_config": {
-                        "col_type": "NORMAL",
-                        "filter_type": "text",
-                        "filter_op": "in",
-                        "filter_value": _ids,
-                    },
-                })
+                _resolved.append(
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "col_type": "NORMAL",
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": _ids,
+                        },
+                    }
+                )
                 continue
             _resolved.append(_f)
         filters = _resolved
@@ -2189,9 +2189,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # identifier. CH only stores the UUID; the display fields live on
         # the PG EndUser table.
         end_user_ids = {
-            str(r.get("end_user_id"))
-            for r in result.data
-            if r.get("end_user_id")
+            str(r.get("end_user_id")) for r in result.data if r.get("end_user_id")
         }
         end_user_map = {}
         if end_user_ids:
@@ -2207,9 +2205,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         for row in result.data:
             span_id = str(row.get("id", ""))
             cost = row.get("cost")
-            eu = end_user_map.get(str(row.get("end_user_id"))) if row.get(
-                "end_user_id"
-            ) else None
+            eu = (
+                end_user_map.get(str(row.get("end_user_id")))
+                if row.get("end_user_id")
+                else None
+            )
             entry = {
                 "span_id": span_id,
                 "input": row.get("input", ""),
@@ -2239,11 +2239,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 # columns keyed ``{config_id}**{choice}`` to match the
                 # column config produced by
                 # ``update_column_config_based_on_eval_config``.
-                if (
-                    isinstance(val, dict)
-                    and not val.get("error")
-                    and val
-                ):
+                if isinstance(val, dict) and not val.get("error") and val:
                     for choice, pct in val.items():
                         entry[f"{config_id}**{choice}"] = pct
                 else:
@@ -2982,11 +2978,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
         keep the aggregate cheap on large projects.
         """
-        sample_trace_ids = Trace.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
+        sample_trace_ids = (
+            Trace.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
         agg = (
             ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
             .values("trace_id")
@@ -2997,11 +2993,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     def _max_traces_per_session(self, project_id: str) -> int:
         """Max trace count observed across the project's most recent sessions."""
-        sample_session_ids = TraceSession.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
+        sample_session_ids = (
+            TraceSession.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
         agg = (
             Trace.objects.filter(session_id__in=sample_session_ids)
             .values("session_id")
