@@ -684,6 +684,19 @@ def _execute_composite_on_span(
     if not child_links:
         raise ValueError(f"Composite {parent.id} has no children — cannot run on span.")
 
+    # Forward all available contexts; each child's own data_injection decides.
+    composite_contexts: dict = {
+        "span_context": build_span_context(observation_span),
+    }
+    if observation_span.trace is not None:
+        composite_contexts["trace_context"] = build_trace_context(
+            observation_span.trace, anchor_span_id=str(observation_span.id)
+        )
+        _session = getattr(observation_span.trace, "session", None)
+        _session_ctx = build_session_context(_session) if _session else None
+        if _session_ctx is not None:
+            composite_contexts["session_context"] = _session_ctx
+
     try:
         outcome = execute_composite_children_sync(
             parent=parent,
@@ -694,6 +707,7 @@ def _execute_composite_on_span(
             workspace=workspace,
             model=custom_eval_config.model,
             source="tracer_composite",
+            **composite_contexts,
         )
 
         value = (
@@ -813,6 +827,16 @@ def _execute_composite_on_trace(
             error=str(_ctx_err),
         )
 
+    # Forward all available contexts; each child's own data_injection decides.
+    composite_contexts: dict = {
+        "trace_context": build_trace_context(trace, anchor_span_id=str(anchor_span.id)),
+        "span_context": build_span_context(anchor_span),
+    }
+    _session = getattr(trace, "session", None)
+    _session_ctx = build_session_context(_session) if _session else None
+    if _session_ctx is not None:
+        composite_contexts["session_context"] = _session_ctx
+
     try:
         outcome = execute_composite_children_sync(
             parent=parent,
@@ -822,11 +846,8 @@ def _execute_composite_on_trace(
             org=org,
             workspace=workspace,
             model=custom_eval_config.model,
-            trace_context={
-                "trace_id": str(trace.id),
-                "anchor_span_id": str(anchor_span.id),
-            },
             source="tracer_composite",
+            **composite_contexts,
         )
 
         value = (
@@ -952,6 +973,11 @@ def _execute_composite_on_session(
             error=str(_ctx_err),
         )
 
+    composite_contexts: dict = {}
+    _session_ctx = build_session_context(trace_session)
+    if _session_ctx is not None:
+        composite_contexts["session_context"] = _session_ctx
+
     try:
         outcome = execute_composite_children_sync(
             parent=parent,
@@ -961,8 +987,8 @@ def _execute_composite_on_session(
             org=org,
             workspace=workspace,
             model=custom_eval_config.model,
-            session_context={"session_id": str(trace_session.id)},
             source="tracer_composite",
+            **composite_contexts,
         )
 
         value = (

@@ -298,3 +298,75 @@ class TestTraceSpanCompositeBranch:
 
         mock_composite.assert_called_once()
         assert result == {"value": 0.5}
+
+
+@pytest.mark.django_db
+class TestCompositeOnSpanContextForwarding:
+    """`_execute_composite_on_span` forwards canonical span/trace/session contexts (TH-5261)."""
+
+    def test_span_composite_always_forwards_canonical_span_context(
+        self, aggregated_composite
+    ):
+        from tracer.utils import eval as tracer_eval
+
+        recorded: dict = {}
+
+        def _capture(**kwargs):
+            recorded.update(kwargs)
+
+            class _Outcome:
+                aggregate_score = 0.7
+                aggregate_pass = True
+                summary = "ok"
+                child_results = []
+                error_localizer_results = None
+
+            return _Outcome()
+
+        fake_span = MagicMock()
+        fake_span.id = "span-abc"
+        fake_span.project.organization = MagicMock()
+        fake_span.project.workspace = MagicMock()
+        fake_span.trace = None  # trace/session contexts absent cleanly
+        # build_span_context uses getattr with defaults — sufficient for capture.
+        fake_span.name = "user.message"
+        fake_span.observation_type = "span"
+        fake_span.status = "OK"
+        fake_span.status_message = None
+        fake_span.model = "turing_large"
+        fake_span.latency_ms = 12
+        fake_span.total_tokens = 100
+        fake_span.cost = 0
+
+        fake_cfg = MagicMock()
+        fake_cfg.eval_template = aggregated_composite
+        fake_cfg.eval_template.template_type = "composite"
+        fake_cfg.config = {}
+        fake_cfg.model = "turing_large"
+
+        with (
+            patch.object(
+                tracer_eval.ObservationSpan.objects, "select_related"
+            ) as mock_span_select,
+            patch.object(tracer_eval.CustomEvalConfig.objects, "get") as mock_cfg_get,
+            patch(
+                "model_hub.utils.composite_execution.execute_composite_children_sync",
+                side_effect=_capture,
+            ),
+        ):
+            mock_span_select.return_value.get.return_value = fake_span
+            mock_cfg_get.return_value = fake_cfg
+            tracer_eval._execute_composite_on_span(
+                observation_span_id="span-abc",
+                custom_eval_config_id="cfg-1",
+                eval_task_id="task-1",
+                run_params={"input": "hello"},
+            )
+
+        assert recorded.get("source") == "tracer_composite"
+        ctx = recorded.get("span_context")
+        assert ctx is not None, "span_context must always be forwarded"
+        assert ctx.get("id") == "span-abc"
+        assert ctx.get("name") == "user.message"
+        assert "trace_context" not in recorded
+        assert "session_context" not in recorded
