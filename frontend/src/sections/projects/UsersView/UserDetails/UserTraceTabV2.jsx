@@ -32,6 +32,10 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     "userTraceFilterOpen",
     false,
   );
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
   const openColumnConfigure = Boolean(columnConfigureAnchor);
@@ -157,7 +161,13 @@ const UserTraceTabV2 = ({ dateFilter }) => {
         // Filter
         hasActiveFilter={extraFilters.length > 0}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         onApplyExtraFilters={setExtraFilters}
         // Columns / Display
         columns={columns}
@@ -179,10 +189,24 @@ const UserTraceTabV2 = ({ dateFilter }) => {
           display_name:
             columnLabelLookup[f?.column_id] ?? f?.display_name,
         }))}
-        onRemoveFilter={(idx) =>
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx))
-        }
-        onClearAll={() => setExtraFilters([])}
+        onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
+          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
+        }}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       <TraceGrid
