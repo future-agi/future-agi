@@ -1,5 +1,4 @@
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,8 +9,8 @@ from ai_tools.registry import register_tool
 
 
 class UpdateEvalTemplateInput(PydanticBaseModel):
-    eval_template_id: UUID = Field(
-        description="The UUID of the eval template to update"
+    eval_template_id: str = Field(
+        description="Name or UUID of the eval template to update"
     )
 
     # ── Core fields ──
@@ -176,16 +175,17 @@ class UpdateEvalTemplateTool(BaseTool):
         if params.eval_tags and not params.tags:
             params.tags = params.eval_tags
 
-        try:
-            template = EvalTemplate.objects.get(
-                id=params.eval_template_id,
-                organization=context.organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found(
-                "User-owned Eval Template", str(params.eval_template_id)
+        from ai_tools.resolvers import resolve_eval_template
+
+        template, err = resolve_eval_template(
+            params.eval_template_id, context.organization
+        )
+        if err:
+            return ToolResult.error(err, error_code="NOT_FOUND")
+        if template.owner != OwnerChoices.USER.value:
+            return ToolResult.error(
+                "Only user-owned templates can be updated.",
+                error_code="VALIDATION_ERROR",
             )
 
         changed_fields = []

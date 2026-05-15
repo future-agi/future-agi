@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -10,7 +9,7 @@ from ai_tools.registry import register_tool
 
 
 class TestEvalTemplateInput(PydanticBaseModel):
-    eval_template_id: UUID = Field(description="The UUID of the eval template to test")
+    eval_template_id: str = Field(description="Name or UUID of the eval template to test")
     mapping: dict = Field(
         description=(
             "Mapping of template variable names to test values. "
@@ -38,18 +37,15 @@ class TestEvalTemplateTool(BaseTool):
     def execute(
         self, params: TestEvalTemplateInput, context: ToolContext
     ) -> ToolResult:
-        from django.db.models import Q
-
+        from ai_tools.resolvers import resolve_eval_template
         from model_hub.models.evals_metric import EvalTemplate
 
-        # Look up the template (user-owned or system)
-        try:
-            template = EvalTemplate.no_workspace_objects.get(
-                Q(organization=context.organization) | Q(organization__isnull=True),
-                id=params.eval_template_id,
-            )
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found("Eval Template", str(params.eval_template_id))
+        # Look up the template (by name or UUID)
+        template, err = resolve_eval_template(
+            params.eval_template_id, context.organization
+        )
+        if err:
+            return ToolResult.error(err, error_code="NOT_FOUND")
 
         config = template.config or {}
         required_keys = config.get("required_keys", [])

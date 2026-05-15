@@ -288,7 +288,8 @@ class TestResolveProject:
 
 class TestResolveEvalTemplate:
     @patch("ai_tools.resolvers.EvalTemplate")
-    def test_resolve_by_uuid_found(self, MockTemplate):
+    def test_resolve_by_uuid_found_in_org(self, MockTemplate):
+        """UUID found in org-scoped lookup (first try)."""
         org = _make_mock_org()
         tmpl = _make_mock_obj("Faithfulness", obj_id=VALID_UUID)
         MockTemplate.objects.get.return_value = tmpl
@@ -298,17 +299,34 @@ class TestResolveEvalTemplate:
         assert err is None
 
     @patch("ai_tools.resolvers.EvalTemplate")
-    def test_resolve_by_uuid_not_found(self, MockTemplate):
+    def test_resolve_by_uuid_found_as_system(self, MockTemplate):
+        """UUID not in org but found as system template (fallback)."""
         org = _make_mock_org()
         MockTemplate.DoesNotExist = type("DoesNotExist", (Exception,), {})
         MockTemplate.objects.get.side_effect = MockTemplate.DoesNotExist
+
+        sys_tmpl = _make_mock_obj("toxicity", obj_id=VALID_UUID)
+        MockTemplate.no_workspace_objects.get.return_value = sys_tmpl
+
+        result, err = resolve_eval_template(VALID_UUID, org)
+        assert result is sys_tmpl
+        assert err is None
+
+    @patch("ai_tools.resolvers.EvalTemplate")
+    def test_resolve_by_uuid_not_found_anywhere(self, MockTemplate):
+        """UUID not in org and not a system template — error."""
+        org = _make_mock_org()
+        MockTemplate.DoesNotExist = type("DoesNotExist", (Exception,), {})
+        MockTemplate.objects.get.side_effect = MockTemplate.DoesNotExist
+        MockTemplate.no_workspace_objects.get.side_effect = MockTemplate.DoesNotExist
 
         result, err = resolve_eval_template(VALID_UUID, org)
         assert result is None
         assert "not found" in err.lower()
 
     @patch("ai_tools.resolvers.EvalTemplate")
-    def test_resolve_by_name(self, MockTemplate):
+    def test_resolve_by_name_in_org(self, MockTemplate):
+        """Name found in org-scoped lookup."""
         org = _make_mock_org()
         tmpl = _make_mock_obj("Hallucination")
 
@@ -323,6 +341,7 @@ class TestResolveEvalTemplate:
 
     @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_by_name_multiple_matches(self, MockTemplate):
+        """Multiple org templates with same name — error."""
         org = _make_mock_org()
         t1 = _make_mock_obj("Custom Eval", obj_id=uuid.uuid4())
         t2 = _make_mock_obj("Custom Eval", obj_id=uuid.uuid4())
@@ -337,20 +356,48 @@ class TestResolveEvalTemplate:
         assert "Multiple templates" in err
 
     @patch("ai_tools.resolvers.EvalTemplate")
+    def test_resolve_by_name_system_fallback(self, MockTemplate):
+        """Name not in org but found as system template."""
+        org = _make_mock_org()
+
+        # Org lookup returns nothing
+        org_qs = MagicMock()
+        org_qs.count.return_value = 0
+        MockTemplate.objects.filter.return_value = org_qs
+
+        # System fallback finds it
+        sys_tmpl = _make_mock_obj("toxicity")
+        sys_qs = MagicMock()
+        sys_qs.count.return_value = 1
+        sys_qs.first.return_value = sys_tmpl
+        MockTemplate.no_workspace_objects.filter.return_value = sys_qs
+
+        result, err = resolve_eval_template("toxicity", org)
+        assert result is sys_tmpl
+        assert err is None
+
+    @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_fuzzy_suggestions(self, MockTemplate):
+        """No exact match — fuzzy suggestions returned."""
         org = _make_mock_org()
         tmpl = _make_mock_obj("hallucination_detection")
 
-        exact_qs = MagicMock()
-        exact_qs.count.return_value = 0
-        # Resolver does `EvalTemplate.objects.filter(...)[:5]` — make __getitem__
-        # return the same mock so configured exists/__iter__ stay applied.
+        # Org exact match — nothing
+        org_exact_qs = MagicMock()
+        org_exact_qs.count.return_value = 0
+        MockTemplate.objects.filter.return_value = org_exact_qs
+
+        # System exact match — nothing
+        sys_exact_qs = MagicMock()
+        sys_exact_qs.count.return_value = 0
+
+        # Fuzzy — found suggestion
         fuzzy_qs = MagicMock()
         fuzzy_qs.exists.return_value = True
         fuzzy_qs.__iter__ = MagicMock(return_value=iter([tmpl]))
         fuzzy_qs.__getitem__ = MagicMock(return_value=fuzzy_qs)
 
-        MockTemplate.objects.filter.side_effect = [exact_qs, fuzzy_qs]
+        MockTemplate.no_workspace_objects.filter.side_effect = [sys_exact_qs, fuzzy_qs]
 
         result, err = resolve_eval_template("hallucination", org)
         assert result is None
@@ -359,15 +406,24 @@ class TestResolveEvalTemplate:
 
     @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_no_match(self, MockTemplate):
+        """No match anywhere — returns error."""
         org = _make_mock_org()
 
-        exact_qs = MagicMock()
-        exact_qs.count.return_value = 0
+        # Org exact — nothing
+        org_exact_qs = MagicMock()
+        org_exact_qs.count.return_value = 0
+        MockTemplate.objects.filter.return_value = org_exact_qs
+
+        # System exact — nothing
+        sys_exact_qs = MagicMock()
+        sys_exact_qs.count.return_value = 0
+
+        # Fuzzy — nothing
         fuzzy_qs = MagicMock()
         fuzzy_qs.exists.return_value = False
         fuzzy_qs.__getitem__ = MagicMock(return_value=fuzzy_qs)
 
-        MockTemplate.objects.filter.side_effect = [exact_qs, fuzzy_qs]
+        MockTemplate.no_workspace_objects.filter.side_effect = [sys_exact_qs, fuzzy_qs]
 
         result, err = resolve_eval_template("nonexistent", org)
         assert result is None

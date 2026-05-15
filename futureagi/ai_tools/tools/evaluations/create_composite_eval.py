@@ -123,22 +123,17 @@ class CreateCompositeEvalTool(BaseTool):
             )
 
         # ── 2. Verify all child templates exist and are accessible ──
-        children = list(
-            EvalTemplate.no_workspace_objects.filter(
-                id__in=params.child_template_ids, deleted=False
-            ).filter(
-                Q(owner=OwnerChoices.SYSTEM.value)
-                | Q(owner=OwnerChoices.USER.value, organization=context.organization)
-            )
-        )
+        from ai_tools.resolvers import resolve_eval_template
 
-        found_ids = {str(c.id) for c in children}
-        missing = [cid for cid in params.child_template_ids if cid not in found_ids]
-        if missing:
-            return ToolResult.error(
-                f"Child template(s) not found or not accessible: {', '.join(missing)}",
-                error_code="NOT_FOUND",
-            )
+        children = []
+        for cid in params.child_template_ids:
+            child, err = resolve_eval_template(cid, context.organization)
+            if err:
+                return ToolResult.error(
+                    f"Child template '{cid}': {err}",
+                    error_code="NOT_FOUND",
+                )
+            children.append(child)
 
         # ── 3. Reject nested composites ──
         for child in children:

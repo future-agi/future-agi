@@ -118,10 +118,16 @@ def resolve_project(identifier: str, organization, workspace=None):
 
 
 def resolve_eval_template(identifier: str, organization, workspace=None):
-    """Resolve an eval template by name or UUID."""
+    """Resolve an eval template by name or UUID.
+
+    Looks up user-owned templates within the org (workspace-filtered via
+    the default manager), then falls back to system templates (global,
+    organization=NULL) which are accessible to all orgs.
+    """
     if not identifier:
         return None, "Eval template identifier is required."
 
+    # 1. Try org-scoped lookup (respects workspace filtering)
     if is_uuid(identifier):
         try:
             return (
@@ -131,8 +137,20 @@ def resolve_eval_template(identifier: str, organization, workspace=None):
                 None,
             )
         except EvalTemplate.DoesNotExist:
+            pass
+
+        # 2. Fall back to system templates (org=NULL, no workspace)
+        try:
+            return (
+                EvalTemplate.no_workspace_objects.get(
+                    id=identifier, owner="system", deleted=False
+                ),
+                None,
+            )
+        except EvalTemplate.DoesNotExist:
             return None, f"Eval template with ID `{identifier}` not found."
 
+    # Name-based lookup: try org-scoped first
     matches = EvalTemplate.objects.filter(
         name__iexact=identifier.strip(),
         organization=organization,
@@ -144,10 +162,24 @@ def resolve_eval_template(identifier: str, organization, workspace=None):
         names = [f"`{t.name}` (ID: {t.id})" for t in matches[:5]]
         return None, f"Multiple templates match '{identifier}': {', '.join(names)}."
 
-    # Try fuzzy
-    fuzzy = EvalTemplate.objects.filter(
+    # Fall back to system templates by name
+    sys_matches = EvalTemplate.no_workspace_objects.filter(
+        name__iexact=identifier.strip(),
+        owner="system",
+        deleted=False,
+    )
+    if sys_matches.count() == 1:
+        return sys_matches.first(), None
+    elif sys_matches.count() > 1:
+        names = [f"`{t.name}` (ID: {t.id})" for t in sys_matches[:5]]
+        return None, f"Multiple system templates match '{identifier}': {', '.join(names)}."
+
+    # Try fuzzy across both org + system
+    from django.db.models import Q
+
+    fuzzy = EvalTemplate.no_workspace_objects.filter(
+        Q(organization=organization) | Q(owner="system"),
         name__icontains=identifier.strip(),
-        organization=organization,
         deleted=False,
     )[:5]
     if fuzzy.exists():
