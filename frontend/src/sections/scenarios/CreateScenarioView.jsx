@@ -20,14 +20,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { ShowComponent } from "src/components/show";
 import WorkflowBuilderOption from "./WorkflowBuilderOption";
 import ImportDatasetOption from "./ImportDatasetOption";
-import { useDevelopDatasetList } from "src/api/develop/develop-detail";
 import UploadScriptOption from "./UploadScriptOption";
 import CallChatSOPOption from "./CallChatSOPOption";
 import {
   CreateScenarioDefaultValues,
   CreateScenarioType,
   CreateScenarioValidationSchema,
-  MIN_DATASET_ROWS,
   ScenarioTypeWiseDefaultValues,
   SourceType,
   getScenarioDateString,
@@ -391,34 +389,7 @@ const CreateScenarioView = () => {
     applySourceChange(selectedOption);
   };
 
-  // Pre-submit guard: the Import Dataset path doesn't expose the `noOfRows`
-  // input, so block submission when the picked source dataset has fewer than
-  // MIN_DATASET_ROWS rows. The BE enforces the same floor; this is purely a
-  // faster UX signal so the user doesn't wait on a round-trip to learn the
-  // dataset is too small.
-  const { data: datasetListForGuard } = useDevelopDatasetList();
-  const datasetRowCountById = useMemo(() => {
-    const m = new Map();
-    (datasetListForGuard || []).forEach((d) => {
-      const id = d?.datasetId ?? d?.dataset_id;
-      const count = d?.rowCount ?? d?.row_count;
-      if (id != null && typeof count === "number") m.set(id, count);
-    });
-    return m;
-  }, [datasetListForGuard]);
-
   const handelCreateScenario = async (data) => {
-    if (data?.kind === CreateScenarioType.DATASET) {
-      const pickedId = data?.config?.datasetId;
-      const rowCount = datasetRowCountById.get(pickedId);
-      if (typeof rowCount === "number" && rowCount < MIN_DATASET_ROWS) {
-        enqueueSnackbar(
-          `Selected dataset has only ${rowCount} row${rowCount === 1 ? "" : "s"}. A minimum of ${MIN_DATASET_ROWS} rows is required.`,
-          { variant: "error" },
-        );
-        return;
-      }
-    }
     const transformedColumns =
       data?.columns?.map((col) => ({
         name: col?.name,
