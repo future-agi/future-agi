@@ -1148,7 +1148,7 @@ const TaskUsageTab = ({ taskId }) => {
               height. Without it the DataGrid renders every row at
               natural height and the table grows past the viewport,
               hiding the pagination footer and breaking internal scroll. */}
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
             <DataTable
               columns={columns}
               data={visibleLogs}
