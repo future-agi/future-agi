@@ -361,7 +361,7 @@ def _extract_call_logs(log: dict, eval_attributes: dict):
         return
 
     try:
-        response = requests.get(log_url, timeout=60, verify=False, stream=True)
+        response = requests.get(log_url, timeout=60, stream=True)
         response.raise_for_status()
 
         entries = []
