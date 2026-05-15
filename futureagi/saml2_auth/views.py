@@ -657,7 +657,10 @@ class Auth0CallbackView(APIView):
                     timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
                 )
 
-                next_url += f"?sso_token={str(access_token_encrypted)}"
+                next_url += (
+                    f"?sso_token={str(access_token_encrypted)}"
+                    f"&is_new_user={new_org}"
+                )
                 login_next_url = request.session.get("login_next_url", None)
                 if login_next_url:
                     next_url += f"&next={login_next_url}"
@@ -792,7 +795,10 @@ class GithubCallbackView(APIView):
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
             )
 
-            next_url += f"?sso_token={str(access_token_encrypted)}"
+            next_url += (
+                f"?sso_token={str(access_token_encrypted)}"
+                f"&is_new_user={new_org}"
+            )
             login_next_url = request.session.get("login_next_url", None)
             if login_next_url:
                 next_url += f"&next={login_next_url}"
@@ -912,7 +918,10 @@ class MicrosoftCallbackView(APIView):
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
             )
 
-            next_url += f"?sso_token={str(access_token_encrypted)}"
+            next_url += (
+                f"?sso_token={str(access_token_encrypted)}"
+                f"&is_new_user={new_org}"
+            )
             login_next_url = request.session.get("login_next_url", None)
             if login_next_url:
                 next_url += f"&next={login_next_url}"
