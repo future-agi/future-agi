@@ -25,6 +25,12 @@ import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 
+// Direct ID columns on the trace/span tables. The backend filter pipeline
+// resolves these via equality only — sending `col_type` routes them through
+// the dashboard metric-resolution path, which has no entry for these
+// columns and silently returns no rows. Mirrored from TraceFilterPanel.
+const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
+
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
   { key: "Yesterday", label: "Yesterday" },
@@ -231,8 +237,12 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const rawColType =
-        gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      // trace_id / span_id are direct column filters — `col_type` must
+      // stay undefined for them, otherwise the next request through the
+      // wire-payload builder will re-emit it and silently match nothing.
+      const rawColType = ID_ONLY_FIELDS.has(gf.column_id)
+        ? undefined
+        : gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
       const rawFilterType = gf.filter_config?.filter_type;
       const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
@@ -452,7 +462,13 @@ const ObserveToolbar = ({
               const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
               const apiFilters = newFilters.map((f) => {
                 const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
-                const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
+                // trace_id / span_id are direct column filters — the
+                // backend ignores them when `col_type` is present and
+                // routes the query through the metric path instead. Force
+                // it off regardless of how the panel filter was built.
+                const apiColType = ID_ONLY_FIELDS.has(f.field)
+                  ? undefined
+                  : f.apiColType || colTypeMap[f.fieldCategory];
                 let filterValue = f.value;
                 if (Array.isArray(filterValue)) {
                   if (RANGE_OPS.has(filterOp)) {

@@ -904,9 +904,45 @@ function ValuePicker({
             {isLoading
               ? "Loading..."
               : options.length === 0
-                ? "Select values..."
-                : "Select values..."}
+                ? singleSelect
+                  ? "No value available"
+                  : "No values available"
+                : singleSelect
+                  ? "Select a value..."
+                  : "Select values..."}
           </Typography>
+        ) : singleSelect ? (
+          // Single-select: render the value as plain text. No chip — chips
+          // read as "removable token in a list", which mis-signals
+          // multi-select for fields that only allow one value. To clear,
+          // re-open the popover and click the selected option (toggle), or
+          // remove the whole filter chip from the chip row.
+          (() => {
+            const v = selectedValues[0];
+            const match = options.find((o) => {
+              const ov = typeof o === "string" ? o : o.value;
+              return ov === v;
+            });
+            const displayLabel =
+              (typeof match === "string" ? match : match?.label) || v;
+            return (
+              <Typography
+                key={v}
+                noWrap
+                title={displayLabel}
+                sx={{
+                  fontSize: 12,
+                  color: "text.primary",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                {displayLabel}
+              </Typography>
+            );
+          })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
             // Resolve the display label from static choices or rendered
@@ -943,7 +979,7 @@ function ValuePicker({
             );
           })
         )}
-        {selectedValues.length > 3 && (
+        {!singleSelect && selectedValues.length > 3 && (
           <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
             +{selectedValues.length - 3}
           </Typography>
@@ -1045,9 +1081,13 @@ function ValuePicker({
               >
                 <Iconify
                   icon={
-                    isSelected
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
+                    singleSelect
+                      ? isSelected
+                        ? "mdi:radiobox-marked"
+                        : "mdi:radiobox-blank"
+                      : isSelected
+                        ? "mdi:checkbox-marked"
+                        : "mdi:checkbox-blank-outline"
                   }
                   width={18}
                   sx={{
