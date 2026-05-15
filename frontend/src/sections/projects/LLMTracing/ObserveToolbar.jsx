@@ -22,14 +22,9 @@ import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
+import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-
-// Direct ID columns on the trace/span tables. The backend filter pipeline
-// resolves these via equality only — sending `col_type` routes them through
-// the dashboard metric-resolution path, which has no entry for these
-// columns and silently returns no rows. Mirrored from TraceFilterPanel.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -237,9 +232,6 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      // trace_id / span_id are direct column filters — `col_type` must
-      // stay undefined for them, otherwise the next request through the
-      // wire-payload builder will re-emit it and silently match nothing.
       const rawColType = ID_ONLY_FIELDS.has(gf.column_id)
         ? undefined
         : gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
@@ -462,10 +454,6 @@ const ObserveToolbar = ({
               const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
               const apiFilters = newFilters.map((f) => {
                 const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
-                // trace_id / span_id are direct column filters — the
-                // backend ignores them when `col_type` is present and
-                // routes the query through the metric path instead. Force
-                // it off regardless of how the panel filter was built.
                 const apiColType = ID_ONLY_FIELDS.has(f.field)
                   ? undefined
                   : f.apiColType || colTypeMap[f.fieldCategory];
