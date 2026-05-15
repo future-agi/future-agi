@@ -3,11 +3,11 @@ import io
 import json
 import traceback
 from collections import defaultdict
-from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime
 from time import time
+from typing import Dict, List
 
 import pandas as pd
 import structlog
@@ -70,10 +70,6 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.services.clickhouse.query_service import (
-    AnalyticsQueryService,
-    QueryType,
-)
 from tracer.serializers.observation_span import (
     ObservationSpanSerializer,
     SpanExportSerializer,
@@ -81,6 +77,10 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    QueryType,
+)
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -852,9 +852,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            org = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            org = getattr(request, "organization", None) or request.user.organization
             spans = ObservationSpan.objects.filter(
                 trace_id__in=trace_ids,
                 parent_span_id__isnull=True,
@@ -1557,14 +1555,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             user_id = request.query_params.get("user_id") or request.query_params.get(
                 "userId"
             )
-            if not project_id:
-                raise Exception("Project id is required")
-
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+            org = (
+                getattr(self.request, "organization", None)
+                or self.request.user.organization
             )
+
+            # Org-scoped mode: when no project_id is supplied the caller wants
+            # spans from every project in the org (e.g. the cross-project
+            # user detail page at /dashboard/users/:userId).
+            org_scope = not project_id
+            if org_scope:
+                org_project_ids = list(
+                    Project.objects.filter(
+                        organization=org,
+                        deleted=False,
+                    ).values_list("id", flat=True)
+                )
+                project = None
+            else:
+                try:
+                    project = Project.objects.get(id=project_id, organization=org)
+                except Project.DoesNotExist:
+                    return self._gm.bad_request("Project not found or access denied")
+                org_project_ids = None
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1576,7 +1589,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
                 try:
                     return self._list_spans_clickhouse(
-                        request, project_id, validated_data, analytics
+                        request,
+                        project_id,
+                        validated_data,
+                        analytics,
+                        org_project_ids=org_project_ids,
+                        org=org,
                     )
                 except Exception as e:
                     logger.warning(
@@ -1591,29 +1609,32 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 self.request.query_params.get("pageSize", 30)
             )
 
-            end_user_id = None
+            end_user_ids = None
             if user_id:
-                try:
-                    end_user_id = str(
-                        EndUser.objects.get(
-                            user_id=user_id,
-                            organization=getattr(request, "organization", None)
-                            or request.user.organization,
-                            project=project,
-                        ).id
-                    )
-                except EndUser.DoesNotExist as e:
-                    raise Exception("User not found for the given user_id") from e
+                eu_qs = EndUser.objects.filter(
+                    user_id=user_id,
+                    organization=org,
+                )
+                if not org_scope:
+                    eu_qs = eu_qs.filter(project=project)
+                end_user_ids = list(eu_qs.values_list("id", flat=True))
+                if not end_user_ids:
+                    return self._gm.bad_request("User not found for the given user_id")
 
             # Base query with annotations
-            base_query = ObservationSpan.objects.filter(
-                project_id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            ).select_related("trace")
+            if org_scope:
+                base_query = ObservationSpan.objects.filter(
+                    project_id__in=org_project_ids,
+                    project__organization=org,
+                ).select_related("trace")
+            else:
+                base_query = ObservationSpan.objects.filter(
+                    project_id=project_id,
+                    project__organization=org,
+                ).select_related("trace")
 
-            if end_user_id:
-                base_query = base_query.filter(end_user_id=end_user_id)
+            if end_user_ids:
+                base_query = base_query.filter(end_user_id__in=end_user_ids)
 
             base_query = base_query.annotate(
                 node_type=F("observation_type"),
@@ -1624,17 +1645,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 user_id_hash=F("end_user__user_id_hash"),
             )
 
-            # Get all eval configs for the project
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id,
-                    observation_span__project__organization=getattr(
-                        request, "organization", None
-                    )
-                    or request.user.organization,
+            # Get all eval configs for the project (or all org projects in
+            # org-scoped mode)
+            _eval_logger_qs = (
+                EvalLogger.objects.filter(
+                    observation_span__project_id__in=org_project_ids,
+                    observation_span__project__organization=org,
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
+                if org_scope
+                else EvalLogger.objects.filter(
+                    observation_span__project_id=project_id,
+                    observation_span__project__organization=org,
+                )
+            )
+            eval_configs = CustomEvalConfig.objects.filter(
+                id__in=_eval_logger_qs.values("custom_eval_config_id").distinct(),
                 deleted=False,
             ).select_related("eval_template")
 
@@ -1741,12 +1766,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            # Add Span Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(
-                project__id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            # Add Span Annotations — skip in org-scoped mode (deferred enhancement:
+            # the helper only supports a single project_id).
+            if org_scope:
+                annotation_labels = AnnotationsLabels.objects.none()
+            else:
+                annotation_labels = AnnotationsLabels.objects.filter(
+                    project__id=project_id,
+                    project__organization=org,
+                )
             base_query = build_annotation_subqueries(
                 base_query,
                 annotation_labels,
@@ -1972,11 +2000,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the spans list of observe {str(e)}"
             )
 
-    def _list_spans_clickhouse(self, request, project_id, validated_data, analytics):
-        """List spans using ClickHouse backend."""
+    def _list_spans_clickhouse(
+        self,
+        request,
+        project_id,
+        validated_data,
+        analytics,
+        org_project_ids=None,
+        org=None,
+    ):
+        """List spans using ClickHouse backend.
+
+        When ``org_project_ids`` is provided (cross-project user-detail
+        mode), the builder is constructed with ``project_ids=...`` and the
+        view falls back to a PG-side EvalLogger lookup scoped to those
+        projects (the CH dict-lookup path requires a single project_id).
+        """
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
-        filters = validated_data.get("filters", [])
+        org_scope = bool(org_project_ids)
+        if org is None:
+            org = getattr(request, "organization", None) or request.user.organization
+
+        filters = list(validated_data.get("filters", []) or [])
         page_number = int(request.query_params.get("page_number", 0)) or int(
             request.query_params.get("pageNumber", 0)
         )
@@ -1989,15 +2035,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         )
         end_user_id = None
         if user_id:
-            try:
-                end_user_id = str(
-                    EndUser.objects.get(
-                        user_id=user_id,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                    ).id
-                )
-            except EndUser.DoesNotExist:
+            eu_qs = EndUser.objects.filter(user_id=user_id, organization=org)
+            if not org_scope:
+                eu_qs = eu_qs.filter(project_id=project_id)
+            eu = eu_qs.first()
+            if eu:
+                end_user_id = str(eu.id)
+            else:
                 raise Exception("User not found for the given user_id")
 
         # Resolve in-filter user_id (string) → end_user_id UUIDs. Spans table
@@ -2016,58 +2060,79 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if not _vals:
                     _resolved.append(_f)
                     continue
-                _ids = [
-                    str(u) for u in EndUser.objects.filter(
-                        user_id__in=_vals,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                ]
+                _eu_qs = EndUser.objects.filter(
+                    user_id__in=_vals,
+                    organization=org,
+                    deleted=False,
+                )
+                if not org_scope:
+                    _eu_qs = _eu_qs.filter(project_id=project_id)
+                _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
                 if not _ids:
                     _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append({
-                    "column_id": "end_user_id",
-                    "filter_config": {
-                        "col_type": "NORMAL",
-                        "filter_type": "text",
-                        "filter_op": "in",
-                        "filter_value": _ids,
-                    },
-                })
+                _resolved.append(
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "col_type": "NORMAL",
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": _ids,
+                        },
+                    }
+                )
                 continue
             _resolved.append(_f)
         filters = _resolved
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
+        # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
+        # org mode uses a PG scan because the CH dict-lookup takes a single
+        # project_id — multi-project CH variant not implemented yet.
         eval_config_ids = []
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            "FROM tracer_eval_logger FINAL "
-            "WHERE _peerdb_is_deleted = 0 "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
+        if org_scope:
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+                id__in=EvalLogger.objects.filter(
+                    observation_span__project_id__in=org_project_ids
+                )
+                .values("custom_eval_config_id")
+                .distinct(),
+                deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_configs = []
+            ch_result = analytics.execute_ch_query(
+                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
+                "FROM tracer_eval_logger FINAL "
+                "WHERE _peerdb_is_deleted = 0 "
+                "AND dictGet('trace_dict', 'project_id', "
+                "trace_id) = toUUID(%(pid)s)",
+                {"pid": str(project_id)},
+                timeout_ms=30000,
+            )
+            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
+            if ch_ids:
+                eval_configs = CustomEvalConfig.objects.filter(
+                    id__in=ch_ids, deleted=False
+                ).select_related("eval_template")
+                eval_config_ids = [str(c.id) for c in eval_configs]
+            else:
+                eval_configs = []
 
-        # Get annotation labels from PG (small config table)
-        annotation_labels = AnnotationsLabels.objects.filter(
-            project__id=project_id, project__organization=request.user.organization
-        )
-        annotation_label_ids = [str(l.id) for l in annotation_labels]
-        label_types = {str(l.id): l.type for l in annotation_labels}
+        # Annotation labels — skip in org-scoped mode (deferred enhancement:
+        # the helper only supports a single project_id).
+        if org_scope:
+            annotation_label_ids = []
+            label_types = {}
+        else:
+            annotation_labels = AnnotationsLabels.objects.filter(
+                project__id=project_id, project__organization=org
+            )
+            annotation_label_ids = [str(l.id) for l in annotation_labels]
+            label_types = {str(l.id): l.type for l in annotation_labels}
 
         builder = SpanListQueryBuilder(
-            project_id=str(project_id),
+            project_id=None if org_scope else str(project_id),
+            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
             page_number=page_number,
             page_size=page_size,
@@ -2190,9 +2255,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # identifier. CH only stores the UUID; the display fields live on
         # the PG EndUser table.
         end_user_ids = {
-            str(r.get("end_user_id"))
-            for r in result.data
-            if r.get("end_user_id")
+            str(r.get("end_user_id")) for r in result.data if r.get("end_user_id")
         }
         end_user_map = {}
         if end_user_ids:
@@ -2208,9 +2271,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         for row in result.data:
             span_id = str(row.get("id", ""))
             cost = row.get("cost")
-            eu = end_user_map.get(str(row.get("end_user_id"))) if row.get(
-                "end_user_id"
-            ) else None
+            eu = (
+                end_user_map.get(str(row.get("end_user_id")))
+                if row.get("end_user_id")
+                else None
+            )
             entry = {
                 "span_id": span_id,
                 "input": row.get("input", ""),
@@ -2240,11 +2305,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 # columns keyed ``{config_id}**{choice}`` to match the
                 # column config produced by
                 # ``update_column_config_based_on_eval_config``.
-                if (
-                    isinstance(val, dict)
-                    and not val.get("error")
-                    and val
-                ):
+                if isinstance(val, dict) and not val.get("error") and val:
                     for choice, pct in val.items():
                         entry[f"{config_id}**{choice}"] = pct
                 else:
@@ -2983,11 +3044,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
         keep the aggregate cheap on large projects.
         """
-        sample_trace_ids = Trace.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
+        sample_trace_ids = (
+            Trace.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
         agg = (
             ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
             .values("trace_id")
@@ -2998,11 +3059,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     def _max_traces_per_session(self, project_id: str) -> int:
         """Max trace count observed across the project's most recent sessions."""
-        sample_session_ids = TraceSession.objects.filter(
-            project_id=project_id
-        ).order_by("-created_at").values_list("id", flat=True)[
-            : self._OBSERVED_MAX_SAMPLE_SIZE
-        ]
+        sample_session_ids = (
+            TraceSession.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
         agg = (
             Trace.objects.filter(session_id__in=sample_session_ids)
             .values("session_id")
