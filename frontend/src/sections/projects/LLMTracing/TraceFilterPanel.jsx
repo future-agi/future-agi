@@ -316,6 +316,9 @@ const DEFAULT_OP_FOR_TYPE = {
 // Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
+// Categorical / thumbs ops in saved views — reverse the save-side LEGACY_OP_ALIAS so the menu renders.
+const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
+
 const NO_VALUE_OPS = new Set([
   "is_empty",
   "is_not_empty",
@@ -334,7 +337,7 @@ const SINGLE_VALUE_OPS = new Set([
 ]);
 
 // List ops — multi-select picker.
-const LIST_VALUE_OPS = new Set(["in", "not_in"]);
+const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -1204,7 +1207,10 @@ function FilterRow({
         prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // ID-only fields only support "is"; fallback would render blank.
+      const defaultOp = ID_ONLY_FIELDS.has(prop.id)
+        ? "is"
+        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1712,16 +1718,17 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          // ID-only fields (trace_id / span_id) bypass the string-op
-          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
-          // than "is" renders blank in the operator Select.
+          // Translate wire ops to the picker's MenuItem values, per fieldType.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
             ? "is"
-            : (fieldType === "string" || fieldType === "text") &&
-                HYDRATE_STRING_OP[f.operator]
-              ? HYDRATE_STRING_OP[f.operator]
-              : f.operator;
-          // Scalar legacy `equals` value → array for the multi-select picker.
+            : (fieldType === "categorical" || fieldType === "thumbs") &&
+                HYDRATE_CATEGORICAL_OP[f.operator]
+              ? HYDRATE_CATEGORICAL_OP[f.operator]
+              : (fieldType === "string" || fieldType === "text") &&
+                  HYDRATE_STRING_OP[f.operator]
+                ? HYDRATE_STRING_OP[f.operator]
+                : f.operator;
+          // Scalar value → array when rewritten op uses a multi-select picker.
           let value = f.value;
           if (
             hydratedOp !== f.operator &&
