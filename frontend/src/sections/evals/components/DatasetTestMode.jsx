@@ -539,9 +539,6 @@ const DatasetTestMode = React.forwardRef(
       compositeAdhocConfig = null,
       sourceColumns,
       extraColumns,
-      // Runtime override sent under `config.run_config` so unsaved /
-      // system-eval connector + KB selections reach the BE for the test
-      // call (TH-5276 / TH-5279).
       runtimeOverrides = null,
     },
     ref,
@@ -1087,8 +1084,6 @@ const DatasetTestMode = React.forwardRef(
                   if (contextOptions.includes("call_context")) flags.call_context = true;
                   return Object.keys(flags).length > 0 ? { data_injection: flags } : {};
                 })(),
-                // Forward unsaved tools / KB picks under `run_config` so the
-                // BE merges them as runtime overrides (TH-5276 / TH-5279).
                 ...(runtimeOverrides && Object.keys(runtimeOverrides).length > 0
                   ? { run_config: runtimeOverrides }
                   : {}),

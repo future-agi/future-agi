@@ -254,9 +254,6 @@ const TracingTestMode = React.forwardRef(
       // only for source="task" — other surfaces stay locked until each
       // one's resolver is audited.
       allowCustomFieldPath = false,
-      // Runtime override sent under `config.run_config` so unsaved /
-      // system-eval connector + KB selections reach the BE for the test
-      // call (TH-5276 / TH-5279).
       runtimeOverrides = null,
     },
     ref,
@@ -1101,8 +1098,6 @@ const TracingTestMode = React.forwardRef(
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
-                // Forward unsaved tools / KB picks under `run_config` so the
-                // BE merges them as runtime overrides (TH-5276 / TH-5279).
                 ...(runtimeOverrides && Object.keys(runtimeOverrides).length > 0
                   ? { run_config: runtimeOverrides }
                   : {}),

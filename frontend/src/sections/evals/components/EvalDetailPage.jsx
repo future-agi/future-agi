@@ -56,19 +56,12 @@ import VersionBadge from "./VersionBadge";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
-// Read MCP connector UUIDs from a saved `tools` config. Tolerates both the
-// canonical `{internet: bool, connectors: [uuid, ...]}` shape (what fresh
-// FE saves and the migration script write) and the legacy flat-map
-// `{uuid: true, ...}` shape that an older FE wrote pre-TH-5276 — older
-// dirty rows still render correctly in the picker.
+// Reads canonical `{internet, connectors[]}` first, falls back to legacy `{uuid: true}` shape.
 const extract_selected_tools = (tools) => {
   if (!tools) return [];
   if (Array.isArray(tools)) return tools;
   if (typeof tools === "object") {
-    // Canonical shape — `connectors` is the authoritative list.
-    if (Array.isArray(tools.connectors))
-      return tools.connectors.filter(Boolean);
-    // Legacy flat-map — any truthy key other than "internet" is a connector UUID.
+    if (Array.isArray(tools.connectors)) return tools.connectors.filter(Boolean);
     return Object.entries(tools)
       .filter(([key, enabled]) => !!enabled && key !== "internet")
       .map(([name]) => name);
@@ -76,11 +69,6 @@ const extract_selected_tools = (tools) => {
   return [];
 };
 
-// Build the canonical `tools` payload the BE runtime expects:
-//   { internet: <bool>, connectors: [<uuid>, ...] }
-// Previously this returned `{uuid: true, ...}` which the BE runtime never
-// read — AgentEvaluator looks up `tools_config.get("connectors", [])` so
-// connectors were silently ignored even on "saved" evals (TH-5276 / TH-5279).
 const build_tools_payload = (selected_connector_ids, internet_enabled = false) => ({
   internet: !!internet_enabled,
   connectors: (selected_connector_ids || []).filter(Boolean),
@@ -1787,25 +1775,34 @@ const EvalDetailPage = () => {
                       setTestPassed(false);
                     }}
                     onReadyChange={setIsPlaygroundReady}
-                    // Pass current connector + KB picks as runtime overrides
-                    // so tests reflect what's in the UI even if it hasn't
-                    // been saved (or, for system evals, will never be saved
-                    // to the template at all). See TH-5276 / TH-5279.
                     runtimeOverrides={(() => {
-                      if (evalType !== "agent") return null;
-                      const overrides = {};
-                      const hasConnectors =
-                        (connectorIds || []).length > 0 || !!checkInternet;
-                      if (hasConnectors) {
+                      // Mirror every field listed in _RUNTIME_ALLOWED_KEYS so the
+                      // test call honours the current picker state for both
+                      // agent and llm evals (TH-5276 / TH-5279).
+                      const overrides = {
+                        output_type: outputType,
+                        pass_threshold: passThreshold,
+                        multi_choice: multiChoice,
+                        check_internet: !!checkInternet,
+                        error_localizer_enabled: !!errorLocalizerEnabled,
+                      };
+                      if (Object.keys(choiceScores || {}).length > 0) {
+                        overrides.choice_scores = choiceScores;
+                        overrides.choices = Object.keys(choiceScores);
+                      }
+                      if (evalType === "agent") {
+                        overrides.agent_mode = agentMode;
                         overrides.tools = build_tools_payload(
                           connectorIds,
                           checkInternet,
                         );
+                        overrides.knowledge_bases = knowledgeBaseIds || [];
+                        overrides.summary =
+                          summaryType === "custom"
+                            ? { type: "custom", custom: "" }
+                            : { type: summaryType };
                       }
-                      if ((knowledgeBaseIds || []).length > 0) {
-                        overrides.knowledge_bases = knowledgeBaseIds;
-                      }
-                      return Object.keys(overrides).length > 0 ? overrides : null;
+                      return overrides;
                     })()}
                   />
                 </Box>

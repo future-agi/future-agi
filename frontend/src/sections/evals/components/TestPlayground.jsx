@@ -633,12 +633,7 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
-      // Runtime override sent under `config.run_config` so unsaved /
-      // system-eval connector + KB selections reach the BE for the test
-      // call. Without this, the test path reads the persisted template
-      // only — which for system evals is never customised, and for user
-      // evals is only updated by `handleTestEvaluation` auto-save (skipped
-      // for system evals). See TH-5276 / TH-5279.
+      // Forwarded under `config.run_config` so unsaved picker state reaches the BE.
       runtimeOverrides = null,
     },
     ref,
@@ -930,11 +925,6 @@ const TestPlayground = React.forwardRef(
 
         const params = evalType === "code" ? { ...codeParamsRef.current } : {};
 
-        // Carry unsaved / system-eval connector + KB selections through as
-        // a runtime override. The BE merges `config.run_config` into the
-        // eval instance config per `_RUNTIME_ALLOWED_KEYS`, so the test
-        // call reflects what's currently in the picker even if it hasn't
-        // been persisted to the template yet. See TH-5276 / TH-5279.
         const runConfigOverride =
           runtimeOverrides && Object.keys(runtimeOverrides).length > 0
             ? { run_config: runtimeOverrides }

@@ -183,9 +183,6 @@ const SimulationTestMode = React.forwardRef(
       initialRunTestId = "",
       isComposite = false,
       compositeAdhocConfig = null,
-      // Runtime override sent under `config.run_config` so unsaved /
-      // system-eval connector + KB selections reach the BE for the test
-      // call (TH-5276 / TH-5279).
       runtimeOverrides = null,
     },
     ref,
@@ -897,8 +894,6 @@ const SimulationTestMode = React.forwardRef(
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
-                // Forward unsaved tools / KB picks under `run_config` so the
-                // BE merges them as runtime overrides (TH-5276 / TH-5279).
                 ...(runtimeOverrides && Object.keys(runtimeOverrides).length > 0
                   ? { run_config: runtimeOverrides }
                   : {}),

@@ -87,17 +87,12 @@ const EVAL_TAGS = [
   { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
 ];
 
-// Read MCP connector UUIDs from a saved `tools` config. Tolerates both the
-// canonical `{internet: bool, connectors: [uuid, ...]}` shape and the
-// legacy flat-map `{uuid: true, ...}` shape an older FE wrote pre-TH-5276.
+// Reads canonical `{internet, connectors[]}` first, falls back to legacy `{uuid: true}` shape.
 const extractSelectedTools = (tools) => {
   if (!tools) return [];
   if (Array.isArray(tools)) return tools;
   if (typeof tools === "object") {
-    // Canonical shape — `connectors` is the authoritative list.
-    if (Array.isArray(tools.connectors))
-      return tools.connectors.filter(Boolean);
-    // Legacy flat-map — any truthy key other than "internet" is a connector UUID.
+    if (Array.isArray(tools.connectors)) return tools.connectors.filter(Boolean);
     return Object.entries(tools)
       .filter(([key, enabled]) => !!enabled && key !== "internet")
       .map(([name]) => name);
@@ -105,11 +100,6 @@ const extractSelectedTools = (tools) => {
   return [];
 };
 
-// Build the canonical `tools` payload the BE runtime expects:
-//   { internet: <bool>, connectors: [<uuid>, ...] }
-// Previously this returned `{uuid: true, ...}` which the BE runtime never
-// read — AgentEvaluator looks up `tools_config.get("connectors", [])` so
-// connectors were silently ignored even on "saved" evals (TH-5276 / TH-5279).
 const buildToolsPayload = (selectedConnectorIds, internetEnabled = false) => ({
   internet: !!internetEnabled,
   connectors: (selectedConnectorIds || []).filter(Boolean),
@@ -1247,26 +1237,35 @@ const EvalCreatePage = () => {
                     mode === "composite" ? false : errorLocalizerEnabled
                   }
                   templateFormat={templateFormat}
-                  // Pass current connector + KB picks as runtime overrides
-                  // so tests reflect what's in the UI even before the draft
-                  // is persisted. Defends against draft-save races and
-                  // matches the same plumbing on EvalDetailPage. See
-                  // TH-5276 / TH-5279.
                   runtimeOverrides={(() => {
-                    if (mode === "composite" || evalType !== "agent") return null;
-                    const overrides = {};
-                    const hasConnectors =
-                      (connectorIds || []).length > 0 || !!checkInternet;
-                    if (hasConnectors) {
+                    if (mode === "composite") return null;
+                    // Mirror every field in _RUNTIME_ALLOWED_KEYS so the test
+                    // call reflects the current picker state on first run,
+                    // before any draft-save has landed (TH-5276 / TH-5279).
+                    const overrides = {
+                      output_type: outputType,
+                      pass_threshold: passThreshold,
+                      multi_choice: multiChoice,
+                      check_internet: !!checkInternet,
+                      error_localizer_enabled: !!errorLocalizerEnabled,
+                    };
+                    if (Object.keys(choiceScores || {}).length > 0) {
+                      overrides.choice_scores = choiceScores;
+                      overrides.choices = Object.keys(choiceScores);
+                    }
+                    if (evalType === "agent") {
+                      overrides.agent_mode = agentMode;
                       overrides.tools = buildToolsPayload(
                         connectorIds,
                         checkInternet,
                       );
+                      overrides.knowledge_bases = knowledgeBaseIds || [];
+                      overrides.summary =
+                        summaryType === "custom"
+                          ? { type: "custom", custom: customSummary || "" }
+                          : { type: summaryType };
                     }
-                    if ((knowledgeBaseIds || []).length > 0) {
-                      overrides.knowledge_bases = knowledgeBaseIds;
-                    }
-                    return Object.keys(overrides).length > 0 ? overrides : null;
+                    return overrides;
                   })()}
                 />
               </Box>
