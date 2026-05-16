@@ -130,7 +130,6 @@ class TestCreateScenarioSerializer:
         )
         assert not serializer.is_valid()
         assert "dataset_id" in serializer.errors
-        # Message should reference the actual count so users understand the gap.
         rendered_error = str(serializer.errors["dataset_id"])
         assert "10" in rendered_error
         assert "1" in rendered_error

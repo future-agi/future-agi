@@ -300,9 +300,6 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 # Already validated in validate_dataset_id; skip DB checks
                 return data
 
-            # Source dataset must clear the same floor that the Workflow
-            # Builder's `no_of_rows` input enforces, so the Import Dataset
-            # path can't silently slip a smaller dataset through.
             min_rows = ScenarioCreateRequestSerializer._no_of_rows_min()
             row_count = Row.objects.filter(
                 dataset=source_dataset, deleted=False
