@@ -87,21 +87,23 @@ const EVAL_TAGS = [
   { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
 ];
 
+// Reads canonical `{internet, connectors[]}` first, falls back to legacy `{uuid: true}` shape.
 const extractSelectedTools = (tools) => {
+  if (!tools) return [];
   if (Array.isArray(tools)) return tools;
-  if (tools && typeof tools === "object") {
+  if (typeof tools === "object") {
+    if (Array.isArray(tools.connectors)) return tools.connectors.filter(Boolean);
     return Object.entries(tools)
-      .filter(([, enabled]) => !!enabled)
+      .filter(([key, enabled]) => !!enabled && key !== "internet")
       .map(([name]) => name);
   }
   return [];
 };
 
-const buildToolsPayload = (selectedTools) =>
-  (selectedTools || []).reduce((acc, toolName) => {
-    if (toolName) acc[toolName] = true;
-    return acc;
-  }, {});
+const buildToolsPayload = (selectedConnectorIds, internetEnabled = false) => ({
+  internet: !!internetEnabled,
+  connectors: (selectedConnectorIds || []).filter(Boolean),
+});
 
 const resolveSummaryType = (summary) => {
   if (summary && typeof summary === "object" && summary.type) {
@@ -336,7 +338,7 @@ const EvalCreatePage = () => {
         ? { type: "custom", custom: customSummary }
         : { type: summaryType };
 
-    const tools = buildToolsPayload(connectorIds);
+    const tools = buildToolsPayload(connectorIds, checkInternet);
 
     return {
       eval_type: evalType,
@@ -1235,6 +1237,33 @@ const EvalCreatePage = () => {
                     mode === "composite" ? false : errorLocalizerEnabled
                   }
                   templateFormat={templateFormat}
+                  runtimeOverrides={(() => {
+                    if (mode === "composite") return null;
+                    const overrides = {
+                      output_type: outputType,
+                      pass_threshold: passThreshold,
+                      multi_choice: multiChoice,
+                      check_internet: !!checkInternet,
+                      error_localizer_enabled: !!errorLocalizerEnabled,
+                    };
+                    if (Object.keys(choiceScores || {}).length > 0) {
+                      overrides.choice_scores = choiceScores;
+                      overrides.choices = Object.keys(choiceScores);
+                    }
+                    if (evalType === "agent") {
+                      overrides.agent_mode = agentMode;
+                      overrides.tools = buildToolsPayload(
+                        connectorIds,
+                        checkInternet,
+                      );
+                      overrides.knowledge_bases = knowledgeBaseIds || [];
+                      overrides.summary =
+                        summaryType === "custom"
+                          ? { type: "custom", custom: customSummary || "" }
+                          : { type: summaryType };
+                    }
+                    return overrides;
+                  })()}
                 />
               </Box>
 

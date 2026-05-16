@@ -633,6 +633,8 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
+      // Forwarded under `config.run_config` so unsaved picker state reaches the BE.
+      runtimeOverrides = null,
     },
     ref,
   ) => {
@@ -923,6 +925,11 @@ const TestPlayground = React.forwardRef(
 
         const params = evalType === "code" ? { ...codeParamsRef.current } : {};
 
+        const runConfigOverride =
+          runtimeOverrides && Object.keys(runtimeOverrides).length > 0
+            ? { run_config: runtimeOverrides }
+            : {};
+
         const { data } = await axios.post(
           endpoints.develop.eval.evalPlayground,
           {
@@ -932,6 +939,7 @@ const TestPlayground = React.forwardRef(
             config: {
               mapping,
               ...(evalType === "code" ? { params } : {}),
+              ...runConfigOverride,
             },
           },
         );
@@ -1370,6 +1378,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  runtimeOverrides={runtimeOverrides}
                 />
               )}
 
@@ -1388,6 +1397,7 @@ const TestPlayground = React.forwardRef(
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
+                  runtimeOverrides={runtimeOverrides}
                 />
               )}
 
@@ -1405,6 +1415,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleSimulationReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  runtimeOverrides={runtimeOverrides}
                 />
               )}
 

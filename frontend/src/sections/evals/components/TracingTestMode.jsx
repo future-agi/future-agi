@@ -254,6 +254,7 @@ const TracingTestMode = React.forwardRef(
       // only for source="task" — other surfaces stay locked until each
       // one's resolver is audited.
       allowCustomFieldPath = false,
+      runtimeOverrides = null,
     },
     ref,
   ) => {
@@ -1096,6 +1097,9 @@ const TracingTestMode = React.forwardRef(
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
+                  : {}),
+                ...(runtimeOverrides && Object.keys(runtimeOverrides).length > 0
+                  ? { run_config: runtimeOverrides }
                   : {}),
               },
               ...autoCtx,

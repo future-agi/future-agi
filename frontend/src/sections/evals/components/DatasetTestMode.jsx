@@ -539,6 +539,7 @@ const DatasetTestMode = React.forwardRef(
       compositeAdhocConfig = null,
       sourceColumns,
       extraColumns,
+      runtimeOverrides = null,
     },
     ref,
   ) => {
@@ -1083,6 +1084,9 @@ const DatasetTestMode = React.forwardRef(
                   if (contextOptions.includes("call_context")) flags.call_context = true;
                   return Object.keys(flags).length > 0 ? { data_injection: flags } : {};
                 })(),
+                ...(runtimeOverrides && Object.keys(runtimeOverrides).length > 0
+                  ? { run_config: runtimeOverrides }
+                  : {}),
               },
               input_data_types: inputDataTypes,
               row_context: rowContext,

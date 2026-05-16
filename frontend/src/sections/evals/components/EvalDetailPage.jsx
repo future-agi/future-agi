@@ -56,21 +56,23 @@ import VersionBadge from "./VersionBadge";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
+// Reads canonical `{internet, connectors[]}` first, falls back to legacy `{uuid: true}` shape.
 const extract_selected_tools = (tools) => {
+  if (!tools) return [];
   if (Array.isArray(tools)) return tools;
-  if (tools && typeof tools === "object") {
+  if (typeof tools === "object") {
+    if (Array.isArray(tools.connectors)) return tools.connectors.filter(Boolean);
     return Object.entries(tools)
-      .filter(([, enabled]) => !!enabled)
+      .filter(([key, enabled]) => !!enabled && key !== "internet")
       .map(([name]) => name);
   }
   return [];
 };
 
-const build_tools_payload = (selected_tools) =>
-  (selected_tools || []).reduce((acc, tool_name) => {
-    if (tool_name) acc[tool_name] = true;
-    return acc;
-  }, {});
+const build_tools_payload = (selected_connector_ids, internet_enabled = false) => ({
+  internet: !!internet_enabled,
+  connectors: (selected_connector_ids || []).filter(Boolean),
+});
 
 const resolve_summary_type = (summary) => {
   if (summary && typeof summary === "object" && summary.type) {
@@ -682,7 +684,7 @@ const EvalDetailPage = () => {
         summaryType === "custom"
           ? { type: "custom", custom: "" }
           : { type: summaryType };
-      const tools = build_tools_payload(connectorIds);
+      const tools = build_tools_payload(connectorIds, checkInternet);
       // Update the template first
       const payload = {
         instructions: evalType === "code" ? "" : instructions,
@@ -872,7 +874,7 @@ const EvalDetailPage = () => {
           summaryType === "custom"
             ? { type: "custom", custom: "" }
             : { type: summaryType };
-        const tools = build_tools_payload(connectorIds);
+        const tools = build_tools_payload(connectorIds, checkInternet);
         await updateEval.mutateAsync({
           instructions: evalType === "code" ? "" : instructions,
           code: evalType === "code" ? code : undefined,
@@ -1773,6 +1775,32 @@ const EvalDetailPage = () => {
                       setTestPassed(false);
                     }}
                     onReadyChange={setIsPlaygroundReady}
+                    runtimeOverrides={(() => {
+                      const overrides = {
+                        output_type: outputType,
+                        pass_threshold: passThreshold,
+                        multi_choice: multiChoice,
+                        check_internet: !!checkInternet,
+                        error_localizer_enabled: !!errorLocalizerEnabled,
+                      };
+                      if (Object.keys(choiceScores || {}).length > 0) {
+                        overrides.choice_scores = choiceScores;
+                        overrides.choices = Object.keys(choiceScores);
+                      }
+                      if (evalType === "agent") {
+                        overrides.agent_mode = agentMode;
+                        overrides.tools = build_tools_payload(
+                          connectorIds,
+                          checkInternet,
+                        );
+                        overrides.knowledge_bases = knowledgeBaseIds || [];
+                        overrides.summary =
+                          summaryType === "custom"
+                            ? { type: "custom", custom: "" }
+                            : { type: summaryType };
+                      }
+                      return overrides;
+                    })()}
                   />
                 </Box>
 
