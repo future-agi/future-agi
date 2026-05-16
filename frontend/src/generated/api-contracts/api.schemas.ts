@@ -2669,5 +2669,8 @@ page_size?: number;
  */
 current_page_index?: number;
 sort_params?: string;
+/**
+ * @minLength 1
+ */
 filters?: string;
 };

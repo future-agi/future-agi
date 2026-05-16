@@ -8091,6 +8091,8 @@ export const tracerUsersListQueryPageSizeMax = 500;
 
 export const tracerUsersListQueryCurrentPageIndexMin = 0;
 
+export const tracerUsersListQueryFiltersDefault = `[]`;
+
 
 
 export const TracerUsersListQueryParams = zod.object({
@@ -8099,7 +8101,7 @@ export const TracerUsersListQueryParams = zod.object({
   "page_size": zod.number().min(1).max(tracerUsersListQueryPageSizeMax).optional(),
   "current_page_index": zod.number().min(tracerUsersListQueryCurrentPageIndexMin).optional(),
   "sort_params": zod.string().optional(),
-  "filters": zod.string().optional()
+  "filters": zod.string().min(1).default(tracerUsersListQueryFiltersDefault)
 })
 
 export const tracerUsersListResponseStatusDefault = true;

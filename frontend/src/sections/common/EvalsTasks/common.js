@@ -180,12 +180,12 @@ export const EvalTaskFilterDefinition = (observeId) => {
 // span_attributes_filters
 // [
 //     {
-//         "columnId": "llm.output_messages.0.message.content",
-//         "filterConfig": {
-//             "colType": "SPAN_ATTRIBUTE",
-//             "filterOp": "equals",
-//             "filterType": "text",
-//             "filterValue": "asdasdasd"
+//         "column_id": "llm.output_messages.0.message.content",
+//         "filter_config": {
+//             "col_type": "SPAN_ATTRIBUTE",
+//             "filter_op": "equals",
+//             "filter_type": "text",
+//             "filter_value": "asdasdasd"
 //         }
 //     }
 // ]
@@ -228,16 +228,12 @@ export const formatTaskFilters = (filters_applied) => {
     },
   }));
 
-  // Every other top-level key is treated as a generic system filter:
-  // one filter row per value. Round-trips arbitrary keys (span_kind,
-  // latency_ms, total_tokens, status_code, …) without each one needing
-  // to be hard-coded here.
+  // Every other top-level key is treated as a task system filter: one filter
+  // row per value. The backend contract only accepts task-scoping keys such
+  // as observation_type; span attributes stay in `span_attributes_filters`.
   //
-  // canonicalEntries (not Object.entries) drops the camelCase aliases
-  // the axios interceptor auto-attaches alongside every snake_case
-  // key — without it we'd render duplicate chips like `span_kind` AND
-  // `spanKind`, and the reserved-key skip would miss `projectId` /
-  // `dateRange` because the set only lists the snake_case forms.
+  // canonicalEntries (not Object.entries) drops the camelCase aliases the
+  // axios interceptor auto-attaches alongside every snake_case key.
   const systemFilters = [];
   canonicalEntries(filters_applied).forEach(([key, vals]) => {
     if (RESERVED_FILTER_KEYS.has(key)) return;

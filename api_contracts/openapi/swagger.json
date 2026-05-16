@@ -35604,7 +35604,9 @@
                         "name": "filters",
                         "in": "query",
                         "required": false,
-                        "type": "string"
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
                     }
                 ],
                 "responses": {
@@ -51170,7 +51172,93 @@
                 "filters": {
                     "title": "Filters",
                     "type": "object",
-                    "x-nullable": true
+                    "default": {},
+                    "x-nullable": true,
+                    "properties": {
+                        "project_id": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Project scope for the evaluation task."
+                        },
+                        "date_range": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "Inclusive start/end ISO timestamps."
+                        },
+                        "created_at": {
+                            "type": "string",
+                            "description": "Lower-bound ISO timestamp for legacy task filters."
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Trace session id to constrain the task."
+                        },
+                        "observation_type": {
+                            "oneOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            ],
+                            "description": "Observation span type(s), for example llm, tool, or chain."
+                        },
+                        "span_attributes_filters": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column_id": {
+                                        "type": "string",
+                                        "description": "Column or attribute id to filter on."
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "description": "Optional UI label for chips and saved views."
+                                    },
+                                    "filter_config": {
+                                        "type": "object",
+                                        "properties": {
+                                            "filter_type": {
+                                                "type": "string",
+                                                "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                                            },
+                                            "filter_op": {
+                                                "type": "string",
+                                                "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                            },
+                                            "filter_value": {
+                                                "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                            },
+                                            "col_type": {
+                                                "type": "string",
+                                                "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                            }
+                                        },
+                                        "required": [
+                                            "filter_type",
+                                            "filter_op"
+                                        ],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "required": [
+                                    "column_id",
+                                    "filter_config"
+                                ],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "additionalProperties": false
                 },
                 "sampling_rate": {
                     "title": "Sampling rate",

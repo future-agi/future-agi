@@ -1,3 +1,5 @@
+import json
+
 from rest_framework import serializers
 
 from tracer.utils.filter_operators import (
@@ -6,7 +8,6 @@ from tracer.utils.filter_operators import (
     NO_VALUE_FILTER_OPS,
     RANGE_FILTER_OPS,
 )
-
 
 FILTER_CONFIG_SCHEMA = {
     "type": "object",
@@ -53,11 +54,67 @@ FILTER_LIST_SCHEMA = {
     "type": "array",
     "items": FILTER_ITEM_SCHEMA,
 }
+FILTER_LIST_QUERY_PARAM_SCHEMA = {
+    "type": "string",
+    "description": "JSON-encoded canonical filter list.",
+}
+
+EVAL_TASK_FILTERS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "project_id": {
+            "type": "string",
+            "nullable": True,
+            "description": "Project scope for the evaluation task.",
+        },
+        "date_range": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Inclusive start/end ISO timestamps.",
+        },
+        "created_at": {
+            "type": "string",
+            "description": "Lower-bound ISO timestamp for legacy task filters.",
+        },
+        "session_id": {
+            "type": "string",
+            "description": "Trace session id to constrain the task.",
+        },
+        "observation_type": {
+            "oneOf": [
+                {"type": "string"},
+                {"type": "array", "items": {"type": "string"}},
+            ],
+            "description": "Observation span type(s), for example llm, tool, or chain.",
+        },
+        "span_attributes_filters": FILTER_LIST_SCHEMA,
+    },
+    "additionalProperties": False,
+}
 
 FILTER_ITEM_ALLOWED_KEYS = set(FILTER_ITEM_SCHEMA["properties"])
 FILTER_CONFIG_ALLOWED_KEYS = set(FILTER_CONFIG_SCHEMA["properties"])
 FILTER_ITEM_REQUIRED_KEYS = set(FILTER_ITEM_SCHEMA["required"])
 FILTER_CONFIG_REQUIRED_KEYS = set(FILTER_CONFIG_SCHEMA["required"])
+EVAL_TASK_FILTER_ALLOWED_KEYS = set(EVAL_TASK_FILTERS_SCHEMA["properties"])
+
+
+def parse_filter_list_payload(data):
+    """Decode the canonical filter-list payload from body or query params."""
+    if data in (None, ""):
+        return []
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise serializers.ValidationError("Filters must be valid JSON.") from exc
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        raise serializers.ValidationError("Filters must be a list.")
+    return data
 
 
 class FilterItemField(serializers.JSONField):
@@ -146,6 +203,92 @@ class FilterListField(serializers.ListField):
     class Meta:
         swagger_schema_fields = FILTER_LIST_SCHEMA
 
+    def to_internal_value(self, data):
+        return super().to_internal_value(parse_filter_list_payload(data))
+
+
+class FilterListQueryParamField(serializers.CharField):
+    """Query-param version of FilterListField.
+
+    Query strings carry filters as JSON text (`filters=[...]`). The runtime
+    validator still parses and checks the canonical filter-list shape, while
+    OpenAPI correctly advertises a string parameter instead of an array of
+    repeated query params.
+    """
+
+    class Meta:
+        swagger_schema_fields = FILTER_LIST_QUERY_PARAM_SCHEMA
+
+    def to_internal_value(self, data):
+        return FilterListField().run_validation(data)
+
+
+class EvalTaskFiltersField(serializers.JSONField):
+    """Strict serializer for the saved EvalTask filter object.
+
+    Eval tasks store a small wrapper object around canonical filter lists
+    because the dispatcher needs task-scoping keys (`project_id`, `date_range`)
+    alongside span attribute filters. Keep that wrapper typed and reject unknown
+    keys instead of silently dropping them in `parsing_evaltask_filters`.
+    """
+
+    class Meta:
+        swagger_schema_fields = EVAL_TASK_FILTERS_SCHEMA
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Eval task filters must be an object.")
+
+        extra_keys = sorted(set(value) - EVAL_TASK_FILTER_ALLOWED_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown eval task filter keys: {', '.join(extra_keys)}"
+            )
+
+        if "date_range" in value:
+            date_range = value["date_range"]
+            if not isinstance(date_range, list) or len(date_range) != 2:
+                raise serializers.ValidationError(
+                    "date_range must be a two-value list."
+                )
+
+        if "observation_type" in value:
+            observation_type = value["observation_type"]
+            if isinstance(observation_type, str):
+                if not observation_type:
+                    raise serializers.ValidationError(
+                        "observation_type cannot be empty."
+                    )
+            elif isinstance(observation_type, list):
+                if not observation_type or not all(
+                    isinstance(item, str) and item for item in observation_type
+                ):
+                    raise serializers.ValidationError(
+                        "observation_type must be a non-empty string or string list."
+                    )
+            else:
+                raise serializers.ValidationError(
+                    "observation_type must be a string or string list."
+                )
+
+        if "span_attributes_filters" in value:
+            value["span_attributes_filters"] = FilterListField().run_validation(
+                value["span_attributes_filters"]
+            )
+
+        return value
+
 
 def filter_list_field(**kwargs):
     return FilterListField(**kwargs)
+
+
+def filter_list_query_param_field(**kwargs):
+    return FilterListQueryParamField(**kwargs)
+
+
+def eval_task_filters_field(**kwargs):
+    return EvalTaskFiltersField(**kwargs)

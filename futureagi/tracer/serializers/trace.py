@@ -4,7 +4,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.serializers.filters import filter_list_field
+from tracer.serializers.filters import filter_list_field, filter_list_query_param_field
 from tracer.utils.helper import validate_filters_helper
 
 
@@ -49,7 +49,7 @@ class UsersQuerySerializer(serializers.Serializer):
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=500)
     current_page_index = serializers.IntegerField(required=False, min_value=0)
     sort_params = serializers.JSONField(required=False)
-    filters = serializers.JSONField(required=False)
+    filters = filter_list_query_param_field(required=False, default=list)
 
 
 class UsersTableRowSerializer(serializers.Serializer):

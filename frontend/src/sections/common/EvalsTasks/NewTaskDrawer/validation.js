@@ -3,6 +3,13 @@ import { z } from "zod";
 
 const RANGE_OPS = new Set(["between", "not_between"]);
 const LIST_OPS = new Set(["in", "not_in"]);
+const TASK_FILTER_PROPERTY_TO_API = {
+  span_kind: "observation_type",
+  observation_type: "observation_type",
+};
+
+export const getTaskFilterApiKey = (property) =>
+  TASK_FILTER_PROPERTY_TO_API[property] || property;
 
 // Group multiple form rows for the same (column_id, op) into a single wire
 // entry. Scalar rows for list ops collapse to array `filter_value`; multiple
@@ -79,6 +86,8 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
   // historical `{ field: [v1, v2, ...] }` shape it expects.
   data?.filters?.forEach((filter) => {
     if (filter?.property === "attributes") return;
+    const apiKey = getTaskFilterApiKey(filter?.property);
+    if (!apiKey) return;
     const val = filter?.filterConfig?.filterValue;
     const vals = Array.isArray(val)
       ? val
@@ -86,10 +95,10 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
         ? [val]
         : [];
     if (vals.length === 0) return;
-    if (filter?.property in filters) {
-      filters[filter?.property].push(...vals);
+    if (apiKey in filters) {
+      filters[apiKey].push(...vals);
     } else {
-      filters[filter?.property] = [...vals];
+      filters[apiKey] = [...vals];
     }
   });
 

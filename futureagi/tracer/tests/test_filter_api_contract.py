@@ -44,3 +44,26 @@ def test_filter_request_schemas_are_not_generic_json_objects():
 
     _assert_filter_item_schema(definitions["FetchGraph"]["properties"]["filters"])
     _assert_filter_item_schema(definitions["Selection"]["properties"]["filter"])
+
+
+def test_eval_task_filter_schema_is_typed_and_closed():
+    definitions = _swagger()["definitions"]
+
+    filters = definitions["EvalTask"]["properties"]["filters"]
+    assert filters["type"] == "object"
+    assert filters["additionalProperties"] is False
+    assert "span_kind" not in filters["properties"]
+    assert "observation_type" in filters["properties"]
+    _assert_filter_item_schema(filters["properties"]["span_attributes_filters"])
+
+
+def test_users_filter_query_param_stays_json_string():
+    users_get = _swagger()["paths"]["/tracer/users/"]["get"]
+    filters = next(
+        parameter
+        for parameter in users_get["parameters"]
+        if parameter["name"] == "filters"
+    )
+
+    assert filters["type"] == "string"
+    assert "items" not in filters

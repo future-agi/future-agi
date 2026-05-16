@@ -5024,7 +5024,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "filters": {
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "default": "[]"
             }
           }
         },

@@ -1573,6 +1573,7 @@ const TraceFilterPanel = ({
   showAi = true,
   showQueryTab = true,
   categories: categoriesOverride,
+  propertyFilter,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1589,7 +1590,11 @@ const TraceFilterPanel = ({
     });
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
-    if (propertiesOverride) return propertiesOverride;
+    if (propertiesOverride) {
+      return propertyFilter
+        ? propertiesOverride.filter(propertyFilter)
+        : propertiesOverride;
+    }
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
@@ -1626,8 +1631,16 @@ const TraceFilterPanel = ({
         category: "system",
         type: f.type || "string",
       }));
-    return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride, tab, isSpansView]);
+    const merged = [...staticProps, ...dynamicExtras, ...fieldExtras];
+    return propertyFilter ? merged.filter(propertyFilter) : merged;
+  }, [
+    dynamicProperties,
+    filterFields,
+    propertiesOverride,
+    propertyFilter,
+    tab,
+    isSpansView,
+  ]);
   const propertyById = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p])),
     [properties],
@@ -2085,6 +2098,7 @@ TraceFilterPanel.propTypes = {
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
+  propertyFilter: PropTypes.func,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

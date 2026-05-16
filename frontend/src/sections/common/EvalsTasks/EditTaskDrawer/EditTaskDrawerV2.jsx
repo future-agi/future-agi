@@ -41,6 +41,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
 import {
   extractAttributeFilters,
+  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -265,20 +266,24 @@ const EditTaskDrawerV2Content = ({
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
 
-      // Generic system filter aggregation: every non-attribute filter
-      // row contributes its value to a BE key named after `f.property`.
-      // Mirrors the create-side getNewTaskFilters (validation.js) so
-      // span_kind, latency_ms, total_tokens, etc. all round-trip
-      // without each one being hard-coded.
+      // Task system filter aggregation. Keep the update payload aligned with
+      // the backend-supported task filter contract instead of saving fields
+      // that the dispatcher would ignore.
       const systemFilters = {};
       (data.filters || []).forEach((f) => {
         if (!f?.property || f.property === "attributes") return;
+        const apiKey = getTaskFilterApiKey(f.property);
         const v = f?.filterConfig?.filterValue;
-        if (v === undefined || v === null || v === "") return;
-        if (systemFilters[f.property]) {
-          systemFilters[f.property].push(v);
+        const values = Array.isArray(v)
+          ? v
+          : v !== undefined && v !== null && v !== ""
+            ? [v]
+            : [];
+        if (!values.length) return;
+        if (systemFilters[apiKey]) {
+          systemFilters[apiKey].push(...values);
         } else {
-          systemFilters[f.property] = [v];
+          systemFilters[apiKey] = [...values];
         }
       });
 

@@ -4165,8 +4165,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         start_date, end_date = BaseQueryBuilder.parse_time_range(filters)
         has_explicit_date = any(
-            f.get("column_id") in ("created_at", "start_time")
-            for f in filters
+            f.get("column_id") in ("created_at", "start_time") for f in filters
         )
         if not has_explicit_date:
             start_date = datetime.utcnow() - timedelta(days=365)
@@ -5649,16 +5648,21 @@ class UsersView(APIView):
         List traces filtered by project ID with optimized queries.
         """
         try:
-            project_id = request.query_params.get("project_id") or None
-            search = request.query_params.get("search", "")
-            page_size = int(request.query_params.get("page_size", 30))
-            current_page = int(request.query_params.get("current_page_index", 0))
+            query_serializer = UsersQuerySerializer(data=request.query_params)
+            query_serializer.is_valid(raise_exception=True)
+            query_data = query_serializer.validated_data
+
+            project_id = query_data.get("project_id") or None
+            project_id = str(project_id) if project_id else None
+            search = query_data.get("search", "")
+            page_size = query_data.get("page_size", 30)
+            current_page = query_data.get("current_page_index", 0)
             search_name = search.strip() if search else None
             organization_id = request.user.organization.id
             limit = page_size
             offset = current_page * page_size
             sort_params = request.query_params.get("sort_params", [])
-            filters = request.query_params.get("filters", [])
+            filters = query_data.get("filters", [])
 
             # Convert string parameters to appropriate types
             try:
@@ -5674,12 +5678,6 @@ class UsersView(APIView):
                     sort_params = json.loads(sort_params)
                 except (ValueError, TypeError):
                     sort_params = []
-
-            if isinstance(filters, str):
-                try:
-                    filters = json.loads(filters)
-                except (ValueError, TypeError):
-                    filters = []
 
             column_mapping = {
                 "user_id": "user_id",
