@@ -11,6 +11,48 @@ import { getLabel } from "./common";
 const DeterministicEvaluationChart = ({ title, data }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+
+  // Empty-state placeholder: no data points (e.g. every call errored on this
+  // eval) — render the title with a muted message instead of an empty chart.
+  if (!data || data.length === 0) {
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        justifyContent="center"
+        sx={{ width: "100%", maxWidth: 320 }}
+      >
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: "fontWeightMedium",
+            color: "text.primary",
+          }}
+        >
+          {getLabel(title)}
+        </Typography>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: 115,
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.disabled",
+              fontStyle: "italic",
+            }}
+          >
+            No data — every eval run errored
+          </Typography>
+        </Box>
+      </Box>
+    );
+  }
+
   const series = data.map((item) => item.value);
   const labels = data.map((item) => item.name);
   const colors = data.map((item) => item.color);

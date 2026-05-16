@@ -670,7 +670,7 @@ def _execute_composite_on_span(
             id=custom_eval_config_id, deleted=False
         )
     except (ObservationSpan.DoesNotExist, CustomEvalConfig.DoesNotExist) as e:
-        raise ValueError(f"Trace composite eval load failed: {e}") from e
+        raise ValueError(f"Span composite eval load failed: {e}") from e
 
     parent = custom_eval_config.eval_template
     org = observation_span.project.organization
@@ -750,6 +750,277 @@ def _execute_composite_on_span(
 
     if value != "ERROR":
         logger_kwargs["value"] = value
+        if isinstance(value, bool):
+            logger_kwargs["output_bool"] = value
+        elif isinstance(value, float) or isinstance(value, int):
+            logger_kwargs["output_float"] = float(value)
+        elif isinstance(value, list):
+            logger_kwargs["output_str_list"] = value
+        else:
+            logger_kwargs["output_str"] = str(value)
+
+    return logger_kwargs
+
+
+def _execute_composite_on_trace(
+    *,
+    trace: Trace,
+    anchor_span: ObservationSpan,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    run_params=None,
+    feedback_id=None,
+):
+    """Execute a composite `EvalTemplate` against a Trace.
+
+    Twin of `_execute_composite_on_span` but anchored to a trace. Resolves
+    the composite's child links, delegates to `execute_composite_children_sync`,
+    and returns a `logger_kwargs` dict shaped like the trace single-eval
+    path at the bottom of `_execute_evaluation_for_trace` (target_type=trace,
+    trace + anchor_span set, trace_session NULL). The caller writes the
+    EvalLogger row.
+    """
+    from model_hub.models.evals_metric import CompositeEvalChild
+    from model_hub.utils.composite_execution import execute_composite_children_sync
+
+    parent = custom_eval_config.eval_template
+    org = trace.project.organization
+    workspace = trace.project.workspace
+    if workspace is None:
+        workspace = Workspace.objects.get(
+            organization=org,
+            is_default=True,
+            is_active=True,
+        )
+
+    child_links = list(
+        CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+        .select_related("child", "pinned_version")
+        .order_by("order")
+    )
+    if not child_links:
+        raise ValueError(f"Composite {parent.id} has no children — cannot run on trace.")
+
+    # Mirror the single-eval trace path: set the workspace ContextVar so child
+    # evals' tools (explore_trace etc.) see the right org scope.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+
+        set_workspace_context(workspace=workspace, organization=org)
+    except Exception as _ctx_err:
+        logger.debug(
+            "Failed to set workspace context for composite trace eval",
+            error=str(_ctx_err),
+        )
+
+    try:
+        outcome = execute_composite_children_sync(
+            parent=parent,
+            child_links=child_links,
+            mapping=run_params or {},
+            config=custom_eval_config.config or {},
+            org=org,
+            workspace=workspace,
+            model=custom_eval_config.model,
+            trace_context={
+                "trace_id": str(trace.id),
+                "anchor_span_id": str(anchor_span.id),
+            },
+            source="tracer_composite",
+        )
+
+        value = (
+            outcome.aggregate_score
+            if parent.aggregation_enabled
+            else (outcome.summary or "")
+        )
+        response = {
+            "data": run_params,
+            "failure": False,
+            "reason": outcome.summary or "",
+            "runtime": 0,
+            "model": custom_eval_config.model,
+            "metrics": None,
+            "metadata": {
+                "composite_id": str(parent.id),
+                "aggregation_enabled": parent.aggregation_enabled,
+                "aggregation_function": parent.aggregation_function,
+                "aggregate_pass": outcome.aggregate_pass,
+                "children": [cr.model_dump() for cr in outcome.child_results],
+            },
+            "output": "score" if parent.aggregation_enabled else "text",
+        }
+        logger_kwargs = {
+            "target_type": EvalTargetType.TRACE.value,
+            "trace": trace,
+            "observation_span": anchor_span,
+            "trace_session": None,
+            "output_metadata": response["metadata"],
+            "eval_explanation": outcome.summary or "",
+            "results_explanation": response,
+            "eval_task_id": eval_task_id,
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": None,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        logger_kwargs = {
+            "target_type": EvalTargetType.TRACE.value,
+            "trace": trace,
+            "observation_span": anchor_span,
+            "trace_session": None,
+            "output_metadata": {
+                "error": str(e),
+                "composite_id": str(parent.id),
+            },
+            "eval_explanation": f"Composite eval failed: {e}",
+            "results_explanation": {"reason": str(e)},
+            "output_str": "ERROR",
+            "error": True,
+            "error_message": f"Composite eval failed: {e}",
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": None,
+            "eval_task_id": eval_task_id,
+        }
+        value = "ERROR"
+
+    if value != "ERROR":
+        if isinstance(value, bool):
+            logger_kwargs["output_bool"] = value
+        elif isinstance(value, float) or isinstance(value, int):
+            logger_kwargs["output_float"] = float(value)
+        elif isinstance(value, list):
+            logger_kwargs["output_str_list"] = value
+        else:
+            logger_kwargs["output_str"] = str(value)
+
+    return logger_kwargs
+
+
+def _execute_composite_on_session(
+    *,
+    trace_session: TraceSession,
+    custom_eval_config: CustomEvalConfig,
+    eval_task_id,
+    run_params=None,
+    feedback_id=None,
+):
+    """Execute a composite `EvalTemplate` against a TraceSession.
+
+    Twin of `_execute_composite_on_trace` but session-scoped. Writes a
+    target_type='session' EvalLogger shape (trace_session set, observation_span
+    + trace NULL). Sets the workspace ContextVar before delegation so child
+    evals' tools (e.g. explore_trace) see the right org scope.
+    """
+    from model_hub.models.evals_metric import CompositeEvalChild
+    from model_hub.utils.composite_execution import execute_composite_children_sync
+
+    parent = custom_eval_config.eval_template
+    org = trace_session.project.organization
+    workspace = trace_session.project.workspace
+    if workspace is None:
+        workspace = Workspace.objects.get(
+            organization=org,
+            is_default=True,
+            is_active=True,
+        )
+
+    child_links = list(
+        CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+        .select_related("child", "pinned_version")
+        .order_by("order")
+    )
+    if not child_links:
+        raise ValueError(
+            f"Composite {parent.id} has no children — cannot run on session."
+        )
+
+    # The explore_trace tool's live DB actions (list_trace_spans, span_detail)
+    # call get_current_organization() to enforce tenant isolation. The
+    # ContextVar is request-bound and not set in Temporal worker contexts.
+    # Mirror the single-eval session path so children can drill into spans.
+    try:
+        from tfc.middleware.workspace_context import set_workspace_context
+
+        set_workspace_context(
+            workspace=workspace,
+            organization=org,
+        )
+    except Exception as _ctx_err:
+        logger.debug(
+            "Failed to set workspace context for composite session eval",
+            error=str(_ctx_err),
+        )
+
+    try:
+        outcome = execute_composite_children_sync(
+            parent=parent,
+            child_links=child_links,
+            mapping=run_params or {},
+            config=custom_eval_config.config or {},
+            org=org,
+            workspace=workspace,
+            model=custom_eval_config.model,
+            session_context={"session_id": str(trace_session.id)},
+            source="tracer_composite",
+        )
+
+        value = (
+            outcome.aggregate_score
+            if parent.aggregation_enabled
+            else (outcome.summary or "")
+        )
+        response = {
+            "data": run_params,
+            "failure": False,
+            "reason": outcome.summary or "",
+            "runtime": 0,
+            "model": custom_eval_config.model,
+            "metrics": None,
+            "metadata": {
+                "composite_id": str(parent.id),
+                "aggregation_enabled": parent.aggregation_enabled,
+                "aggregation_function": parent.aggregation_function,
+                "aggregate_pass": outcome.aggregate_pass,
+                "children": [cr.model_dump() for cr in outcome.child_results],
+            },
+            "output": "score" if parent.aggregation_enabled else "text",
+        }
+        logger_kwargs = {
+            "target_type": EvalTargetType.SESSION.value,
+            "trace": None,
+            "observation_span": None,
+            "trace_session": trace_session,
+            "output_metadata": response["metadata"],
+            "eval_explanation": outcome.summary or "",
+            "results_explanation": response,
+            "eval_task_id": eval_task_id,
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": None,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        logger_kwargs = {
+            "target_type": EvalTargetType.SESSION.value,
+            "trace": None,
+            "observation_span": None,
+            "trace_session": trace_session,
+            "output_metadata": {
+                "error": str(e),
+                "composite_id": str(parent.id),
+            },
+            "eval_explanation": f"Composite eval failed: {e}",
+            "results_explanation": {"reason": str(e)},
+            "output_str": "ERROR",
+            "error": True,
+            "error_message": f"Composite eval failed: {e}",
+            "custom_eval_config": custom_eval_config,
+            "eval_type_id": None,
+            "eval_task_id": eval_task_id,
+        }
+        value = "ERROR"
+
+    if value != "ERROR":
         if isinstance(value, bool):
             logger_kwargs["output_bool"] = value
         elif isinstance(value, float) or isinstance(value, int):
@@ -1656,10 +1927,10 @@ def score_categorical(evals: list, value):
 #                   ``first``/``last``); for sessions also
 #                   ``traces.<n>.spans.<m>.<field>``.
 #
-# Composite eval support is intentionally span-only here: the helpers raise
-# NotImplementedError if a composite template is used. Composite fan-out
-# for trace/session subjects is deferred until the UX questions around
-# per-target_type composite templates are settled.
+# Composite eval support spans all three row types: span, trace, and
+# session evaluators each have a `_execute_composite_on_*` helper that
+# fans out to `execute_composite_children_sync` and returns a
+# `logger_kwargs` dict matching the target_type-specific FK shape.
 
 
 # ── Anchor span resolution ──
@@ -1995,17 +2266,24 @@ def _execute_evaluation_for_trace(
     Twin of ``_execute_evaluation`` — same flow (cost log → run_eval → write
     logger), but resolves project/org/workspace off the trace and writes
     a target_type='trace' row anchored to ``anchor_span``. Composite
-    templates raise ``NotImplementedError`` (span-only).
+    templates fan out via ``_execute_composite_on_trace``; children log
+    their own cost rows so the parent cost-log path is skipped.
     """
     from evaluations.constants import FUTUREAGI_EVAL_TYPES
     from evaluations.engine import EvalRequest, run_eval
 
     eval_template = custom_eval_config.eval_template
     if eval_template.template_type == "composite":
-        raise NotImplementedError(
-            "Composite eval templates are span-only. Trace-level "
-            "composite fan-out is not supported yet."
+        logger_kwargs = _execute_composite_on_trace(
+            trace=trace,
+            anchor_span=anchor_span,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+            run_params=run_params,
+            feedback_id=feedback_id,
         )
+        EvalLogger.objects.create(**logger_kwargs)
+        return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -2204,16 +2482,25 @@ def _execute_evaluation_for_session(
     run_params: dict,
     feedback_id=None,
 ):
-    """Twin of ``_execute_evaluation_for_trace`` but for sessions."""
+    """Twin of ``_execute_evaluation_for_trace`` but for sessions.
+
+    Composite templates fan out via ``_execute_composite_on_session``;
+    children log their own cost rows so the parent cost-log path is skipped.
+    """
     from evaluations.constants import FUTUREAGI_EVAL_TYPES
     from evaluations.engine import EvalRequest, run_eval
 
     eval_template = custom_eval_config.eval_template
     if eval_template.template_type == "composite":
-        raise NotImplementedError(
-            "Composite eval templates are span-only. Session-level "
-            "composite fan-out is not supported yet."
+        logger_kwargs = _execute_composite_on_session(
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+            run_params=run_params,
+            feedback_id=feedback_id,
         )
+        EvalLogger.objects.create(**logger_kwargs)
+        return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
