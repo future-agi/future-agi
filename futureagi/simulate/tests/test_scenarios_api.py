@@ -72,7 +72,9 @@ def simulator_agent(db, organization, workspace):
 
 @pytest.fixture
 def dataset(db, organization, user, workspace):
-    """Create a test dataset."""
+    """Create a test dataset (no rows). Use ``dataset_min_rows`` when the test
+    exercises the scenario-create Import Dataset path (which enforces a row
+    floor)."""
     return Dataset.no_workspace_objects.create(
         name="Test Dataset",
         organization=organization,
@@ -80,6 +82,17 @@ def dataset(db, organization, user, workspace):
         user=user,
         source=DatasetSourceChoices.SCENARIO.value,
     )
+
+
+@pytest.fixture
+def dataset_min_rows(db, dataset):
+    """Dataset seeded with the scenario-create minimum number of rows
+    (``no_of_rows.min_value``) for tests that exercise the Import Dataset path.
+    """
+    Row.objects.bulk_create(
+        [Row(dataset=dataset, order=i) for i in range(10)]
+    )
+    return dataset
 
 
 @pytest.fixture
@@ -503,13 +516,13 @@ class TestCreateScenarioView:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_dataset_success(
-        self, mock_workflow, auth_client, agent_definition, dataset
+        self, mock_workflow, auth_client, agent_definition, dataset_min_rows
     ):
         """Test creating a dataset scenario successfully."""
         payload = {
             "name": "New Dataset Scenario",
             "description": "A new scenario from dataset",
-            "dataset_id": str(dataset.id),
+            "dataset_id": str(dataset_min_rows.id),
             "kind": "dataset",
             "agent_definition_id": str(agent_definition.id),
         }
@@ -718,12 +731,12 @@ class TestCreateScenarioView:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_with_custom_columns(
-        self, mock_workflow, auth_client, agent_definition, dataset
+        self, mock_workflow, auth_client, agent_definition, dataset_min_rows
     ):
         """Test creating scenario with custom columns."""
         payload = {
             "name": "New Scenario with Custom Cols",
-            "dataset_id": str(dataset.id),
+            "dataset_id": str(dataset_min_rows.id),
             "kind": "dataset",
             "agent_definition_id": str(agent_definition.id),
             "custom_columns": [

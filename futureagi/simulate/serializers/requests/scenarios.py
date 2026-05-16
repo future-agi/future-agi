@@ -126,6 +126,15 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
     finished_speaking_sensitivity = serializers.FloatField(required=False, default=0.5)
     initial_message_delay = serializers.IntegerField(required=False, default=0)
 
+    @classmethod
+    def _no_of_rows_min(cls) -> int:
+        """Single source of truth for the dataset-rows floor.
+
+        Mirrors the ``no_of_rows.min_value`` so the Import-Dataset path and the
+        Workflow-Builder path stay in lockstep.
+        """
+        return cls().fields["no_of_rows"].min_value
+
     def validate_name(self, value):
         if not value.strip():
             raise serializers.ValidationError(
@@ -278,7 +287,7 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         # Phase 0.1.2 + 0.1.3 — persona column type + duplicate DB column names (dataset)
         if kind == Scenarios.ScenarioTypes.DATASET and data.get("dataset_id"):
             request = self.context.get("request")
-            from model_hub.models.develop_dataset import Column, Dataset
+            from model_hub.models.develop_dataset import Column, Dataset, Row
 
             try:
                 source_dataset = Dataset.objects.get(
@@ -290,6 +299,20 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
             except Dataset.DoesNotExist:
                 # Already validated in validate_dataset_id; skip DB checks
                 return data
+
+            min_rows = ScenarioCreateRequestSerializer._no_of_rows_min()
+            row_count = Row.objects.filter(
+                dataset=source_dataset, deleted=False
+            ).count()
+            if row_count < min_rows:
+                raise serializers.ValidationError(
+                    {
+                        "dataset_id": (
+                            f"Source dataset must have at least {min_rows} rows "
+                            f"to create a scenario (found {row_count})."
+                        )
+                    }
+                )
 
             # 0.1.2 — persona column data type
             persona_col = Column.objects.filter(

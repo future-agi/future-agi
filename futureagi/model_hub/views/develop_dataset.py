@@ -3323,14 +3323,20 @@ class GetDatasetsNamesView(APIView):
             if search_text:
                 queryset = queryset.filter(name__icontains=search_text)
 
+            # Separate annotated qs keeps the experiments subquery free of COUNT/GROUP BY.
+            annotated_datasets = queryset.annotate(
+                row_count=Count("row", filter=Q(row__deleted=False), distinct=True)
+            ).select_related("organization")
+
             # Format response
             datasets.extend(
                 {
                     "dataset_id": str(dataset.id),
                     "name": dataset.name,
                     "model_type": dataset.model_type,
+                    "row_count": dataset.row_count,
                 }
-                for dataset in queryset.select_related("organization")
+                for dataset in annotated_datasets
             )
 
             if include_experiments:
