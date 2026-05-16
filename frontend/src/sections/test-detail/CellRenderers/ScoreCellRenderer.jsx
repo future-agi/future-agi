@@ -8,13 +8,12 @@ import { CallExecutionLoadingStatus, TestRunLoadingStatus } from "../common";
 const ScoreCellRenderer = ({ value, data }) => {
   const color = getCsatScoreColor(value);
   if (value === null || value === undefined) {
-    const callLoading = CallExecutionLoadingStatus.includes(
-      data?.status?.toLowerCase?.(),
-    );
-    const runLoading = TestRunLoadingStatus.includes(
-      data?.overall_status?.toLowerCase?.(),
-    );
-    if (callLoading || runLoading) {
+    // Precise signal from BE: only show the loading skeleton while CSAT is
+    // actually being computed. Eval-only reruns don't recompute CSAT, so the
+    // BE doesn't transition this back to "running" — the cell stays as "-".
+    const callMetadata = data?.callMetadata ?? data?.call_metadata;
+    const csatStatus = callMetadata?.csatStatus ?? callMetadata?.csat_status;
+    if (csatStatus === "running") {
       return (
         <Box
           sx={{
@@ -27,6 +26,33 @@ const ScoreCellRenderer = ({ value, data }) => {
           <Skeleton sx={{ width: "100%", height: "20px" }} variant="rounded" />
         </Box>
       );
+    }
+    // Fallback for older rows persisted before csat_status was tracked:
+    // infer from the broader call/run loading state.
+    if (csatStatus === undefined) {
+      const callLoading = CallExecutionLoadingStatus.includes(
+        data?.status?.toLowerCase?.(),
+      );
+      const runLoading = TestRunLoadingStatus.includes(
+        data?.overall_status?.toLowerCase?.(),
+      );
+      if (callLoading || runLoading) {
+        return (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              height: "100%",
+              width: "100%",
+            }}
+          >
+            <Skeleton
+              sx={{ width: "100%", height: "20px" }}
+              variant="rounded"
+            />
+          </Box>
+        );
+      }
     }
     return <Typography typography="s1">- </Typography>;
   }
