@@ -156,21 +156,18 @@ def test_call_execution_number_filters_accept_contract_operators(filter_op):
 
 
 @pytest.mark.parametrize(
-    "legacy_op,lookup",
-    [
-        ("more_than", "duration_seconds__gt"),
-        ("more_than_or_equal", "duration_seconds__gte"),
-    ],
+    "legacy_op",
+    ["more_than", "more_than_or_equal", "gt", "gte", "not_in_between", "eq", "ne"],
 )
-def test_call_execution_keeps_legacy_numeric_operator_compatibility(legacy_op, lookup):
+def test_call_execution_rejects_legacy_numeric_operator_aliases(legacy_op):
     qs = RecordingQuerySet()
     qs, unsupported = _apply_call_execution_filters(
         qs,
         [_filter("duration_seconds", "SYSTEM_METRIC", "number", legacy_op, 7)],
     )
 
-    assert unsupported == []
-    assert ("filter", lookup) in _call_keys(qs)
+    assert unsupported == ["duration_seconds"]
+    assert not qs.calls
 
 
 def _install_filter_engine_spies(monkeypatch):

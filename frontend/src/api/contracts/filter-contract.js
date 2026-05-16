@@ -1,7 +1,6 @@
 import {
   COLUMN_TYPE_ALIASES,
   FIELD_TYPE_ALIASES,
-  FILTER_OP_ALIASES,
   FILTER_TYPE_ALLOWED_OPS,
   LIST_FILTER_OPS,
   NO_VALUE_FILTER_OPS,
@@ -37,7 +36,7 @@ export const normalizeFilterOperator = (
   { filterType, value } = {},
 ) => {
   const canonicalType = normalizeFilterType(filterType);
-  let op = FILTER_OP_ALIASES[operator] || operator || "equals";
+  let op = operator || "equals";
 
   if (
     isMultiValueCandidate(canonicalType, value) &&
@@ -100,6 +99,12 @@ export const buildApiFilterFromPanelRow = (row) => {
   });
   const filterValue = coerceFilterValue(row?.value, filterOp, filterType);
   const apiColType = normalizeColumnType(row?.apiColType || row?.fieldCategory);
+
+  if (!isAllowedFilterOperator(filterType, filterOp)) {
+    throw new Error(
+      `Unsupported filter operator "${filterOp}" for type "${filterType}".`,
+    );
+  }
 
   return {
     column_id: row?.field,

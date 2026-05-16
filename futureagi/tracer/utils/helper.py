@@ -16,6 +16,7 @@ from tracer.utils.constants import (
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
 )
+from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 
 
 @dataclass
@@ -390,7 +391,7 @@ def validate_filters_helper(value):
 
     REQUIRED_FILTER_KEYS = ["column_id", "filter_config"]
     VALID_FILTER_KEYS = {"column_id", "display_name", "filter_config"}
-    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op"]
     VALID_CONFIG_KEYS = {"filter_type", "filter_op", "filter_value", "col_type"}
 
     for filter_item in value:
@@ -412,9 +413,7 @@ def validate_filters_helper(value):
         if not isinstance(filter_config, dict):
             raise serializers.ValidationError("Filter config must be a dictionary.")
 
-        missing_keys = [
-            key for key in REQUIRED_CONFIG_KEYS if key not in filter_config
-        ]
+        missing_keys = [key for key in REQUIRED_CONFIG_KEYS if key not in filter_config]
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
@@ -425,11 +424,39 @@ def validate_filters_helper(value):
                 f"Unknown filter config keys: {', '.join(extra_config_keys)}"
             )
 
+        filter_type = filter_config.get("filter_type")
+        filter_op = filter_config.get("filter_op")
+        allowed_ops = FILTER_TYPE_ALLOWED_OPS.get(filter_type)
+        if allowed_ops is None:
+            raise serializers.ValidationError(
+                f"Unsupported filter_type {filter_type!r}."
+            )
+        if filter_op not in allowed_ops:
+            raise serializers.ValidationError(
+                f"Unsupported filter_op {filter_op!r} for filter_type {filter_type!r}."
+            )
+        if filter_op in RANGE_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or len(filter_value) != 2:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a 2-element filter_value list."
+                )
+        elif filter_op in LIST_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or not filter_value:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a non-empty filter_value list."
+                )
+        elif filter_op not in NO_VALUE_OPS and "filter_value" not in filter_config:
+            raise serializers.ValidationError(
+                f"Filter {filter_item.get('column_id')!r}: {filter_op!r} requires filter_value."
+            )
+
         col_type = filter_config.get("col_type")
         if col_type == "SPAN_ATTRIBUTE":
-            _validate_span_attribute_filter(
-                filter_item.get("column_id"), filter_config
-            )
+            _validate_span_attribute_filter(filter_item.get("column_id"), filter_config)
 
     return value
 

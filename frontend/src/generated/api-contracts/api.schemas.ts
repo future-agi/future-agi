@@ -589,8 +589,7 @@ export type SelectionApiFilterItemFilterConfig = {
   filter_value?: unknown;
   /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
   col_type?: string;
-  [key: string]: unknown;
- };
+};
 
 export type SelectionApiFilterItem = {
   /** Column or attribute id to filter on. */
@@ -598,8 +597,7 @@ export type SelectionApiFilterItem = {
   /** Optional UI label for chips and saved views. */
   display_name?: string;
   filter_config: SelectionApiFilterItemFilterConfig;
-  [key: string]: unknown;
- };
+};
 
 export interface SelectionApi {
   mode: SelectionApiMode;

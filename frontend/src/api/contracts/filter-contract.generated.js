@@ -5,17 +5,6 @@
 export const FILTER_CONTRACT = Object.freeze({
   version: 1,
   operators: {
-    aliases: {
-      is: "equals",
-      is_not: "not_equals",
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_in_between: "not_between",
-      inBetween: "between",
-      before: "less_than",
-      after: "greater_than",
-      on: "equals",
-    },
     noValue: ["is_null", "is_not_null"],
     list: ["in", "not_in"],
     range: ["between", "not_between"],
@@ -153,9 +142,6 @@ export const FILTER_CONTRACT = Object.freeze({
 });
 
 export const FILTER_CONTRACT_VERSION = FILTER_CONTRACT.version;
-export const FILTER_OP_ALIASES = Object.freeze(
-  FILTER_CONTRACT.operators.aliases,
-);
 export const NO_VALUE_FILTER_OPS = Object.freeze(
   FILTER_CONTRACT.operators.noValue,
 );

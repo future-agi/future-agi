@@ -17,8 +17,6 @@ from tracer.utils.constants import (
     SPAN_ATTR_ALLOWED_OPS,
 )
 
-from tracer.utils.filter_operators import normalize_filter_op
-
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 
@@ -607,9 +605,6 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> Optional[str]:
         """Dispatch to the appropriate condition builder based on column type."""
-        if col_type != self.SPAN_ATTRIBUTE:
-            filter_op = normalize_filter_op(filter_op)
-
         # The dashboard/metrics + get_span_attributes_list endpoints can
         # surface the same logical metric (e.g. ``gen_ai.usage.total_tokens``)
         # under both ``system_metric`` and ``custom_attribute`` categories,
@@ -1187,16 +1182,6 @@ class ClickHouseFilterBuilder:
         param_cfg = self._next_param("eval_cfg")
         self._params[param_cfg] = tuple(config_ids)
 
-        op_aliases = {
-            "is": "equals",
-            "is_not": "not_equals",
-            "equal_to": "equals",
-            "not_equal_to": "not_equals",
-            "inBetween": "between",
-            "not_in_between": "not_between",
-        }
-        filter_op = op_aliases.get(filter_op, filter_op)
-
         _fv = filter_value
         values = (
             list(_fv)
@@ -1238,7 +1223,7 @@ class ClickHouseFilterBuilder:
                 f")"
             )
 
-        negative_ops = {"not_equals", "not_in", "not_contains", "ne", "!="}
+        negative_ops = {"not_equals", "not_in", "not_contains"}
 
         if filter_op in ("is_null", "is_not_null"):
             if output_type == "PASS_FAIL":

@@ -90,7 +90,7 @@ const opStoreToPanel = (storeOp, panelType) => {
         greater_than_or_equal: "greater_than_or_equal",
         less_than_or_equal: "less_than_or_equal",
         between: "between",
-        not_in_between: "not_between",
+        not_between: "not_between",
       }[storeOp] || "equal_to"
     );
   }
@@ -101,7 +101,7 @@ const opStoreToPanel = (storeOp, panelType) => {
         less_than: "before",
         greater_than: "after",
         between: "between",
-        not_in_between: "not_between",
+        not_between: "not_between",
       }[storeOp] || "on"
     );
   }
@@ -142,7 +142,7 @@ const opPanelToStore = (panelOp, panelType) => {
         greater_than_or_equal: "greater_than_or_equal",
         less_than_or_equal: "less_than_or_equal",
         between: "between",
-        not_between: "not_in_between",
+        not_between: "not_between",
       }[panelOp] || "equals"
     );
   }
@@ -153,7 +153,7 @@ const opPanelToStore = (panelOp, panelType) => {
         before: "less_than",
         after: "greater_than",
         between: "between",
-        not_between: "not_in_between",
+        not_between: "not_between",
       }[panelOp] || "equals"
     );
   }

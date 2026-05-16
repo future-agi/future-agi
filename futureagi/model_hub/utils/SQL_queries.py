@@ -127,7 +127,7 @@ def build_sql_filters(filters=[], column_map={}):
             if op == "between":
                 filter_clauses.append(f"{col} BETWEEN %s AND %s")
                 params.extend([values[0], values[1]])
-            elif op == "not_in_between":
+            elif op == "not_between":
                 filter_clauses.append(f"{col} NOT BETWEEN %s AND %s")
                 params.extend([values[0], values[1]])
             elif op == "equals":
@@ -203,7 +203,7 @@ def build_datetime_filter_sql(
     }
 
     try:
-        if filter_op in ["between", "not_in_between"]:
+        if filter_op in ["between", "not_between"]:
             parts = value.split(",")
             if len(parts) != 2:
                 raise ValueError("Between operation requires two datetime values")
@@ -312,9 +312,7 @@ class SQLQueryHandler:
             AND status = 'pass';
         """
 
-        return cls.execute_query(
-            query, (search_key, search_key, pattern, dataset_id)
-        )
+        return cls.execute_query(query, (search_key, search_key, pattern, dataset_id))
 
     @classmethod
     def get_all_templates(

@@ -142,7 +142,9 @@ def _resolve_default_queue_scope(source_type, source_obj):
         if not project:
             return None, None
         scope_name = (
-            getattr(project, "name", None) or getattr(project, "agent_name", None) or str(project)
+            getattr(project, "name", None)
+            or getattr(project, "agent_name", None)
+            or str(project)
         )
         return {"project": project}, scope_name
     if source_type == QueueItemSourceType.DATASET_ROW.value:
@@ -287,9 +289,7 @@ def _ensure_default_queue_member_can_manage(queue, user):
     )
 
 
-def resolve_default_queue_item_for_source(
-    source_type, source_obj, organization, user
-):
+def resolve_default_queue_item_for_source(source_type, source_obj, organization, user):
     """Return a ``QueueItem`` on the source's default queue, creating both
     the queue and the item if they don't exist yet.
 
@@ -359,9 +359,8 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
 
     if workspace is not None:
         obj_ws = _get_source_workspace(obj)
-        ws_match = (
-            obj_ws == workspace
-            or (obj_ws is None and getattr(workspace, "is_default", False))
+        ws_match = obj_ws == workspace or (
+            obj_ws is None and getattr(workspace, "is_default", False)
         )
         if not ws_match:
             logger.warning(
@@ -409,9 +408,7 @@ def _get_source_organization(obj):
         ):
             related = getattr(test_execution, relation_name, None)
             org = (
-                getattr(related, "organization", None)
-                if related is not None
-                else None
+                getattr(related, "organization", None) if related is not None else None
             )
             if org is not None:
                 return org
@@ -456,11 +453,7 @@ def _get_source_workspace(obj):
             "simulator_agent",
         ):
             related = getattr(test_execution, relation_name, None)
-            ws = (
-                getattr(related, "workspace", None)
-                if related is not None
-                else None
-            )
+            ws = getattr(related, "workspace", None) if related is not None else None
             if ws is not None:
                 return ws
 
@@ -711,7 +704,9 @@ def resolve_source_content(item):
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
                 "call_type": getattr(call, "call_type", None),
                 "phone_number": getattr(call, "phone_number", None),
-                "service_provider_call_id": getattr(call, "service_provider_call_id", None),
+                "service_provider_call_id": getattr(
+                    call, "service_provider_call_id", None
+                ),
                 "customer_call_id": getattr(call, "customer_call_id", None),
                 "customer_number": getattr(call, "customer_number", None),
                 "assistant_id": getattr(call, "assistant_id", None),
@@ -729,7 +724,9 @@ def resolve_source_content(item):
                 "user_wpm": getattr(call, "user_wpm", None),
                 "agent_wpm": getattr(call, "bot_wpm", None),
                 "talk_ratio": getattr(call, "talk_ratio", None),
-                "user_interruption_count": getattr(call, "user_interruption_count", None),
+                "user_interruption_count": getattr(
+                    call, "user_interruption_count", None
+                ),
                 "ai_interruption_count": getattr(call, "ai_interruption_count", None),
                 "input": getattr(call, "input", None),
                 "output": getattr(call, "output", None),
@@ -1326,9 +1323,7 @@ def _finalize_automation_items(rule, created_items):
         QueueItem.objects.bulk_update(created_items, ["assigned_to"])
     elif queue.auto_assign:
         member_ids = list(
-            AnnotationQueueAnnotator.objects.filter(
-                queue=queue, deleted=False
-            )
+            AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False)
             .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
             .values_list("user_id", flat=True)
             .distinct()
@@ -1369,9 +1364,7 @@ def _normalize_filter_payload(filters):
                 "column_id": column_id,
                 "filter_config": filter_config,
                 **(
-                    {
-                        "display_name": item.get("display_name")
-                    }
+                    {"display_name": item.get("display_name")}
                     if item.get("display_name")
                     else {}
                 ),
@@ -1404,10 +1397,10 @@ def _parse_datetime_value(value):
 
 def _apply_scalar_filter(qs, field_name, op, value):
     """Apply rule operators to a regular Django field."""
-    if op in ("between", "not_between", "not_in_between"):
+    if op in ("between", "not_between"):
         start, end = _coerce_range_value(value)
         lookup = {f"{field_name}__range": (start, end)}
-        if op in ("not_between", "not_in_between"):
+        if op == "not_between":
             return qs.exclude(**lookup)
         return qs.filter(**lookup)
     if op == "not_in":
@@ -1426,7 +1419,7 @@ def _apply_scalar_filter(qs, field_name, op, value):
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             min_val, max_val = _coerce_range_value(filter_value)
             min_val, max_val = float(min_val), float(max_val)
             if column_type == "audio":
@@ -1441,7 +1434,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                     numeric_value=Cast("value", FloatField())
                 )
             condition = Q(numeric_value__gte=min_val) & Q(numeric_value__lte=max_val)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1504,7 +1497,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
         return cells.none()
 
     if filter_type == "datetime":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             start_raw, end_raw = _coerce_range_value(filter_value)
             start = _parse_datetime_value(start_raw)
             end = _parse_datetime_value(end_raw)
@@ -1514,7 +1507,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                 condition &= Q(datetime_value__gte=start)
             if end:
                 condition &= Q(datetime_value__lte=end)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1691,7 +1684,9 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
     return result
 
 
-def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, cap=1000):
+def _evaluate_filter_mode_rule(
+    rule, filters, scope, dry_run=False, user=None, cap=1000
+):
     filters = _normalize_filter_payload(filters)
     source_type = rule.source_type
     queue = rule.queue
@@ -1801,7 +1796,9 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
 
         resolver = resolve_filtered_session_ids
     elif source_type == QueueItemSourceType.CALL_EXECUTION.value:
-        from model_hub.services.bulk_selection import resolve_filtered_call_execution_ids
+        from model_hub.services.bulk_selection import (
+            resolve_filtered_call_execution_ids,
+        )
 
         resolver = resolve_filtered_call_execution_ids
 
@@ -1994,7 +1991,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
             django_field = "_session_duration"
             if op not in ("is_null", "is_not_null"):
                 try:
-                    if op in ("between", "not_between", "not_in_between"):
+                    if op in ("between", "not_between"):
                         start, end = _coerce_range_value(value)
                         value = (
                             timedelta(seconds=float(start)),
@@ -2010,7 +2007,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     )
                     continue
 
-        if op in ("between", "not_between", "not_in_between"):
+        if op in ("between", "not_between"):
             start, end = _coerce_range_value(value)
             if start is None or end is None:
                 logger.warning(
@@ -2022,7 +2019,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                 continue
             lookup = f"{django_field}__range"
             try:
-                if op in ("not_between", "not_in_between"):
+                if op == "not_between":
                     qs = qs.exclude(**{lookup: (start, end)})
                 else:
                     qs = qs.filter(**{lookup: (start, end)})
@@ -2295,9 +2292,7 @@ def send_rule_completion_email(
 
         try:
             user = get_user_model().objects.get(pk=triggered_by_user_id)
-            triggered_by_name = (
-                user.get_full_name() or user.email or triggered_by_name
-            )
+            triggered_by_name = user.get_full_name() or user.email or triggered_by_name
         except Exception:
             pass
 

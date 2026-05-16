@@ -141,6 +141,7 @@ jobs:
         run: >
           uv run pytest -q
           tracer/tests/test_filter_contract.py
+          tracer/tests/test_filter_api_contract.py
           tracer/tests/test_validate_filters_helper.py
           tracer/tests/test_filter_engine_parity.py
           model_hub/tests/test_annotation_api_contract.py

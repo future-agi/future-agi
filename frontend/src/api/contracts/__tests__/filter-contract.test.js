@@ -39,22 +39,22 @@ describe("filter contract", () => {
     expect(SPAN_ATTRIBUTE_ALLOWED_OPS.number).not.toContain("not_in_between");
   });
 
-  it("normalizes UI and legacy operators to canonical API operators", () => {
-    expect(normalizeFilterOperator("is")).toBe("equals");
-    expect(normalizeFilterOperator("is_not")).toBe("not_equals");
-    expect(normalizeFilterOperator("not_in_between")).toBe("not_between");
-    expect(normalizeFilterOperator("before")).toBe("less_than");
+  it("keeps operators canonical instead of translating legacy aliases", () => {
+    expect(normalizeFilterOperator("equals")).toBe("equals");
+    expect(normalizeFilterOperator("not_between")).toBe("not_between");
+    expect(isAllowedFilterOperator("text", "is")).toBe(false);
+    expect(isAllowedFilterOperator("number", "not_in_between")).toBe(false);
   });
 
   it("promotes multi-value equality to in/not_in", () => {
     expect(
-      normalizeFilterOperator("is", {
+      normalizeFilterOperator("equals", {
         filterType: "categorical",
         value: ["OK", "ERROR"],
       }),
     ).toBe("in");
     expect(
-      normalizeFilterOperator("is_not", {
+      normalizeFilterOperator("not_equals", {
         filterType: "annotator",
         value: ["user-a", "user-b"],
       }),
@@ -98,6 +98,17 @@ describe("filter contract", () => {
     expect(normalizeFilterType("string")).toBe("text");
     expect(isAllowedFilterOperator("number", "contains")).toBe(false);
     expect(isAllowedFilterOperator("number", "not_between")).toBe(true);
+  });
+
+  it("fails before sending a non-canonical operator to the API", () => {
+    expect(() =>
+      buildApiFilterFromPanelRow({
+        field: "status",
+        fieldType: "text",
+        operator: "is",
+        value: "OK",
+      }),
+    ).toThrow(/Unsupported filter operator/);
   });
 
   it.each(

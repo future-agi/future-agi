@@ -237,7 +237,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             explanation_map = {}  # config_id_str -> explanation
 
             if eval_config_ids:
-
                 eval_aggs = (
                     EvalLogger.objects.filter(
                         trace_id__in=paginated_trace_ids,
@@ -1135,13 +1134,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                                 v.strip() for v in filter_val.split(",") if v.strip()
                             ]
 
-                        if filter_op in ("equals", "is"):
+                        if filter_op == "equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
                                 score_q = base_score_q.filter(value=filter_val)
                             base_query = base_query.filter(Exists(score_q))
-                        elif filter_op in ("not_equals", "is_not"):
+                        elif filter_op == "not_equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
@@ -1912,6 +1911,4 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(paginated.data)
         except Exception as e:
             logger.exception(f"Error in fetching session eval logs: {str(e)}")
-            return self._gm.bad_request(
-                f"Error fetching session eval logs: {str(e)}"
-            )
+            return self._gm.bad_request(f"Error fetching session eval logs: {str(e)}")

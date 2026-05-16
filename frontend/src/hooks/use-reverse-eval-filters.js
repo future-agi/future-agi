@@ -25,7 +25,7 @@ const reverseFilter = (filterConfig) => {
       fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "between":
-    case "not_in_between":
+    case "not_between":
       fil.filter_value = [
         100 - filterConfig.filter_value[1],
         100 - filterConfig.filter_value[0],

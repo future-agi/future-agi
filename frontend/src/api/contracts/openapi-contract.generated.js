@@ -7963,14 +7963,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "filter_type",
                   "filter_op"
                 ],
-                "additionalProperties": true
+                "additionalProperties": false
               }
             },
             "required": [
               "column_id",
               "filter_config"
             ],
-            "additionalProperties": true
+            "additionalProperties": false
           },
           "default": []
         },

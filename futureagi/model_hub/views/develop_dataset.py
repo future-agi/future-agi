@@ -193,13 +193,17 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
+
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
     APICallStatusChoices = None
     APICallTypeChoices = None
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
@@ -1618,7 +1622,7 @@ class GetDatasetTableView(APIView):
                         "less_than_or_equal": "lte",
                     }
 
-                    if filter_op in ["between", "not_in_between"]:
+                    if filter_op in ["between", "not_between"]:
                         # Expect filter_value to be a list/array of [min, max]
                         if not isinstance(filter_value, list) or len(filter_value) != 2:
                             message = "Between operations \
@@ -1651,7 +1655,7 @@ class GetDatasetTableView(APIView):
                         between_filter = Q(numeric_value__gte=min_val) & Q(
                             numeric_value__lte=max_val
                         )
-                        if filter_op == "not_in_between":
+                        if filter_op == "not_between":
                             cells = cells.filter(~between_filter, deleted=False)
                         else:
                             cells = cells.filter(between_filter, deleted=False)
@@ -1688,7 +1692,7 @@ class GetDatasetTableView(APIView):
                         message = "Invalid filter operation. \
                         operations are: greater_than, less_than, equals, \
                         not_equals, greater_than_or_equal, less_than_or_equal, \
-                        between, not_in_between"
+                        between, not_between"
                         error_messages.append(message)
                         raise ValueError(message)
 
@@ -1776,7 +1780,7 @@ class GetDatasetTableView(APIView):
                         return rows  # skip filtering
 
                     # Determine filter kwargs
-                    if filter_op in ["between", "not_in_between"]:
+                    if filter_op in ["between", "not_between"]:
                         start = valid_dates[0] if len(valid_dates) > 0 else None
                         end = valid_dates[1] if len(valid_dates) > 1 else None
 
@@ -1790,7 +1794,7 @@ class GetDatasetTableView(APIView):
                         else:
                             filter_kwargs = {"value__range": (start, end)}
 
-                        if filter_op == "not_in_between":
+                        if filter_op == "not_between":
                             cells = cells.filter(~Q(**filter_kwargs), deleted=False)
                         else:
                             cells = cells.filter(**filter_kwargs, deleted=False)
@@ -2040,11 +2044,13 @@ class GetDatasetTableView(APIView):
             column_order_set = set(column_order)
             qs = Column.objects.filter(dataset=dataset, deleted=False)
             if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
-                qs = qs.exclude(source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ])
+                qs = qs.exclude(
+                    source__in=[
+                        SourceChoices.EXPERIMENT.value,
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                    ]
+                )
             all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
@@ -2687,11 +2693,13 @@ class GetRowDataView(APIView):
             column_order = dataset.column_order or []
             qs = Column.objects.filter(dataset=dataset, deleted=False)
             if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
-                qs = qs.exclude(source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ])
+                qs = qs.exclude(
+                    source__in=[
+                        SourceChoices.EXPERIMENT.value,
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                    ]
+                )
             all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
@@ -2999,9 +3007,7 @@ class GetExperimentDatasetTableView(APIView):
                     metric_id = (
                         sid.split("-sourceid-")[1] if "-sourceid-" in sid else sid
                     )
-                    reason_column_flag = reason_column_by_metric.get(
-                        metric_id, False
-                    )
+                    reason_column_flag = reason_column_by_metric.get(metric_id, False)
                 elif column.source == SourceChoices.EXPERIMENT_EVALUATION_TAGS.value:
                     origin_type = "evaluation_tags"
 
@@ -3970,9 +3976,9 @@ class DeleteColumnView(APIView):
                 column_id,
             )
             if metrics:
-                UserEvalMetric.objects.filter(
-                    id__in=[m.id for m in metrics]
-                ).update(column_deleted=True)
+                UserEvalMetric.objects.filter(id__in=[m.id for m in metrics]).update(
+                    column_deleted=True
+                )
 
             # Now safe to delete columns
             Column.objects.filter(
@@ -4272,7 +4278,8 @@ class ManuallyCreateDatasetView(APIView):
             )
             if (
                 call_log_row_entry is None
-                or call_log_row_entry.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                or call_log_row_entry.status
+                == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
@@ -6894,9 +6901,7 @@ class GetEvalStructureView(APIView):
         try:
             eval_type = request.query_params.get(
                 "eval_type"
-            ) or request.query_params.get(
-                "evalType"
-            )  # Changed from request.data.get
+            ) or request.query_params.get("evalType")  # Changed from request.data.get
             if not eval_type or eval_type not in [
                 "preset",
                 "user",
@@ -6965,8 +6970,8 @@ class GetEvalStructureView(APIView):
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
             "config_params_option": strip_turing_from_config_options(
-                    template.config.get("config_params_option", {})
-                ),
+                template.config.get("config_params_option", {})
+            ),
             "kb_id": None,
             "error_localizer": template.error_localizer_enabled,
             "choices": template.choices,
@@ -7049,8 +7054,8 @@ class GetEvalStructureView(APIView):
             "output": template.config.get("output", ""),
             "config_params_desc": template.config.get("config_params_desc", {}),
             "config_params_option": strip_turing_from_config_options(
-                    template.config.get("config_params_option", {})
-                ),
+                template.config.get("config_params_option", {})
+            ),
             "run_config": eval.config.get("run_config", {}),
         }
 
@@ -7131,7 +7136,9 @@ class StartEvalsProcess(APIView):
             column_order_changed = False
 
             for user_eval_metric in eval_metrics:
-                data_type = infer_eval_result_column_data_type(user_eval_metric.template)
+                data_type = infer_eval_result_column_data_type(
+                    user_eval_metric.template
+                )
 
                 source_id = str(user_eval_metric.id)
                 column = existing_columns.get(str(source_id))
@@ -7222,12 +7229,9 @@ class DeleteEvalsView(APIView):
             # so the delete path can't leave an experiment in a state the
             # create flow wouldn't accept.
             if experiment_id:
-                experiment = ExperimentsTable.objects.filter(
-                    id=experiment_id
-                ).first()
+                experiment = ExperimentsTable.objects.filter(id=experiment_id).first()
                 if experiment and (
-                    experiment.user_eval_template_ids.filter(deleted=False).count()
-                    <= 1
+                    experiment.user_eval_template_ids.filter(deleted=False).count() <= 1
                 ):
                     return self._gm.bad_request(
                         "Cannot delete the last evaluation. "
@@ -7301,9 +7305,7 @@ class DeleteEvalsView(APIView):
                         # Delete all cells associated with the column and its dependent columns
                         Cell.objects.filter(
                             Q(column=column)
-                            | Q(
-                                column__source_id__startswith=f"{column.id}-sourceid-"
-                            ),
+                            | Q(column__source_id__startswith=f"{column.id}-sourceid-"),
                             deleted=False,
                         ).update(deleted=True)
 
@@ -7747,9 +7749,9 @@ class AddUserEvalView(CreateAPIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key][
-                                    "default"
-                                ] = value
+                                new_config["function_params_schema"][key]["default"] = (
+                                    value
+                                )
                     new_template.config = new_config
                     new_template.save()
                     template_id = new_template.id
@@ -14892,7 +14894,9 @@ def get_json_column_schemas(dataset):
         metadata = column.metadata or {}
         json_schema = metadata.get("json_schema")
 
-        if json_schema and (json_schema.get("keys") or json_schema.get("max_array_count")):
+        if json_schema and (
+            json_schema.get("keys") or json_schema.get("max_array_count")
+        ):
             # Use cached schema
             entry = {
                 "name": column.name,
@@ -14914,9 +14918,7 @@ def get_json_column_schemas(dataset):
             if column.data_type == "text":
                 # Quick check: peek at first 3 non-empty cells
                 peek = list(base_qs.values_list("value", flat=True)[:3])
-                has_json = any(
-                    parse_json_safely(v)[1] for v in peek
-                )
+                has_json = any(parse_json_safely(v)[1] for v in peek)
                 if not has_json:
                     continue
                 sample_cells = list(base_qs.values_list("value", flat=True)[:500])

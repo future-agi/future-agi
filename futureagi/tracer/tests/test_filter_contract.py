@@ -8,10 +8,9 @@ from tracer.utils.constants import (
     SPAN_ATTR_ALLOWED_OPS,
 )
 from tracer.utils.filter_operators import (
-    FILTER_OP_ALIASES,
     FILTER_TYPE_ALLOWED_OPS,
-    normalize_filter_op,
     normalize_filter_type,
+    load_filter_contract,
 )
 from tracer.utils.helper import validate_filters_helper
 
@@ -48,22 +47,8 @@ class TestFilterContract:
         assert "not_in_between" not in SPAN_ATTR_ALLOWED_OPS["number"]
         assert FILTER_TYPE_ALLOWED_OPS["number"] == SPAN_ATTR_ALLOWED_OPS["number"]
 
-    @pytest.mark.parametrize(
-        "legacy_op,canonical_op",
-        [
-            ("is", "equals"),
-            ("is_not", "not_equals"),
-            ("equal_to", "equals"),
-            ("not_equal_to", "not_equals"),
-            ("not_in_between", "not_between"),
-            ("before", "less_than"),
-            ("after", "greater_than"),
-            ("on", "equals"),
-        ],
-    )
-    def test_operator_aliases_are_contract_backed(self, legacy_op, canonical_op):
-        assert FILTER_OP_ALIASES[legacy_op] == canonical_op
-        assert normalize_filter_op(legacy_op) == canonical_op
+    def test_contract_does_not_publish_operator_aliases(self):
+        assert "aliases" not in load_filter_contract()["operators"]
 
     def test_field_type_aliases_are_contract_backed(self):
         assert normalize_filter_type("string") == "text"

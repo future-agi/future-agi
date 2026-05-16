@@ -17,8 +17,6 @@ export const PANEL_OP_TO_API = {
   less_than_or_equal: "less_than_or_equal",
   between: "between",
   not_between: "not_between",
-  not_in_between: "not_between",
-  inBetween: "between",
   is_empty: "is_null",
   is_not_empty: "is_not_null",
   is_null: "is_null",
@@ -28,15 +26,6 @@ export const PANEL_OP_TO_API = {
   on: "equals",
   in: "in",
   not_in: "not_in",
-};
-
-const API_OP_ALIASES = {
-  is: "equals",
-  is_not: "not_equals",
-  equal_to: "equals",
-  not_equal_to: "not_equals",
-  not_in_between: "not_between",
-  inBetween: "between",
 };
 
 const NUMBER_API_TO_PANEL = {
@@ -81,8 +70,7 @@ const VALUELESS_FILTER_OPS = new Set([
 ]);
 
 export function normalizeApiFilterOp(op) {
-  if (!op) return op;
-  return API_OP_ALIASES[op] || op;
+  return op;
 }
 
 export function panelOpToApi(op) {

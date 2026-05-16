@@ -10,7 +10,6 @@ from django.db.models.functions import Cast, Round
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
 from tracer.models.observability_provider import ProviderChoices
-from tracer.utils.filter_operators import normalize_filter_op
 from tracer.utils.helper import extract_date
 
 
@@ -84,7 +83,7 @@ def apply_created_at_filters(qs, filters):
         cfg = normalize_filter_item(f)["filter_config"]
         if cfg.get("filter_type") != "datetime":
             continue
-        op = normalize_filter_op(cfg.get("filter_op"))
+        op = cfg.get("filter_op")
         val = cfg.get("filter_value")
         if val is None:
             continue
@@ -450,7 +449,6 @@ class FilterEngine:
         return [obj for obj in objects if matches(obj.get(column_id))]
 
     def _filter_datetime(self, objects, column_id, filter_op, filter_value, col_type):
-        filter_op = normalize_filter_op(filter_op)
         if filter_op in ("is_null", "is_not_null"):
             return [
                 obj
@@ -656,7 +654,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -854,7 +852,7 @@ class FilterEngine:
             if not defn:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -969,7 +967,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1076,7 +1074,7 @@ class FilterEngine:
             if column_id not in field_map:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1187,7 +1185,7 @@ class FilterEngine:
             if column_id in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1310,7 +1308,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             if filter_type == "number":
@@ -1450,7 +1448,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             # Replace '*' with '_' in column_id
@@ -1751,7 +1749,7 @@ class FilterEngine:
             # For per-label annotator filtering, use filter_type="annotator" with
             # col_type=ANNOTATION which checks the annotators JSON map via has_key.
             if column_id == "annotator":
-                filter_op = normalize_filter_op(filter_config.get("filter_op"))
+                filter_op = filter_config.get("filter_op")
                 filter_value = filter_config.get("filter_value")
                 any_annotation = Score.objects.filter(source_q, deleted=False)
                 if filter_op == "is_null":
@@ -1784,7 +1782,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             # Parse column_id for sub-field separator

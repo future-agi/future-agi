@@ -65,7 +65,7 @@ const convertGraphSelectionsToFilters = (
       if (!value && value !== 0) return;
 
       // For between operators, require both values
-      const isBetweenOp = ["between", "not_in_between"].includes(operator);
+      const isBetweenOp = ["between", "not_between"].includes(operator);
       if (isBetweenOp && !value2 && value2 !== 0) return;
 
       // Convert to percentage values (divide by 100) for backend

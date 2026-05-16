@@ -1173,14 +1173,14 @@ def _apply_session_filters(base_sessions_qs, filters, *, project_id, organizatio
         else:
             if isinstance(filter_val, str) and "," in filter_val:
                 filter_val = [v.strip() for v in filter_val.split(",") if v.strip()]
-            if filter_op in ("equals", "is"):
+            if filter_op == "equals":
                 score_q = (
                     base_score_q.filter(value__in=filter_val)
                     if isinstance(filter_val, list)
                     else base_score_q.filter(value=filter_val)
                 )
                 aggregated = aggregated.filter(Exists(score_q))
-            elif filter_op in ("not_equals", "is_not"):
+            elif filter_op == "not_equals":
                 score_q = (
                     base_score_q.filter(value__in=filter_val)
                     if isinstance(filter_val, list)
@@ -1294,7 +1294,7 @@ def _apply_call_execution_filters(qs, filters):
                     col,
                     op,
                     value,
-                    cfg.get("filter_type") or cfg.get("filterType"),
+                    cfg.get("filter_type"),
                 )
             except UnsupportedPersonaFilter:
                 unsupported.append(col or "<unknown>")
@@ -1314,13 +1314,13 @@ def _apply_call_execution_filters(qs, filters):
             continue
 
         try:
-            if op in ("equals", "eq"):
+            if op == "equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.filter(**{orm_field: values[0]})
                 else:
                     qs = qs.filter(**{f"{orm_field}__in": values})
-            elif op in ("not_equals", "ne"):
+            elif op == "not_equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.exclude(**{orm_field: values[0]})
@@ -1332,28 +1332,28 @@ def _apply_call_execution_filters(qs, filters):
             elif op == "not_in":
                 values = value if isinstance(value, list) else [value]
                 qs = qs.exclude(**{f"{orm_field}__in": values})
-            elif op in ("contains", "icontains"):
+            elif op == "contains":
                 qs = qs.filter(**{f"{orm_field}__icontains": value})
-            elif op in ("not_contains",):
+            elif op == "not_contains":
                 qs = qs.exclude(**{f"{orm_field}__icontains": value})
             elif op == "starts_with":
                 qs = qs.filter(**{f"{orm_field}__istartswith": value})
             elif op == "ends_with":
                 qs = qs.filter(**{f"{orm_field}__iendswith": value})
-            elif op in ("greater_than", "more_than", "gt"):
+            elif op == "greater_than":
                 qs = qs.filter(**{f"{orm_field}__gt": value})
-            elif op in ("less_than", "lt"):
+            elif op == "less_than":
                 qs = qs.filter(**{f"{orm_field}__lt": value})
-            elif op in ("greater_than_or_equal", "more_than_or_equal", "gte"):
+            elif op == "greater_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__gte": value})
-            elif op in ("less_than_or_equal", "lte"):
+            elif op == "less_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__lte": value})
             elif op == "between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.filter(**{f"{orm_field}__range": (value[0], value[1])})
                 else:
                     unsupported.append(col)
-            elif op in ("not_between", "not_in_between"):
+            elif op == "not_between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.exclude(**{f"{orm_field}__range": (value[0], value[1])})
                 else:

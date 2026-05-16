@@ -137,7 +137,7 @@ export const normalizeFilters = (filters = []) => {
             .filter((v) => v !== "" && v != null)
             .map(Number);
 
-          if (["between", "not_in_between"].includes(filterOp)) {
+          if (["between", "not_between"].includes(filterOp)) {
             filterValue = cleaned.length === 2 ? cleaned : null;
           } else {
             filterValue = cleaned.length > 0 ? cleaned[0] : null;
@@ -171,7 +171,7 @@ export const normalizeFilters = (filters = []) => {
           ) {
             filterConfig.filterValue = cleaned.length > 0 ? cleaned[0] : null;
           } else if (
-            ["between", "not_in_between"].includes(filterConfig.filterOp)
+            ["between", "not_between"].includes(filterConfig.filterOp)
           ) {
             filterConfig.filterValue = cleaned.length === 2 ? cleaned : null;
           }

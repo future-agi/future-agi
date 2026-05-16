@@ -21,7 +21,7 @@ export const MapColumnTypeToFilterType = {
 };
 // Filter looks like this a valid filter should have columnId string length > 0 &
 // filterConfig.filterValue, filterConfig.filterOp, filterConfig.filterType should not be undefined
-// if filterOp is between or no_between then filterConfig.filterValue should be an array of 2 elements
+// if filterOp is between or not_between then filterConfig.filterValue should be an array of 2 elements
 export const validateFilter = (filter) => {
   const filterValue = filter.filterConfig.filterValue;
   const filterOp = filter.filterConfig.filterOp;
@@ -33,10 +33,10 @@ export const validateFilter = (filter) => {
     filterOp !== "" &&
     filterType !== "" &&
     (filterType === "datetime"
-      ? filterOp === "between" || filterOp === "not_in_between"
+      ? filterOp === "between" || filterOp === "not_between"
         ? isValid(filterValue[0]) && isValid(filterValue[1])
         : isValid(filterValue)
-      : filterOp === "between" || filterOp === "not_in_between"
+      : filterOp === "between" || filterOp === "not_between"
         ? Array.isArray(filterValue) && filterValue.length === 2
         : true)
   );
