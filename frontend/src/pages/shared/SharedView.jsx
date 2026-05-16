@@ -14,6 +14,7 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
+import SharedDashboardView from "./SharedDashboardView";
 import { isVoiceCall } from "./sharedViewHelpers";
 
 function getSpan(entry) {
@@ -45,6 +46,7 @@ export default function SharedView() {
     () => isTrace && isVoiceCall(resourceData),
     [isTrace, resourceData],
   );
+  const isDashboard = resourceType === "dashboard";
 
   // For traces, the resolve endpoint returns full span tree in data
   const spans =
@@ -168,9 +170,11 @@ export default function SharedView() {
         <title>
           {isVoice
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
-            : isTrace
-              ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : "Shared Resource"}
+            : isDashboard
+              ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+              : isTrace
+                ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -239,8 +243,11 @@ export default function SharedView() {
             <CircularProgress size={32} />
           </Box>
         ) : isVoice ? (
-          /* Voice call view — transcript + audio player, read-only */
+          {/* Voice call view — transcript + audio player, read-only */}
           <SharedVoiceView resourceData={resourceData} />
+        ) : isDashboard ? (
+          /* Dashboard view — read-only widgets */
+          <SharedDashboardView resourceData={resourceData} />
         ) : isTrace ? (
           /* Trace view */
           <Box
