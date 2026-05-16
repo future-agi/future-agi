@@ -5,6 +5,7 @@ import structlog
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -19,11 +20,15 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.span_notes import SpanNotes
 from tracer.serializers.annotation import (
+    BulkAnnotationRequestSerializer,
+    BulkAnnotationResponseSerializer,
     BulkAnnotationSerializer,
+    GetAnnotationLabelsResponseSerializer,
     GetTraceAnnotationSerializer,
 )
 from tracer.services.clickhouse.query_service import (
@@ -34,6 +39,11 @@ from tracer.services.clickhouse.query_service import (
 logger = structlog.get_logger(__name__)
 
 User = get_user_model()
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class TraceAnnotationView(ModelViewSet):
@@ -395,6 +405,10 @@ class BulkAnnotationView(APIView):
     authentication_classes = [APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=BulkAnnotationRequestSerializer,
+        responses={200: BulkAnnotationResponseSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             # Initial validation
@@ -1216,6 +1230,9 @@ class GetAnnotationLabelsView(APIView):
     authentication_classes = [APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: GetAnnotationLabelsResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request):
         try:
             queryset = AnnotationsLabels.objects.filter(

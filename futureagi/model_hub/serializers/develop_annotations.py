@@ -284,6 +284,23 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "name", "organization_role", "is_active", "is_staff"]
 
 
+class AnnotationSummaryHeaderSerializer(serializers.Serializer):
+    dataset_coverage = serializers.FloatField(required=False, allow_null=True)
+    completion_eta = serializers.FloatField(required=False, allow_null=True)
+    overall_agreement = serializers.FloatField(required=False, allow_null=True)
+
+
+class AnnotationSummaryResultSerializer(serializers.Serializer):
+    labels = serializers.ListField(child=serializers.JSONField(), default=list)
+    annotators = serializers.ListField(child=serializers.JSONField(), default=list)
+    header = AnnotationSummaryHeaderSerializer(required=False)
+
+
+class AnnotationSummaryResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationSummaryResultSerializer()
+
+
 class AnnotationProjectVersionMapperSerializer(serializers.ModelSerializer):
     class Meta:
         model = Annotations

@@ -7,17 +7,25 @@
  * OpenAPI spec version: v1
  */
 import type {
+  AIFilterRequestApi,
+  AIFilterResponseApi,
   AddItemsApi,
   AddObservationSpanAnnotationsApi,
   AnnotationQueueApi,
+  AnnotationSummaryResponseApi,
   AnnotationTaskApi,
   AnnotationsApi,
   AnnotationsLabelsApi,
   ApiErrorResponseApi,
   ApiSelectionTooLargeErrorApi,
+  ApiTracesSpanAttributeDetailListParams,
+  ApiTracesSpanAttributeKeysListParams,
+  ApiTracesSpanAttributeValuesListParams,
   AssignItemsApi,
   AutomationRuleApi,
   AutomationRuleEvaluateAcceptedResponseApi,
+  BulkAnnotationRequestApi,
+  BulkAnnotationResponseApi,
   BulkCreateScoresApi,
   BulkCreateScoresResponseApi,
   BulkRemoveItemsApi,
@@ -29,6 +37,7 @@ import type {
   DiscussionCommentRequestApi,
   DiscussionReactionRequestApi,
   DiscussionThreadStatusRequestApi,
+  GetAnnotationLabelsResponseApi,
   GetTraceAnnotationApi,
   ImportAnnotationsApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
@@ -86,6 +95,9 @@ import type {
   ScoreDeleteResponseApi,
   ScoreForSourceResponseApi,
   ScoreResponseApi,
+  SpanAttributeDetailResponseApi,
+  SpanAttributeKeysResponseApi,
+  SpanAttributeValuesResponseApi,
   SubmitAnnotationsApi,
   TraceApi,
   TraceSessionApi,
@@ -169,7 +181,10 @@ import type {
   TracerTraceSessionListSessions200,
   TracerTraceSessionListSessionsParams,
   TracerTraceVoiceCallDetail200,
-  TracerTraceVoiceCallDetailParams
+  TracerTraceVoiceCallDetailParams,
+  TracerUsersListParams,
+  UserCodeExampleResponseApi,
+  UsersResponseApi
 } from './api.schemas';
 
 import { apiMutator } from '../../api/contracts/openapi-mutator';
@@ -202,23 +217,52 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
 
 
 export type apiTracesSpanAttributeDetailListResponse200 = {
-  data: void
+  data: SpanAttributeDetailResponseApi
   status: 200
+}
+
+export type apiTracesSpanAttributeDetailListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type apiTracesSpanAttributeDetailListResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type apiTracesSpanAttributeDetailListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
+}
+
+export type apiTracesSpanAttributeDetailListResponse503 = {
+  data: ApiErrorResponseApi
+  status: 503
 }
 
 export type apiTracesSpanAttributeDetailListResponseSuccess = (apiTracesSpanAttributeDetailListResponse200) & {
   headers: Headers;
 };
-;
+export type apiTracesSpanAttributeDetailListResponseError = (apiTracesSpanAttributeDetailListResponse400 | apiTracesSpanAttributeDetailListResponse404 | apiTracesSpanAttributeDetailListResponse500 | apiTracesSpanAttributeDetailListResponse503) & {
+  headers: Headers;
+};
 
-export type apiTracesSpanAttributeDetailListResponse = (apiTracesSpanAttributeDetailListResponseSuccess)
+export type apiTracesSpanAttributeDetailListResponse = (apiTracesSpanAttributeDetailListResponseSuccess | apiTracesSpanAttributeDetailListResponseError)
 
-export const getApiTracesSpanAttributeDetailListUrl = () => {
+export const getApiTracesSpanAttributeDetailListUrl = (params: ApiTracesSpanAttributeDetailListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/traces/span-attribute-detail/`
+  return stringifiedParams.length > 0 ? `/api/traces/span-attribute-detail/?${stringifiedParams}` : `/api/traces/span-attribute-detail/`
 }
 
 /**
@@ -231,9 +275,9 @@ returns type-appropriate statistics:
 GET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>
  * @summary Full detail for a specific span attribute key.
  */
-export const apiTracesSpanAttributeDetailList = async ( options?: RequestInit): Promise<apiTracesSpanAttributeDetailListResponse> => {
+export const apiTracesSpanAttributeDetailList = async (params: ApiTracesSpanAttributeDetailListParams, options?: RequestInit): Promise<apiTracesSpanAttributeDetailListResponse> => {
 
-  return apiMutator<apiTracesSpanAttributeDetailListResponse>(getApiTracesSpanAttributeDetailListUrl(),
+  return apiMutator<apiTracesSpanAttributeDetailListResponse>(getApiTracesSpanAttributeDetailListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -245,23 +289,52 @@ export const apiTracesSpanAttributeDetailList = async ( options?: RequestInit): 
 
 
 export type apiTracesSpanAttributeKeysListResponse200 = {
-  data: void
+  data: SpanAttributeKeysResponseApi
   status: 200
+}
+
+export type apiTracesSpanAttributeKeysListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type apiTracesSpanAttributeKeysListResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type apiTracesSpanAttributeKeysListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
+}
+
+export type apiTracesSpanAttributeKeysListResponse503 = {
+  data: ApiErrorResponseApi
+  status: 503
 }
 
 export type apiTracesSpanAttributeKeysListResponseSuccess = (apiTracesSpanAttributeKeysListResponse200) & {
   headers: Headers;
 };
-;
+export type apiTracesSpanAttributeKeysListResponseError = (apiTracesSpanAttributeKeysListResponse400 | apiTracesSpanAttributeKeysListResponse404 | apiTracesSpanAttributeKeysListResponse500 | apiTracesSpanAttributeKeysListResponse503) & {
+  headers: Headers;
+};
 
-export type apiTracesSpanAttributeKeysListResponse = (apiTracesSpanAttributeKeysListResponseSuccess)
+export type apiTracesSpanAttributeKeysListResponse = (apiTracesSpanAttributeKeysListResponseSuccess | apiTracesSpanAttributeKeysListResponseError)
 
-export const getApiTracesSpanAttributeKeysListUrl = () => {
+export const getApiTracesSpanAttributeKeysListUrl = (params: ApiTracesSpanAttributeKeysListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/traces/span-attribute-keys/`
+  return stringifiedParams.length > 0 ? `/api/traces/span-attribute-keys/?${stringifiedParams}` : `/api/traces/span-attribute-keys/`
 }
 
 /**
@@ -271,9 +344,9 @@ maps together with its inferred type and occurrence count.
 GET /api/traces/span-attribute-keys/?project_id=<uuid>
  * @summary Discover all span attribute keys for a project.
  */
-export const apiTracesSpanAttributeKeysList = async ( options?: RequestInit): Promise<apiTracesSpanAttributeKeysListResponse> => {
+export const apiTracesSpanAttributeKeysList = async (params: ApiTracesSpanAttributeKeysListParams, options?: RequestInit): Promise<apiTracesSpanAttributeKeysListResponse> => {
 
-  return apiMutator<apiTracesSpanAttributeKeysListResponse>(getApiTracesSpanAttributeKeysListUrl(),
+  return apiMutator<apiTracesSpanAttributeKeysListResponse>(getApiTracesSpanAttributeKeysListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -285,23 +358,52 @@ export const apiTracesSpanAttributeKeysList = async ( options?: RequestInit): Pr
 
 
 export type apiTracesSpanAttributeValuesListResponse200 = {
-  data: void
+  data: SpanAttributeValuesResponseApi
   status: 200
+}
+
+export type apiTracesSpanAttributeValuesListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type apiTracesSpanAttributeValuesListResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type apiTracesSpanAttributeValuesListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
+}
+
+export type apiTracesSpanAttributeValuesListResponse503 = {
+  data: ApiErrorResponseApi
+  status: 503
 }
 
 export type apiTracesSpanAttributeValuesListResponseSuccess = (apiTracesSpanAttributeValuesListResponse200) & {
   headers: Headers;
 };
-;
+export type apiTracesSpanAttributeValuesListResponseError = (apiTracesSpanAttributeValuesListResponse400 | apiTracesSpanAttributeValuesListResponse404 | apiTracesSpanAttributeValuesListResponse500 | apiTracesSpanAttributeValuesListResponse503) & {
+  headers: Headers;
+};
 
-export type apiTracesSpanAttributeValuesListResponse = (apiTracesSpanAttributeValuesListResponseSuccess)
+export type apiTracesSpanAttributeValuesListResponse = (apiTracesSpanAttributeValuesListResponseSuccess | apiTracesSpanAttributeValuesListResponseError)
 
-export const getApiTracesSpanAttributeValuesListUrl = () => {
+export const getApiTracesSpanAttributeValuesListUrl = (params: ApiTracesSpanAttributeValuesListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/traces/span-attribute-values/`
+  return stringifiedParams.length > 0 ? `/api/traces/span-attribute-values/?${stringifiedParams}` : `/api/traces/span-attribute-values/`
 }
 
 /**
@@ -311,9 +413,9 @@ with optional prefix search filtering.
 GET /api/traces/span-attribute-values/?project_id=<uuid>&key=<attr_key>[&q=<search>][&limit=50]
  * @summary Get top values for a specific span attribute key.
  */
-export const apiTracesSpanAttributeValuesList = async ( options?: RequestInit): Promise<apiTracesSpanAttributeValuesListResponse> => {
+export const apiTracesSpanAttributeValuesList = async (params: ApiTracesSpanAttributeValuesListParams, options?: RequestInit): Promise<apiTracesSpanAttributeValuesListResponse> => {
 
-  return apiMutator<apiTracesSpanAttributeValuesListResponse>(getApiTracesSpanAttributeValuesListUrl(),
+  return apiMutator<apiTracesSpanAttributeValuesListResponse>(getApiTracesSpanAttributeValuesListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -324,17 +426,29 @@ export const apiTracesSpanAttributeValuesList = async ( options?: RequestInit): 
 
 
 
-export type modelHubAiFilterCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubAiFilterCreateResponse200 = {
+  data: AIFilterResponseApi
+  status: 200
 }
 
-export type modelHubAiFilterCreateResponseSuccess = (modelHubAiFilterCreateResponse201) & {
+export type modelHubAiFilterCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type modelHubAiFilterCreateResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
+}
+
+export type modelHubAiFilterCreateResponseSuccess = (modelHubAiFilterCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubAiFilterCreateResponseError = (modelHubAiFilterCreateResponse400 | modelHubAiFilterCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubAiFilterCreateResponse = (modelHubAiFilterCreateResponseSuccess)
+export type modelHubAiFilterCreateResponse = (modelHubAiFilterCreateResponseSuccess | modelHubAiFilterCreateResponseError)
 
 export const getModelHubAiFilterCreateUrl = () => {
 
@@ -361,14 +475,15 @@ export const getModelHubAiFilterCreateUrl = () => {
 }
  * @summary POST /model-hub/ai-filter/
  */
-export const modelHubAiFilterCreate = async ( options?: RequestInit): Promise<modelHubAiFilterCreateResponse> => {
+export const modelHubAiFilterCreate = async (aIFilterRequestApi: AIFilterRequestApi, options?: RequestInit): Promise<modelHubAiFilterCreateResponse> => {
 
   return apiMutator<modelHubAiFilterCreateResponse>(getModelHubAiFilterCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aIFilterRequestApi,)
   }
 );}
 
@@ -3884,16 +3999,33 @@ export const modelHubAnnotationsUpdateCells = async (id: string,
 
 
 export type modelHubDatasetAnnotationSummaryListResponse200 = {
-  data: void
+  data: AnnotationSummaryResponseApi
   status: 200
+}
+
+export type modelHubDatasetAnnotationSummaryListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type modelHubDatasetAnnotationSummaryListResponse403 = {
+  data: ApiErrorResponseApi
+  status: 403
+}
+
+export type modelHubDatasetAnnotationSummaryListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type modelHubDatasetAnnotationSummaryListResponseSuccess = (modelHubDatasetAnnotationSummaryListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubDatasetAnnotationSummaryListResponseError = (modelHubDatasetAnnotationSummaryListResponse400 | modelHubDatasetAnnotationSummaryListResponse403 | modelHubDatasetAnnotationSummaryListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubDatasetAnnotationSummaryListResponse = (modelHubDatasetAnnotationSummaryListResponseSuccess)
+export type modelHubDatasetAnnotationSummaryListResponse = (modelHubDatasetAnnotationSummaryListResponseSuccess | modelHubDatasetAnnotationSummaryListResponseError)
 
 export const getModelHubDatasetAnnotationSummaryListUrl = (datasetId: string,) => {
 
@@ -4351,17 +4483,29 @@ export const modelHubScoresDelete = async (id: string, options?: RequestInit): P
 
 
 
-export type tracerBulkAnnotationCreateResponse201 = {
-  data: void
-  status: 201
+export type tracerBulkAnnotationCreateResponse200 = {
+  data: BulkAnnotationResponseApi
+  status: 200
 }
 
-export type tracerBulkAnnotationCreateResponseSuccess = (tracerBulkAnnotationCreateResponse201) & {
+export type tracerBulkAnnotationCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerBulkAnnotationCreateResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
+}
+
+export type tracerBulkAnnotationCreateResponseSuccess = (tracerBulkAnnotationCreateResponse200) & {
   headers: Headers;
 };
-;
+export type tracerBulkAnnotationCreateResponseError = (tracerBulkAnnotationCreateResponse400 | tracerBulkAnnotationCreateResponse500) & {
+  headers: Headers;
+};
 
-export type tracerBulkAnnotationCreateResponse = (tracerBulkAnnotationCreateResponseSuccess)
+export type tracerBulkAnnotationCreateResponse = (tracerBulkAnnotationCreateResponseSuccess | tracerBulkAnnotationCreateResponseError)
 
 export const getTracerBulkAnnotationCreateUrl = () => {
 
@@ -4371,14 +4515,15 @@ export const getTracerBulkAnnotationCreateUrl = () => {
   return `/tracer/bulk-annotation/`
 }
 
-export const tracerBulkAnnotationCreate = async ( options?: RequestInit): Promise<tracerBulkAnnotationCreateResponse> => {
+export const tracerBulkAnnotationCreate = async (bulkAnnotationRequestApi: BulkAnnotationRequestApi, options?: RequestInit): Promise<tracerBulkAnnotationCreateResponse> => {
 
   return apiMutator<tracerBulkAnnotationCreateResponse>(getTracerBulkAnnotationCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      bulkAnnotationRequestApi,)
   }
 );}
 
@@ -5146,16 +5291,28 @@ export const tracerDashboardDelete = async (id: string, options?: RequestInit): 
 
 
 export type tracerGetAnnotationLabelsListResponse200 = {
-  data: void
+  data: GetAnnotationLabelsResponseApi
   status: 200
+}
+
+export type tracerGetAnnotationLabelsListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerGetAnnotationLabelsListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerGetAnnotationLabelsListResponseSuccess = (tracerGetAnnotationLabelsListResponse200) & {
   headers: Headers;
 };
-;
+export type tracerGetAnnotationLabelsListResponseError = (tracerGetAnnotationLabelsListResponse400 | tracerGetAnnotationLabelsListResponse500) & {
+  headers: Headers;
+};
 
-export type tracerGetAnnotationLabelsListResponse = (tracerGetAnnotationLabelsListResponseSuccess)
+export type tracerGetAnnotationLabelsListResponse = (tracerGetAnnotationLabelsListResponseSuccess | tracerGetAnnotationLabelsListResponseError)
 
 export const getTracerGetAnnotationLabelsListUrl = () => {
 
@@ -8328,31 +8485,50 @@ export const tracerTraceUpdateTags = async (id: string,
 
 
 export type tracerUsersListResponse200 = {
-  data: void
+  data: UsersResponseApi
   status: 200
+}
+
+export type tracerUsersListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerUsersListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerUsersListResponseSuccess = (tracerUsersListResponse200) & {
   headers: Headers;
 };
-;
+export type tracerUsersListResponseError = (tracerUsersListResponse400 | tracerUsersListResponse500) & {
+  headers: Headers;
+};
 
-export type tracerUsersListResponse = (tracerUsersListResponseSuccess)
+export type tracerUsersListResponse = (tracerUsersListResponseSuccess | tracerUsersListResponseError)
 
-export const getTracerUsersListUrl = () => {
+export const getTracerUsersListUrl = (params?: TracerUsersListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/users/`
+  return stringifiedParams.length > 0 ? `/tracer/users/?${stringifiedParams}` : `/tracer/users/`
 }
 
 /**
  * List traces filtered by project ID with optimized queries.
  */
-export const tracerUsersList = async ( options?: RequestInit): Promise<tracerUsersListResponse> => {
+export const tracerUsersList = async (params?: TracerUsersListParams, options?: RequestInit): Promise<tracerUsersListResponse> => {
 
-  return apiMutator<tracerUsersListResponse>(getTracerUsersListUrl(),
+  return apiMutator<tracerUsersListResponse>(getTracerUsersListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -8364,16 +8540,28 @@ export const tracerUsersList = async ( options?: RequestInit): Promise<tracerUse
 
 
 export type tracerUsersGetCodeExampleListResponse200 = {
-  data: void
+  data: UserCodeExampleResponseApi
   status: 200
+}
+
+export type tracerUsersGetCodeExampleListResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerUsersGetCodeExampleListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerUsersGetCodeExampleListResponseSuccess = (tracerUsersGetCodeExampleListResponse200) & {
   headers: Headers;
 };
-;
+export type tracerUsersGetCodeExampleListResponseError = (tracerUsersGetCodeExampleListResponse400 | tracerUsersGetCodeExampleListResponse500) & {
+  headers: Headers;
+};
 
-export type tracerUsersGetCodeExampleListResponse = (tracerUsersGetCodeExampleListResponseSuccess)
+export type tracerUsersGetCodeExampleListResponse = (tracerUsersGetCodeExampleListResponseSuccess | tracerUsersGetCodeExampleListResponseError)
 
 export const getTracerUsersGetCodeExampleListUrl = () => {
 

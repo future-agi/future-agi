@@ -8,6 +8,163 @@
  */
 import * as zod from 'zod';
 
+/**
+ * Determines the attribute type by probing which map contains the key, then
+returns type-appropriate statistics:
+  - string: top values with percentages
+  - number: min, max, avg, p50, p95
+  - boolean: true/false distribution
+
+GET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>
+ * @summary Full detail for a specific span attribute key.
+ */
+
+
+
+export const ApiTracesSpanAttributeDetailListQueryParams = zod.object({
+  "project_id": zod.string().uuid(),
+  "key": zod.string().min(1)
+})
+
+
+
+
+export const ApiTracesSpanAttributeDetailListResponse = zod.object({
+  "key": zod.string().min(1),
+  "type": zod.enum(['string', 'number', 'boolean']),
+  "count": zod.number(),
+  "unique_values": zod.number().optional(),
+  "top_values": zod.array(zod.object({
+  "value": zod.object({
+
+}).passthrough(),
+  "count": zod.number(),
+  "percentage": zod.number()
+})).optional(),
+  "min": zod.number().optional(),
+  "max": zod.number().optional(),
+  "avg": zod.number().optional(),
+  "p50": zod.number().optional(),
+  "p95": zod.number().optional()
+})
+
+
+/**
+ * Returns every distinct key across the string, number, and boolean attribute
+maps together with its inferred type and occurrence count.
+
+GET /api/traces/span-attribute-keys/?project_id=<uuid>
+ * @summary Discover all span attribute keys for a project.
+ */
+export const ApiTracesSpanAttributeKeysListQueryParams = zod.object({
+  "project_id": zod.string().uuid()
+})
+
+
+
+
+export const ApiTracesSpanAttributeKeysListResponse = zod.object({
+  "result": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "type": zod.enum(['string', 'number', 'boolean']),
+  "count": zod.number()
+}))
+})
+
+
+/**
+ * Returns the most frequent values for the given string attribute key,
+with optional prefix search filtering.
+
+GET /api/traces/span-attribute-values/?project_id=<uuid>&key=<attr_key>[&q=<search>][&limit=50]
+ * @summary Get top values for a specific span attribute key.
+ */
+
+export const apiTracesSpanAttributeValuesListQueryLimitMax = 500;
+
+
+
+export const ApiTracesSpanAttributeValuesListQueryParams = zod.object({
+  "project_id": zod.string().uuid(),
+  "key": zod.string().min(1),
+  "q": zod.string().optional(),
+  "limit": zod.number().min(1).max(apiTracesSpanAttributeValuesListQueryLimitMax).optional()
+})
+
+export const ApiTracesSpanAttributeValuesListResponse = zod.object({
+  "result": zod.array(zod.object({
+  "value": zod.object({
+
+}).passthrough(),
+  "count": zod.number()
+}))
+})
+
+
+/**
+ * Request body:
+{
+    "query": "show me LLM evals that are pass/fail",
+    "schema": [
+        {
+            "field": "eval_type",
+            "label": "Eval Type",
+            "type": "enum",
+            "operators": ["is", "is_not"],
+            "choices": ["llm", "code", "agent"]
+        },
+        ...
+    ]
+}
+ * @summary POST /model-hub/ai-filter/
+ */
+export const modelHubAiFilterCreateBodyModeDefault = `build_filters`;
+
+
+export const modelHubAiFilterCreateBodySchemaItemOperatorsDefault = [];
+export const modelHubAiFilterCreateBodySchemaItemChoicesDefault = [];
+export const modelHubAiFilterCreateBodySchemaItemChoiceLabelsDefault = {  };
+export const modelHubAiFilterCreateBodySourceDefault = `traces`;
+
+export const ModelHubAiFilterCreateBody = zod.object({
+  "mode": zod.enum(['build_filters', 'select_fields', 'smart']).default(modelHubAiFilterCreateBodyModeDefault),
+  "query": zod.string().min(1),
+  "schema": zod.array(zod.object({
+  "field": zod.string().min(1),
+  "label": zod.string().optional(),
+  "type": zod.string().optional(),
+  "category": zod.string().optional(),
+  "operators": zod.array(zod.string().min(1)).default(modelHubAiFilterCreateBodySchemaItemOperatorsDefault),
+  "choices": zod.array(zod.object({
+
+}).passthrough()).default(modelHubAiFilterCreateBodySchemaItemChoicesDefault),
+  "choice_labels": zod.record(zod.string(), zod.string().min(1)).default(modelHubAiFilterCreateBodySchemaItemChoiceLabelsDefault)
+})),
+  "source": zod.enum(['traces', 'dataset']).default(modelHubAiFilterCreateBodySourceDefault),
+  "project_id": zod.string().uuid().optional(),
+  "dataset_id": zod.string().uuid().optional()
+})
+
+export const modelHubAiFilterCreateResponseStatusDefault = true;
+
+
+
+
+export const ModelHubAiFilterCreateResponse = zod.object({
+  "status": zod.boolean().default(modelHubAiFilterCreateResponseStatusDefault),
+  "result": zod.object({
+  "filters": zod.array(zod.object({
+  "field": zod.string().min(1),
+  "operator": zod.string().min(1),
+  "value": zod.object({
+
+}).passthrough().optional()
+})).optional(),
+  "fields": zod.array(zod.string().min(1)).optional()
+})
+})
+
+
 export const ModelHubAnnotationQueuesListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.'),
@@ -2623,6 +2780,27 @@ export const ModelHubDatasetAnnotationSummaryListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const modelHubDatasetAnnotationSummaryListResponseStatusDefault = true;
+export const modelHubDatasetAnnotationSummaryListResponseResultLabelsDefault = [];
+export const modelHubDatasetAnnotationSummaryListResponseResultAnnotatorsDefault = [];
+
+export const ModelHubDatasetAnnotationSummaryListResponse = zod.object({
+  "status": zod.boolean().default(modelHubDatasetAnnotationSummaryListResponseStatusDefault),
+  "result": zod.object({
+  "labels": zod.array(zod.object({
+
+}).passthrough()).default(modelHubDatasetAnnotationSummaryListResponseResultLabelsDefault),
+  "annotators": zod.array(zod.object({
+
+}).passthrough()).default(modelHubDatasetAnnotationSummaryListResponseResultAnnotatorsDefault),
+  "header": zod.object({
+  "dataset_coverage": zod.number().optional(),
+  "completion_eta": zod.number().optional(),
+  "overall_agreement": zod.number().optional()
+}).optional()
+})
+})
+
 
 /**
  * GET    /model-hub/scores/?source_type=trace&source_id=<uuid>
@@ -3000,6 +3178,50 @@ export const modelHubScoresDeleteResponseStatusDefault = true;
 export const ModelHubScoresDeleteResponse = zod.object({
   "status": zod.boolean().default(modelHubScoresDeleteResponseStatusDefault),
   "result": zod.record(zod.string(), zod.boolean())
+})
+
+
+
+
+
+
+
+export const TracerBulkAnnotationCreateBody = zod.object({
+  "records": zod.array(zod.object({
+  "observation_span_id": zod.string().min(1),
+  "annotations": zod.array(zod.object({
+  "annotation_label_id": zod.string().uuid(),
+  "value": zod.string().optional(),
+  "value_float": zod.number().optional(),
+  "value_bool": zod.boolean().optional(),
+  "value_str_list": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "notes": zod.array(zod.object({
+  "text": zod.string().min(1)
+})).optional()
+}))
+})
+
+export const tracerBulkAnnotationCreateResponseStatusDefault = true;
+
+
+export const TracerBulkAnnotationCreateResponse = zod.object({
+  "status": zod.boolean().default(tracerBulkAnnotationCreateResponseStatusDefault),
+  "result": zod.object({
+  "message": zod.string().min(1),
+  "annotations_created": zod.number(),
+  "annotations_updated": zod.number(),
+  "notes_created": zod.number(),
+  "succeeded_count": zod.number(),
+  "errors_count": zod.number(),
+  "warnings_count": zod.number(),
+  "warnings": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "errors": zod.array(zod.object({
+
+}).passthrough()).optional()
+})
 })
 
 
@@ -4069,6 +4291,24 @@ export const TracerDashboardPartialUpdateResponse = zod.object({
 
 export const TracerDashboardDeleteParams = zod.object({
   "id": zod.string()
+})
+
+
+export const tracerGetAnnotationLabelsListResponseStatusDefault = true;
+
+
+
+export const TracerGetAnnotationLabelsListResponse = zod.object({
+  "status": zod.boolean().default(tracerGetAnnotationLabelsListResponseStatusDefault),
+  "result": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "type": zod.string().min(1),
+  "description": zod.string().optional(),
+  "settings": zod.object({
+
+}).passthrough().optional()
+}))
 })
 
 
@@ -7832,4 +8072,45 @@ export const TracerTraceUpdateTagsBody = zod.object({
 
 export const TracerTraceUpdateTagsResponse = zod.object({
   "tags": zod.array(zod.string().min(1))
+})
+
+
+/**
+ * List traces filtered by project ID with optimized queries.
+ */
+export const tracerUsersListQueryPageSizeMax = 500;
+
+export const tracerUsersListQueryCurrentPageIndexMin = 0;
+
+
+
+export const TracerUsersListQueryParams = zod.object({
+  "project_id": zod.string().uuid().optional(),
+  "search": zod.string().optional(),
+  "page_size": zod.number().min(1).max(tracerUsersListQueryPageSizeMax).optional(),
+  "current_page_index": zod.number().min(tracerUsersListQueryCurrentPageIndexMin).optional(),
+  "sort_params": zod.string().optional(),
+  "filters": zod.string().optional()
+})
+
+export const tracerUsersListResponseStatusDefault = true;
+
+export const TracerUsersListResponse = zod.object({
+  "status": zod.boolean().default(tracerUsersListResponseStatusDefault),
+  "result": zod.object({
+  "table": zod.array(zod.object({
+
+}).passthrough()),
+  "total_count": zod.number(),
+  "total_pages": zod.number()
+})
+})
+
+
+export const tracerUsersGetCodeExampleListResponseStatusDefault = true;
+
+
+export const TracerUsersGetCodeExampleListResponse = zod.object({
+  "status": zod.boolean().default(tracerUsersGetCodeExampleListResponseStatusDefault),
+  "result": zod.string().min(1)
 })

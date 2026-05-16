@@ -38,6 +38,7 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.develop_annotations import (
+    AnnotationSummaryResponseSerializer,
     AnnotationsLabelsSerializer,
     AnnotationsSerializer,
     UserSerializer,
@@ -47,9 +48,16 @@ from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import corpus_builder
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.ee_gating import FeatureUnavailable
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class AnnotationTaskViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1778,6 +1786,9 @@ class AnnotationSummaryView(APIView):
             return [self.nan_to_none(x) for x in obj]
         return obj
 
+    @swagger_auto_schema(
+        responses={200: AnnotationSummaryResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, dataset_id):
         try:
             organization = (

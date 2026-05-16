@@ -6,6 +6,140 @@
  * TFC Management API - annotation/filter contracts
  * OpenAPI spec version: v1
  */
+export type SpanAttributeDetailResponseApiType = typeof SpanAttributeDetailResponseApiType[keyof typeof SpanAttributeDetailResponseApiType];
+
+
+export const SpanAttributeDetailResponseApiType = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+} as const;
+
+export type SpanAttributeTopValueApiValue = { [key: string]: unknown };
+
+export interface SpanAttributeTopValueApi {
+  value: SpanAttributeTopValueApiValue;
+  count: number;
+  percentage: number;
+}
+
+export interface SpanAttributeDetailResponseApi {
+  /** @minLength 1 */
+  key: string;
+  type: SpanAttributeDetailResponseApiType;
+  count: number;
+  unique_values?: number;
+  top_values?: SpanAttributeTopValueApi[];
+  min?: number;
+  max?: number;
+  avg?: number;
+  p50?: number;
+  p95?: number;
+}
+
+export type ApiErrorResponseApiResult = { [key: string]: unknown };
+
+export type ApiErrorResponseApiMessage = { [key: string]: unknown };
+
+export interface ApiErrorResponseApi {
+  status?: boolean;
+  result?: ApiErrorResponseApiResult;
+  message?: ApiErrorResponseApiMessage;
+}
+
+export type SpanAttributeKeyApiType = typeof SpanAttributeKeyApiType[keyof typeof SpanAttributeKeyApiType];
+
+
+export const SpanAttributeKeyApiType = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+} as const;
+
+export interface SpanAttributeKeyApi {
+  /** @minLength 1 */
+  key: string;
+  type: SpanAttributeKeyApiType;
+  count: number;
+}
+
+export interface SpanAttributeKeysResponseApi {
+  result: SpanAttributeKeyApi[];
+}
+
+export type SpanAttributeValueApiValue = { [key: string]: unknown };
+
+export interface SpanAttributeValueApi {
+  value: SpanAttributeValueApiValue;
+  count: number;
+}
+
+export interface SpanAttributeValuesResponseApi {
+  result: SpanAttributeValueApi[];
+}
+
+export type AIFilterRequestApiMode = typeof AIFilterRequestApiMode[keyof typeof AIFilterRequestApiMode];
+
+
+export const AIFilterRequestApiMode = {
+  build_filters: 'build_filters',
+  select_fields: 'select_fields',
+  smart: 'smart',
+} as const;
+
+export type AIFilterRequestApiSource = typeof AIFilterRequestApiSource[keyof typeof AIFilterRequestApiSource];
+
+
+export const AIFilterRequestApiSource = {
+  traces: 'traces',
+  dataset: 'dataset',
+} as const;
+
+export type AIFilterSchemaFieldApiChoicesItem = { [key: string]: unknown };
+
+export type AIFilterSchemaFieldApiChoiceLabels = {[key: string]: string};
+
+export interface AIFilterSchemaFieldApi {
+  /** @minLength 1 */
+  field: string;
+  label?: string;
+  type?: string;
+  category?: string;
+  operators?: string[];
+  choices?: AIFilterSchemaFieldApiChoicesItem[];
+  choice_labels?: AIFilterSchemaFieldApiChoiceLabels;
+}
+
+export interface AIFilterRequestApi {
+  mode?: AIFilterRequestApiMode;
+  /** @minLength 1 */
+  query: string;
+  schema: AIFilterSchemaFieldApi[];
+  source?: AIFilterRequestApiSource;
+  project_id?: string;
+  dataset_id?: string;
+}
+
+export type AIFilterConditionApiValue = { [key: string]: unknown };
+
+export interface AIFilterConditionApi {
+  /** @minLength 1 */
+  field: string;
+  /** @minLength 1 */
+  operator: string;
+  value?: AIFilterConditionApiValue;
+}
+
+export interface AIFilterResultApi {
+  filters?: AIFilterConditionApi[];
+  fields?: string[];
+}
+
+export interface AIFilterResponseApi {
+  status?: boolean;
+  result: AIFilterResultApi;
+}
+
 export type AnnotationQueueApiStatus = typeof AnnotationQueueApiStatus[keyof typeof AnnotationQueueApiStatus];
 
 
@@ -105,16 +239,6 @@ export type QueueJsonResponseApiResult = { [key: string]: unknown };
 export interface QueueJsonResponseApi {
   status?: boolean;
   result: QueueJsonResponseApiResult;
-}
-
-export type ApiErrorResponseApiResult = { [key: string]: unknown };
-
-export type ApiErrorResponseApiMessage = { [key: string]: unknown };
-
-export interface ApiErrorResponseApi {
-  status?: boolean;
-  result?: ApiErrorResponseApiResult;
-  message?: ApiErrorResponseApiMessage;
 }
 
 export interface QueueDefaultRequestApi {
@@ -981,6 +1105,27 @@ export interface AnnotationsApi {
   readonly label_requirements?: string;
 }
 
+export interface AnnotationSummaryHeaderApi {
+  dataset_coverage?: number;
+  completion_eta?: number;
+  overall_agreement?: number;
+}
+
+export type AnnotationSummaryResultApiLabelsItem = { [key: string]: unknown };
+
+export type AnnotationSummaryResultApiAnnotatorsItem = { [key: string]: unknown };
+
+export interface AnnotationSummaryResultApi {
+  labels?: AnnotationSummaryResultApiLabelsItem[];
+  annotators?: AnnotationSummaryResultApiAnnotatorsItem[];
+  header?: AnnotationSummaryHeaderApi;
+}
+
+export interface AnnotationSummaryResponseApi {
+  status?: boolean;
+  result: AnnotationSummaryResultApi;
+}
+
 export type CreateScoreApiSourceType = typeof CreateScoreApiSourceType[keyof typeof CreateScoreApiSourceType];
 
 
@@ -1072,6 +1217,52 @@ export interface ScoreDeleteResponseApi {
   result: ScoreDeleteResponseApiResult;
 }
 
+export interface BulkAnnotationAnnotationRequestApi {
+  annotation_label_id: string;
+  value?: string;
+  value_float?: number;
+  value_bool?: boolean;
+  value_str_list?: string[];
+}
+
+export interface BulkAnnotationNoteRequestApi {
+  /** @minLength 1 */
+  text: string;
+}
+
+export interface BulkAnnotationRecordRequestApi {
+  /** @minLength 1 */
+  observation_span_id: string;
+  annotations?: BulkAnnotationAnnotationRequestApi[];
+  notes?: BulkAnnotationNoteRequestApi[];
+}
+
+export interface BulkAnnotationRequestApi {
+  records: BulkAnnotationRecordRequestApi[];
+}
+
+export type BulkAnnotationResponseResultApiWarningsItem = { [key: string]: unknown };
+
+export type BulkAnnotationResponseResultApiErrorsItem = { [key: string]: unknown };
+
+export interface BulkAnnotationResponseResultApi {
+  /** @minLength 1 */
+  message: string;
+  annotations_created: number;
+  annotations_updated: number;
+  notes_created: number;
+  succeeded_count: number;
+  errors_count: number;
+  warnings_count: number;
+  warnings?: BulkAnnotationResponseResultApiWarningsItem[];
+  errors?: BulkAnnotationResponseResultApiErrorsItem[];
+}
+
+export interface BulkAnnotationResponseApi {
+  status?: boolean;
+  result: BulkAnnotationResponseResultApi;
+}
+
 export interface DashboardApi {
   readonly id?: string;
   /**
@@ -1145,6 +1336,23 @@ export interface DashboardDetailApi {
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly widgets?: string;
+}
+
+export type AnnotationLabelResponseApiSettings = { [key: string]: unknown };
+
+export interface AnnotationLabelResponseApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  description?: string;
+  settings?: AnnotationLabelResponseApiSettings;
+}
+
+export interface GetAnnotationLabelsResponseApi {
+  status?: boolean;
+  result: AnnotationLabelResponseApi[];
 }
 
 export type ObservationSpanApiObservationType = typeof ObservationSpanApiObservationType[keyof typeof ObservationSpanApiObservationType];
@@ -1416,6 +1624,51 @@ export interface TraceApi {
 export interface TraceTagsUpdateApi {
   tags: string[];
 }
+
+export type UsersResultApiTableItem = { [key: string]: unknown };
+
+export interface UsersResultApi {
+  table: UsersResultApiTableItem[];
+  total_count: number;
+  total_pages: number;
+}
+
+export interface UsersResponseApi {
+  status?: boolean;
+  result: UsersResultApi;
+}
+
+export interface UserCodeExampleResponseApi {
+  status?: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type ApiTracesSpanAttributeDetailListParams = {
+project_id: string;
+/**
+ * @minLength 1
+ */
+key: string;
+};
+
+export type ApiTracesSpanAttributeKeysListParams = {
+project_id: string;
+};
+
+export type ApiTracesSpanAttributeValuesListParams = {
+project_id: string;
+/**
+ * @minLength 1
+ */
+key: string;
+q?: string;
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+};
 
 export type ModelHubAnnotationQueuesListParams = {
 /**
@@ -2384,4 +2637,20 @@ export type TracerTraceVoiceCallDetail200 = {
   next?: string;
   previous?: string;
   results: TraceApi[];
+};
+
+export type TracerUsersListParams = {
+project_id?: string;
+search?: string;
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+page_size?: number;
+/**
+ * @minimum 0
+ */
+current_page_index?: number;
+sort_params?: string;
+filters?: string;
 };

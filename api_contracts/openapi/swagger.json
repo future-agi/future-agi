@@ -7799,10 +7799,52 @@
                 "operationId": "api_traces_span-attribute-detail_list",
                 "summary": "Full detail for a specific span attribute key.",
                 "description": "Determines the attribute type by probing which map contains the key, then\nreturns type-appropriate statistics:\n  - string: top values with percentages\n  - number: min, max, avg, p50, p95\n  - boolean: true/false distribution\n\nGET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "key",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SpanAttributeDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -7816,10 +7858,45 @@
                 "operationId": "api_traces_span-attribute-keys_list",
                 "summary": "Discover all span attribute keys for a project.",
                 "description": "Returns every distinct key across the string, number, and boolean attribute\nmaps together with its inferred type and occurrence count.\n\nGET /api/traces/span-attribute-keys/?project_id=<uuid>",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SpanAttributeKeysResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -7833,10 +7910,66 @@
                 "operationId": "api_traces_span-attribute-values_list",
                 "summary": "Get top values for a specific span attribute key.",
                 "description": "Returns the most frequent values for the given string attribute key,\nwith optional prefix search filtering.\n\nGET /api/traces/span-attribute-values/?project_id=<uuid>&key=<attr_key>[&q=<search>][&limit=50]",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "key",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 500,
+                        "minimum": 1
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SpanAttributeValuesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -9048,10 +9181,34 @@
                 "operationId": "model-hub_ai-filter_create",
                 "summary": "POST /model-hub/ai-filter/",
                 "description": "Request body:\n{\n    \"query\": \"show me LLM evals that are pass/fail\",\n    \"schema\": [\n        {\n            \"field\": \"eval_type\",\n            \"label\": \"Eval Type\",\n            \"type\": \"enum\",\n            \"operators\": [\"is\", \"is_not\"],\n            \"choices\": [\"llm\", \"code\", \"agent\"]\n        },\n        ...\n    ]\n}",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AIFilterRequest"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AIFilterResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -13557,7 +13714,28 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AnnotationSummaryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -27668,10 +27846,34 @@
             "post": {
                 "operationId": "tracer_bulk-annotation_create",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/BulkAnnotationRequest"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/BulkAnnotationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -30012,7 +30214,22 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GetAnnotationLabelsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -35348,10 +35565,66 @@
             "get": {
                 "operationId": "tracer_users_list",
                 "description": "List traces filtered by project ID with optimized queries.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 500,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "current_page_index",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    {
+                        "name": "sort_params",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "filters",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/UsersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -35367,7 +35640,22 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/UserCodeExampleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -39487,6 +39775,184 @@
                 }
             }
         },
+        "SpanAttributeTopValue": {
+            "required": [
+                "value",
+                "count",
+                "percentage"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "object"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "percentage": {
+                    "title": "Percentage",
+                    "type": "number"
+                }
+            }
+        },
+        "SpanAttributeDetailResponse": {
+            "required": [
+                "key",
+                "type",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                    ]
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "unique_values": {
+                    "title": "Unique values",
+                    "type": "integer"
+                },
+                "top_values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SpanAttributeTopValue"
+                    }
+                },
+                "min": {
+                    "title": "Min",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "max": {
+                    "title": "Max",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg": {
+                    "title": "Avg",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "p50": {
+                    "title": "P50",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "p95": {
+                    "title": "P95",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ApiErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SpanAttributeKey": {
+            "required": [
+                "key",
+                "type",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                    ]
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                }
+            }
+        },
+        "SpanAttributeKeysResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SpanAttributeKey"
+                    }
+                }
+            }
+        },
+        "SpanAttributeValue": {
+            "required": [
+                "value",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "object"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                }
+            }
+        },
+        "SpanAttributeValuesResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SpanAttributeValue"
+                    }
+                }
+            }
+        },
         "IntegrationConnectionList": {
             "required": [
                 "platform",
@@ -39849,6 +40315,164 @@
                 }
             }
         },
+        "AIFilterSchemaField": {
+            "required": [
+                "field"
+            ],
+            "type": "object",
+            "properties": {
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string"
+                },
+                "category": {
+                    "title": "Category",
+                    "type": "string"
+                },
+                "operators": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": []
+                },
+                "choices": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "default": []
+                },
+                "choice_labels": {
+                    "title": "Choice labels",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "AIFilterRequest": {
+            "required": [
+                "query",
+                "schema"
+            ],
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "build_filters",
+                        "select_fields",
+                        "smart"
+                    ],
+                    "default": "build_filters"
+                },
+                "query": {
+                    "title": "Query",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "schema": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AIFilterSchemaField"
+                    }
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "dataset"
+                    ],
+                    "default": "traces"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "AIFilterCondition": {
+            "required": [
+                "field",
+                "operator"
+            ],
+            "type": "object",
+            "properties": {
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "operator": {
+                    "title": "Operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "AIFilterResult": {
+            "type": "object",
+            "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AIFilterCondition"
+                    }
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AIFilterResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/AIFilterResult"
+                }
+            }
+        },
         "QueueLabelNested": {
             "required": [
                 "label_id"
@@ -40137,26 +40761,6 @@
                 "result": {
                     "title": "Result",
                     "type": "object"
-                }
-            }
-        },
-        "ApiErrorResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "object",
-                    "x-nullable": true
                 }
             }
         },
@@ -42924,6 +43528,64 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "AnnotationSummaryHeader": {
+            "type": "object",
+            "properties": {
+                "dataset_coverage": {
+                    "title": "Dataset coverage",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "completion_eta": {
+                    "title": "Completion eta",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "overall_agreement": {
+                    "title": "Overall agreement",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "AnnotationSummaryResult": {
+            "type": "object",
+            "properties": {
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "default": []
+                },
+                "annotators": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "default": []
+                },
+                "header": {
+                    "$ref": "#/definitions/AnnotationSummaryHeader"
+                }
+            }
+        },
+        "AnnotationSummaryResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/AnnotationSummaryResult"
                 }
             }
         },
@@ -49880,6 +50542,163 @@
                 }
             }
         },
+        "BulkAnnotationAnnotationRequest": {
+            "required": [
+                "annotation_label_id"
+            ],
+            "type": "object",
+            "properties": {
+                "annotation_label_id": {
+                    "title": "Annotation label id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string"
+                },
+                "value_float": {
+                    "title": "Value float",
+                    "type": "number"
+                },
+                "value_bool": {
+                    "title": "Value bool",
+                    "type": "boolean"
+                },
+                "value_str_list": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "BulkAnnotationNoteRequest": {
+            "required": [
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "text": {
+                    "title": "Text",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "BulkAnnotationRecordRequest": {
+            "required": [
+                "observation_span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "observation_span_id": {
+                    "title": "Observation span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/BulkAnnotationAnnotationRequest"
+                    }
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/BulkAnnotationNoteRequest"
+                    }
+                }
+            }
+        },
+        "BulkAnnotationRequest": {
+            "required": [
+                "records"
+            ],
+            "type": "object",
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/BulkAnnotationRecordRequest"
+                    }
+                }
+            }
+        },
+        "BulkAnnotationResponseResult": {
+            "required": [
+                "message",
+                "annotations_created",
+                "annotations_updated",
+                "notes_created",
+                "succeeded_count",
+                "errors_count",
+                "warnings_count"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "annotations_created": {
+                    "title": "Annotations created",
+                    "type": "integer"
+                },
+                "annotations_updated": {
+                    "title": "Annotations updated",
+                    "type": "integer"
+                },
+                "notes_created": {
+                    "title": "Notes created",
+                    "type": "integer"
+                },
+                "succeeded_count": {
+                    "title": "Succeeded count",
+                    "type": "integer"
+                },
+                "errors_count": {
+                    "title": "Errors count",
+                    "type": "integer"
+                },
+                "warnings_count": {
+                    "title": "Warnings count",
+                    "type": "integer"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                }
+            }
+        },
+        "BulkAnnotationResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/BulkAnnotationResponseResult"
+                }
+            }
+        },
         "FetchGraph": {
             "required": [
                 "interval",
@@ -50374,6 +51193,60 @@
                     "title": "Progress",
                     "type": "string",
                     "readOnly": true
+                }
+            }
+        },
+        "AnnotationLabelResponse": {
+            "required": [
+                "id",
+                "name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "settings": {
+                    "title": "Settings",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "GetAnnotationLabelsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AnnotationLabelResponse"
+                    }
                 }
             }
         },
@@ -51997,6 +52870,64 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "UsersResult": {
+            "required": [
+                "table",
+                "total_count",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "total_count": {
+                    "title": "Total count",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                }
+            }
+        },
+        "UsersResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/UsersResult"
+                }
+            }
+        },
+        "UserCodeExampleResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         }

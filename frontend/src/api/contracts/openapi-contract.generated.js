@@ -11,32 +11,144 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "api_traces_span-attribute-detail_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "project_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "key": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SpanAttributeDetailResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/api/traces/span-attribute-keys/": {
       "get": {
         "operationId": "api_traces_span-attribute-keys_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "project_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SpanAttributeKeysResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/api/traces/span-attribute-values/": {
       "get": {
         "operationId": "api_traces_span-attribute-values_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "project_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "key": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "q": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SpanAttributeValuesResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/ai-filter/": {
       "post": {
         "operationId": "model-hub_ai-filter_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AIFilterRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AIFilterResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/annotation-queues/": {
@@ -1806,7 +1918,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_dataset_annotation-summary_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AnnotationSummaryResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/scores/": {
@@ -2074,9 +2199,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/bulk-annotation/": {
       "post": {
         "operationId": "tracer_bulk-annotation_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/BulkAnnotationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/BulkAnnotationResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/tracer/dashboard/": {
@@ -2512,7 +2649,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "tracer_get-annotation-labels_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/GetAnnotationLabelsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/tracer/observation-span/": {
@@ -4839,8 +4986,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_users_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "project_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          "current_page_index": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "sort_params": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/UsersResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/tracer/users/get_code_example/": {
@@ -4848,11 +5046,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "tracer_users_get_code_example_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/UserCodeExampleResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     }
   },
   "definitions": {
+    "AIFilterRequest": {
+      "required": [
+        "query",
+        "schema"
+      ],
+      "type": "object",
+      "properties": {
+        "mode": {
+          "title": "Mode",
+          "type": "string",
+          "enum": [
+            "build_filters",
+            "select_fields",
+            "smart"
+          ],
+          "default": "build_filters"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AIFilterSchemaField"
+          }
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "enum": [
+            "traces",
+            "dataset"
+          ],
+          "default": "traces"
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
+    "AIFilterResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/AIFilterResult"
+        }
+      }
+    },
     "AddItems": {
       "type": "object",
       "properties": {
@@ -5086,6 +5361,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "readOnly": true
+        }
+      }
+    },
+    "AnnotationSummaryResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/AnnotationSummaryResult"
         }
       }
     },
@@ -5494,6 +5785,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Message",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "BulkAnnotationRequest": {
+      "required": [
+        "records"
+      ],
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BulkAnnotationRecordRequest"
+          }
+        }
+      }
+    },
+    "BulkAnnotationResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/BulkAnnotationResponseResult"
         }
       }
     },
@@ -5910,6 +6231,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "comment": {
           "title": "Comment",
           "type": "string"
+        }
+      }
+    },
+    "GetAnnotationLabelsResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AnnotationLabelResponse"
+          }
         }
       }
     },
@@ -7221,6 +7561,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SpanAttributeDetailResponse": {
+      "required": [
+        "key",
+        "type",
+        "count"
+      ],
+      "type": "object",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        },
+        "unique_values": {
+          "title": "Unique values",
+          "type": "integer"
+        },
+        "top_values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SpanAttributeTopValue"
+          }
+        },
+        "min": {
+          "title": "Min",
+          "type": "number",
+          "x-nullable": true
+        },
+        "max": {
+          "title": "Max",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg": {
+          "title": "Avg",
+          "type": "number",
+          "x-nullable": true
+        },
+        "p50": {
+          "title": "P50",
+          "type": "number",
+          "x-nullable": true
+        },
+        "p95": {
+          "title": "P95",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "SpanAttributeKeysResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SpanAttributeKey"
+          }
+        }
+      }
+    },
+    "SpanAttributeValuesResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SpanAttributeValue"
+          }
+        }
+      }
+    },
     "SubmitAnnotations": {
       "required": [
         "annotations"
@@ -7357,6 +7788,107 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "type": "object",
       "properties": {
         "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "UserCodeExampleResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "UsersResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/UsersResult"
+        }
+      }
+    },
+    "AIFilterSchemaField": {
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "operators": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "choice_labels": {
+          "title": "Choice labels",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {}
+        }
+      }
+    },
+    "AIFilterResult": {
+      "type": "object",
+      "properties": {
+        "filters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AIFilterCondition"
+          }
+        },
+        "fields": {
           "type": "array",
           "items": {
             "type": "string",
@@ -7507,6 +8039,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "maximum": 2147483647,
           "minimum": -2147483648
+        }
+      }
+    },
+    "AnnotationSummaryResult": {
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "annotators": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "header": {
+          "$ref": "#/definitions/AnnotationSummaryHeader"
         }
       }
     },
@@ -7672,6 +8226,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "BulkAnnotationRecordRequest": {
+      "required": [
+        "observation_span_id"
+      ],
+      "type": "object",
+      "properties": {
+        "observation_span_id": {
+          "title": "Observation span id",
+          "type": "string",
+          "minLength": 1
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BulkAnnotationAnnotationRequest"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BulkAnnotationNoteRequest"
+          }
+        }
+      }
+    },
+    "BulkAnnotationResponseResult": {
+      "required": [
+        "message",
+        "annotations_created",
+        "annotations_updated",
+        "notes_created",
+        "succeeded_count",
+        "errors_count",
+        "warnings_count"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "annotations_created": {
+          "title": "Annotations created",
+          "type": "integer"
+        },
+        "annotations_updated": {
+          "title": "Annotations updated",
+          "type": "integer"
+        },
+        "notes_created": {
+          "title": "Notes created",
+          "type": "integer"
+        },
+        "succeeded_count": {
+          "title": "Succeeded count",
+          "type": "integer"
+        },
+        "errors_count": {
+          "title": "Errors count",
+          "type": "integer"
+        },
+        "warnings_count": {
+          "title": "Warnings count",
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "x-nullable": true
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "x-nullable": true
+        }
+      }
+    },
     "BulkCreateScoresResult": {
       "required": [
         "scores",
@@ -7691,6 +8327,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "minLength": 1
           }
+        }
+      }
+    },
+    "AnnotationLabelResponse": {
+      "required": [
+        "id",
+        "name",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "settings": {
+          "title": "Settings",
+          "type": "object",
+          "x-nullable": true
         }
       }
     },
@@ -8060,6 +8731,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "default": {}
     },
+    "SpanAttributeTopValue": {
+      "required": [
+        "value",
+        "count",
+        "percentage"
+      ],
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "object"
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        },
+        "percentage": {
+          "title": "Percentage",
+          "type": "number"
+        }
+      }
+    },
+    "SpanAttributeKey": {
+      "required": [
+        "key",
+        "type",
+        "count"
+      ],
+      "type": "object",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        }
+      }
+    },
+    "SpanAttributeValue": {
+      "required": [
+        "value",
+        "count"
+      ],
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "object"
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        }
+      }
+    },
+    "UsersResult": {
+      "required": [
+        "table",
+        "total_count",
+        "total_pages"
+      ],
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total_count": {
+          "title": "Total count",
+          "type": "integer"
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        }
+      }
+    },
+    "AIFilterCondition": {
+      "required": [
+        "field",
+        "operator"
+      ],
+      "type": "object",
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string",
+          "minLength": 1
+        },
+        "operator": {
+          "title": "Operator",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "title": "Value",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "AnnotationSummaryHeader": {
+      "type": "object",
+      "properties": {
+        "dataset_coverage": {
+          "title": "Dataset coverage",
+          "type": "number",
+          "x-nullable": true
+        },
+        "completion_eta": {
+          "title": "Completion eta",
+          "type": "number",
+          "x-nullable": true
+        },
+        "overall_agreement": {
+          "title": "Overall agreement",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
     "Monitor": {
       "required": [
         "name",
@@ -8198,6 +9004,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "x-nullable": true
+        }
+      }
+    },
+    "BulkAnnotationAnnotationRequest": {
+      "required": [
+        "annotation_label_id"
+      ],
+      "type": "object",
+      "properties": {
+        "annotation_label_id": {
+          "title": "Annotation label id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "value_float": {
+          "title": "Value float",
+          "type": "number"
+        },
+        "value_bool": {
+          "title": "Value bool",
+          "type": "boolean"
+        },
+        "value_str_list": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "BulkAnnotationNoteRequest": {
+      "required": [
+        "text"
+      ],
+      "type": "object",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

@@ -46,6 +46,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -58,7 +59,13 @@ from tracer.serializers.observation_span import (
     ObservationSpanSerializer,
     SpanExportSerializer,
 )
-from tracer.serializers.trace import TraceExportSerializer, TraceSerializer
+from tracer.serializers.trace import (
+    TraceExportSerializer,
+    TraceSerializer,
+    UserCodeExampleResponseSerializer,
+    UsersQuerySerializer,
+    UsersResponseSerializer,
+)
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     EvalMetricsQueryBuilder,
@@ -86,6 +93,11 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import DECODER, CallAttributes, ConversationAttributes
 from tracer.views.observation_span import get_observation_spans
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -2552,9 +2564,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = (
-                                    metric["custom_eval_config__name"] + " - " + choice
-                                )
+                                ] = metric["custom_eval_config__name"] + " - " + choice
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3329,11 +3339,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     data = getattr(trace, f"metric_{config.id}")
                     if data and "score" in data:
                         score = data["score"]
-                        result[str(config.id)] = round(score, 2) if score is not None else None
+                        result[str(config.id)] = (
+                            round(score, 2) if score is not None else None
+                        )
                     elif data:
                         for key, value in data.items():
-                            score = value["score"] if isinstance(value, dict) and "score" in value else None
-                            result[str(config.id) + "**" + key] = round(score, 2) if score is not None else None
+                            score = (
+                                value["score"]
+                                if isinstance(value, dict) and "score" in value
+                                else None
+                            )
+                            result[str(config.id) + "**" + key] = (
+                                round(score, 2) if score is not None else None
+                            )
 
                 # Add Root Span Annotations
                 for label in annotation_labels:
@@ -4873,9 +4891,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_config_ids = []
         if org_scope:
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    trace__project_id__in=org_project_ids
-                )
+                id__in=EvalLogger.objects.filter(trace__project_id__in=org_project_ids)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -5350,9 +5366,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
-                                    k
-                                    for k, v in scores["per_choice"].items()
-                                    if v > 0
+                                    k for k, v in scores["per_choice"].items() if v > 0
                                 ]
                                 metric_entry["output_type"] = "str_list"
                             elif "str_list" in scores and scores["str_list"]:
@@ -5633,6 +5647,10 @@ class UsersView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=UsersQuerySerializer,
+        responses={200: UsersResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         """
         List traces filtered by project ID with optimized queries.
@@ -5862,6 +5880,9 @@ class GetUserCodeExampleView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: UserCodeExampleResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         project_name = "New Project"
         project_id = request.GET.get("project_id")

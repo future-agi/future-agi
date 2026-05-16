@@ -21,6 +21,17 @@ from model_hub.serializers.scores import (
 )
 from tfc.utils.general_methods import GeneralMethods
 
+CONTRACTED_ANNOTATION_FILTER_PATH_RE = (
+    r"^/(?:"
+    r"model-hub/(?:annotation-tasks|annotation-queues|annotations-labels|"
+    r"annotations|scores|ai-filter|dataset/.+annotation-summary)"
+    r"|tracer/(?:bulk-annotation|get-annotation-labels|trace-annotation|"
+    r"project-version/add_annotations|observation-span|project|trace-session|"
+    r"trace|dashboard|users)(?:/|$)"
+    r"|api/traces"
+    r")"
+)
+
 
 def _uuid():
     return str(uuid.uuid4())
@@ -126,14 +137,32 @@ class TestAnnotationApiContract:
 
     def test_action_request_serializers_document_real_payloads(self):
         expected_refs = {
-            ("/model-hub/annotation-queues/{queue_id}/items/add-items/", "post"): "#/definitions/AddItems",
-            ("/model-hub/annotation-queues/{queue_id}/items/assign/", "post"): "#/definitions/AssignItems",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/", "post"): "#/definitions/SubmitAnnotations",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", "post"): "#/definitions/DiscussionCommentRequest",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/review/", "post"): "#/definitions/ReviewItemRequest",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/add-items/",
+                "post",
+            ): "#/definitions/AddItems",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/assign/",
+                "post",
+            ): "#/definitions/AssignItems",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+                "post",
+            ): "#/definitions/SubmitAnnotations",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/",
+                "post",
+            ): "#/definitions/DiscussionCommentRequest",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
+                "post",
+            ): "#/definitions/ReviewItemRequest",
             ("/model-hub/scores/", "post"): "#/definitions/CreateScore",
             ("/model-hub/scores/bulk/", "post"): "#/definitions/BulkCreateScores",
-            ("/tracer/observation-span/add_annotations/", "post"): "#/definitions/AddObservationSpanAnnotations",
+            (
+                "/tracer/observation-span/add_annotations/",
+                "post",
+            ): "#/definitions/AddObservationSpanAnnotations",
             ("/tracer/trace/{id}/tags/", "patch"): "#/definitions/TraceTagsUpdate",
         }
         for (path, method), expected_ref in expected_refs.items():
@@ -141,21 +170,63 @@ class TestAnnotationApiContract:
 
     def test_custom_action_responses_document_general_methods_envelopes(self):
         expected_refs = {
-            ("/model-hub/annotation-queues/{id}/progress/", "get"): "#/definitions/QueueProgressResponse",
-            ("/model-hub/annotation-queues/{id}/hard-delete/", "post"): "#/definitions/QueueHardDeleteResponse",
-            ("/model-hub/annotation-queues/{id}/export-to-dataset/", "post"): "#/definitions/QueueExportToDatasetResponse",
-            ("/model-hub/annotation-queues/get-or-create-default/", "post"): "#/definitions/QueueDefaultResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/add-items/", "post"): "#/definitions/QueueAddItemsResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/", "post"): "#/definitions/QueueSubmitAnnotationsResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/complete/", "post"): "#/definitions/QueueNavigationResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/skip/", "post"): "#/definitions/QueueNavigationResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/release/", "post"): "#/definitions/QueueReleaseReservationResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", "get"): "#/definitions/QueueDiscussionResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", "post"): "#/definitions/QueueDiscussionResponse",
-            ("/model-hub/annotation-queues/{queue_id}/items/{id}/review/", "post"): "#/definitions/QueueReviewItemResponse",
+            (
+                "/model-hub/annotation-queues/{id}/progress/",
+                "get",
+            ): "#/definitions/QueueProgressResponse",
+            (
+                "/model-hub/annotation-queues/{id}/hard-delete/",
+                "post",
+            ): "#/definitions/QueueHardDeleteResponse",
+            (
+                "/model-hub/annotation-queues/{id}/export-to-dataset/",
+                "post",
+            ): "#/definitions/QueueExportToDatasetResponse",
+            (
+                "/model-hub/annotation-queues/get-or-create-default/",
+                "post",
+            ): "#/definitions/QueueDefaultResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/add-items/",
+                "post",
+            ): "#/definitions/QueueAddItemsResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+                "post",
+            ): "#/definitions/QueueSubmitAnnotationsResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+                "post",
+            ): "#/definitions/QueueNavigationResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/skip/",
+                "post",
+            ): "#/definitions/QueueNavigationResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/release/",
+                "post",
+            ): "#/definitions/QueueReleaseReservationResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/",
+                "get",
+            ): "#/definitions/QueueDiscussionResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/",
+                "post",
+            ): "#/definitions/QueueDiscussionResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
+                "post",
+            ): "#/definitions/QueueReviewItemResponse",
             ("/model-hub/scores/", "post"): "#/definitions/ScoreResponse",
-            ("/model-hub/scores/bulk/", "post"): "#/definitions/BulkCreateScoresResponse",
-            ("/model-hub/scores/for-source/", "get"): "#/definitions/ScoreForSourceResponse",
+            (
+                "/model-hub/scores/bulk/",
+                "post",
+            ): "#/definitions/BulkCreateScoresResponse",
+            (
+                "/model-hub/scores/for-source/",
+                "get",
+            ): "#/definitions/ScoreForSourceResponse",
         }
         for (path, method), expected_ref in expected_refs.items():
             assert _response_ref(path, method) == expected_ref
@@ -205,6 +276,28 @@ class TestAnnotationApiContract:
         }
         for (path, method, status_code), expected_ref in expected_error_refs.items():
             assert _response_ref(path, method, status_code) == expected_ref
+
+    def test_annotation_and_filter_api_success_payloads_have_schemas(self):
+        import re
+
+        missing = []
+        contracted_re = re.compile(CONTRACTED_ANNOTATION_FILTER_PATH_RE)
+        for path, path_item in _swagger()["paths"].items():
+            if not contracted_re.match(path):
+                continue
+            for method, operation in path_item.items():
+                if method not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                for status_code, response in operation.get("responses", {}).items():
+                    if not status_code.startswith("2") or status_code == "204":
+                        continue
+                    if "schema" not in response:
+                        missing.append(f"{method.upper()} {path} -> {status_code}")
+
+        assert not missing, (
+            "Contracted annotation/filter endpoints returning payloads must "
+            f"document response schemas: {missing}"
+        )
 
     def test_score_for_source_query_is_documented(self):
         assert {"source_type", "source_id"}.issubset(
