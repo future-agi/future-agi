@@ -269,7 +269,8 @@ def _resolve_resource(link):
             }
 
         elif link.resource_type == "dashboard":
-            from tracer.models.dashboard import Dashboard
+            from tracer.models.dashboard import Dashboard, DashboardWidget
+            from tracer.serializers.dashboard import DashboardWidgetSerializer
 
             dashboard = Dashboard.objects.filter(
                 id=link.resource_id,
@@ -277,10 +278,14 @@ def _resolve_resource(link):
             ).first()
             if not dashboard:
                 return None
+            widgets = DashboardWidget.objects.filter(
+                dashboard=dashboard, deleted=False
+            ).order_by("position", "created_at")
             return {
                 "id": str(dashboard.id),
                 "name": dashboard.name,
-                "config": dashboard.config,
+                "description": dashboard.description,
+                "widgets": DashboardWidgetSerializer(widgets, many=True).data,
             }
 
         # Extend for other resource types as needed
