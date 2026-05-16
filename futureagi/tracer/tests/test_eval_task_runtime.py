@@ -177,6 +177,96 @@ class TestProcessEvalTaskSpans:
         assert count == 6
 
 
+# ────────────────────────────────────────────────────────────────────────
+# Voice-call dispatch — literal alias of the spans pipeline. Any
+# observation_type narrowing is the caller's job via ``filters``.
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def voice_call_eval_task(db, populated_observe_project, eval_template):
+    """Historical voiceCalls eval task on the shared 12-span fixture."""
+    from tracer.models.eval_task import RowType
+
+    project = populated_observe_project["project"]
+    config = CustomEvalConfig.objects.create(
+        project=project,
+        eval_template=eval_template,
+        name="Test Voice Eval",
+        config={"output": "Pass/Fail"},
+        mapping={"input": "input", "output": "output"},
+        model="turing_large",
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        name="Test voice calls task",
+        filters={"project_id": str(project.id)},
+        sampling_rate=100.0,
+        run_type=RunType.HISTORICAL,
+        spans_limit=1000,
+        status=EvalTaskStatus.PENDING,
+        row_type=RowType.VOICE_CALLS,
+    )
+    task.evals.add(config)
+    return {"task": task, "config": config, "project": project}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestProcessEvalTaskVoiceCalls:
+    """Dispatcher must route voiceCalls through the spans flow.
+
+    Regression net for the bug where ``row_type='voiceCalls'`` hit the
+    dispatcher's ``else`` branch (added in fb134ddf) and raised
+    ``ValueError`` — flipping every voiceCalls task in prod to FAILED.
+
+    Behaviour pin: voiceCalls is a literal alias of spans at dispatch.
+    Any observation_type narrowing (e.g. limiting to conversation roots)
+    is the caller's responsibility via ``EvalTask.filters``.
+    """
+
+    def test_dispatches_same_spans_as_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls fan-out matches the spans path on the same project."""
+        task = voice_call_eval_task["task"]
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        # populated_observe_project has 2 sessions × 2 traces × 3 spans = 12
+        # spans × 1 eval -> 12 EvalLogger rows (no observation_type narrowing).
+        assert rows.count() == 12
+        expected_ids = {s.id for s in populated_observe_project["spans"]}
+        assert {r.observation_span_id for r in rows} == expected_ids
+
+    def test_status_transitions_match_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls inherits the spans drain semantics: PENDING -> RUNNING -> COMPLETED."""
+        task = voice_call_eval_task["task"]
+        assert task.status == EvalTaskStatus.PENDING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.RUNNING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.COMPLETED
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
