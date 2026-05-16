@@ -1239,9 +1239,6 @@ const EvalCreatePage = () => {
                   templateFormat={templateFormat}
                   runtimeOverrides={(() => {
                     if (mode === "composite") return null;
-                    // Mirror every field in _RUNTIME_ALLOWED_KEYS so the test
-                    // call reflects the current picker state on first run,
-                    // before any draft-save has landed (TH-5276 / TH-5279).
                     const overrides = {
                       output_type: outputType,
                       pass_threshold: passThreshold,

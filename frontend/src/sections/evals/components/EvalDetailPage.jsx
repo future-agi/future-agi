@@ -1776,9 +1776,6 @@ const EvalDetailPage = () => {
                     }}
                     onReadyChange={setIsPlaygroundReady}
                     runtimeOverrides={(() => {
-                      // Mirror every field listed in _RUNTIME_ALLOWED_KEYS so the
-                      // test call honours the current picker state for both
-                      // agent and llm evals (TH-5276 / TH-5279).
                       const overrides = {
                         output_type: outputType,
                         pass_threshold: passThreshold,
