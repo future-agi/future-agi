@@ -82,6 +82,9 @@ _MIME_TO_EXT = {
     "application/json": "json",
 }
 
+_FFMPEG_DETECT_AUDIO_TIMEOUT_SECONDS = 10
+_FFMPEG_CONVERT_AUDIO_TIMEOUT_SECONDS = 60
+
 
 def _ext_from_mime(content_type: str | None) -> str:
     """Map a MIME type to a canonical file extension (no dot). Returns
@@ -584,6 +587,22 @@ def upload_image_to_s3(
         raise ValueError(get_error_message("ERROR_IMAGE_UPLOAD").format(str(e))) from e
 
 
+def _communicate_ffmpeg(process, audio_bytes, timeout_seconds, operation):
+    try:
+        return process.communicate(input=audio_bytes, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as e:
+        process.kill()
+        process.communicate()
+        logger.warning(
+            "ffmpeg process timed out",
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+        )
+        raise TimeoutError(
+            f"FFmpeg {operation} timed out after {timeout_seconds} seconds"
+        ) from e
+
+
 def detect_audio_format(audio_bytes):
     process = subprocess.Popen(
         ["ffmpeg", "-i", "-", "-f", "ffmetadata", "-"],
@@ -592,7 +611,12 @@ def detect_audio_format(audio_bytes):
         stderr=subprocess.PIPE,
     )
 
-    stdout, stderr = process.communicate(input=audio_bytes)
+    stdout, stderr = _communicate_ffmpeg(
+        process,
+        audio_bytes,
+        _FFMPEG_DETECT_AUDIO_TIMEOUT_SECONDS,
+        "audio format detection",
+    )
 
     if process.returncode != 0:
         raise Exception(f"FFmpeg Error: {stderr.decode('utf-8')}")
@@ -627,7 +651,12 @@ def convert_to_mp3(audio_bytes):
             stderr=subprocess.PIPE,
         )
 
-        stdout, stderr = process.communicate(input=audio_bytes)
+        stdout, stderr = _communicate_ffmpeg(
+            process,
+            audio_bytes,
+            _FFMPEG_CONVERT_AUDIO_TIMEOUT_SECONDS,
+            "audio conversion",
+        )
 
         if process.returncode != 0:
             raise Exception(f"FFmpeg Conversion Error: {stderr.decode('utf-8')}")
