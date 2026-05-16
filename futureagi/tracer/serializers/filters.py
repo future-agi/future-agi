@@ -21,7 +21,7 @@ FILTER_CONFIG_SCHEMA = {
         },
     },
     "required": ["filter_type", "filter_op"],
-    "additionalProperties": True,
+    "additionalProperties": False,
 }
 
 
@@ -39,20 +39,46 @@ FILTER_ITEM_SCHEMA = {
         "filter_config": FILTER_CONFIG_SCHEMA,
     },
     "required": ["column_id", "filter_config"],
-    "additionalProperties": True,
+    "additionalProperties": False,
 }
+
+FILTER_ITEM_ALLOWED_KEYS = set(FILTER_ITEM_SCHEMA["properties"])
+FILTER_CONFIG_ALLOWED_KEYS = set(FILTER_CONFIG_SCHEMA["properties"])
 
 
 class FilterItemField(serializers.JSONField):
     """JSON field with explicit OpenAPI shape for a single filter item.
 
-    Runtime stays intentionally permissive because saved views and legacy UI
-    surfaces may carry additional keys; stricter operator validation is layered
-    in endpoint serializers and query builders.
+    Runtime validation is intentionally strict, matching the generated API
+    schema pattern used by mature schema-first systems: callers send the
+    canonical snake_case filter contract or get a validation error.
     """
 
     class Meta:
         swagger_schema_fields = FILTER_ITEM_SCHEMA
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Filter item must be an object.")
+
+        extra_keys = sorted(set(value) - FILTER_ITEM_ALLOWED_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter item keys: {', '.join(extra_keys)}"
+            )
+
+        config = value.get("filter_config")
+        if not isinstance(config, dict):
+            raise serializers.ValidationError("Filter config must be an object.")
+
+        extra_config_keys = sorted(set(config) - FILTER_CONFIG_ALLOWED_KEYS)
+        if extra_config_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter config keys: {', '.join(extra_config_keys)}"
+            )
+
+        return value
 
 
 def filter_list_field(**kwargs):

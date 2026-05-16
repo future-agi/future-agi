@@ -1,7 +1,7 @@
 """Tests for the ``user_id`` filter path in the ClickHouse filter builder.
 
 Regression coverage for TH-4436: the cross-project user-detail page injects
-``userScopeFilter = [{columnId: "user_id", filterValue: <user_id_string>}]``
+``userScopeFilter = [{column_id: "user_id", filter_value: <user_id_string>}]``
 into the traces view. The frontend sends the ``tracer_enduser.user_id``
 string (e.g. ``"9281"`` or ``"user-11771490488.8493178"``), **not** the
 UUID primary key. Before the fix the builder treated ``user_id`` as a
@@ -25,8 +25,8 @@ class UserIdFilterTests(unittest.TestCase):
         return ClickHouseFilterBuilder(table=table)
 
     def _user_id_filter(self, value, col_type=None):
-        # Default to NORMAL because that's what the frontend's ``userScopeFilter``
-        # actually sends (``filterConfig`` with no ``col_type`` key).
+        # Default to NORMAL because that's what the frontend's user scope
+        # filter sends when no explicit ``col_type`` is present.
         return dict(
             col_id="user_id",
             col_type=col_type or ClickHouseFilterBuilder.NORMAL,

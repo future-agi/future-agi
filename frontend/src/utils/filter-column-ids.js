@@ -15,11 +15,7 @@ const SYSTEM_METRIC_COL_TYPES = new Set([
 ]);
 
 const getFilterColType = (filter) =>
-  filter?.filter_config?.col_type ??
-  filter?.filterConfig?.col_type ??
-  filter?.filterConfig?.colType ??
-  filter?.col_type ??
-  filter?.colType;
+  filter?.filter_config?.col_type ?? filter?.col_type;
 
 export const canonicalizeSystemMetricColumnId = (columnId, colType) => {
   if (!columnId) return columnId;
@@ -35,10 +31,7 @@ export const canonicalizeApiFilterColumnIds = (filters) => {
   return filters.map((filter) => {
     if (!filter || typeof filter !== "object") return filter;
 
-    const columnKey = Object.prototype.hasOwnProperty.call(filter, "column_id")
-      ? "column_id"
-      : "columnId";
-    const columnId = filter[columnKey];
+    const columnId = filter.column_id;
     const canonicalColumnId = canonicalizeSystemMetricColumnId(
       columnId,
       getFilterColType(filter),
@@ -46,6 +39,6 @@ export const canonicalizeApiFilterColumnIds = (filters) => {
 
     return canonicalColumnId === columnId
       ? filter
-      : { ...filter, [columnKey]: canonicalColumnId };
+      : { ...filter, column_id: canonicalColumnId };
   });
 };

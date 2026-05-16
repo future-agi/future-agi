@@ -1349,21 +1349,19 @@ def _finalize_automation_items(rule, created_items):
 
 
 def _normalize_filter_payload(filters):
-    """Normalize camelCase/snake_case UI filter entries to backend shape."""
+    """Keep queue rule filters in the canonical snake_case API shape."""
     normalized = []
     for item in filters or []:
-        column_id = item.get("column_id") or item.get("columnId")
+        column_id = item.get("column_id")
         if not column_id:
             continue
-        config = item.get("filter_config") or item.get("filterConfig") or {}
+        config = item.get("filter_config") or {}
         filter_config = {
-            "filter_type": config.get("filter_type") or config.get("filterType"),
-            "filter_op": config.get("filter_op") or config.get("filterOp"),
-            "filter_value": config.get("filter_value")
-            if "filter_value" in config
-            else config.get("filterValue"),
+            "filter_type": config.get("filter_type"),
+            "filter_op": config.get("filter_op"),
+            "filter_value": config.get("filter_value"),
         }
-        col_type = config.get("col_type") or config.get("colType")
+        col_type = config.get("col_type")
         if col_type:
             filter_config["col_type"] = col_type
         normalized.append(
@@ -1373,9 +1371,8 @@ def _normalize_filter_payload(filters):
                 **(
                     {
                         "display_name": item.get("display_name")
-                        or item.get("displayName")
                     }
-                    if item.get("display_name") or item.get("displayName")
+                    if item.get("display_name")
                     else {}
                 ),
             }

@@ -120,8 +120,7 @@ class TestApplyCreatedAtFiltersUnit:
 
         assert remaining == [text_filter]
 
-    def test_handles_camel_case_filter_params(self, db, organization):
-        """Should handle camelCase parameter names."""
+    def test_ignores_camel_case_filter_params(self, db, organization):
         now = timezone.now()
         filters = [
             {
@@ -136,7 +135,8 @@ class TestApplyCreatedAtFiltersUnit:
         qs = APICallLog.objects.filter(organization=organization)
         filtered_qs, remaining = apply_created_at_filters(qs, filters)
 
-        assert remaining == []
+        assert filtered_qs is qs
+        assert remaining == filters
 
     def test_handles_none_filter_config(self, db, organization):
         """Should handle None filter_config gracefully."""

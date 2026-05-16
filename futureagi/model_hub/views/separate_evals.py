@@ -230,12 +230,8 @@ def get_eval_metric_data(eval_template, filters, logs, error=False):
 
     query = Q()
     if filters:
-        filter_config = filters[0].get("filterConfig") or filters[0].get(
-            "filter_config"
-        )
-        start_date, end_date = filter_config.get(
-            "filterValue", []
-        ) or filter_config.get("filter_value", [])
+        filter_config = filters[0].get("filter_config") or {}
+        start_date, end_date = filter_config.get("filter_value", [])
 
         if start_date:
             query &= Q(created_at__gte=start_date)

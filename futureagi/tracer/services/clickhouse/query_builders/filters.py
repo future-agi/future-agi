@@ -498,16 +498,16 @@ class ClickHouseFilterBuilder:
         self._param_counter = 0
 
         for f in filters:
-            col_id = f.get("column_id") or f.get("columnId")
-            config = f.get("filter_config") or f.get("filterConfig", {})
-            col_type = config.get("col_type") or config.get("colType") or self.NORMAL
+            col_id = f.get("column_id")
+            config = f.get("filter_config") or {}
+            col_type = config.get("col_type") or self.NORMAL
 
             if not col_id or not config:
                 continue
 
-            filter_type = config.get("filter_type") or config.get("filterType")
-            filter_op = config.get("filter_op") or config.get("filterOp")
-            filter_value = config.get("filter_value", config.get("filterValue"))
+            filter_type = config.get("filter_type")
+            filter_op = config.get("filter_op")
+            filter_value = config.get("filter_value")
 
             # Skip date filters (handled by BaseQueryBuilder.parse_time_range)
             if col_id in ("created_at", "start_time") and filter_type in (
@@ -575,7 +575,7 @@ class ClickHouseFilterBuilder:
 
         order_parts: List[str] = []
         for s in sort_params:
-            col = s.get("column_id") or s.get("columnId")
+            col = s.get("column_id")
             if not col:
                 continue
             direction = s.get("direction", "desc").upper()

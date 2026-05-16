@@ -70,16 +70,16 @@ describe("filter contract", () => {
   });
 
   it("builds canonical API filters from observe panel rows", () => {
-    expect(
-      buildApiFilterFromPanelRow({
-        field: "latency_ms",
-        fieldName: "Latency",
-        fieldCategory: "system",
-        fieldType: "number",
-        operator: "greater_than",
-        value: ["100"],
-      }),
-    ).toEqual({
+    const apiFilter = buildApiFilterFromPanelRow({
+      field: "latency_ms",
+      fieldName: "Latency",
+      fieldCategory: "system",
+      fieldType: "number",
+      operator: "greater_than",
+      value: ["100"],
+    });
+
+    expect(apiFilter).toEqual({
       column_id: "latency_ms",
       display_name: "Latency",
       filter_config: {
@@ -89,6 +89,9 @@ describe("filter contract", () => {
         col_type: "SYSTEM_METRIC",
       },
     });
+    expect(apiFilter).not.toHaveProperty("columnId");
+    expect(apiFilter).not.toHaveProperty("filterConfig");
+    expect(apiFilter.filter_config).not.toHaveProperty("filterOp");
   });
 
   it("keeps the API contract explicit per type", () => {

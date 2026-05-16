@@ -316,6 +316,15 @@ function toRuleRows(filters) {
   }));
 }
 
+function toCanonicalRuleRows(filters) {
+  return (filters || []).map((filter) => ({
+    field: filter.column_id,
+    op: filter.filter_config?.filter_op,
+    value: filter.filter_config?.filter_value,
+    filterType: filter.filter_config?.filter_type,
+  }));
+}
+
 function toApiFilters(filters) {
   // Drop rows that don't carry a value (or aren't a unary op like
   // is_null / is_empty). Without this, a half-filled row with just a
@@ -408,11 +417,13 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       nextScope.is_voice_call = !!scope.is_voice_call;
       nextScope.remove_simulation_calls = !!scope.remove_simulation_calls;
     }
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = canonicalizeApiFilterColumnIds(
+      objectCamelToSnake(toApiFilters(filters)),
+    );
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      rules: toCanonicalRuleRows(apiFilters),
+      filter: apiFilters,
       scope: nextScope,
     };
   }
@@ -424,11 +435,13 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       scope.project_id,
     );
     if (projectId) nextScope.project_id = projectId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = canonicalizeApiFilterColumnIds(
+      objectCamelToSnake(toApiFilters(filters)),
+    );
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      rules: toCanonicalRuleRows(apiFilters),
+      filter: apiFilters,
       scope: nextScope,
     };
   }
@@ -436,11 +449,13 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   if (sourceType === "call_execution") {
     const agentId = resolveRuleScopeId(queue, queueAgentId, scope.project_id);
     if (agentId) nextScope.project_id = agentId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = canonicalizeApiFilterColumnIds(
+      objectCamelToSnake(toApiFilters(filters)),
+    );
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      rules: toCanonicalRuleRows(apiFilters),
+      filter: apiFilters,
       ...(Object.keys(nextScope).length ? { scope: nextScope } : {}),
     };
   }
@@ -864,7 +879,8 @@ function TraceRuleFilters({
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
   const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
+    () =>
+      canonicalizeApiFilterColumnIds(objectCamelToSnake(toApiFilters(filters))),
     [filters],
   );
 
@@ -1000,7 +1016,8 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
   );
 
   const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
+    () =>
+      canonicalizeApiFilterColumnIds(objectCamelToSnake(toApiFilters(filters))),
     [filters],
   );
 

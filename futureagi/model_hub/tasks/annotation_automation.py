@@ -26,7 +26,7 @@ def _has_user_scoped_filter(rule):
             return True
     filters = conditions.get("filter") or conditions.get("filters") or []
     for entry in filters:
-        col = entry.get("column_id") or entry.get("columnId")
+        col = entry.get("column_id")
         if col in USER_SCOPED_FIELDS:
             return True
     return False

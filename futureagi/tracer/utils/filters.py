@@ -57,60 +57,20 @@ _CREATED_AT_OP_MAP = {
 }
 
 
-_FILTER_ITEM_KEY_ALIASES = {
-    "column_id": ("column_id", "columnId"),
-    "filter_config": ("filter_config", "filterConfig"),
-}
-
-_FILTER_CONFIG_KEY_ALIASES = {
-    "col_type": ("col_type", "colType"),
-    "filter_type": ("filter_type", "filterType"),
-    "filter_op": ("filter_op", "filterOp"),
-    "filter_value": ("filter_value", "filterValue"),
-}
-
-_LEGACY_TOP_LEVEL_CONFIG_KEY_ALIASES = {
-    "col_type": ("col_type", "colType"),
-}
-
-
-def _get_alias_value(mapping, aliases, default=None):
-    for key in aliases:
-        if key in mapping:
-            return mapping[key]
-    return default
-
-
 def normalize_filter_item(filter_item):
-    """Return one canonical snake_case filter payload.
+    """Return the canonical snake_case filter payload.
 
-    The API contract is snake_case. Older callers still send camelCase and a
-    legacy top-level ``col_type``; normalize those shapes once at the boundary
-    so filter builders do not carry ad-hoc fallback checks.
+    Filter request bodies are part of the public API contract. Callers must
+    send ``column_id`` and ``filter_config`` with snake_case config keys; the
+    backend intentionally does not guess camelCase aliases here.
     """
-    if not filter_item:
+    if not isinstance(filter_item, dict) or not filter_item:
         return {"column_id": None, "filter_config": {}}
 
-    raw_config = (
-        _get_alias_value(filter_item, _FILTER_ITEM_KEY_ALIASES["filter_config"], {})
-        or {}
-    )
-    filter_config = dict(raw_config)
-
-    for canonical_key, aliases in _FILTER_CONFIG_KEY_ALIASES.items():
-        value = _get_alias_value(raw_config, aliases)
-        if value is None and canonical_key in _LEGACY_TOP_LEVEL_CONFIG_KEY_ALIASES:
-            value = _get_alias_value(
-                filter_item,
-                _LEGACY_TOP_LEVEL_CONFIG_KEY_ALIASES[canonical_key],
-            )
-        filter_config[canonical_key] = value
-
+    raw_config = filter_item.get("filter_config") or {}
     return {
-        "column_id": _get_alias_value(
-            filter_item, _FILTER_ITEM_KEY_ALIASES["column_id"]
-        ),
-        "filter_config": filter_config,
+        "column_id": filter_item.get("column_id"),
+        "filter_config": dict(raw_config) if isinstance(raw_config, dict) else {},
     }
 
 
@@ -289,13 +249,13 @@ class FilterEngine:
     @staticmethod
     def _normalize_filter_params(filter_item):
         """
-        Normalize filter parameters to handle both camelCase and snake_case.
+        Read filter parameters from the canonical snake_case API payload.
 
         Args:
             filter_item: Dictionary containing filter parameters
 
         Returns:
-            tuple: (column_id, filter_config) with normalized parameter names
+            tuple: (column_id, filter_config)
         """
         normalized = normalize_filter_item(filter_item)
         return normalized["column_id"], normalized["filter_config"]
@@ -553,7 +513,7 @@ class FilterEngine:
         Convert sort parameters to Django ORM ordering conditions
 
         Args:
-            sort_params (list): List of dicts with columnId and direction
+            sort_params (list): List of dicts with column_id and direction
             Example: [{"column_id": "avg_cost", "direction": "asc"}]
             field_map (dict, optional): Custom mapping of column_id to ORM field name.
                 When None, uses the default map for system metrics.
@@ -596,11 +556,11 @@ class FilterEngine:
         Expected filter format:
         [
             {
-                "columnId": "avg_cost",
-                "filterConfig": {
-                    "filterOp": "equals",
-                    "filterType": "number",
-                    "filterValue": 0.5
+                "column_id": "avg_cost",
+                "filter_config": {
+                    "filter_op": "equals",
+                    "filter_type": "number",
+                    "filter_value": 0.5
                 }
             }
         ]
@@ -883,9 +843,7 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = (
-                filter_config.get("col_type") or filter_config.get("colType") or ""
-            )
+            col_type = filter_config.get("col_type") or ""
 
             if column_id not in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
@@ -896,15 +854,9 @@ class FilterEngine:
             if not defn:
                 continue
 
-            filter_op = normalize_filter_op(
-                filter_config.get("filter_op") or filter_config.get("filterOp")
-            )
-            filter_value = filter_config.get(
-                "filter_value", filter_config.get("filterValue")
-            )
-            filter_type = filter_config.get("filter_type") or filter_config.get(
-                "filterType"
-            )
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_value = filter_config.get("filter_value")
+            filter_type = filter_config.get("filter_type")
 
             if not filter_op or not filter_type:
                 continue

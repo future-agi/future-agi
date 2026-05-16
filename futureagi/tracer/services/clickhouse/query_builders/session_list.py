@@ -173,7 +173,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def has_having_filters(self) -> bool:
         """Return True if any filters target aggregate columns (requiring HAVING)."""
         for f in self.filters:
-            col_id = f.get("column_id") or f.get("columnId")
+            col_id = f.get("column_id")
             if col_id in self.SESSION_FILTER_MAP:
                 return True
         return False
@@ -381,7 +381,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         span_filters: List[Dict] = []
         for f in self.filters:
-            col_id = f.get("column_id") or f.get("columnId")
+            col_id = f.get("column_id")
             if col_id not in self.SESSION_FILTER_MAP:
                 span_filters.append(f)
         return span_filters
@@ -392,15 +392,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         param_counter = 900  # Use high numbers to avoid conflicts
 
         for f in self.filters:
-            col_id = f.get("column_id") or f.get("columnId")
+            col_id = f.get("column_id")
             if col_id not in self.SESSION_FILTER_MAP:
                 continue
 
-            config = f.get("filter_config") or f.get("filterConfig", {})
-            filter_op = normalize_filter_op(
-                config.get("filter_op") or config.get("filterOp")
-            )
-            filter_value = config.get("filter_value", config.get("filterValue"))
+            config = f.get("filter_config") or {}
+            filter_op = normalize_filter_op(config.get("filter_op"))
+            filter_value = config.get("filter_value")
             ch_col = self.SESSION_FILTER_MAP[col_id]
 
             op_map = {

@@ -174,13 +174,13 @@ class BaseQueryBuilder(ABC):
         end_date: Optional[datetime] = None
 
         for f in filters:
-            col_id = f.get("column_id") or f.get("columnId")
-            config = f.get("filter_config") or f.get("filterConfig", {})
+            col_id = f.get("column_id")
+            config = f.get("filter_config") or {}
             if col_id not in ("created_at", "start_time"):
                 continue
 
-            op = config.get("filter_op") or config.get("filterOp")
-            val = config.get("filter_value", config.get("filterValue"))
+            op = config.get("filter_op")
+            val = config.get("filter_value")
 
             if op == "greater_than" and val:
                 start_date = _parse_dt(val)

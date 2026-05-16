@@ -1811,8 +1811,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -2161,8 +2160,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Apply eval metric filters (excluding annotation filters)
@@ -2340,7 +2338,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             data_fetched = graph_data.get("data", [])
             if len(data_fetched) == 0:
-                # Find the filter with columnId == "created_at"
+                # Find the filter with column_id == "created_at"
                 created_at_filter = None
                 for f in filters:
                     if f.get("column_id") == "created_at":
@@ -2845,8 +2843,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (
@@ -3242,8 +3239,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Apply eval metric filters (excluding annotation filters)
@@ -3531,8 +3527,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Apply eval metric filters (excluding annotation filters)
@@ -4170,7 +4165,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         start_date, end_date = BaseQueryBuilder.parse_time_range(filters)
         has_explicit_date = any(
-            (f.get("column_id") or f.get("columnId")) in ("created_at", "start_time")
+            f.get("column_id") in ("created_at", "start_time")
             for f in filters
         )
         if not has_explicit_date:
@@ -4487,8 +4482,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f
                     for f in filters
                     if _get_col_type(f) not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Apply eval metric filters (excluding annotation filters)
@@ -4702,8 +4696,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f
                 for f in filters
                 if _get_col_type(f) not in annotation_col_types
-                and (f.get("column_id") or f.get("columnId"))
-                not in annotation_column_ids
+                and f.get("column_id") not in annotation_column_ids
             ]
 
             eval_filter_conditions = (
@@ -4850,11 +4843,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             org = getattr(request, "organization", None) or request.user.organization
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col = _f.get("column_id")
+            _cfg = _f.get("filter_config") or {}
+            _col_type = _cfg.get("col_type") or "NORMAL"
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:

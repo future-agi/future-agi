@@ -1213,9 +1213,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -1789,9 +1789,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -2021,11 +2021,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # the filter to `end_user_id` scoped to this project + organization.
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col = _f.get("column_id")
+            _cfg = _f.get("filter_config") or {}
+            _col_type = _cfg.get("col_type") or "NORMAL"
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:
@@ -2264,10 +2264,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
@@ -3716,9 +3716,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (
@@ -3797,6 +3797,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not span_id:
                 raise Exception("Span id is required")
 
+            project_id = request.query_params.get(
+                "project_id"
+            ) or request.query_params.get("projectId")
+            if not project_id:
+                raise Exception("Project id is required")
+
             user_id = request.query_params.get("user_id") or request.query_params.get(
                 "userId"
             )
@@ -3809,17 +3815,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             user_id=user_id,
                             organization=getattr(request, "organization", None)
                             or request.user.organization,
-                            project=project,
+                            project_id=project_id,
                         ).id
                     )
                 except EndUser.DoesNotExist as e:
                     raise Exception("User not found for the given user_id") from e
-
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
 
             project = Project.objects.get(
                 id=project_id,
@@ -3994,9 +3994,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (

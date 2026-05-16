@@ -1531,8 +1531,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert where == ""
 
-    def test_translate_has_eval_camel_case(self):
-        """has_eval filter should work with camelCase keys."""
+    def test_translate_has_eval_requires_canonical_filter_keys(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -1549,8 +1548,8 @@ class TestClickHouseFilterBuilder:
             }
         ]
         where, params = builder.translate(filters)
-        assert "trace_id IN" in where
-        assert "tracer_eval_logger" in where
+        assert where == ""
+        assert params == {}
 
     # ------------------------------------------------------------------
     # has_annotation filter tests
@@ -4844,8 +4843,7 @@ class TestFilterBuilderEdgeCases:
         assert "BETWEEN" in where
         assert "span_attr_num" in where
 
-    def test_camelcase_filter_keys(self):
-        """Should accept camelCase filter keys (columnId, filterConfig)."""
+    def test_camelcase_filter_keys_are_not_backend_contract(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4863,8 +4861,8 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, params = builder.translate(filters)
-        assert "model" in where
-        assert "gpt-4" in params.values()
+        assert where == ""
+        assert params == {}
 
     def test_eval_metric_filter_subquery_structure(self):
         """EVAL_METRIC filter should have correct subquery structure."""

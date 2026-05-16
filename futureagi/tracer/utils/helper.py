@@ -389,7 +389,9 @@ def validate_filters_helper(value):
         return []
 
     REQUIRED_FILTER_KEYS = ["column_id", "filter_config"]
-    VALID_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    VALID_FILTER_KEYS = {"column_id", "display_name", "filter_config"}
+    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    VALID_CONFIG_KEYS = {"filter_type", "filter_op", "filter_value", "col_type"}
 
     for filter_item in value:
         if not isinstance(filter_item, dict):
@@ -400,18 +402,30 @@ def validate_filters_helper(value):
             raise serializers.ValidationError(
                 f"Missing required filter keys: {', '.join(missing_keys)}"
             )
+        extra_keys = sorted(set(filter_item) - VALID_FILTER_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter keys: {', '.join(extra_keys)}"
+            )
 
         filter_config = filter_item.get("filter_config")
         if not isinstance(filter_config, dict):
             raise serializers.ValidationError("Filter config must be a dictionary.")
 
-        missing_keys = [key for key in VALID_CONFIG_KEYS if key not in filter_config]
+        missing_keys = [
+            key for key in REQUIRED_CONFIG_KEYS if key not in filter_config
+        ]
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
             )
+        extra_config_keys = sorted(set(filter_config) - VALID_CONFIG_KEYS)
+        if extra_config_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter config keys: {', '.join(extra_config_keys)}"
+            )
 
-        col_type = filter_config.get("col_type") or filter_config.get("colType")
+        col_type = filter_config.get("col_type")
         if col_type == "SPAN_ATTRIBUTE":
             _validate_span_attribute_filter(
                 filter_item.get("column_id"), filter_config

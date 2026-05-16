@@ -1595,23 +1595,15 @@ class GetDatasetTableView(APIView):
         # Apply filters if any
         for filter_item in filters:
             try:
-                column_id = filter_item.get("column_id") or filter_item.get("columnId")
-                filter_config = filter_item.get("filter_config", {}) or filter_item.get(
-                    "filterConfig", {}
-                )
+                column_id = filter_item.get("column_id")
+                filter_config = filter_item.get("filter_config") or {}
 
                 if not column_id or not filter_config:
                     continue
 
-                filter_type = filter_config.get("filter_type") or filter_config.get(
-                    "filterType"
-                )
-                filter_op = filter_config.get("filter_op") or filter_config.get(
-                    "filterOp"
-                )
-                filter_value = filter_config.get("filter_value") or filter_config.get(
-                    "filterValue"
-                )
+                filter_type = filter_config.get("filter_type")
+                filter_op = filter_config.get("filter_op")
+                filter_value = filter_config.get("filter_value")
                 cells = all_cells.filter(column_id=column_id)
 
                 #
@@ -1837,7 +1829,7 @@ class GetDatasetTableView(APIView):
         for sort_item in sort_configs:
             # continue
             try:
-                column_id = sort_item.get("column_id") or sort_item.get("columnId")
+                column_id = sort_item.get("column_id")
                 sort_type = sort_item.get("type") or sort_item.get("type")
 
                 if not column_id or not sort_type:

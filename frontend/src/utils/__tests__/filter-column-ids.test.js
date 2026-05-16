@@ -70,7 +70,7 @@ describe("filter column id canonicalization", () => {
     expect(filters[0].column_id).toBe("latency_ms");
   });
 
-  it("supports camelCase filter objects before they are snake-cased", () => {
+  it("does not canonicalize non-contract camelCase filter objects", () => {
     const filters = canonicalizeApiFilterColumnIds([
       {
         columnId: "output_tokens",
@@ -78,6 +78,7 @@ describe("filter column id canonicalization", () => {
       },
     ]);
 
-    expect(filters[0].columnId).toBe("completion_tokens");
+    expect(filters[0].columnId).toBe("output_tokens");
+    expect(filters[0]).not.toHaveProperty("column_id");
   });
 });

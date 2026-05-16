@@ -20,6 +20,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
     ResolveResult,
+    _validate_user_scoped_filters,
     _resolve_trace_ids_clickhouse,
     resolve_filtered_trace_ids,
 )
@@ -386,26 +387,21 @@ class TestUserScopedFilters:
                 user=None,
             )
 
-    def test_user_scoped_accepts_camelcase_column_id(
-        self, observe_project, organization
-    ):
-        """camelCase form of the column_id must also trip the guard."""
-        with pytest.raises(ValueError, match="user-scoped"):
-            resolve_filtered_trace_ids(
-                project_id=observe_project.id,
-                filters=[
-                    {
-                        "columnId": "my_annotations",
-                        "filter_config": {
-                            "filter_type": "boolean",
-                            "filter_op": "equals",
-                            "filter_value": True,
-                        },
-                    }
-                ],
-                organization=organization,
-                user=None,
-            )
+    def test_user_scoped_requires_canonical_column_id(self):
+        """Backend user-scoped guard reads the canonical snake_case filter contract."""
+        _validate_user_scoped_filters(
+            [
+                {
+                    "columnId": "my_annotations",
+                    "filter_config": {
+                        "filter_type": "boolean",
+                        "filter_op": "equals",
+                        "filter_value": True,
+                    },
+                }
+            ],
+            user=None,
+        )
 
     def test_validator_silent_when_user_provided(self, user):
         """Validator does not raise when user is provided for user-scoped cols."""

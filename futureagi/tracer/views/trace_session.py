@@ -1383,6 +1383,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         sort_params = validated_data.get("sort_params", [])
         page_number = int(request.query_params.get("page_number", 0))
         page_size = int(request.query_params.get("page_size", 30))
+        org = getattr(request, "organization", None) or request.user.organization
         user_id_qp = request.query_params.get("user_id") or request.query_params.get(
             "userId"
         )
@@ -1396,11 +1397,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         user_id_raw: Optional[str] = user_id_qp or None
         _remaining: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col = _f.get("column_id")
+            _cfg = _f.get("filter_config") or {}
+            _col_type = _cfg.get("col_type") or "NORMAL"
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 if isinstance(_val, list):
                     _val = _val[0] if _val else None
                 if _val and not user_id_raw:

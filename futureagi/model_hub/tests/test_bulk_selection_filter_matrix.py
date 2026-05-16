@@ -48,19 +48,7 @@ def _filter(
     filter_type,
     filter_op,
     filter_value,
-    *,
-    camel=False,
 ):
-    if camel:
-        return {
-            "columnId": column_id,
-            "filterConfig": {
-                "colType": col_type,
-                "filterType": filter_type,
-                "filterOp": filter_op,
-                "filterValue": filter_value,
-            },
-        }
     return {
         "column_id": column_id,
         "filter_config": {
@@ -91,13 +79,12 @@ def _call_keys(qs):
     return set(keys)
 
 
-def test_filter_helpers_accept_snake_and_camel_filter_payloads():
+def test_filter_helpers_read_canonical_snake_filter_payloads_only():
     snake = _filter("label-1", "ANNOTATION", "text", "contains", "x")
-    camel = _filter("label-2", "ANNOTATION", "text", "contains", "x", camel=True)
-    top_level_camel = {
-        "columnId": "label-3",
-        "colType": "ANNOTATION",
+    camel = {
+        "columnId": "label-2",
         "filterConfig": {
+            "colType": "ANNOTATION",
             "filterType": "text",
             "filterOp": "contains",
             "filterValue": "x",
@@ -105,11 +92,9 @@ def test_filter_helpers_accept_snake_and_camel_filter_payloads():
     }
 
     assert _filter_column_id(snake) == "label-1"
-    assert _filter_column_id(camel) == "label-2"
-    assert _filter_column_id(top_level_camel) == "label-3"
     assert _filter_col_type(snake) == "ANNOTATION"
-    assert _filter_col_type(camel) == "ANNOTATION"
-    assert _filter_col_type(top_level_camel) == "ANNOTATION"
+    assert _filter_column_id(camel) == ""
+    assert _filter_col_type(camel) == ""
 
 
 @pytest.mark.parametrize("filter_op", sorted(FILTER_TYPE_ALLOWED_OPS["text"]))
@@ -257,12 +242,11 @@ def _mixed_observe_filters():
         _filter("metric-1", "EVAL_METRIC", "number", "greater_than", 80),
         _filter("label-snake", "ANNOTATION", "text", "contains", "alpha"),
         _filter(
-            "label-camel",
+            "label-category",
             "ANNOTATION",
             "categorical",
             "in",
             ["yes", "no"],
-            camel=True,
         ),
         _filter("annotator", "NORMAL", "annotator", "equals", str(uuid.uuid4())),
         _filter(
@@ -303,7 +287,7 @@ def test_trace_and_span_filter_mode_do_not_route_annotation_filters_to_eval_bran
     non_system_columns = {_filter_column_id(f) for f in calls["non_system"]}
     assert "metric-1" in non_system_columns
     assert "label-snake" not in non_system_columns
-    assert "label-camel" not in non_system_columns
+    assert "label-category" not in non_system_columns
     assert "annotator" not in non_system_columns
     assert calls["annotations"]
     assert calls["has_eval_kwargs"] == {"observe_type": expected_has_eval_type}
@@ -345,7 +329,6 @@ def test_session_field_maps_accept_contract_operator_shapes(
                 filter_type,
                 filter_op,
                 _value_for(filter_type, filter_op),
-                camel=True,
             )
         ],
         field_map=field_map,
@@ -354,7 +337,7 @@ def test_session_field_maps_accept_contract_operator_shapes(
     assert q_filter
 
 
-def test_apply_created_at_filters_accepts_camel_case_filter_payload():
+def test_apply_created_at_filters_accepts_canonical_filter_payload():
     qs = RecordingQuerySet()
     filtered_qs, remaining = apply_created_at_filters(
         qs,
@@ -365,7 +348,6 @@ def test_apply_created_at_filters_accepts_camel_case_filter_payload():
                 "datetime",
                 "greater_than",
                 "2026-05-01T00:00:00Z",
-                camel=True,
             )
         ],
     )
