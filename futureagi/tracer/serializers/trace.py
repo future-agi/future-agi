@@ -4,6 +4,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.filters import filter_list_field
 from tracer.utils.helper import validate_filters_helper
 
 
@@ -36,9 +37,7 @@ class TraceSerializer(serializers.ModelSerializer):
 
 
 class TraceExportSerializer(serializers.Serializer):
-    filters = serializers.ListField(
-        required=False, default=[], child=serializers.JSONField()
-    )
+    filters = filter_list_field(required=False, default=[])
 
     def validate_filters(self, value):
         return validate_filters_helper(value)

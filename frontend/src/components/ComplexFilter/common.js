@@ -1,25 +1,17 @@
 import { format } from "date-fns";
 import _ from "lodash";
+import {
+  FILTER_TYPE_ALLOWED_OPS,
+  RANGE_FILTER_OPS,
+} from "src/api/contracts/filter-contract.generated";
 import { FilterTypeMapper } from "src/utils/constants";
 import { formatISOCustom } from "src/utils/utils";
 import { z } from "zod";
 
-const AllowedOperators = [
-  "greater_than",
-  "less_than",
-  "equals",
-  "not_equals",
-  "greater_than_or_equal",
-  "less_than_or_equal",
-  "between",
-  "not_in_between",
-  "contains",
-  "not_contains",
-  "starts_with",
-  "ends_with",
-  "is_null",
-  "is_not_null",
-];
+const AllowedOperators = Array.from(
+  new Set(Object.values(FILTER_TYPE_ALLOWED_OPS).flat()),
+);
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 export const NULL_OPERATORS = ["is_null", "is_not_null"];
 
@@ -75,10 +67,7 @@ export const getComplexFilterValidation = (
                 if (!val.filterValue || !Array.isArray(val.filterValue))
                   return false;
 
-                if (
-                  val.filterOp === "between" ||
-                  val.filterOp === "not_in_between"
-                ) {
+                if (RangeOperators.has(val.filterOp)) {
                   if (val.filterValue.length !== 2) return false;
                   if (
                     val.filterValue[0].length === 0 ||
@@ -105,10 +94,7 @@ export const getComplexFilterValidation = (
                 if (!val.filterValue || !Array.isArray(val.filterValue))
                   return false;
 
-                if (
-                  val.filterOp === "between" ||
-                  val.filterOp === "not_in_between"
-                ) {
+                if (RangeOperators.has(val.filterOp)) {
                   if (val.filterValue.length !== 2) return false;
                   try {
                     format(new Date(val.filterValue[0]), "yyyy-MM-dd HH:mm:ss");
@@ -151,7 +137,7 @@ export const getComplexFilterValidation = (
       let finalFilters = {};
       if (val.filterConfig.filterType === "number") {
         let newFilterValues;
-        if (["between", "not_in_between"].includes(val.filterConfig.filterOp)) {
+        if (RangeOperators.has(val.filterConfig.filterOp)) {
           newFilterValues = val.filterConfig.filterValue.map((item) =>
             parseFloat(item),
           );
@@ -167,7 +153,7 @@ export const getComplexFilterValidation = (
         };
       } else if (val.filterConfig.filterType === "datetime") {
         let newFilterValues;
-        if (["between", "not_in_between"].includes(val.filterConfig.filterOp)) {
+        if (RangeOperators.has(val.filterConfig.filterOp)) {
           newFilterValues = val.filterConfig.filterValue.map((item) =>
             formatISOCustom(new Date(item)),
           );

@@ -4,6 +4,9 @@ import React from "react";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const DateValueSelector = ({ definition, filter, updateFilter }) => {
   const values = filter.filterConfig;
@@ -59,7 +62,7 @@ const DateValueSelector = ({ definition, filter, updateFilter }) => {
         }}
       />
 
-      {["between", "not_in_between"].includes(values?.filterOp) ? (
+      {RangeOperators.has(values?.filterOp) ? (
         <>
           <Typography variant="body2" color="text.disabled">
             and

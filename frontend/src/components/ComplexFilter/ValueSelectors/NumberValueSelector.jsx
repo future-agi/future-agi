@@ -4,6 +4,9 @@ import React from "react";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import { handleNumericInput } from "../common";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const NumberValueSelector = ({ definition, filter, updateFilter }) => {
   const values = filter.filterConfig;
@@ -54,7 +57,7 @@ const NumberValueSelector = ({ definition, filter, updateFilter }) => {
           }));
         }}
       />
-      {["between", "not_in_between"].includes(values?.filterOp) ? (
+      {RangeOperators.has(values?.filterOp) ? (
         <>
           <Typography
             variant="s2"

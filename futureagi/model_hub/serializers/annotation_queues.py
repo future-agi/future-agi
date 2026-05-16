@@ -25,6 +25,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
     resolve_source_preview,
 )
+from tracer.serializers.filters import filter_list_field
 
 
 class QueueLabelNestedSerializer(serializers.ModelSerializer):
@@ -466,9 +467,7 @@ class SelectionSerializer(serializers.Serializer):
         choices=sorted(SUPPORTED_SELECTION_SOURCE_TYPES)
     )
     project_id = serializers.UUIDField()
-    filter = serializers.ListField(
-        child=serializers.DictField(), required=False, default=list
-    )
+    filter = filter_list_field(required=False, default=list)
     # exclude_ids are compared against the resolver's string-cast IDs, so
     # accept any string (UUIDs for trace/session/call_execution, hex for
     # observation_span).
@@ -600,7 +599,10 @@ class QueueExportToDatasetRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        if not attrs.get("dataset_id") and not str(attrs.get("dataset_name") or "").strip():
+        if (
+            not attrs.get("dataset_id")
+            and not str(attrs.get("dataset_name") or "").strip()
+        ):
             raise serializers.ValidationError(
                 "Either dataset_id or dataset_name is required."
             )

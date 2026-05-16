@@ -25,6 +25,9 @@ import { createCachePrimaryFilter, getCachePrimaryFilter } from "../common";
 import { useAuthContext } from "src/auth/hooks";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import { handleNumericInput } from "src/components/ComplexFilter/common";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const LeftControl = ({
   onGraphConfigChange,
@@ -500,7 +503,7 @@ const LeftControl = ({
     (operator, value, value2) => {
       if (!selectedOption) return;
 
-      const isBetweenOp = ["between", "not_in_between"].includes(operator);
+      const isBetweenOp = RangeOperators.has(operator);
 
       // Store values for UI persistence (operator and values separately for form restoration)
       setSelectedGraphAttributes({
@@ -642,7 +645,7 @@ const LeftControl = ({
               handleNumberFilterChange(currentOperator, value, currentValue2);
             }}
           />
-          {["between", "not_in_between"].includes(currentOperator) && (
+          {RangeOperators.has(currentOperator) && (
             <>
               <Typography
                 typography="s2"
