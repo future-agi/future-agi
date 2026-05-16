@@ -992,7 +992,7 @@ class TestCompositeEvalOnTrace:
         stub_cost_log,
         inline_temporal,
     ):
-        """The composite call gets `trace_context` + source='tracer_composite'."""
+        """Composite call forwards canonical trace_context + span_context (anchor) + session_context."""
         task = composite_trace_task["task"]
         process_eval_task._original_func(str(task.id))
 
@@ -1001,7 +1001,12 @@ class TestCompositeEvalOnTrace:
             assert call["source"] == "tracer_composite"
             ctx = call.get("trace_context")
             assert ctx is not None
-            assert "trace_id" in ctx and "anchor_span_id" in ctx
+            assert ctx.get("id"), "trace_context missing canonical 'id'"
+            assert ctx.get("span_id"), "trace_context missing anchor 'span_id'"
+            assert "span_count" in ctx
+            span_ctx = call.get("span_context")
+            assert span_ctx is not None
+            assert span_ctx.get("id")
 
     def test_writes_error_row_when_children_raise(
         self,
@@ -1161,7 +1166,9 @@ class TestCompositeEvalOnSession:
             assert call["source"] == "tracer_composite"
             ctx = call.get("session_context")
             assert ctx is not None
-            assert "session_id" in ctx
+            assert ctx.get("id"), "session_context missing canonical 'id'"
+            assert "trace_count" in ctx
+            assert "traces" in ctx
 
     def test_sets_workspace_context(
         self,
