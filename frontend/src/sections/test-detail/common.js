@@ -7,7 +7,7 @@ import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import { canonicalKeys, objectCamelToSnake } from "src/utils/utils";
+import { canonicalKeys } from "src/utils/utils";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
 import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRenderer";
 import { getLabel } from "./PerformanceMetrics/common";
@@ -419,7 +419,7 @@ export const getTestRunDetailColumnQuery = (
           page: pageNumber + 1,
           limit: 30,
           search: debouncedSearchQuery,
-          filters: JSON.stringify(validatedFilters?.map(objectCamelToSnake)),
+          filters: JSON.stringify(validatedFilters || []),
           ...(pageSize && { limit: pageSize }),
         },
       }),

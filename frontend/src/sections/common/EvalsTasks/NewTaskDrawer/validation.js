@@ -4,8 +4,8 @@ import { z } from "zod";
 const RANGE_OPS = new Set(["between", "not_between"]);
 const LIST_OPS = new Set(["in", "not_in"]);
 
-// Group multiple form rows for the same (columnId, op) into a single wire
-// entry. Scalar rows for list ops collapse to array `filterValue`; multiple
+// Group multiple form rows for the same (column_id, op) into a single wire
+// entry. Scalar rows for list ops collapse to array `filter_value`; multiple
 // scalar rows for a single-value op (legacy multi-value `equals` from saved
 // tasks) are promoted to `in` so the BE filter validator accepts them.
 export const extractAttributeFilters = (filters) => {
@@ -58,12 +58,12 @@ export const extractAttributeFilters = (filters) => {
       filterValue = entry.values[0];
     }
     return {
-      columnId: entry.columnId,
-      filterConfig: {
-        filterType: entry.filterType,
-        filterOp,
-        colType: "SPAN_ATTRIBUTE",
-        ...(filterValue !== undefined && { filterValue }),
+      column_id: entry.columnId,
+      filter_config: {
+        filter_type: entry.filterType,
+        filter_op: filterOp,
+        col_type: "SPAN_ATTRIBUTE",
+        ...(filterValue !== undefined && { filter_value: filterValue }),
       },
     };
   });
@@ -118,9 +118,7 @@ export const NewTaskValidationSchema = () =>
         .min(1, { message: "At least one evaluation is required" })
         .refine(
           (evals) =>
-            evals.every(
-              (e) => typeof e?.id === "string" && e.id.length > 0,
-            ),
+            evals.every((e) => typeof e?.id === "string" && e.id.length > 0),
           {
             message:
               "Remove the highlighted evaluation(s) and re-add them before continuing.",
@@ -136,9 +134,7 @@ export const NewTaskValidationSchema = () =>
       // the transform runs and the form-state value (set by the
       // Spans/Traces/Sessions tabs in TaskConfigPanel) is silently
       // dropped — every payload then defaults to "spans".
-      rowType: z
-        .enum(["spans", "traces", "sessions", "voiceCalls"])
-        .optional(),
+      rowType: z.enum(["spans", "traces", "sessions", "voiceCalls"]).optional(),
       filters: z
         .array(
           z.object({

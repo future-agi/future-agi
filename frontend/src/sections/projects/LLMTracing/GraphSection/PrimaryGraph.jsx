@@ -41,8 +41,6 @@ import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { FILTER_FOR_HAS_EVAL } from "../common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -308,7 +306,7 @@ const PrimaryGraph = ({
   // Combine filters with date filter + eval filter
   const combinedFilters = useMemo(() => {
     const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.columnId === "created_at");
+    const hasDateFilter = base.some((f) => f?.column_id === "created_at");
     const startDate = dateFilter?.dateFilter?.[0];
     const endDate = dateFilter?.dateFilter?.[1];
 
@@ -316,11 +314,11 @@ const PrimaryGraph = ({
       !hasDateFilter && startDate && endDate
         ? [
             {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
+              column_id: "created_at",
+              filter_config: {
+                filter_type: "datetime",
+                filter_op: "between",
+                filter_value: [
                   new Date(startDate).toISOString(),
                   new Date(endDate).toISOString(),
                 ],
@@ -350,9 +348,7 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: combinedFilters,
         property: "average",
         req_data_config: {
           id: metricDef.id,

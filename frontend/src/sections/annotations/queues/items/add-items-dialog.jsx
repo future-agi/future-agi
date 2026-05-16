@@ -46,8 +46,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import {
   getTraceListColumnDefs,
   TRACE_DEFAULT_COLUMNS,
@@ -127,17 +125,12 @@ function panelFilterToApi(panel) {
   const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
   const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
   return {
-    columnId: panel.field,
-    ...(panel.fieldName && { displayName: panel.fieldName }),
-    filterConfig: {
-      filterType,
-      filterOp,
-      filterValue,
-      // `col_type` (snake_case) matches the Zod schema in
-      // ComplexFilter/common.js — a `colType` key would be stripped by
-      // safeParse, which is how `ended_reason` ended up falling through
-      // the SYSTEM_METRIC → VOICE_SYSTEM_METRIC_STR_MAP path and
-      // generating an "Unknown identifier" ClickHouse error.
+    column_id: panel.field,
+    ...(panel.fieldName && { display_name: panel.fieldName }),
+    filter_config: {
+      filter_type: filterType,
+      filter_op: filterOp,
+      filter_value: filterValue,
       ...(colType && { col_type: colType }),
     },
     _meta: { parentProperty: "" },
@@ -145,12 +138,13 @@ function panelFilterToApi(panel) {
 }
 
 function apiFilterToPanel(api, propertiesById = {}) {
-  const property = propertiesById[api?.columnId];
-  const rawOp = api?.filterConfig?.filterOp || "equals";
+  const property = propertiesById[api?.column_id];
+  const config = api?.filter_config || {};
+  const rawOp = config.filter_op || "equals";
   const canonicalOp = normalizeApiFilterOp(rawOp);
   const isNumberOp = isNumberFilterOp(canonicalOp);
   const isRange = isRangeFilterOp(canonicalOp);
-  const rawVal = api?.filterConfig?.filterValue;
+  const rawVal = config.filter_value;
   let value;
   if (isRange && rawVal) {
     value = Array.isArray(rawVal)
@@ -169,12 +163,8 @@ function apiFilterToPanel(api, propertiesById = {}) {
           .map((v) => v.trim())
       : [];
   }
-  const rawColType =
-    api?.filterConfig?.col_type ||
-    api?.filterConfig?.colType ||
-    api?.col_type ||
-    api?.colType;
-  const filterType = api?.filterConfig?.filterType;
+  const rawColType = config.col_type || api?.col_type;
+  const filterType = config.filter_type;
   const fieldType = isNumberOp
     ? "number"
     : filterType === "number"
@@ -189,8 +179,8 @@ function apiFilterToPanel(api, propertiesById = {}) {
             ? "text"
             : property?.type || "string";
   return {
-    field: api.columnId,
-    fieldName: api.displayName || property?.name,
+    field: api.column_id,
+    fieldName: api.display_name || property?.name,
     fieldCategory:
       COL_TYPE_TO_PANEL_CAT[rawColType] || property?.category || "system",
     fieldType,
@@ -201,7 +191,7 @@ function apiFilterToPanel(api, propertiesById = {}) {
 
 function hasAppliedAnnotatorFilter(filters) {
   return filters.some(
-    (filter) => filter?.columnId === "annotator" && apiFilterHasValue(filter),
+    (filter) => filter?.column_id === "annotator" && apiFilterHasValue(filter),
   );
 }
 
@@ -494,9 +484,7 @@ async function fetchAllTraceIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(
-    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
-  );
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -534,9 +522,7 @@ async function fetchAllSpanIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(
-    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
-  );
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -635,9 +621,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               mode: "filter",
               source_type: sourceType,
               project_id: selectAllInfo.projectId,
-              filter: canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(selectAllInfo.filters || []),
-              ),
+              filter: selectAllInfo.filters || [],
               exclude_ids: Array.from(selectAllInfo.excludedIds || []),
               ...(sourceType === "trace" && isVoiceTraceSelection
                 ? { is_voice_call: true }
@@ -1851,11 +1835,11 @@ DatasetRowSelector.propTypes = {
 // ---------------------------------------------------------------------------
 
 const traceDefaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -1937,16 +1921,14 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     staleTime: 1000 * 60 * 2,
   });
 
-  // Validate & transform filters using the same Zod pipeline as the tracer view.
-  // This converts columnId to snake_case, validates filterType/filterOp, and strips invalid filters.
+  // TraceFilterPanel output is already the canonical API filter shape. Keep
+  // selection fetches and bulk-select payloads on that same shape.
   const validatedMainFilters = useMemo(() => {
-    // TraceFilterPanel's output (via panelFilterToApi) is already correct
-    // shape — columnId + filterConfig with col_type preserved. Don't run
-    // it through the legacy Zod validator in ComplexFilter/common.js:
+    // Don't run it through the legacy Zod validator in ComplexFilter/common.js:
     // its AllowedOperators enum omits `in` / `not_in` (which we promote
     // to for multi-value equals) so the whole filter gets dropped on
     // second apply. We only need to drop the empty-default row.
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
 
   const hasAnnotatorChip = useMemo(
@@ -1974,11 +1956,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -2005,11 +1987,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(filtersRef.current),
-              ),
-            ),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2164,7 +2142,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2344,7 +2322,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           projectId={projectId}
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -2363,7 +2341,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           — that's surfaced by the Date pill, not the chip bar) */}
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -2377,19 +2355,18 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            // FilterChips indexes into the *snake-case validated* list which
-            // already stripped empty rows. Map back to the original filters
-            // state by matching on columnId + filterConfig.
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            // FilterChips indexes into the validated list which already
+            // stripped empty rows. Map back by column_id + filter_op.
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -2471,11 +2448,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(
-                canonicalizeApiFilterColumnIds(
-                  objectCamelToSnake(validatedFilters || []),
-                ),
-              ),
+              filters: JSON.stringify(validatedFilters || []),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2613,7 +2586,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   // panels wired after the schema was last updated, causing repeated
   // applies to silently drop filters).
   const validatedMainFilters = useMemo(() => {
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
 
   const hasAnnotatorChip = useMemo(
@@ -2638,11 +2611,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -2669,11 +2642,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(filtersRef.current),
-              ),
-            ),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2818,7 +2787,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2992,7 +2961,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           projectId={projectId}
           source="traces"
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -3009,7 +2978,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -3023,16 +2992,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -3244,11 +3213,7 @@ function SessionSelector({ onSetSelection }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(
-                    objectCamelToSnake(filtersRef.current),
-                  ),
-                ),
+                filters: JSON.stringify(filtersRef.current || []),
               },
             },
           );
@@ -3365,7 +3330,7 @@ function SessionSelector({ onSetSelection }) {
   );
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -3554,7 +3519,7 @@ function SessionSelector({ onSetSelection }) {
           properties={sessionFilterFields}
           categories={[]}
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -3571,7 +3536,7 @@ function SessionSelector({ onSetSelection }) {
 
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -3585,18 +3550,16 @@ function SessionSelector({ onSetSelection }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter(
+            const snakeChips = (validatedMainFilters || []).filter(
               (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
             );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -4224,11 +4187,11 @@ export function buildSimulationSelectorColumnDefs(columnOrder = []) {
 }
 
 const simulationDefaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -4292,12 +4255,7 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   const serializedFilters = useMemo(
-    () =>
-      JSON.stringify(
-        canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(validatedFilters || []),
-        ),
-      ),
+    () => JSON.stringify(validatedFilters || []),
     [validatedFilters],
   );
 
@@ -4676,7 +4634,7 @@ function SimulationSelector({ onSetSelection }) {
 
       {executionRunId && (
         <FilterChips
-          extraFilters={objectCamelToSnake(validatedFilters) || []}
+          extraFilters={validatedFilters || []}
           onAddFilter={(anchorEl) => {
             setFilterAnchorEl(anchorEl || filterButtonRef.current);
             setFilterOpen(true);
@@ -4687,14 +4645,14 @@ function SimulationSelector({ onSetSelection }) {
           }}
           onRemoveFilter={(index) => {
             setFilterAnchorEl(null);
-            const snakeFilters = objectCamelToSnake(validatedFilters) || [];
+            const snakeFilters = validatedFilters || [];
             const target = snakeFilters[index];
             if (!target) return;
             setFilters((prev) => {
               const nextFilters = prev.filter((filter) => {
-                const colMatches = filter?.columnId === target.column_id;
+                const colMatches = filter?.column_id === target.column_id;
                 const opMatches =
-                  filter?.filterConfig?.filterOp ===
+                  filter?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               });

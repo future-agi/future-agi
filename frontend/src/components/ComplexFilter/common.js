@@ -21,7 +21,7 @@ export const getComplexFilterValidation = (
 ) => {
   return z
     .object({
-      columnId: z
+      column_id: z
         .string()
         .min(1)
         .transform((val) => {
@@ -30,20 +30,20 @@ export const getComplexFilterValidation = (
       _meta: z.object({
         parentProperty: z.string(),
       }),
-      filterConfig: z
+      filter_config: z
         .object({
-          filterOp: z.enum(
+          filter_op: z.enum(
             // @ts-ignore
             AllowedOperators,
           ),
-          filterType: z.enum([
+          filter_type: z.enum([
             "number",
             "text",
             "datetime",
             "boolean",
             "array",
           ]),
-          filterValue: z
+          filter_value: z
             .union([
               z.string(),
               z.array(z.string()),
@@ -57,55 +57,67 @@ export const getComplexFilterValidation = (
         })
         .refine(
           (val) => {
-            // Skip validation for null operators as they don't require filterValue
-            if (val.filterOp === "is_null" || val.filterOp === "is_not_null") {
+            // Skip validation for null operators as they don't require filter_value
+            if (
+              val.filter_op === "is_null" ||
+              val.filter_op === "is_not_null"
+            ) {
               return true;
             }
 
-            switch (val.filterType) {
+            switch (val.filter_type) {
               case "number":
-                if (!val.filterValue || !Array.isArray(val.filterValue))
+                if (!val.filter_value || !Array.isArray(val.filter_value))
                   return false;
 
-                if (RangeOperators.has(val.filterOp)) {
-                  if (val.filterValue.length !== 2) return false;
+                if (RangeOperators.has(val.filter_op)) {
+                  if (val.filter_value.length !== 2) return false;
                   if (
-                    val.filterValue[0].length === 0 ||
-                    val.filterValue[1].length === 0
+                    val.filter_value[0].length === 0 ||
+                    val.filter_value[1].length === 0
                   )
                     return false;
                   try {
-                    parseFloat(val.filterValue[0]);
-                    parseFloat(val.filterValue[1]);
+                    parseFloat(val.filter_value[0]);
+                    parseFloat(val.filter_value[1]);
                   } catch (error) {
                     return false;
                   }
                 } else {
-                  if (val.filterValue.length == 0) return false;
-                  if (val.filterValue[0].length === 0) return false;
+                  if (val.filter_value.length == 0) return false;
+                  if (val.filter_value[0].length === 0) return false;
                   try {
-                    parseFloat(val.filterValue[0]);
+                    parseFloat(val.filter_value[0]);
                   } catch (error) {
                     return false;
                   }
                 }
                 return true;
               case "datetime":
-                if (!val.filterValue || !Array.isArray(val.filterValue))
+                if (!val.filter_value || !Array.isArray(val.filter_value))
                   return false;
 
-                if (RangeOperators.has(val.filterOp)) {
-                  if (val.filterValue.length !== 2) return false;
+                if (RangeOperators.has(val.filter_op)) {
+                  if (val.filter_value.length !== 2) return false;
                   try {
-                    format(new Date(val.filterValue[0]), "yyyy-MM-dd HH:mm:ss");
-                    format(new Date(val.filterValue[1]), "yyyy-MM-dd HH:mm:ss");
+                    format(
+                      new Date(val.filter_value[0]),
+                      "yyyy-MM-dd HH:mm:ss",
+                    );
+                    format(
+                      new Date(val.filter_value[1]),
+                      "yyyy-MM-dd HH:mm:ss",
+                    );
                   } catch (error) {
                     return false;
                   }
                 } else {
-                  if (val.filterValue.length == 0) return false;
+                  if (val.filter_value.length == 0) return false;
                   try {
-                    format(new Date(val.filterValue[0]), "yyyy-MM-dd HH:mm:ss");
+                    format(
+                      new Date(val.filter_value[0]),
+                      "yyyy-MM-dd HH:mm:ss",
+                    );
                   } catch (error) {
                     return false;
                   }
@@ -113,12 +125,12 @@ export const getComplexFilterValidation = (
                 return true;
               case "text":
                 return Boolean(
-                  val.filterValue &&
-                    typeof val.filterValue === "string" &&
-                    val.filterValue.length > 0,
+                  val.filter_value &&
+                    typeof val.filter_value === "string" &&
+                    val.filter_value.length > 0,
                 );
               case "boolean":
-                return typeof val.filterValue === "boolean";
+                return typeof val.filter_value === "boolean";
               default:
                 return true;
             }
@@ -129,49 +141,52 @@ export const getComplexFilterValidation = (
         ),
     })
     .transform((val) => {
-      // For null operators, set filterValue to empty string even if it exists in old data
+      // For null operators, set filter_value to empty string even if it exists in old data
       const isNullOperator =
-        val.filterConfig.filterOp === "is_null" ||
-        val.filterConfig.filterOp === "is_not_null";
+        val.filter_config.filter_op === "is_null" ||
+        val.filter_config.filter_op === "is_not_null";
 
       let finalFilters = {};
-      if (val.filterConfig.filterType === "number") {
+      if (val.filter_config.filter_type === "number") {
         let newFilterValues;
-        if (RangeOperators.has(val.filterConfig.filterOp)) {
-          newFilterValues = val.filterConfig.filterValue.map((item) =>
+        if (RangeOperators.has(val.filter_config.filter_op)) {
+          newFilterValues = val.filter_config.filter_value.map((item) =>
             parseFloat(item),
           );
         } else {
-          newFilterValues = parseFloat(val.filterConfig.filterValue[0]);
+          newFilterValues = parseFloat(val.filter_config.filter_value[0]);
         }
         finalFilters = {
-          columnId: val.columnId,
-          filterConfig: {
-            ...val.filterConfig,
-            filterValue: newFilterValues,
+          column_id: val.column_id,
+          filter_config: {
+            ...val.filter_config,
+            filter_value: newFilterValues,
           },
         };
-      } else if (val.filterConfig.filterType === "datetime") {
+      } else if (val.filter_config.filter_type === "datetime") {
         let newFilterValues;
-        if (RangeOperators.has(val.filterConfig.filterOp)) {
-          newFilterValues = val.filterConfig.filterValue.map((item) =>
+        if (RangeOperators.has(val.filter_config.filter_op)) {
+          newFilterValues = val.filter_config.filter_value.map((item) =>
             formatISOCustom(new Date(item)),
           );
         } else {
           newFilterValues = formatISOCustom(
-            new Date(val.filterConfig.filterValue[0]),
+            new Date(val.filter_config.filter_value[0]),
           );
         }
         finalFilters = {
-          columnId: val.columnId,
-          filterConfig: { ...val.filterConfig, filterValue: newFilterValues },
+          column_id: val.column_id,
+          filter_config: {
+            ...val.filter_config,
+            filter_value: newFilterValues,
+          },
         };
       } else {
         finalFilters = {
-          columnId: val.columnId,
-          filterConfig: {
-            ...val.filterConfig,
-            ...(isNullOperator && { filterValue: "" }),
+          column_id: val.column_id,
+          filter_config: {
+            ...val.filter_config,
+            ...(isNullOperator && { filter_value: "" }),
           },
         };
       }
@@ -181,9 +196,11 @@ export const getComplexFilterValidation = (
         return {
           ...finalFilters,
           ...customProps,
-          filterConfig: {
-            ...finalFilters?.filterConfig,
-            ...(customProps?.colType ? { colType: customProps.colType } : {}),
+          filter_config: {
+            ...finalFilters?.filter_config,
+            ...(customProps?.col_type
+              ? { col_type: customProps.col_type }
+              : {}),
           },
         };
       } else {
@@ -197,11 +214,11 @@ export const isEmptyFilter = (filter) => {
   delete internalFilter.id;
 
   return _.isEqual(internalFilter, {
-    columnId: "",
-    filterConfig: {
-      filterType: "",
-      filterOp: "",
-      filterValue: "",
+    column_id: "",
+    filter_config: {
+      filter_type: "",
+      filter_op: "",
+      filter_value: "",
     },
   });
 };
@@ -223,7 +240,7 @@ export const avoidDuplicateFilterSet = (prev, filter) => {
     if (isEmptyFilter(f)) {
       return acc;
     }
-    if (f.columnId === filter.columnId) {
+    if (f.column_id === filter.column_id) {
       filterAdded = true;
       return [...acc, filter];
     }

@@ -4,7 +4,7 @@ import { Typography } from "@mui/material";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 
 const BooleanValueSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
 
   const options = [
     {
@@ -22,14 +22,14 @@ const BooleanValueSelector = ({ definition, filter, updateFilter }) => {
       <Typography variant="s1">is</Typography>
       <FormSearchSelectFieldState
         label={definition?.propertyName}
-        value={values?.filterValue}
+        value={values?.filter_value}
         size="small"
         onChange={(e) => {
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterValue: e.target.value,
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_value: e.target.value,
             },
           }));
         }}

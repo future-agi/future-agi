@@ -125,8 +125,8 @@ const buildSessionFilterFields = (sessionColumns) => {
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -249,11 +249,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       isUserMode && userIdForUserMode
         ? [
             {
-              columnId: "user_id",
-              filterConfig: {
-                filterType: "text",
-                filterOp: "equals",
-                filterValue: userIdForUserMode,
+              column_id: "user_id",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: userIdForUserMode,
               },
             },
           ]
@@ -261,26 +261,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     [isUserMode, userIdForUserMode],
   );
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so objectCamelToSnake in Session-grid handles them uniformly
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     const base = [...userScopeFilter, ...validatedFilters];
     if (!extraFilters.length) return base;
-    const normalized = extraFilters.map((f) => ({
-      columnId: f.column_id || f.columnId || "",
-      filterConfig: {
-        filterType:
-          f.filter_config?.filter_type || f.filterConfig?.filterType || "text",
-        filterOp:
-          f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals",
-        filterValue:
-          f.filter_config?.filter_value || f.filterConfig?.filterValue || "",
-        ...(f.filter_config?.col_type && { colType: f.filter_config.col_type }),
-      },
-    }));
-    return [...base, ...normalized];
+    return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
 
   // --- Column visibility ---

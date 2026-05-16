@@ -98,8 +98,8 @@ const USER_FILTER_FIELDS = [
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -253,48 +253,10 @@ const UsersView = ({
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so useGetValidatedFilters in UsersGrid accepts them
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
-
-    // ObserveToolbar number operators → Zod AllowedOperators
-    const opFixMap = {
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_between: "not_in_between",
-    };
-
-    const normalized = extraFilters.map((f) => {
-      const rawOp =
-        f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals";
-      const rawType =
-        f.filter_config?.filter_type || f.filterConfig?.filterType || "text";
-      const rawValue =
-        f.filter_config?.filter_value ?? f.filterConfig?.filterValue ?? "";
-
-      // Number values arrive as comma-joined strings; Zod expects arrays
-      let filterValue = rawValue;
-      if (rawType === "number" && typeof rawValue === "string") {
-        filterValue = rawValue.includes(",") ? rawValue.split(",") : [rawValue];
-      }
-
-      return {
-        columnId: f.column_id || f.columnId || "",
-        _meta: { parentProperty: "" },
-        filterConfig: {
-          filterType: rawType,
-          filterOp: opFixMap[rawOp] || rawOp,
-          filterValue,
-          ...(f.filter_config?.col_type && {
-            col_type: f.filter_config.col_type,
-          }),
-        },
-      };
-    });
-    return [...validatedFilters, ...normalized];
+    return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
   // --- Row height ---

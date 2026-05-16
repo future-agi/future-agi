@@ -9,7 +9,7 @@ import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
 const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const DateValueSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
 
   const operators =
     definition?.overrideOperators || AdvanceNumberFilterOperators;
@@ -26,14 +26,14 @@ const DateValueSelector = ({ definition, filter, updateFilter }) => {
         onChange={(e) => {
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterOp: e.target.value,
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_op: e.target.value,
             },
           }));
         }}
         label=""
-        value={values?.filterOp || ""}
+        value={values?.filter_op || ""}
         size="small"
         options={operators.map(({ label, value }) => ({
           label,
@@ -47,22 +47,22 @@ const DateValueSelector = ({ definition, filter, updateFilter }) => {
           },
         }}
         sx={{ width: "160px" }}
-        value={parseDate(values?.filterValue?.[0])}
+        value={parseDate(values?.filter_value?.[0])}
         onChange={(v) => {
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterValue: [
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_value: [
                 v ?? "",
-                existingFilter?.filterConfig?.filterValue?.[1] || "",
+                existingFilter?.filter_config?.filter_value?.[1] || "",
               ],
             },
           }));
         }}
       />
 
-      {RangeOperators.has(values?.filterOp) ? (
+      {RangeOperators.has(values?.filter_op) ? (
         <>
           <Typography variant="body2" color="text.disabled">
             and
@@ -72,14 +72,14 @@ const DateValueSelector = ({ definition, filter, updateFilter }) => {
               textField: { size: "small" },
             }}
             sx={{ width: "160px" }}
-            value={parseDate(values?.filterValue?.[1])}
+            value={parseDate(values?.filter_value?.[1])}
             onChange={(v) => {
               updateFilter(filter.id, (existingFilter) => ({
                 ...existingFilter,
-                filterConfig: {
-                  ...existingFilter.filterConfig,
-                  filterValue: [
-                    existingFilter?.filterConfig?.filterValue?.[0] || "",
+                filter_config: {
+                  ...existingFilter.filter_config,
+                  filter_value: [
+                    existingFilter?.filter_config?.filter_value?.[0] || "",
                     v ?? "",
                   ],
                 },

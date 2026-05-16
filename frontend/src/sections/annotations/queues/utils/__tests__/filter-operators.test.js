@@ -95,20 +95,20 @@ describe("annotation queue filter operator contract", () => {
   it("drops empty value filters while keeping valueless null checks", () => {
     expect(
       apiFilterHasValue({
-        columnId: "status",
-        filterConfig: { filterOp: "in", filterValue: [] },
+        column_id: "status",
+        filter_config: { filter_op: "in", filter_value: [] },
       }),
     ).toBe(false);
     expect(
       apiFilterHasValue({
-        columnId: "status",
-        filterConfig: { filterOp: "not_in", filterValue: [""] },
+        column_id: "status",
+        filter_config: { filter_op: "not_in", filter_value: [""] },
       }),
     ).toBe(false);
     expect(
       apiFilterHasValue({
-        columnId: "status",
-        filterConfig: { filterOp: "is_null" },
+        column_id: "status",
+        filter_config: { filter_op: "is_null" },
       }),
     ).toBe(true);
   });

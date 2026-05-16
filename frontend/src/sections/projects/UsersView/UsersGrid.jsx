@@ -7,11 +7,8 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useGetValidatedFilters } from "src/hooks/use-get-validated-filters";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
@@ -72,11 +69,11 @@ const UsersGrid = React.memo(
 
     const projectFilter = useMemo(
       () => ({
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: convertToISO([pastDate, today]),
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: convertToISO([pastDate, today]),
         },
         id: projectFilterId,
         _meta: {
@@ -86,11 +83,9 @@ const UsersGrid = React.memo(
       [projectFilterId, selectedProjectDay],
     );
 
-    const validatedUserFilters = useGetValidatedFilters(filters);
-
     const validatedFilters = useMemo(() => {
-      return [...validatedUserFilters, projectFilter];
-    }, [validatedUserFilters, projectFilter]);
+      return [...(filters || []), projectFilter];
+    }, [filters, projectFilter]);
 
     const navigate = useNavigate();
 
@@ -225,11 +220,7 @@ const UsersGrid = React.memo(
                   : null,
                 page_size: pageSize,
                 current_page_index: pageNumber,
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(
-                    objectCamelToSnake(validatedFilters),
-                  ),
-                ),
+                filters: JSON.stringify(validatedFilters),
               },
             });
 

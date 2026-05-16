@@ -50,11 +50,11 @@ export function buildSessionSelectionFilters(
   return [
     ...(mainFilters || []),
     {
-      columnId: SESSION_DATE_FILTER_COLUMN,
-      filterConfig: {
-        filterType: "datetime",
-        filterOp: "between",
-        filterValue: [
+      column_id: SESSION_DATE_FILTER_COLUMN,
+      filter_config: {
+        filter_type: "datetime",
+        filter_op: "between",
+        filter_value: [
           new Date(range[0]).toISOString(),
           new Date(range[1]).toISOString(),
         ],

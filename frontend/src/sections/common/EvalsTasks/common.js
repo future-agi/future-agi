@@ -45,7 +45,7 @@ export const getEvalsTaskColumnConfig = (observeId) => {
 
         if (spanAttributes.length > 0) {
           const customAttributeString = `Custom attribute is ${spanAttributes
-            .map((f) => `(${f.columnId})`)
+            .map((f) => `(${f.column_id})`)
             .join(",")}`;
 
           filters.push(customAttributeString);
@@ -214,18 +214,19 @@ const FILTER_KEY_ALIAS = {
 export const formatTaskFilters = (filters_applied) => {
   if (!filters_applied) return [];
 
-  // Attribute filters carry a nested {columnId, filterConfig} shape on
-  // the BE — keep their dedicated converter.
-  const span_attributes_filters = (filters_applied.span_attributes_filters || [])
-    .map((i) => ({
-      property: "attributes",
-      propertyId: i?.columnId,
-      filterConfig: {
-        filterType: i?.filterConfig?.filterType,
-        filterOp: i?.filterConfig?.filterOp,
-        filterValue: i?.filterConfig?.filterValue,
-      },
-    }));
+  // Attribute filters carry canonical API filter objects inside the saved
+  // task filters payload.
+  const span_attributes_filters = (
+    filters_applied.span_attributes_filters || []
+  ).map((i) => ({
+    property: "attributes",
+    propertyId: i?.column_id,
+    filterConfig: {
+      filterType: i?.filter_config?.filter_type,
+      filterOp: i?.filter_config?.filter_op,
+      filterValue: i?.filter_config?.filter_value,
+    },
+  }));
 
   // Every other top-level key is treated as a generic system filter:
   // one filter row per value. Round-trips arbitrary keys (span_kind,

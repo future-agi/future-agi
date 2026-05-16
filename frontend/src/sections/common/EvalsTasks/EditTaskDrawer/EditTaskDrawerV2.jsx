@@ -38,7 +38,6 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { red } from "src/theme/palette";
 import {
   extractAttributeFilters,
@@ -198,7 +197,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -217,7 +216,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
         },
       }),
     select: (d) => d.data?.result,

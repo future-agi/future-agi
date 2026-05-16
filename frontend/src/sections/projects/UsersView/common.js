@@ -90,11 +90,11 @@ export const transformDateFilterToBackendFilters = (dateFilter) => {
 
   return [
     {
-      columnId: "created_at",
-      filterConfig: {
-        filterType: "datetime",
-        filterOp: "between",
-        filterValue: dateFilter.dateFilter.map((d) =>
+      column_id: "created_at",
+      filter_config: {
+        filter_type: "datetime",
+        filter_op: "between",
+        filter_value: dateFilter.dateFilter.map((d) =>
           new Date(d).toISOString(),
         ),
       },
@@ -143,11 +143,11 @@ export const transformGraphDataToChartData = (response) => {
 };
 
 export const userDefaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 

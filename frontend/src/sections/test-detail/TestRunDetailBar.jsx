@@ -41,11 +41,11 @@ import { useQuery } from "@tanstack/react-query";
 import { AGENT_TYPES } from "../agents/constants";
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -155,10 +155,10 @@ const TestRunDetailBar = () => {
   const isData = true;
   const isFilterApplied = useMemo(() => {
     const isFilters = filters?.some((f) =>
-      f?.filterConfig?.filterValue &&
-      Array.isArray(f?.filterConfig?.filterValue)
-        ? f?.filterConfig?.filterValue?.length > 0
-        : f?.filterConfig?.filterValue !== "",
+      f?.filter_config?.filter_value &&
+      Array.isArray(f?.filter_config?.filter_value)
+        ? f?.filter_config?.filter_value?.length > 0
+        : f?.filter_config?.filter_value !== "",
     );
 
     return (

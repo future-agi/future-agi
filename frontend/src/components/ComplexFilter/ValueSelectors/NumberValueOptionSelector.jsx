@@ -4,7 +4,7 @@ import { Typography } from "@mui/material";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 
 const NumberValueOptionSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
   return (
     <>
       <Typography variant="s1">is</Typography>
@@ -13,17 +13,17 @@ const NumberValueOptionSelector = ({ definition, filter, updateFilter }) => {
           const value = e.target.value;
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterValue: [
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_value: [
                 value,
-                existingFilter?.filterConfig?.filterValue?.[1] || "",
+                existingFilter?.filter_config?.filter_value?.[1] || "",
               ],
             },
           }));
         }}
         label={definition?.propertyName}
-        value={values?.filterValue?.[0]}
+        value={values?.filter_value?.[0]}
         size="small"
         options={definition.filterType.options.map(({ label, value }) => ({
           label,

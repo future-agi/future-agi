@@ -53,7 +53,6 @@ import EvaluationSection from "../NewTaskDrawer/EvaluationSection";
 import { red } from "src/theme/palette";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 
 function CustomTabPanel(props) {
@@ -187,7 +186,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -207,7 +206,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
         },
       }),
     select: (data) => data.data?.result,

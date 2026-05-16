@@ -1,6 +1,5 @@
 import { format, isValid } from "date-fns";
 import logger from "src/utils/logger";
-import { objectCamelToSnake } from "../../../../utils/utils";
 
 export const DefaultFilter = {
   columnId: "",
@@ -76,14 +75,15 @@ const transformFilterValue = (filterValue, filterType) => {
 
 export const transformFilter = (filter) => ({
   column_id: filter.columnId,
-  filter_config: objectCamelToSnake({
-    ...filter.filterConfig,
-    filterValue: transformFilterValue(
+  filter_config: {
+    filter_type: filter.filterConfig.filterType,
+    filter_op: filter.filterConfig.filterOp,
+    filter_value: transformFilterValue(
       filter.filterConfig.filterValue,
       filter.filterConfig.filterType,
       filter.filterConfig.filterOp,
     ),
-  }),
+  },
 });
 
 export const compareFilterChange = (prevFilters, filters) => {

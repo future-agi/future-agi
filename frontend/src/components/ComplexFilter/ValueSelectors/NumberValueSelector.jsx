@@ -9,7 +9,7 @@ import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
 const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const NumberValueSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
 
   const operators =
     definition?.overrideOperators || AdvanceNumberFilterOperators;
@@ -20,14 +20,14 @@ const NumberValueSelector = ({ definition, filter, updateFilter }) => {
         onChange={(e) => {
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterOp: e.target.value,
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_op: e.target.value,
             },
           }));
         }}
         label=""
-        value={values?.filterOp || ""}
+        value={values?.filter_op || ""}
         size="small"
         options={operators.map(({ label, value }) => ({
           label,
@@ -42,22 +42,22 @@ const NumberValueSelector = ({ definition, filter, updateFilter }) => {
         label="Value"
         placeholder="Value"
         size="small"
-        value={values?.filterValue?.[0] || ""}
+        value={values?.filter_value?.[0] || ""}
         onChange={(e) => {
           const value = handleNumericInput(e.target.value);
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterValue: [
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_value: [
                 value,
-                existingFilter?.filterConfig?.filterValue?.[1] || "",
+                existingFilter?.filter_config?.filter_value?.[1] || "",
               ],
             },
           }));
         }}
       />
-      {RangeOperators.has(values?.filterOp) ? (
+      {RangeOperators.has(values?.filter_op) ? (
         <>
           <Typography
             variant="s2"
@@ -71,15 +71,15 @@ const NumberValueSelector = ({ definition, filter, updateFilter }) => {
             type="text"
             placeholder="Value"
             size="small"
-            value={values?.filterValue?.[1] || ""}
+            value={values?.filter_value?.[1] || ""}
             onChange={(e) => {
               const value = handleNumericInput(e.target.value);
               updateFilter(filter.id, (existingFilter) => ({
                 ...existingFilter,
-                filterConfig: {
-                  ...existingFilter.filterConfig,
-                  filterValue: [
-                    existingFilter?.filterConfig?.filterValue?.[0] || "",
+                filter_config: {
+                  ...existingFilter.filter_config,
+                  filter_value: [
+                    existingFilter?.filter_config?.filter_value?.[0] || "",
                     value,
                   ],
                 },

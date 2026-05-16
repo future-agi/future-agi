@@ -28,8 +28,6 @@ import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingSpanDetailDrawer from "./LLMTracingSpanDetailDrawer";
 import { useLLMTracingStoreShallow, useSpanGridStore } from "./states";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -355,16 +353,12 @@ const SpanGrid = React.forwardRef(
                 ...(observeId ? { project_id: observeId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds([
-                    ...objectCamelToSnake([
-                      ...filters,
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ]),
-                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                    ...(metricFilters || []),
-                  ]),
-                ),
+                filters: JSON.stringify([
+                  ...filters,
+                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                  ...(metricFilters || []),
+                ]),
               });
 
               // Use prefetched data if available, otherwise fetch

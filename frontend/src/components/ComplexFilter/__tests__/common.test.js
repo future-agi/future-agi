@@ -15,18 +15,18 @@ describe("ComplexFilter contract wiring", () => {
 
     const schema = getComplexFilterValidation();
     const parsed = schema.safeParse({
-      columnId: "latency_ms",
+      column_id: "latency_ms",
       _meta: { parentProperty: "System Metrics" },
-      filterConfig: {
+      filter_config: {
         col_type: "SYSTEM_METRIC",
-        filterType: "number",
-        filterOp: "not_between",
-        filterValue: ["10", "20"],
+        filter_type: "number",
+        filter_op: "not_between",
+        filter_value: ["10", "20"],
       },
     });
 
     expect(parsed.success).toBe(true);
-    expect(parsed.data.filterConfig.filterOp).toBe("not_between");
-    expect(parsed.data.filterConfig.filterValue).toEqual([10, 20]);
+    expect(parsed.data.filter_config.filter_op).toBe("not_between");
+    expect(parsed.data.filter_config.filter_value).toEqual([10, 20]);
   });
 });

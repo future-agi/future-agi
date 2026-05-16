@@ -1,5 +1,4 @@
-// Keep the annotation queue add-items dialog on the same canonical filter
-// contract as Observe. Legacy panel names are accepted only at the boundary.
+// Keep annotation queue filters on the same canonical API contract as Observe.
 
 export const PANEL_OP_TO_API = {
   is: "equals",
@@ -118,11 +117,11 @@ export function panelOperatorAndValueToApi(operator, value) {
 }
 
 export function apiFilterHasValue(filter) {
-  const op = normalizeApiFilterOp(filter?.filterConfig?.filterOp);
-  if (!filter?.columnId || !op) return false;
+  const op = normalizeApiFilterOp(filter?.filter_config?.filter_op);
+  if (!filter?.column_id || !op) return false;
   if (VALUELESS_FILTER_OPS.has(op)) return true;
 
-  const value = filter?.filterConfig?.filterValue;
+  const value = filter?.filter_config?.filter_value;
   if (Array.isArray(value)) {
     return value.length > 0 && value.every((v) => v !== "" && v != null);
   }

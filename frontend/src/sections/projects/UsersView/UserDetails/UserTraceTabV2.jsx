@@ -95,11 +95,11 @@ const UserTraceTabV2 = ({ dateFilter }) => {
   const validatedFilters = useMemo(() => {
     const base = [
       {
-        columnId: "user_id",
-        filterConfig: {
-          filterOp: "equals",
-          filterType: "text",
-          filterValue: userId,
+        column_id: "user_id",
+        filter_config: {
+          filter_op: "equals",
+          filter_type: "text",
+          filter_value: userId,
         },
       },
       ...(transformDateFilterToBackendFilters(dateFilter) || []),

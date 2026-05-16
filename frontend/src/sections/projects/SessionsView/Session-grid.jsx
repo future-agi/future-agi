@@ -20,8 +20,6 @@ import { getSessionListColumnDef } from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -230,9 +228,7 @@ const SessionGrid = React.forwardRef(
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-                ),
+                filters: JSON.stringify(filters),
                 ...(dateInterval && { interval: dateInterval }),
               });
 

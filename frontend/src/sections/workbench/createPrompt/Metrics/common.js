@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { LABELS } from "./constants";
-import { getRandomId, objectCamelToSnake, safeParse } from "src/utils/utils";
+import { getRandomId, safeParse } from "src/utils/utils";
 import CustomTraceRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceRenderer";
 import CustomTraceGroupHeaderRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceGroupHeaderRenderer";
 import { isCellValueEmpty } from "src/components/table/utils";
@@ -189,9 +189,14 @@ export const normalizeFilters = (filters = []) => {
         }
       }
 
-      newFilter.filterConfig = filterConfig;
-
-      return objectCamelToSnake(newFilter);
+      return {
+        column_id: newFilter.columnId,
+        filter_config: {
+          filter_type: filterConfig.filterType,
+          filter_op: filterConfig.filterOp,
+          filter_value: filterConfig.filterValue,
+        },
+      };
     });
 };
 

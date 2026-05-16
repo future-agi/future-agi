@@ -210,11 +210,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: col.id,
@@ -226,17 +226,17 @@ export const applyQuickFilters =
     }
 
     if (!col.groupBy) {
-      let filterType = "text";
+      let filter_type = "text";
       if (DATE_FILTER_FIELDS.includes(col.name)) {
-        filterType = "date";
+        filter_type = "date";
       }
 
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: filterType,
-          filterOp: "equals",
-          filterValue: value,
+        column_id: col.id,
+        filter_config: {
+          filter_type: filter_type,
+          filter_op: "equals",
+          filter_value: value,
         },
         _meta: {
           parentProperty: col.id,
@@ -245,19 +245,19 @@ export const applyQuickFilters =
       };
 
       if (col.id === "node_type") {
-        filter.filterConfig = {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: [value],
+        filter.filter_config = {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: [value],
         };
       }
       if (DATE_FILTER_FIELDS.includes(col.name)) {
         filter = {
-          columnId: _.snakeCase(col.id),
-          filterConfig: {
-            filterType: "datetime",
-            filterOp: "equals",
-            filterValue: [value],
+          column_id: _.snakeCase(col.id),
+          filter_config: {
+            filter_type: "datetime",
+            filter_op: "equals",
+            filter_value: [value],
           },
           _meta: {
             parentProperty: col.id,
@@ -273,11 +273,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -288,7 +288,7 @@ export const applyQuickFilters =
       });
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
-        columnId: col.id,
+        column_id: col.id,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -299,10 +299,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.STAR: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "number",
-              filterOp: "equals",
-              filterValue: [value, ""],
+            filter_config: {
+              filter_type: "number",
+              filter_op: "equals",
+              filter_value: [value, ""],
             },
           };
           break;
@@ -310,10 +310,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.TEXT: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "equals",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: value,
             },
           };
           break;
@@ -321,10 +321,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.THUMBS_UP_DOWN: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "boolean",
-              filterOp: "equals",
-              filterValue: value === "up" ? true : false,
+            filter_config: {
+              filter_type: "boolean",
+              filter_op: "equals",
+              filter_value: value === "up" ? true : false,
             },
           };
           break;
@@ -332,10 +332,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.CATEGORICAL: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "contains",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "contains",
+              filter_value: value,
             },
           };
           break;
@@ -346,10 +346,10 @@ export const applyQuickFilters =
             value,
             filter: {
               ...filter,
-              filterConfig: {
-                filterType: "number",
-                filterOp: "equals",
-                filterValue: [value, ""],
+              filter_config: {
+                filter_type: "number",
+                filter_op: "equals",
+                filter_value: [value, ""],
               },
             },
           });
@@ -360,10 +360,10 @@ export const applyQuickFilters =
 
     if (filter) {
       const extraFilter = buildApiFilterFromPanelRow({
-        field: filter.columnId,
-        fieldType: filter.filterConfig?.filterType,
-        operator: filter.filterConfig?.filterOp,
-        value: filter.filterConfig?.filterValue,
+        field: filter.column_id,
+        fieldType: filter.filter_config?.filter_type,
+        operator: filter.filter_config?.filter_op,
+        value: filter.filter_config?.filter_value,
       });
       setFilters((prev) => {
         const exists = (prev || []).some(
@@ -812,11 +812,11 @@ export const LLM_TABS = {
 };
 
 export const FILTER_FOR_HAS_EVAL = {
-  columnId: "has_eval",
-  filterConfig: {
-    filterType: "boolean",
-    filterOp: "equals",
-    filterValue: true,
+  column_id: "has_eval",
+  filter_config: {
+    filter_type: "boolean",
+    filter_op: "equals",
+    filter_value: true,
   },
 };
 
