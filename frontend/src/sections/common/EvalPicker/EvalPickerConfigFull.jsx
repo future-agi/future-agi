@@ -78,11 +78,15 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
-const build_tools_payload = (selected_tools) =>
-  (selected_tools || []).reduce((acc, tool_name) => {
-    if (tool_name) acc[tool_name] = true;
-    return acc;
-  }, {});
+// Build the canonical `tools` payload the BE runtime expects:
+//   { internet: <bool>, connectors: [<uuid>, ...] }
+// Previously this returned `{uuid: true, ...}` which the BE runtime never
+// read — AgentEvaluator looks up `tools_config.get("connectors", [])` so
+// connectors were silently ignored even on "saved" evals (TH-5276 / TH-5279).
+const build_tools_payload = (selected_connector_ids, internet_enabled = false) => ({
+  internet: !!internet_enabled,
+  connectors: (selected_connector_ids || []).filter(Boolean),
+});
 
 // ── Main Component ──
 
@@ -863,7 +867,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       if (contextOptions.includes("full_row")) flags.full_row = true;
       return Object.keys(flags).length > 0 ? flags : { full_row: true };
     })();
-    const tools = build_tools_payload(connectorIds);
+    const tools = build_tools_payload(connectorIds, useInternet);
 
     const templateType =
       fullEval?.template_type ||

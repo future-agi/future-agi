@@ -56,21 +56,35 @@ import VersionBadge from "./VersionBadge";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
+// Read MCP connector UUIDs from a saved `tools` config. Tolerates both the
+// canonical `{internet: bool, connectors: [uuid, ...]}` shape (what fresh
+// FE saves and the migration script write) and the legacy flat-map
+// `{uuid: true, ...}` shape that an older FE wrote pre-TH-5276 — older
+// dirty rows still render correctly in the picker.
 const extract_selected_tools = (tools) => {
+  if (!tools) return [];
   if (Array.isArray(tools)) return tools;
-  if (tools && typeof tools === "object") {
+  if (typeof tools === "object") {
+    // Canonical shape — `connectors` is the authoritative list.
+    if (Array.isArray(tools.connectors))
+      return tools.connectors.filter(Boolean);
+    // Legacy flat-map — any truthy key other than "internet" is a connector UUID.
     return Object.entries(tools)
-      .filter(([, enabled]) => !!enabled)
+      .filter(([key, enabled]) => !!enabled && key !== "internet")
       .map(([name]) => name);
   }
   return [];
 };
 
-const build_tools_payload = (selected_tools) =>
-  (selected_tools || []).reduce((acc, tool_name) => {
-    if (tool_name) acc[tool_name] = true;
-    return acc;
-  }, {});
+// Build the canonical `tools` payload the BE runtime expects:
+//   { internet: <bool>, connectors: [<uuid>, ...] }
+// Previously this returned `{uuid: true, ...}` which the BE runtime never
+// read — AgentEvaluator looks up `tools_config.get("connectors", [])` so
+// connectors were silently ignored even on "saved" evals (TH-5276 / TH-5279).
+const build_tools_payload = (selected_connector_ids, internet_enabled = false) => ({
+  internet: !!internet_enabled,
+  connectors: (selected_connector_ids || []).filter(Boolean),
+});
 
 const resolve_summary_type = (summary) => {
   if (summary && typeof summary === "object" && summary.type) {
@@ -682,7 +696,7 @@ const EvalDetailPage = () => {
         summaryType === "custom"
           ? { type: "custom", custom: "" }
           : { type: summaryType };
-      const tools = build_tools_payload(connectorIds);
+      const tools = build_tools_payload(connectorIds, checkInternet);
       // Update the template first
       const payload = {
         instructions: evalType === "code" ? "" : instructions,
@@ -872,7 +886,7 @@ const EvalDetailPage = () => {
           summaryType === "custom"
             ? { type: "custom", custom: "" }
             : { type: summaryType };
-        const tools = build_tools_payload(connectorIds);
+        const tools = build_tools_payload(connectorIds, checkInternet);
         await updateEval.mutateAsync({
           instructions: evalType === "code" ? "" : instructions,
           code: evalType === "code" ? code : undefined,
@@ -1773,6 +1787,26 @@ const EvalDetailPage = () => {
                       setTestPassed(false);
                     }}
                     onReadyChange={setIsPlaygroundReady}
+                    // Pass current connector + KB picks as runtime overrides
+                    // so tests reflect what's in the UI even if it hasn't
+                    // been saved (or, for system evals, will never be saved
+                    // to the template at all). See TH-5276 / TH-5279.
+                    runtimeOverrides={(() => {
+                      if (evalType !== "agent") return null;
+                      const overrides = {};
+                      const hasConnectors =
+                        (connectorIds || []).length > 0 || !!checkInternet;
+                      if (hasConnectors) {
+                        overrides.tools = build_tools_payload(
+                          connectorIds,
+                          checkInternet,
+                        );
+                      }
+                      if ((knowledgeBaseIds || []).length > 0) {
+                        overrides.knowledge_bases = knowledgeBaseIds;
+                      }
+                      return Object.keys(overrides).length > 0 ? overrides : null;
+                    })()}
                   />
                 </Box>
 
