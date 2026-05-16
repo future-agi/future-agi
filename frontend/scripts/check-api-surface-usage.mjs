@@ -1,3 +1,5 @@
+/* eslint-env node */
+/* eslint-disable no-console */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +19,6 @@ const API_PATH_RE =
 
 const ALLOWED_RAW_PATH_FILES = new Set([
   path.join("src", "api", "contracts", "api-surface.generated.js"),
-  path.join("src", "api", "contracts", "openapi-client.generated.js"),
   path.join("src", "api", "contracts", "openapi-contract.generated.js"),
   path.join("scripts", "generate-api-surface-contract.mjs"),
   path.join("scripts", "generate-openapi-client.mjs"),
@@ -84,15 +85,20 @@ function checkApiPathCall(nodePath, rel) {
 
   const firstArg = nodePath.node.arguments[0];
   const value = staticStringValue(firstArg);
-  const line = firstArg?.loc?.start?.line || nodePath.node.loc?.start?.line || 1;
+  const line =
+    firstArg?.loc?.start?.line || nodePath.node.loc?.start?.line || 1;
 
   if (!value) {
-    violations.push(`${rel}:${line}: apiPath first argument must be a static path`);
+    violations.push(
+      `${rel}:${line}: apiPath first argument must be a static path`,
+    );
     return;
   }
 
   if (!Object.prototype.hasOwnProperty.call(API_SURFACE_PATHS, value)) {
-    violations.push(`${rel}:${line}: apiPath target is not in generated Swagger surface: ${value}`);
+    violations.push(
+      `${rel}:${line}: apiPath target is not in generated Swagger surface: ${value}`,
+    );
   }
 }
 
@@ -113,6 +119,7 @@ function walk(dir) {
 
     if (entry.isDirectory()) {
       if (entry.name === "__tests__" || entry.name === "__mocks__") continue;
+      if (rel === path.join("src", "generated")) continue;
       walk(full);
       continue;
     }

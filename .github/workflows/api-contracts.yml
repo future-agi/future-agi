@@ -6,6 +6,7 @@ on:
     paths:
       - "api_contracts/**"
       - "frontend/src/api/contracts/**"
+      - "frontend/src/generated/api-contracts/**"
       - "frontend/src/api/annotation-queues/**"
       - "frontend/src/api/scores/**"
       - "frontend/src/utils/axios.js"
@@ -33,6 +34,7 @@ on:
     paths:
       - "api_contracts/**"
       - "frontend/src/api/contracts/**"
+      - "frontend/src/generated/api-contracts/**"
       - "frontend/src/api/annotation-queues/**"
       - "frontend/src/api/scores/**"
       - "frontend/src/utils/axios.js"

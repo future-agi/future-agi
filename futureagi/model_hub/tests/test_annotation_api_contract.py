@@ -19,6 +19,7 @@ from model_hub.serializers.scores import (
     BulkCreateScoresSerializer,
     CreateScoreSerializer,
 )
+from tfc.utils.general_methods import GeneralMethods
 
 
 def _uuid():
@@ -38,6 +39,19 @@ def _body_ref(path, method):
         if parameter.get("in") == "body"
     )
     return body_param["schema"].get("$ref")
+
+
+def _response_ref(path, method, status_code="200"):
+    response = _swagger()["paths"][path][method]["responses"][status_code]
+    return response.get("schema", {}).get("$ref")
+
+
+def _query_params(path, method):
+    return {
+        parameter["name"]
+        for parameter in _swagger()["paths"][path][method].get("parameters", [])
+        if parameter.get("in") == "query"
+    }
 
 
 class TestAnnotationApiContract:
@@ -124,6 +138,91 @@ class TestAnnotationApiContract:
         }
         for (path, method), expected_ref in expected_refs.items():
             assert _body_ref(path, method) == expected_ref
+
+    def test_custom_action_responses_document_general_methods_envelopes(self):
+        expected_refs = {
+            ("/model-hub/annotation-queues/{id}/progress/", "get"): "#/definitions/QueueProgressResponse",
+            ("/model-hub/annotation-queues/{id}/hard-delete/", "post"): "#/definitions/QueueHardDeleteResponse",
+            ("/model-hub/annotation-queues/{id}/export-to-dataset/", "post"): "#/definitions/QueueExportToDatasetResponse",
+            ("/model-hub/annotation-queues/get-or-create-default/", "post"): "#/definitions/QueueDefaultResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/add-items/", "post"): "#/definitions/QueueAddItemsResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/", "post"): "#/definitions/QueueSubmitAnnotationsResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/complete/", "post"): "#/definitions/QueueNavigationResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/skip/", "post"): "#/definitions/QueueNavigationResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/release/", "post"): "#/definitions/QueueReleaseReservationResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", "get"): "#/definitions/QueueDiscussionResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", "post"): "#/definitions/QueueDiscussionResponse",
+            ("/model-hub/annotation-queues/{queue_id}/items/{id}/review/", "post"): "#/definitions/QueueReviewItemResponse",
+            ("/model-hub/scores/", "post"): "#/definitions/ScoreResponse",
+            ("/model-hub/scores/bulk/", "post"): "#/definitions/BulkCreateScoresResponse",
+            ("/model-hub/scores/for-source/", "get"): "#/definitions/ScoreForSourceResponse",
+        }
+        for (path, method), expected_ref in expected_refs.items():
+            assert _response_ref(path, method) == expected_ref
+
+        assert (
+            _response_ref(
+                "/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/evaluate/",
+                "post",
+                "202",
+            )
+            == "#/definitions/AutomationRuleEvaluateAcceptedResponse"
+        )
+
+    def test_annotation_and_score_errors_document_uniform_envelopes(self):
+        expected_error_refs = {
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/add-items/",
+                "post",
+                "400",
+            ): "#/definitions/ApiSelectionTooLargeError",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/add-items/",
+                "post",
+                "403",
+            ): "#/definitions/ApiErrorResponse",
+            (
+                "/model-hub/annotation-queues/{id}/progress/",
+                "get",
+                "400",
+            ): "#/definitions/ApiErrorResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/",
+                "post",
+                "400",
+            ): "#/definitions/ApiErrorResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
+                "post",
+                "409",
+            ): "#/definitions/ApiErrorResponse",
+            ("/model-hub/scores/", "post", "400"): "#/definitions/ApiErrorResponse",
+            (
+                "/model-hub/scores/for-source/",
+                "get",
+                "500",
+            ): "#/definitions/ApiErrorResponse",
+        }
+        for (path, method, status_code), expected_ref in expected_error_refs.items():
+            assert _response_ref(path, method, status_code) == expected_ref
+
+    def test_score_for_source_query_is_documented(self):
+        assert {"source_type", "source_id"}.issubset(
+            _query_params("/model-hub/scores/for-source/", "get")
+        )
+
+    def test_general_methods_error_envelope_is_uniform(self):
+        gm = GeneralMethods()
+
+        bad_request = gm.bad_request("Bad input")
+        assert bad_request.data["status"] is False
+        assert bad_request.data["result"] == "Bad input"
+        assert bad_request.data["message"] == "Bad input"
+
+        custom_error = gm.custom_error_response(409, "Already running")
+        assert custom_error.data["status"] is False
+        assert custom_error.data["result"] == "Already running"
+        assert custom_error.data["message"] == "Already running"
 
     def test_selection_contract_rejects_unknown_source_type(self):
         serializer = SelectionSerializer(

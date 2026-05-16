@@ -240,6 +240,11 @@ class GeneralMethods:
         Server Error:             500 <= http status code <= 599
     """
 
+    def _error_message(self, result):
+        if isinstance(result, str) or result is None:
+            return result
+        return result
+
     def bad_request(self, result):
         """
         Gives bad_request response with status code=400 with given message.
@@ -249,6 +254,7 @@ class GeneralMethods:
         response = {}
         response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
         response[RESULT_KEY_NAME] = result
+        response[ERROR_MESSAGE_KEY_NAME] = self._error_message(result)
         return Response(response, status=HTTP_400_BAD_REQUEST)
 
     def usage_limit_response(self, check_result):
@@ -329,9 +335,8 @@ class GeneralMethods:
         :return:
         """
         response = {}
-        # response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        # response[RESULT_KEY_NAME] = result
-        # response[ERROR_MESSAGE_KEY_NAME] = result
+        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
+        response[ERROR_MESSAGE_KEY_NAME] = self._error_message(result)
         # if programatic_response:
         #     response = dict()
         response[RESULT_KEY_NAME] = result
@@ -383,7 +388,9 @@ class GeneralMethods:
         :return:
         """
         response = {}
+        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
         response[RESULT_KEY_NAME] = result
+        response[ERROR_MESSAGE_KEY_NAME] = self._error_message(result)
         return Response(response, status=status_code)
 
     def detect_delimiter(self, file):

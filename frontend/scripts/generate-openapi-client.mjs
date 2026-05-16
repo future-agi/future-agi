@@ -1,3 +1,5 @@
+/* eslint-env node */
+/* eslint-disable no-console */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,11 +10,22 @@ import { generate } from "orval";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
-const swaggerPath = path.join(repoRoot, "api_contracts", "openapi", "swagger.json");
+const swaggerPath = path.join(
+  repoRoot,
+  "api_contracts",
+  "openapi",
+  "swagger.json",
+);
 const outputDir = path.join(frontendRoot, "src", "generated", "api-contracts");
 const apiOutputPath = path.join(outputDir, "api.ts");
 const zodOutputPath = path.join(outputDir, "api.zod.ts");
-const mutatorPath = path.join(frontendRoot, "src", "api", "contracts", "openapi-mutator.js");
+const mutatorPath = path.join(
+  frontendRoot,
+  "src",
+  "api",
+  "contracts",
+  "openapi-mutator.js",
+);
 
 const ANNOTATION_PREFIXES = [
   "/model-hub/annotation-tasks",
@@ -55,7 +68,9 @@ const HTTP_METHODS = new Set([
 ]);
 
 const hasPrefix = (pathName, prefixes) =>
-  prefixes.some((prefix) => pathName === `${prefix}/` || pathName.startsWith(`${prefix}/`));
+  prefixes.some(
+    (prefix) => pathName === `${prefix}/` || pathName.startsWith(`${prefix}/`),
+  );
 
 const isProtectedPath = (pathName) =>
   hasPrefix(pathName, ANNOTATION_PREFIXES) ||
@@ -116,7 +131,8 @@ function filterSwagger(swagger) {
   const definitions = {};
   for (const ref of allRefs) {
     const name = ref.replace("#/definitions/", "");
-    if (swagger.definitions?.[name]) definitions[name] = swagger.definitions[name];
+    if (swagger.definitions?.[name])
+      definitions[name] = swagger.definitions[name];
   }
 
   return {
@@ -149,6 +165,16 @@ function restoreSnapshot(snapshot) {
   for (const [filePath, content] of snapshot.entries()) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content);
+  }
+}
+
+function normalizeGeneratedFileEndings() {
+  if (!fs.existsSync(outputDir)) return;
+  for (const name of fs.readdirSync(outputDir)) {
+    if (!name.endsWith(".ts")) continue;
+    const filePath = path.join(outputDir, name);
+    const content = fs.readFileSync(filePath, "utf8");
+    fs.writeFileSync(filePath, content.replace(/\n+$/u, "\n"));
   }
 }
 
@@ -207,6 +233,8 @@ async function runGeneration(schemaPath) {
       },
     },
   });
+
+  normalizeGeneratedFileEndings();
 }
 
 const swagger = JSON.parse(fs.readFileSync(swaggerPath, "utf8"));
@@ -229,13 +257,17 @@ try {
 if (process.argv.includes("--check")) {
   const after = snapshotGeneratedFiles();
   const filePaths = new Set([...before.keys(), ...after.keys()]);
-  const changed = [...filePaths].filter((filePath) => before.get(filePath) !== after.get(filePath));
+  const changed = [...filePaths].filter(
+    (filePath) => before.get(filePath) !== after.get(filePath),
+  );
   restoreSnapshot(before);
   if (changed.length) {
     console.error(
       [
         "Generated OpenAPI clients are out of date. Run `yarn contracts:generate`.",
-        ...changed.map((filePath) => `  - ${path.relative(frontendRoot, filePath)}`),
+        ...changed.map(
+          (filePath) => `  - ${path.relative(frontendRoot, filePath)}`,
+        ),
       ].join("\n"),
     );
     process.exit(1);

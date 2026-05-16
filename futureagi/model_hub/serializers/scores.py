@@ -77,6 +77,50 @@ class CreateScoreSerializer(serializers.Serializer):
     )
 
 
+class ScoreListQuerySerializer(serializers.Serializer):
+    source_type = serializers.ChoiceField(
+        choices=list(SCORE_SOURCE_FK_MAP.keys()),
+        required=False,
+    )
+    source_id = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.UUIDField(required=False)
+    annotator_id = serializers.UUIDField(required=False)
+
+
+class ScoreForSourceQuerySerializer(serializers.Serializer):
+    source_type = serializers.ChoiceField(choices=list(SCORE_SOURCE_FK_MAP.keys()))
+    source_id = serializers.CharField()
+
+
+class ScoreResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ScoreSerializer()
+
+
+class BulkCreateScoresResultSerializer(serializers.Serializer):
+    scores = ScoreSerializer(many=True)
+    errors = serializers.ListField(child=serializers.CharField())
+
+
+class BulkCreateScoresResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = BulkCreateScoresResultSerializer()
+
+
+class ScoreForSourceResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ScoreSerializer(many=True)
+    span_notes = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+    )
+
+
+class ScoreDeleteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.BooleanField())
+
+
 class BulkCreateScoresSerializer(serializers.Serializer):
     """Write serializer for creating multiple scores at once (e.g. inline annotator)."""
 

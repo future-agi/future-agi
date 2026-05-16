@@ -37,7 +37,7 @@ export const useAnnotationLabelsList = (filters = {}, options = {}) => {
   return useQuery({
     queryKey: annotationLabelKeys.list(filters),
     queryFn: () => modelHubAnnotationsLabelsList(filters),
-    select: (d) => d,
+    select: (d) => d?.data || d,
     staleTime: 1000 * 60 * 2,
     ...options,
   });
@@ -52,7 +52,13 @@ export const useCreateAnnotationLabel = () => {
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to create label";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to create label";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -69,7 +75,13 @@ export const useUpdateAnnotationLabel = () => {
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to update label";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to update label";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -93,7 +105,7 @@ export const useDeleteAnnotationLabel = () => {
 export const useRestoreAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => modelHubAnnotationsLabelsRestore(id, {}),
+    mutationFn: (id) => modelHubAnnotationsLabelsRestore(id),
     onSuccess: () => {
       enqueueSnackbar("Label restored", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });

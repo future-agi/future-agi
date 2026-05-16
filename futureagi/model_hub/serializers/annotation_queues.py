@@ -665,6 +665,234 @@ class QueueItemNavigationRequestSerializer(serializers.Serializer):
     include_completed = serializers.BooleanField(required=False, default=False)
 
 
+class QueueHardDeleteResultSerializer(serializers.Serializer):
+    deleted = serializers.BooleanField()
+    hard_deleted = serializers.BooleanField(required=False)
+    archived = serializers.BooleanField(required=False)
+    queue_id = serializers.UUIDField()
+
+
+class QueueHardDeleteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueHardDeleteResultSerializer()
+
+
+class QueueProgressUserProgressSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    pending = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
+    in_review = serializers.IntegerField()
+    skipped = serializers.IntegerField()
+    progress_pct = serializers.FloatField()
+
+
+class QueueProgressAnnotatorStatSerializer(serializers.Serializer):
+    user_id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True, required=False)
+    completed = serializers.IntegerField()
+    pending = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
+    in_review = serializers.IntegerField()
+    annotations_count = serializers.IntegerField()
+
+
+class QueueProgressResultSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    pending = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
+    in_review = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    skipped = serializers.IntegerField()
+    progress_pct = serializers.FloatField()
+    annotator_stats = QueueProgressAnnotatorStatSerializer(many=True)
+    user_progress = QueueProgressUserProgressSerializer()
+
+
+class QueueProgressResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueProgressResultSerializer()
+
+
+class QueueStatusResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationQueueSerializer()
+
+
+class QueueExportAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.ListField(child=serializers.JSONField())
+
+
+class QueueJsonResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.JSONField()
+
+
+class QueueExportToDatasetResultSerializer(serializers.Serializer):
+    dataset_id = serializers.UUIDField()
+    dataset_name = serializers.CharField()
+    rows_created = serializers.IntegerField()
+    columns = serializers.ListField(child=serializers.CharField())
+
+
+class QueueExportToDatasetResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueExportToDatasetResultSerializer()
+
+
+class QueueDefaultQueueSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True, required=False)
+    instructions = serializers.CharField(allow_blank=True, required=False)
+    status = serializers.CharField()
+    is_default = serializers.BooleanField()
+
+
+class QueueDefaultLabelSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    settings = serializers.JSONField()
+    description = serializers.CharField(allow_blank=True, required=False)
+    allow_notes = serializers.BooleanField()
+    required = serializers.BooleanField()
+    order = serializers.IntegerField()
+
+
+class QueueDefaultResultSerializer(serializers.Serializer):
+    queue = QueueDefaultQueueSerializer()
+    labels = QueueDefaultLabelSerializer(many=True)
+    created = serializers.BooleanField()
+    action = serializers.ChoiceField(choices=["created", "restored", "fetched"])
+
+
+class QueueDefaultResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueDefaultResultSerializer()
+
+
+class QueueLabelResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    settings = serializers.JSONField()
+    description = serializers.CharField(allow_blank=True, required=False)
+    allow_notes = serializers.BooleanField()
+    required = serializers.BooleanField()
+    order = serializers.IntegerField()
+
+
+class QueueAddLabelResultSerializer(serializers.Serializer):
+    label = QueueLabelResultSerializer()
+    created = serializers.BooleanField()
+    reopened_items = serializers.IntegerField()
+    queue_status = serializers.CharField()
+
+
+class QueueAddLabelResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueAddLabelResultSerializer()
+
+
+class QueueRemoveLabelResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.BooleanField())
+
+
+class QueueAddItemsResultSerializer(serializers.Serializer):
+    added = serializers.IntegerField()
+    duplicates = serializers.IntegerField()
+    errors = serializers.ListField(child=serializers.CharField())
+    queue_status = serializers.CharField()
+    total_matching = serializers.IntegerField(required=False)
+
+
+class QueueAddItemsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueAddItemsResultSerializer()
+
+
+class QueueBulkRemoveItemsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.IntegerField())
+
+
+class QueueSubmitAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.IntegerField())
+
+
+class QueueNavigationResultSerializer(serializers.Serializer):
+    completed_item_id = serializers.UUIDField(required=False)
+    skipped_item_id = serializers.UUIDField(required=False)
+    next_item = serializers.JSONField(allow_null=True)
+
+
+class QueueNavigationResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueNavigationResultSerializer()
+
+
+class QueueNextItemResultSerializer(serializers.Serializer):
+    item = serializers.JSONField(allow_null=True)
+
+
+class QueueNextItemResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueNextItemResultSerializer()
+
+
+class QueueAnnotateDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.JSONField()
+
+
+class QueueAssignItemsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.IntegerField())
+
+
+class QueueReleaseReservationResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.BooleanField())
+
+
+class QueueItemAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ScoreSerializer(many=True)
+
+
+class QueueDiscussionResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.JSONField()
+
+
+class QueueReviewItemResultSerializer(serializers.Serializer):
+    reviewed_item_id = serializers.UUIDField()
+    action = serializers.CharField()
+    next_item = serializers.JSONField(allow_null=True)
+    review_comments = serializers.ListField(child=serializers.JSONField())
+    review_threads = serializers.ListField(child=serializers.JSONField())
+
+
+class QueueReviewItemResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueReviewItemResultSerializer()
+
+
+class QueueImportAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.IntegerField())
+
+
+class AutomationRuleEvaluateAcceptedResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    workflow_id = serializers.CharField()
+    message = serializers.CharField()
+
+
 class AssignItemsSerializer(serializers.Serializer):
     item_ids = serializers.ListField(
         child=serializers.UUIDField(),

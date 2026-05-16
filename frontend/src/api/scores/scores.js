@@ -35,7 +35,7 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
     queryKey: scoreKeys.forSource(sourceType, sourceId),
     queryFn: () =>
       modelHubScoresForSource({ source_type: sourceType, source_id: sourceId }),
-    select: (d) => d?.result || d,
+    select: (d) => d?.data?.result || d?.result || d,
     enabled: !!sourceType && !!sourceId,
     staleTime: 1000 * 60,
     ...options,
@@ -54,7 +54,7 @@ export const useSpanNotes = (spanId, options = {}) => {
         source_type: "observation_span",
         source_id: spanId,
       }),
-    select: (d) => d?.span_notes || [],
+    select: (d) => d?.data?.span_notes || d?.span_notes || [],
     enabled: !!spanId,
     staleTime: 1000 * 60,
     ...options,
@@ -97,7 +97,13 @@ export const useCreateScore = () => {
       });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to save score";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to save score";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -151,7 +157,7 @@ export const useBulkCreateScores = () => {
       // label) — without inspecting `errors[]` the UI used to claim success
       // even when some labels were silently dropped. Surface partial
       // failures explicitly so the user can retry the failed ones.
-      const result = data?.result || data || {};
+      const result = data?.data?.result || data?.result || data || {};
       const errors = result.errors || [];
       const savedCount = (result.scores || []).length;
 

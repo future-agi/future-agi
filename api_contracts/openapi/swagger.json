@@ -9205,32 +9205,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/AnnotationQueue"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9255,10 +9260,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueDefaultRequest"
+                            "$ref": "#/definitions/QueueDefaultResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9375,10 +9410,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueLabelRequest"
+                            "$ref": "#/definitions/QueueAddLabelResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9406,7 +9471,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9434,7 +9529,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9462,7 +9587,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9496,10 +9651,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueExportToDatasetRequest"
+                            "$ref": "#/definitions/QueueExportToDatasetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9554,7 +9739,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueExportAnnotationsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9589,10 +9804,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueHardDeleteRequest"
+                            "$ref": "#/definitions/QueueHardDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9620,7 +9865,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueProgressResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9654,10 +9929,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueLabelRequest"
+                            "$ref": "#/definitions/QueueRemoveLabelResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9682,10 +9987,40 @@
                 "description": "",
                 "parameters": [],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AnnotationQueue"
+                            "$ref": "#/definitions/QueueStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9719,10 +10054,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueStatusRequest"
+                            "$ref": "#/definitions/QueueStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9936,10 +10301,46 @@
                 "description": "Small runs (filter resolves to ≤ ``RULE_RUN_SYNC_THRESHOLD``) finish\nin the HTTP request and return 200 with the result — fast feedback\nfor the common case. Large runs (mostly first-ever runs on backlogs\nor rules with wide filters) hand the work to a Temporal activity and\nreturn 202 immediately. The activity emails creator + queue managers\non completion.\n\nThe peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) — sub-\n100ms even on 10M+ row trace tables — so this branch costs little\neven when it ends up taking the sync path.",
                 "parameters": [],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AutomationRule"
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AutomationRuleEvaluateAcceptedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -9973,7 +10374,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AutomationRule"
+                            "$ref": "#/definitions/QueueJsonResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10138,10 +10569,28 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AddItems"
+                            "$ref": "#/definitions/QueueAddItemsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiSelectionTooLargeError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10173,10 +10622,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AssignItems"
+                            "$ref": "#/definitions/QueueAssignItemsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10208,10 +10687,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/BulkRemoveItems"
+                            "$ref": "#/definitions/QueueBulkRemoveItemsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10290,32 +10799,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/QueueItem"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/QueueNextItemResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10482,7 +10996,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItem"
+                            "$ref": "#/definitions/QueueAnnotateDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10516,7 +11060,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItem"
+                            "$ref": "#/definitions/QueueItemAnnotationsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10556,10 +11130,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ImportAnnotations"
+                            "$ref": "#/definitions/QueueImportAnnotationsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10599,10 +11203,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SubmitAnnotations"
+                            "$ref": "#/definitions/QueueSubmitAnnotationsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10642,10 +11276,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItemNavigationRequest"
+                            "$ref": "#/definitions/QueueNavigationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10679,7 +11343,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItem"
+                            "$ref": "#/definitions/QueueDiscussionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10701,10 +11395,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DiscussionCommentRequest"
+                            "$ref": "#/definitions/QueueDiscussionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10744,10 +11468,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DiscussionReactionRequest"
+                            "$ref": "#/definitions/QueueDiscussionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10793,10 +11547,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DiscussionThreadStatusRequest"
+                            "$ref": "#/definitions/QueueDiscussionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10842,10 +11626,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DiscussionThreadStatusRequest"
+                            "$ref": "#/definitions/QueueDiscussionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10882,10 +11696,40 @@
                 "description": "Release reservation on an item.",
                 "parameters": [],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItem"
+                            "$ref": "#/definitions/QueueReleaseReservationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10925,10 +11769,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ReviewItemRequest"
+                            "$ref": "#/definitions/QueueReviewItemResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -10968,10 +11842,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/QueueItemNavigationRequest"
+                            "$ref": "#/definitions/QueueNavigationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -21146,6 +22050,40 @@
                         "description": "Number of results to return per page.",
                         "required": false,
                         "type": "integer"
+                    },
+                    {
+                        "name": "source_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "dataset_row",
+                            "trace",
+                            "observation_span",
+                            "prototype_run",
+                            "call_execution",
+                            "trace_session"
+                        ]
+                    },
+                    {
+                        "name": "source_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "label_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "annotator_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -21199,10 +22137,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/CreateScore"
+                            "$ref": "#/definitions/ScoreResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -21227,10 +22195,40 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/BulkCreateScores"
+                            "$ref": "#/definitions/BulkCreateScoresResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -21258,38 +22256,64 @@
                         "description": "Number of results to return per page.",
                         "required": false,
                         "type": "integer"
+                    },
+                    {
+                        "name": "source_type",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "dataset_row",
+                            "trace",
+                            "observation_span",
+                            "prototype_run",
+                            "call_execution",
+                            "trace_session"
+                        ]
+                    },
+                    {
+                        "name": "source_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/Score"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/ScoreForSourceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     }
                 },
@@ -21375,8 +22399,41 @@
                 "description": "Only the annotator who created the score or an org Owner/Admin may\ndelete it.",
                 "parameters": [],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ScoreDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -39066,6 +40123,43 @@
                 }
             }
         },
+        "QueueJsonResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object"
+                }
+            }
+        },
+        "ApiErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "QueueDefaultRequest": {
             "type": "object",
             "properties": {
@@ -39086,6 +40180,142 @@
                 }
             }
         },
+        "QueueDefaultQueue": {
+            "required": [
+                "id",
+                "name",
+                "status",
+                "is_default"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                }
+            }
+        },
+        "QueueDefaultLabel": {
+            "required": [
+                "id",
+                "name",
+                "type",
+                "settings",
+                "allow_notes",
+                "required",
+                "order"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "settings": {
+                    "title": "Settings",
+                    "type": "object"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "allow_notes": {
+                    "title": "Allow notes",
+                    "type": "boolean"
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "order": {
+                    "title": "Order",
+                    "type": "integer"
+                }
+            }
+        },
+        "QueueDefaultResult": {
+            "required": [
+                "queue",
+                "labels",
+                "created",
+                "action"
+            ],
+            "type": "object",
+            "properties": {
+                "queue": {
+                    "$ref": "#/definitions/QueueDefaultQueue"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/QueueDefaultLabel"
+                    }
+                },
+                "created": {
+                    "title": "Created",
+                    "type": "boolean"
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "created",
+                        "restored",
+                        "fetched"
+                    ]
+                }
+            }
+        },
+        "QueueDefaultResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueDefaultResult"
+                }
+            }
+        },
         "QueueLabelRequest": {
             "required": [
                 "label_id"
@@ -39101,6 +40331,98 @@
                     "title": "Required",
                     "type": "boolean",
                     "default": true
+                }
+            }
+        },
+        "QueueLabelResult": {
+            "required": [
+                "id",
+                "name",
+                "type",
+                "settings",
+                "allow_notes",
+                "required",
+                "order"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "settings": {
+                    "title": "Settings",
+                    "type": "object"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "allow_notes": {
+                    "title": "Allow notes",
+                    "type": "boolean"
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "order": {
+                    "title": "Order",
+                    "type": "integer"
+                }
+            }
+        },
+        "QueueAddLabelResult": {
+            "required": [
+                "label",
+                "created",
+                "reopened_items",
+                "queue_status"
+            ],
+            "type": "object",
+            "properties": {
+                "label": {
+                    "$ref": "#/definitions/QueueLabelResult"
+                },
+                "created": {
+                    "title": "Created",
+                    "type": "boolean"
+                },
+                "reopened_items": {
+                    "title": "Reopened items",
+                    "type": "integer"
+                },
+                "queue_status": {
+                    "title": "Queue status",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "QueueAddLabelResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueAddLabelResult"
                 }
             }
         },
@@ -39155,6 +40477,73 @@
                 }
             }
         },
+        "QueueExportToDatasetResult": {
+            "required": [
+                "dataset_id",
+                "dataset_name",
+                "rows_created",
+                "columns"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows_created": {
+                    "title": "Rows created",
+                    "type": "integer"
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "QueueExportToDatasetResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueExportToDatasetResult"
+                }
+            }
+        },
+        "QueueExportAnnotationsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
         "QueueHardDeleteRequest": {
             "required": [
                 "force",
@@ -39170,6 +40559,239 @@
                     "title": "Confirm name",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "QueueHardDeleteResult": {
+            "required": [
+                "deleted",
+                "queue_id"
+            ],
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                },
+                "hard_deleted": {
+                    "title": "Hard deleted",
+                    "type": "boolean"
+                },
+                "archived": {
+                    "title": "Archived",
+                    "type": "boolean"
+                },
+                "queue_id": {
+                    "title": "Queue id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "QueueHardDeleteResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueHardDeleteResult"
+                }
+            }
+        },
+        "QueueProgressAnnotatorStat": {
+            "required": [
+                "user_id",
+                "completed",
+                "pending",
+                "in_progress",
+                "in_review",
+                "annotations_count"
+            ],
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "title": "User id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "completed": {
+                    "title": "Completed",
+                    "type": "integer"
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
+                "in_review": {
+                    "title": "In review",
+                    "type": "integer"
+                },
+                "annotations_count": {
+                    "title": "Annotations count",
+                    "type": "integer"
+                }
+            }
+        },
+        "QueueProgressUserProgress": {
+            "required": [
+                "total",
+                "completed",
+                "pending",
+                "in_progress",
+                "in_review",
+                "skipped",
+                "progress_pct"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "completed": {
+                    "title": "Completed",
+                    "type": "integer"
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
+                "in_review": {
+                    "title": "In review",
+                    "type": "integer"
+                },
+                "skipped": {
+                    "title": "Skipped",
+                    "type": "integer"
+                },
+                "progress_pct": {
+                    "title": "Progress pct",
+                    "type": "number"
+                }
+            }
+        },
+        "QueueProgressResult": {
+            "required": [
+                "total",
+                "pending",
+                "in_progress",
+                "in_review",
+                "completed",
+                "skipped",
+                "progress_pct",
+                "annotator_stats",
+                "user_progress"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
+                "in_review": {
+                    "title": "In review",
+                    "type": "integer"
+                },
+                "completed": {
+                    "title": "Completed",
+                    "type": "integer"
+                },
+                "skipped": {
+                    "title": "Skipped",
+                    "type": "integer"
+                },
+                "progress_pct": {
+                    "title": "Progress pct",
+                    "type": "number"
+                },
+                "annotator_stats": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/QueueProgressAnnotatorStat"
+                    }
+                },
+                "user_progress": {
+                    "$ref": "#/definitions/QueueProgressUserProgress"
+                }
+            }
+        },
+        "QueueProgressResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueProgressResult"
+                }
+            }
+        },
+        "QueueRemoveLabelResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                }
+            }
+        },
+        "QueueStatusResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/AnnotationQueue"
                 }
             }
         },
@@ -39283,6 +40905,31 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "AutomationRuleEvaluateAcceptedResponse": {
+            "required": [
+                "status",
+                "workflow_id",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "workflow_id": {
+                    "title": "Workflow id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -39513,6 +41160,86 @@
                 }
             }
         },
+        "QueueAddItemsResult": {
+            "required": [
+                "added",
+                "duplicates",
+                "errors",
+                "queue_status"
+            ],
+            "type": "object",
+            "properties": {
+                "added": {
+                    "title": "Added",
+                    "type": "integer"
+                },
+                "duplicates": {
+                    "title": "Duplicates",
+                    "type": "integer"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "queue_status": {
+                    "title": "Queue status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "total_matching": {
+                    "title": "Total matching",
+                    "type": "integer"
+                }
+            }
+        },
+        "QueueAddItemsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueAddItemsResult"
+                }
+            }
+        },
+        "ApiSelectionTooLargeError": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "integer",
+                    "default": 400
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "object"
+                }
+            }
+        },
         "AssignItems": {
             "required": [
                 "item_ids"
@@ -39553,6 +41280,26 @@
                 }
             }
         },
+        "QueueAssignItemsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "BulkRemoveItems": {
             "required": [
                 "item_ids"
@@ -39566,6 +41313,213 @@
                         "format": "uuid"
                     },
                     "minItems": 1
+                }
+            }
+        },
+        "QueueBulkRemoveItemsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "QueueNextItemResult": {
+            "required": [
+                "item"
+            ],
+            "type": "object",
+            "properties": {
+                "item": {
+                    "title": "Item",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "QueueNextItemResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueNextItemResult"
+                }
+            }
+        },
+        "QueueAnnotateDetailResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object"
+                }
+            }
+        },
+        "Score": {
+            "required": [
+                "source_type",
+                "value"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "source_type": {
+                    "title": "Source type",
+                    "type": "string",
+                    "enum": [
+                        "dataset_row",
+                        "trace",
+                        "observation_span",
+                        "prototype_run",
+                        "call_execution",
+                        "trace_session"
+                    ]
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "label_id": {
+                    "title": "Label id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "label_name": {
+                    "title": "Label name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "label_type": {
+                    "title": "Label type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "label_settings": {
+                    "title": "Label settings",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "label_allow_notes": {
+                    "title": "Label allow notes",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object"
+                },
+                "score_source": {
+                    "title": "Score source",
+                    "type": "string",
+                    "enum": [
+                        "human",
+                        "api",
+                        "auto",
+                        "imported"
+                    ]
+                },
+                "notes": {
+                    "title": "Notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "annotator": {
+                    "title": "Annotator",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "annotator_name": {
+                    "title": "Annotator name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "annotator_email": {
+                    "title": "Annotator email",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "queue_item": {
+                    "title": "Queue item",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "queue_id": {
+                    "title": "Queue id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "QueueItemAnnotationsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Score"
+                    }
                 }
             }
         },
@@ -39614,6 +41568,26 @@
                 }
             }
         },
+        "QueueImportAnnotationsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "SubmitAnnotations": {
             "required": [
                 "annotations"
@@ -39643,6 +41617,26 @@
                 }
             }
         },
+        "QueueSubmitAnnotationsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "QueueItemNavigationRequest": {
             "type": "object",
             "properties": {
@@ -39662,6 +41656,62 @@
                     "title": "Include completed",
                     "type": "boolean",
                     "default": false
+                }
+            }
+        },
+        "QueueNavigationResult": {
+            "required": [
+                "next_item"
+            ],
+            "type": "object",
+            "properties": {
+                "completed_item_id": {
+                    "title": "Completed item id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "skipped_item_id": {
+                    "title": "Skipped item id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "next_item": {
+                    "title": "Next item",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "QueueNavigationResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueNavigationResult"
+                }
+            }
+        },
+        "QueueDiscussionResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object"
                 }
             }
         },
@@ -39741,6 +41791,26 @@
                 }
             }
         },
+        "QueueReleaseReservationResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                }
+            }
+        },
         "ReviewLabelCommentRequest": {
             "type": "object",
             "properties": {
@@ -39801,6 +41871,61 @@
                         "$ref": "#/definitions/ReviewLabelCommentRequest"
                     },
                     "default": []
+                }
+            }
+        },
+        "QueueReviewItemResult": {
+            "required": [
+                "reviewed_item_id",
+                "action",
+                "next_item",
+                "review_comments",
+                "review_threads"
+            ],
+            "type": "object",
+            "properties": {
+                "reviewed_item_id": {
+                    "title": "Reviewed item id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "next_item": {
+                    "title": "Next item",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "review_comments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "review_threads": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "QueueReviewItemResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueReviewItemResult"
                 }
             }
         },
@@ -42019,128 +44144,6 @@
                 }
             }
         },
-        "Score": {
-            "required": [
-                "source_type",
-                "value"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "source_type": {
-                    "title": "Source type",
-                    "type": "string",
-                    "enum": [
-                        "dataset_row",
-                        "trace",
-                        "observation_span",
-                        "prototype_run",
-                        "call_execution",
-                        "trace_session"
-                    ]
-                },
-                "source_id": {
-                    "title": "Source id",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "label_id": {
-                    "title": "Label id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "label_name": {
-                    "title": "Label name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "label_type": {
-                    "title": "Label type",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "label_settings": {
-                    "title": "Label settings",
-                    "type": "object",
-                    "readOnly": true
-                },
-                "label_allow_notes": {
-                    "title": "Label allow notes",
-                    "type": "boolean",
-                    "readOnly": true
-                },
-                "value": {
-                    "title": "Value",
-                    "type": "object"
-                },
-                "score_source": {
-                    "title": "Score source",
-                    "type": "string",
-                    "enum": [
-                        "human",
-                        "api",
-                        "auto",
-                        "imported"
-                    ]
-                },
-                "notes": {
-                    "title": "Notes",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "annotator": {
-                    "title": "Annotator",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "annotator_name": {
-                    "title": "Annotator name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "annotator_email": {
-                    "title": "Annotator email",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "queue_item": {
-                    "title": "Queue item",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "queue_id": {
-                    "title": "Queue id",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time",
-                    "readOnly": true
-                },
-                "updated_at": {
-                    "title": "Updated at",
-                    "type": "string",
-                    "format": "date-time",
-                    "readOnly": true
-                }
-            }
-        },
         "CreateScore": {
             "required": [
                 "source_type",
@@ -42200,6 +44203,22 @@
                 }
             }
         },
+        "ScoreResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/Score"
+                }
+            }
+        },
         "BulkCreateScores": {
             "required": [
                 "source_type",
@@ -42256,6 +44275,89 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "BulkCreateScoresResult": {
+            "required": [
+                "scores",
+                "errors"
+            ],
+            "type": "object",
+            "properties": {
+                "scores": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Score"
+                    }
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "BulkCreateScoresResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/BulkCreateScoresResult"
+                }
+            }
+        },
+        "ScoreForSourceResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Score"
+                    }
+                },
+                "span_notes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "ScoreDeleteResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
                 }
             }
         },

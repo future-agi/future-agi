@@ -14,8 +14,14 @@ from model_hub.models.choices import QueueItemStatus
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
 from model_hub.serializers.scores import (
+    BulkCreateScoresResponseSerializer,
     BulkCreateScoresSerializer,
     CreateScoreSerializer,
+    ScoreDeleteResponseSerializer,
+    ScoreForSourceQuerySerializer,
+    ScoreForSourceResponseSerializer,
+    ScoreListQuerySerializer,
+    ScoreResponseSerializer,
     ScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
@@ -23,11 +29,20 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
 )
 from tfc.constants.roles import OrganizationRoles
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.span_notes import SpanNotes
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    409: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 def _resolve_queue_item(
@@ -290,7 +305,14 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         return qs.order_by("-created_at")
 
-    @swagger_auto_schema(request_body=CreateScoreSerializer)
+    @swagger_auto_schema(query_serializer=ScoreListQuerySerializer)
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        request_body=CreateScoreSerializer,
+        responses={200: ScoreResponseSerializer, **ERROR_RESPONSES},
+    )
     def create(self, request, *args, **kwargs):
         """Create a single score."""
         serializer = CreateScoreSerializer(data=request.data)
@@ -385,7 +407,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
         result = ScoreSerializer(score).data
         return self._gm.success_response(result)
 
-    @swagger_auto_schema(request_body=BulkCreateScoresSerializer)
+    @swagger_auto_schema(
+        request_body=BulkCreateScoresSerializer,
+        responses={200: BulkCreateScoresResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="bulk")
     def bulk_create(self, request):
         """Create multiple scores on a single source (e.g. from inline annotator)."""
@@ -547,6 +572,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @swagger_auto_schema(
+        query_serializer=ScoreForSourceQuerySerializer,
+        responses={200: ScoreForSourceResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"], url_path="for-source")
     def for_source(self, request):
         """
@@ -696,6 +725,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         return response
 
+    @swagger_auto_schema(
+        responses={200: ScoreDeleteResponseSerializer, **ERROR_RESPONSES}
+    )
     def destroy(self, request, *args, **kwargs):
         """Soft-delete a score.
 

@@ -52,29 +52,51 @@ from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
 from model_hub.serializers.annotation_queues import (
     AddItemsSerializer,
     AnnotationQueueListQuerySerializer,
-    AssignItemsSerializer,
     AnnotateDetailSerializer,
     AnnotationQueueSerializer,
+    AssignItemsSerializer,
+    AutomationRuleEvaluateAcceptedResponseSerializer,
     AutomationRuleSerializer,
     BulkRemoveItemsSerializer,
     DiscussionCommentRequestSerializer,
     DiscussionReactionRequestSerializer,
     DiscussionThreadStatusRequestSerializer,
     ImportAnnotationsSerializer,
+    QueueAddItemsResponseSerializer,
+    QueueAddLabelResponseSerializer,
+    QueueAnnotateDetailResponseSerializer,
+    QueueAssignItemsResponseSerializer,
+    QueueBulkRemoveItemsResponseSerializer,
     QueueDefaultRequestSerializer,
+    QueueDefaultResponseSerializer,
+    QueueDiscussionResponseSerializer,
+    QueueExportAnnotationsResponseSerializer,
     QueueExportQuerySerializer,
+    QueueExportToDatasetResponseSerializer,
     QueueExportToDatasetRequestSerializer,
     QueueForSourceQuerySerializer,
     QueueHardDeleteRequestSerializer,
+    QueueHardDeleteResponseSerializer,
+    QueueImportAnnotationsResponseSerializer,
+    QueueItemAnnotationsResponseSerializer,
     QueueItemAnnotateDetailQuerySerializer,
     QueueItemListQuerySerializer,
     QueueItemNavigationRequestSerializer,
     QueueItemNextQuerySerializer,
-    QueueLabelRequestSerializer,
+    QueueJsonResponseSerializer,
     QueueItemReviewCommentSerializer,
     QueueItemReviewThreadSerializer,
     QueueItemSerializer,
+    QueueLabelRequestSerializer,
+    QueueNavigationResponseSerializer,
+    QueueNextItemResponseSerializer,
+    QueueProgressResponseSerializer,
+    QueueReleaseReservationResponseSerializer,
+    QueueRemoveLabelResponseSerializer,
+    QueueReviewItemResponseSerializer,
     QueueStatusRequestSerializer,
+    QueueStatusResponseSerializer,
+    QueueSubmitAnnotationsResponseSerializer,
     ReviewItemRequestSerializer,
     SubmitAnnotationsSerializer,
 )
@@ -95,6 +117,10 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.utils.api_serializers import (
+    ApiErrorResponseSerializer,
+    ApiSelectionTooLargeErrorSerializer,
+)
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -103,6 +129,14 @@ from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    409: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 # Shared cap for filter-mode bulk add. Phase 11 may introduce an async job
 # path for selections exceeding this; until then, the endpoint errors with
@@ -2761,7 +2795,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             {"deleted": True, "archived": True, "queue_id": str(instance.pk)}
         )
 
-    @swagger_auto_schema(request_body=no_body)
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={200: QueueStatusResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
         try:
@@ -2779,7 +2816,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
 
-    @swagger_auto_schema(request_body=QueueHardDeleteRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueHardDeleteRequestSerializer,
+        responses={200: QueueHardDeleteResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="hard-delete")
     def hard_delete(self, request, pk=None):
         """Permanently remove a queue + everything attached.
@@ -2814,6 +2854,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             {"deleted": True, "hard_deleted": True, "queue_id": queue_id}
         )
 
+    @swagger_auto_schema(
+        responses={200: QueueProgressResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="progress")
     def progress(self, request, pk=None):
         queue = self.get_object()
@@ -2923,7 +2966,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
-    @swagger_auto_schema(request_body=QueueStatusRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueStatusRequestSerializer,
+        responses={200: QueueStatusResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="update-status")
     def update_status(self, request, pk=None):
         queue = self.get_object()
@@ -2951,7 +2997,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
 
-    @swagger_auto_schema(query_serializer=QueueExportQuerySerializer)
+    @swagger_auto_schema(
+        query_serializer=QueueExportQuerySerializer,
+        responses={200: QueueExportAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get"], url_path="export")
     def export_annotations(self, request, pk=None):
         """Export all items with their annotations."""
@@ -3093,6 +3142,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response(result)
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="analytics")
     def analytics(self, request, pk=None):
         """Queue analytics: throughput, annotator performance, label distribution."""
@@ -3183,13 +3233,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="export-fields")
     def export_fields(self, request, pk=None):
         """Return source/label/attribute fields available for dataset export."""
         queue = self.get_object()
         return self._gm.success_response(_build_annotation_queue_export_fields(queue))
 
-    @swagger_auto_schema(request_body=QueueExportToDatasetRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueExportToDatasetRequestSerializer,
+        responses={200: QueueExportToDatasetResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="export-to-dataset")
     def export_to_dataset(self, request, pk=None):
         """Export queue items to a dataset using a user-editable column mapping."""
@@ -3436,6 +3490,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="agreement")
     def agreement(self, request, pk=None):
         """Calculate inter-annotator agreement metrics."""
@@ -3459,7 +3514,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         result = calculate_agreement(queue)
         return self._gm.success_response(result)
 
-    @swagger_auto_schema(request_body=QueueDefaultRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueDefaultRequestSerializer,
+        responses={200: QueueDefaultResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="get-or-create-default")
     def get_or_create_default(self, request):
         """
@@ -3600,7 +3658,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
-    @swagger_auto_schema(request_body=QueueLabelRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueLabelRequestSerializer,
+        responses={200: QueueAddLabelResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="add-label")
     def add_label(self, request, pk=None):
         """
@@ -3674,7 +3735,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
-    @swagger_auto_schema(request_body=QueueLabelRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueLabelRequestSerializer,
+        responses={200: QueueRemoveLabelResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="remove-label")
     def remove_label(self, request, pk=None):
         """Remove a label from an annotation queue."""
@@ -3695,7 +3759,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response({"removed": True})
 
-    @swagger_auto_schema(query_serializer=QueueForSourceQuerySerializer)
+    @swagger_auto_schema(
+        query_serializer=QueueForSourceQuerySerializer,
+        responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"], url_path="for-source")
     def for_source(self, request):
         """
@@ -4232,7 +4299,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return denied
         return super().destroy(request, *args, **kwargs)
 
-    @swagger_auto_schema(request_body=AddItemsSerializer)
+    @swagger_auto_schema(
+        request_body=AddItemsSerializer,
+        responses={
+            200: QueueAddItemsResponseSerializer,
+            400: ApiSelectionTooLargeErrorSerializer,
+            403: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="add-items")
     def add_items(self, request, queue_id=None):
         serializer = AddItemsSerializer(data=request.data)
@@ -4368,17 +4443,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.bad_request(str(e))
 
         if result.truncated:
+            message = (
+                f"Selection matches {result.total_matching} items, "
+                f"which exceeds the {MAX_SELECTION_CAP}-item cap. "
+                "Narrow the filter and retry."
+            )
             return Response(
                 {
+                    "status": False,
                     "result": None,
+                    "message": message,
                     "code": 400,
                     "error": {
                         "type": "selection_too_large",
-                        "message": (
-                            f"Selection matches {result.total_matching} items, "
-                            f"which exceeds the {MAX_SELECTION_CAP}-item cap. "
-                            "Narrow the filter and retry."
-                        ),
+                        "message": message,
                         "total_matching": result.total_matching,
                         "cap": MAX_SELECTION_CAP,
                     },
@@ -4442,7 +4520,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(request_body=BulkRemoveItemsSerializer)
+    @swagger_auto_schema(
+        request_body=BulkRemoveItemsSerializer,
+        responses={200: QueueBulkRemoveItemsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="bulk-remove")
     def bulk_remove(self, request, queue_id=None):
         queue = self._get_queue_for_management(queue_id, request)
@@ -4564,7 +4645,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         return available_qs.order_by(*QUEUE_ITEM_WORK_ORDERING).first()
 
-    @swagger_auto_schema(request_body=SubmitAnnotationsSerializer)
+    @swagger_auto_schema(
+        request_body=SubmitAnnotationsSerializer,
+        responses={200: QueueSubmitAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="annotations/submit")
     def submit_annotations(self, request, queue_id=None, pk=None):
         """Submit or update annotations for a queue item."""
@@ -4830,7 +4914,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item.reserved_at = None
         item.reservation_expires_at = None
 
-    @swagger_auto_schema(request_body=QueueItemNavigationRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueItemNavigationRequestSerializer,
+        responses={200: QueueNavigationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="complete")
     def complete_item(self, request, queue_id=None, pk=None):
         """Mark item as completed and return next pending item."""
@@ -4925,7 +5012,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(request_body=QueueItemNavigationRequestSerializer)
+    @swagger_auto_schema(
+        request_body=QueueItemNavigationRequestSerializer,
+        responses={200: QueueNavigationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="skip")
     def skip_item(self, request, queue_id=None, pk=None):
         """Mark item as skipped and return next pending item."""
@@ -4988,7 +5078,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(query_serializer=QueueItemNextQuerySerializer)
+    @swagger_auto_schema(
+        query_serializer=QueueItemNextQuerySerializer,
+        responses={200: QueueNextItemResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"], url_path="next-item")
     def next_item(self, request, queue_id=None):
         """Get the next or previous item in the queue.
@@ -5076,7 +5169,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_data = QueueItemSerializer(item).data
         return self._gm.success_response({"item": item_data})
 
-    @swagger_auto_schema(query_serializer=QueueItemAnnotateDetailQuerySerializer)
+    @swagger_auto_schema(
+        query_serializer=QueueItemAnnotateDetailQuerySerializer,
+        responses={200: QueueAnnotateDetailResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get"], url_path="annotate-detail")
     def annotate_detail(self, request, queue_id=None, pk=None):
         """Get full annotation workspace data for an item."""
@@ -5300,7 +5396,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer = AnnotateDetailSerializer(data, context={"request": request})
         return self._gm.success_response(serializer.data)
 
-    @swagger_auto_schema(request_body=AssignItemsSerializer)
+    @swagger_auto_schema(
+        request_body=AssignItemsSerializer,
+        responses={200: QueueAssignItemsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="assign")
     def assign_items(self, request, queue_id=None):
         """Assign items to one or more annotators.
@@ -5463,7 +5562,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         return self._gm.success_response({"assigned": len(item_pks) * len(user_ids)})
 
-    @swagger_auto_schema(request_body=no_body)
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={200: QueueReleaseReservationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="release")
     def release_reservation(self, request, queue_id=None, pk=None):
         """Release reservation on an item."""
@@ -5491,6 +5593,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         return self._gm.success_response({"released": True})
 
+    @swagger_auto_schema(
+        responses={200: QueueItemAnnotationsResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="annotations")
     def annotations_list(self, request, queue_id=None, pk=None):
         """List all annotations for a queue item (across all annotators)."""
@@ -5631,7 +5736,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
-    @swagger_auto_schema(method="post", request_body=DiscussionCommentRequestSerializer)
+    @swagger_auto_schema(
+        method="get",
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
+    @swagger_auto_schema(
+        method="post",
+        request_body=DiscussionCommentRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get", "post"], url_path="discussion")
     def discussion(self, request, queue_id=None, pk=None):
         """List or create non-blocking discussion comments for a queue item."""
@@ -5824,7 +5937,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
-    @swagger_auto_schema(request_body=DiscussionThreadStatusRequestSerializer)
+    @swagger_auto_schema(
+        request_body=DiscussionThreadStatusRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5839,7 +5955,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             next_status=QueueItemReviewThread.STATUS_RESOLVED,
         )
 
-    @swagger_auto_schema(request_body=DiscussionThreadStatusRequestSerializer)
+    @swagger_auto_schema(
+        request_body=DiscussionThreadStatusRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5854,7 +5973,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             next_status=QueueItemReviewThread.STATUS_REOPENED,
         )
 
-    @swagger_auto_schema(request_body=DiscussionReactionRequestSerializer)
+    @swagger_auto_schema(
+        request_body=DiscussionReactionRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5923,7 +6045,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
-    @swagger_auto_schema(request_body=ReviewItemRequestSerializer)
+    @swagger_auto_schema(
+        request_body=ReviewItemRequestSerializer,
+        responses={200: QueueReviewItemResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
@@ -6242,7 +6367,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(request_body=ImportAnnotationsSerializer)
+    @swagger_auto_schema(
+        request_body=ImportAnnotationsSerializer,
+        responses={200: QueueImportAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="annotations/import")
     def import_annotations(self, request, queue_id=None, pk=None):
         """Import annotations from external sources."""
@@ -6425,7 +6553,14 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             created_by=self.request.user,
         )
 
-    @swagger_auto_schema(request_body=no_body)
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={
+            200: QueueJsonResponseSerializer,
+            202: AutomationRuleEvaluateAcceptedResponseSerializer,
+            **ERROR_RESPONSES,
+        },
+    )
     @action(detail=True, methods=["post"], url_path="evaluate")
     def evaluate(self, request, queue_id=None, pk=None):
         """Trigger a manual rule run with a sync-or-async branch.
@@ -6587,6 +6722,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, queue_id=None, pk=None):
         """Preview how many items match a rule (dry run)."""

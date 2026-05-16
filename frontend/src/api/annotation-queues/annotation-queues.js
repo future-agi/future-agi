@@ -355,7 +355,7 @@ export const useUpdateAnnotationQueueStatus = () => {
     onError: (error) => {
       // Revert optimistic update on error
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
-      const msg = error?.result || error?.detail || "Failed to update status";
+      const msg = extractErrorMessage(error, "Failed to update status");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -423,7 +423,7 @@ export const useAddQueueItems = () => {
         enqueueSnackbar(structured.message, { variant: "error" });
         return;
       }
-      const msg = error?.result || error?.detail || "Failed to add items";
+      const msg = extractErrorMessage(error, "Failed to add items");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -839,8 +839,7 @@ export const useSubmitAnnotations = () => {
       queryClient.invalidateQueries({ queryKey: scoreKeys.all });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to submit annotations";
+      const msg = extractErrorMessage(error, "Failed to submit annotations");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -1230,12 +1229,10 @@ export const useEvaluateRule = () => {
       // instead of a generic failure (the backend guards against duplicate
       // workflows fired within 30s of each other).
       if (error?.response?.status === 409 || error?.statusCode === 409) {
-        const msg =
-          error?.response?.data?.result ||
-          error?.response?.data?.detail ||
-          error?.result ||
-          error?.detail ||
-          "A run is already in progress for this rule.";
+        const msg = extractErrorMessage(
+          error,
+          "A run is already in progress for this rule.",
+        );
         enqueueSnackbar(typeof msg === "string" ? msg : "Run already running", {
           variant: "warning",
         });
@@ -1258,8 +1255,7 @@ export const useExportToDataset = () => {
       );
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to export to dataset";
+      const msg = extractErrorMessage(error, "Failed to export to dataset");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -1429,8 +1425,7 @@ export const useGetOrCreateDefaultQueue = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to get default queue";
+      const msg = extractErrorMessage(error, "Failed to get default queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -1452,8 +1447,7 @@ export const useAddLabelToQueue = () => {
       });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to add label to queue";
+      const msg = extractErrorMessage(error, "Failed to add label to queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -1475,8 +1469,10 @@ export const useRemoveLabelFromQueue = () => {
       });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to remove label from queue";
+      const msg = extractErrorMessage(
+        error,
+        "Failed to remove label from queue",
+      );
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
