@@ -8,9 +8,6 @@ import { CallExecutionLoadingStatus, TestRunLoadingStatus } from "../common";
 const ScoreCellRenderer = ({ value, data }) => {
   const color = getCsatScoreColor(value);
   if (value === null || value === undefined) {
-    // Precise signal from BE: only show the loading skeleton while CSAT is
-    // actually being computed. Eval-only reruns don't recompute CSAT, so the
-    // BE doesn't transition this back to "running" — the cell stays as "-".
     const callMetadata = data?.callMetadata ?? data?.call_metadata;
     const csatStatus = callMetadata?.csatStatus ?? callMetadata?.csat_status;
     if (csatStatus === "running") {
@@ -27,8 +24,7 @@ const ScoreCellRenderer = ({ value, data }) => {
         </Box>
       );
     }
-    // Fallback for older rows persisted before csat_status was tracked:
-    // infer from the broader call/run loading state.
+    // Fallback for rows persisted before csat_status was tracked.
     if (csatStatus === undefined) {
       const callLoading = CallExecutionLoadingStatus.includes(
         data?.status?.toLowerCase?.(),
