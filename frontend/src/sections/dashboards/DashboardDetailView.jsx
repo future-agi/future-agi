@@ -42,6 +42,7 @@ import {
   useCreateWidget,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import { ShareDialog } from "src/components/share-dialog";
 import WidgetChart from "./WidgetChart";
 import {
   DndContext,
@@ -687,7 +688,9 @@ export default function DashboardDetailView() {
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [menuWidget, setMenuWidget] = useState(null);
-  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Share dialog
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   // Width submenu
   const [widthMenuAnchor, setWidthMenuAnchor] = useState(null);
@@ -1077,20 +1080,19 @@ export default function DashboardDetailView() {
         </Breadcrumbs>
 
         <Stack direction="row" spacing={0.5} alignItems="center">
-          <Tooltip title={linkCopied ? "Copied!" : "Copy link to share"}>
+          <Tooltip title="Share dashboard">
             <IconButton
               size="small"
               onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
-                setLinkCopied(true);
-                setTimeout(() => setLinkCopied(false), 2000);
+                if (!dashboard?.id) return;
+                setShareDialogOpen(true);
               }}
               sx={{
-                color: linkCopied ? "primary.main" : "text.secondary",
+                color: "text.secondary",
               }}
             >
               <Iconify
-                icon={linkCopied ? "mdi:check" : "mdi:share-variant-outline"}
+                icon="mdi:share-variant-outline"
                 width={18}
               />
             </IconButton>
@@ -1509,6 +1511,16 @@ export default function DashboardDetailView() {
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>
       </Menu>
+
+      {/* Share dialog */}
+      {dashboard?.id && (
+        <ShareDialog
+          open={shareDialogOpen}
+          onClose={() => setShareDialogOpen(false)}
+          resourceType="dashboard"
+          resourceId={dashboard.id}
+        />
+      )}
     </Box>
   );
 }

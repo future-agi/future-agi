@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Typography, Card, CardContent, Stack, Tooltip } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useResolveSharedLink } from "src/api/shared-links";
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
@@ -15,6 +15,8 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
 import { isVoiceCall } from "./sharedViewHelpers";
+import SharedWidgetChart from "src/sections/dashboards/SharedWidgetChart";
+import axios from "src/utils/axios";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -368,8 +370,11 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          /* Shared dashboard view — render widgets in read-only mode */
+          <SharedDashboardView sharedData={shared?.data} token={token} />
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Non-trace, non-dashboard resource — show raw data */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}
@@ -387,5 +392,157 @@ export default function SharedView() {
         )}
       </Box>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SharedDashboardView — read-only widget grid for shared dashboard links
+// ---------------------------------------------------------------------------
+
+const DEFAULT_WIDGET_HEIGHT = 320;
+
+function computeRows(widgets) {
+  const rows = [];
+  let currentRow = [];
+  let currentWidth = 0;
+  for (const w of widgets) {
+    const width = w.width || 12;
+    if (currentWidth + width > 12 && currentRow.length > 0) {
+      rows.push(currentRow);
+      currentRow = [];
+      currentWidth = 0;
+    }
+    currentRow.push(w);
+    currentWidth += width;
+    if (currentWidth >= 12) {
+      rows.push(currentRow);
+      currentRow = [];
+      currentWidth = 0;
+    }
+  }
+  if (currentRow.length > 0) rows.push(currentRow);
+  return rows;
+}
+
+// SharedWidgetChart wrapper — uses the actual chart rendering logic from
+// the dashboards library with pre-fetched data instead of authenticated queries.
+function SharedWidgetWithChart({ widget, queryData }) {
+  return (
+    <Box
+      sx={{
+        width: `${(widget.width || 12) / 12 * 100}%`,
+        height: widget.height ? `${widget.height * 80}px` : DEFAULT_WIDGET_HEIGHT,
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+      }}
+    >
+      <CardContent sx={{ flex: 1, display: "flex", flexDirection: "column", p: 1.5, pb: 1 }}>
+        <Typography
+          variant="subtitle2"
+          sx={{ mb: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {widget.name}
+        </Typography>
+        <SharedWidgetChart
+          widget={widget}
+          preFetchedData={queryData}
+        />
+      </CardContent>
+    </Box>
+  );
+}
+
+function SharedDashboardView({ sharedData, token }) {
+  const widgets = useMemo(
+    () =>
+      (sharedData?.widgets || [])
+        .slice()
+        .sort((a, b) => a.position - b.position),
+    [sharedData?.widgets],
+  );
+
+  const rows = useMemo(() => computeRows(widgets), [widgets]);
+
+  // Fetch query data for all widgets
+  const [widgetData, setWidgetData] = useState({});
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      const results = {};
+      for (const w of widgets) {
+        try {
+          const res = await axios.post(`/tracer/shared/${token}/widget-query/`, {
+            widget_id: w.id,
+          });
+          results[w.id] = res.data;
+        } catch {
+          results[w.id] = null;
+        }
+      }
+      setWidgetData(results);
+    };
+    if (token && widgets.length > 0) fetchAll();
+  }, [token, widgets]);
+
+  if (widgets.length === 0) {
+    return (
+      <Box
+        sx={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 2,
+        }}
+      >
+        <Iconify icon="mdi:chart-line" width={64} sx={{ color: "text.disabled" }} />
+        <Typography variant="h6" color="text.secondary">
+          No widgets yet
+        </Typography>
+        <Typography variant="body2" color="text.disabled">
+          This shared dashboard has no widgets
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ flex: 1, overflow: "auto", p: 3 }}>
+      <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>
+        {sharedData?.name || "Untitled Dashboard"}
+      </Typography>
+      <Stack spacing={2}>
+        {rows.map((row, rowIdx) => {
+          const rowHeight =
+            row.length > 1
+              ? Math.max(...row.map((w) => (w.height && w.height > 50 ? w.height : DEFAULT_WIDGET_HEIGHT)))
+              : undefined;
+
+          return (
+            <Box
+              key={rowIdx}
+              sx={{
+                display: "flex",
+                gap: 2,
+                height: rowHeight ? `${rowHeight}px` : undefined,
+              }}
+            >
+              {row.map((widget) => {
+                const queryData = widgetData[widget.id];
+                return (
+                  <SharedWidgetWithChart
+                    key={widget.id}
+                    widget={widget}
+                    queryData={queryData}
+                  />
+                );
+              })}
+            </Box>
+          );
+        })}
+      </Stack>
+    </Box>
   );
 }
