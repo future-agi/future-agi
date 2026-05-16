@@ -4,6 +4,8 @@ import requests
 
 from ..clients.constants import MODEL_SERVING_BASE_URL
 
+_HTTP_REQUEST_TIMEOUT_SECONDS = 30
+
 
 class ModelServingClient:
     _instance = None
@@ -44,7 +46,12 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.get(f"{self.base_url}/{endpoint}", params=params, headers=headers)
+            response = requests.get(
+                f"{self.base_url}/{endpoint}",
+                params=params,
+                headers=headers,
+                timeout=_HTTP_REQUEST_TIMEOUT_SECONDS,
+            )
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:
@@ -67,7 +74,12 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.post(f"{self.base_url}/{endpoint}", json=json, headers=headers)
+            response = requests.post(
+                f"{self.base_url}/{endpoint}",
+                json=json,
+                headers=headers,
+                timeout=_HTTP_REQUEST_TIMEOUT_SECONDS,
+            )
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:
