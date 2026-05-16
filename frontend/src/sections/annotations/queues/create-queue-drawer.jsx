@@ -124,13 +124,22 @@ export default function CreateQueueDrawer({
   const isPending = isCreating || isUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const { control, handleSubmit, reset, setValue, watch } = useForm({
+  const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
   });
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
+
+  // RHF only re-runs field validation on user interaction with that field, so
+  // the "Cannot exceed annotator count" error on `annotations_required` would
+  // stay stale when annotators are added/removed or have their roles changed.
+  // Re-trigger whenever the annotator count shifts so the error clears (or
+  // re-appears) in step with the picker.
+  useEffect(() => {
+    trigger("annotations_required");
+  }, [annotatorCount, trigger]);
 
   useEffect(() => {
     if (open && editQueue) {

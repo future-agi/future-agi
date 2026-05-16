@@ -23,34 +23,34 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "attr",
-        columnId: "customer_tier",
-        displayName: "Customer Tier",
-        filterConfig: {
-          filterType: "text",
-          filterOp: "equals",
-          filterValue: "vip",
+        column_id: "customer_tier",
+        display_name: "Customer Tier",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "vip",
           col_type: "SPAN_ATTRIBUTE",
         },
       },
       {
         id: "eval",
-        columnId: "quality_eval",
-        displayName: "Quality Eval",
-        filterConfig: {
-          filterType: "number",
-          filterOp: "greater_than_or_equal",
-          filterValue: 80,
+        column_id: "quality_eval",
+        display_name: "Quality Eval",
+        filter_config: {
+          filter_type: "number",
+          filter_op: "greater_than_or_equal",
+          filter_value: 80,
           col_type: "EVAL_METRIC",
         },
       },
       {
         id: "annotation",
-        columnId: "quality_label",
-        displayName: "Quality Label",
-        filterConfig: {
-          filterType: "number",
-          filterOp: "between",
-          filterValue: [70, 100],
+        column_id: "quality_label",
+        display_name: "Quality Label",
+        filter_config: {
+          filter_type: "number",
+          filter_op: "between",
+          filter_value: [70, 100],
           col_type: "ANNOTATION",
         },
       },
@@ -127,12 +127,12 @@ describe("create rule Observe filter serialization", () => {
 
     expect(filters).toHaveLength(1);
     expect(filters[0]).toMatchObject({
-      columnId: "quality_eval",
-      displayName: "Quality Eval",
-      filterConfig: {
-        filterType: "number",
-        filterOp: "greater_than",
-        filterValue: 80,
+      column_id: "quality_eval",
+      display_name: "Quality Eval",
+      filter_config: {
+        filter_type: "number",
+        filter_op: "greater_than",
+        filter_value: 80,
         col_type: "EVAL_METRIC",
       },
     });
@@ -143,11 +143,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "span-name",
-        columnId: "span_name",
-        filterConfig: {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: "tool",
+        column_id: "span_name",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: "tool",
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -175,11 +175,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "equals",
-          filterValue: "completed",
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "equals",
+          filter_value: "completed",
         },
       },
     ];
@@ -207,12 +207,12 @@ describe("create rule Observe filter serialization", () => {
       "trace",
       [
         {
-          id: "latency",
-          columnId: "latency",
-          filterConfig: {
-            filterType: "number",
-            filterOp: "greater_than",
-            filterValue: 500,
+          id: "latency-ms",
+          column_id: "latency_ms",
+          filter_config: {
+            filter_type: "number",
+            filter_op: "greater_than",
+            filter_value: 500,
             col_type: "SYSTEM_METRIC",
           },
         },
@@ -229,11 +229,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "in",
-          filterValue: ["OK"],
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "in",
+          filter_value: ["OK"],
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -255,7 +255,7 @@ describe("create rule Observe filter serialization", () => {
     expect(
       buildConditionsForRule(
         "dataset_row",
-        filters,
+        [],
         { dataset_id: "wrong-dataset" },
         { dataset: { id: "queue-dataset" }, is_default: false },
       ).scope,
@@ -275,11 +275,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "in",
-          filterValue: ["OK"],
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "in",
+          filter_value: ["OK"],
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -301,7 +301,7 @@ describe("create rule Observe filter serialization", () => {
     expect(
       buildConditionsForRule(
         "dataset_row",
-        filters,
+        [],
         { dataset_id: "selected-dataset" },
         { dataset: { id: "queue-dataset" }, is_default: true },
       ).scope,

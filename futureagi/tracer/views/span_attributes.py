@@ -8,13 +8,31 @@ Endpoints:
 """
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tracer.serializers.span_attributes import (
+    SpanAttributeDetailQuerySerializer,
+    SpanAttributeDetailResponseSerializer,
+    SpanAttributeKeysResponseSerializer,
+    SpanAttributeProjectQuerySerializer,
+    SpanAttributeValuesQuerySerializer,
+    SpanAttributeValuesResponseSerializer,
+)
 from tracer.services.clickhouse.client import ClickHouseClient, is_clickhouse_enabled
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+    503: ApiErrorResponseSerializer,
+}
 
 
 class SpanAttributeKeysView(APIView):
@@ -28,20 +46,19 @@ class SpanAttributeKeysView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=SpanAttributeProjectQuerySerializer,
+        responses={200: SpanAttributeKeysResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
         project_id = request.query_params.get("project_id")
         if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
+            return self._gm.bad_request("project_id query parameter is required")
 
         query = """
             SELECT key, 'string' AS type, count() AS cnt
@@ -97,9 +114,8 @@ class SpanAttributeKeysView(APIView):
                 project_id=project_id,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute keys", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute keys"
             )
 
 
@@ -114,27 +130,23 @@ class SpanAttributeValuesView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=SpanAttributeValuesQuerySerializer,
+        responses={200: SpanAttributeValuesResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
         project_id = request.query_params.get("project_id")
         if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
+            return self._gm.bad_request("project_id query parameter is required")
 
         key = request.query_params.get("key")
         if not key:
-            return Response(
-                {"error": "key query parameter is required"},
-                status=400,
-            )
+            return self._gm.bad_request("key query parameter is required")
 
         q = request.query_params.get("q")
         try:
@@ -196,9 +208,8 @@ class SpanAttributeValuesView(APIView):
                 key=key,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute values", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute values"
             )
 
 
@@ -216,27 +227,23 @@ class SpanAttributeDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        query_serializer=SpanAttributeDetailQuerySerializer,
+        responses={200: SpanAttributeDetailResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
         project_id = request.query_params.get("project_id")
         if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
+            return self._gm.bad_request("project_id query parameter is required")
 
         key = request.query_params.get("key")
         if not key:
-            return Response(
-                {"error": "key query parameter is required"},
-                status=400,
-            )
+            return self._gm.bad_request("key query parameter is required")
 
         params = {"project_id": project_id, "key": key}
 
@@ -251,10 +258,7 @@ class SpanAttributeDetailView(APIView):
             elif attr_type == "boolean":
                 return self._boolean_detail(client, params)
             else:
-                return Response(
-                    {"error": f"Attribute key '{key}' not found in project"},
-                    status=404,
-                )
+                return self._gm.not_found(f"Attribute key '{key}' not found in project")
 
         except Exception as e:
             logger.error(
@@ -263,9 +267,8 @@ class SpanAttributeDetailView(APIView):
                 key=key,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute detail", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute detail"
             )
 
     def _detect_type(self, client: ClickHouseClient, params: dict) -> str | None:
@@ -359,10 +362,7 @@ class SpanAttributeDetailView(APIView):
         rows, _, query_time_ms = client.execute_read(query, params)
 
         if not rows:
-            return Response(
-                {"error": "No data found for this attribute"},
-                status=404,
-            )
+            return self._gm.not_found("No data found for this attribute")
 
         row = rows[0]
 

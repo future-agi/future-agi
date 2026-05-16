@@ -45,7 +45,7 @@ describe("getTraceFilterFields (TH-4571)", () => {
 });
 
 describe("normalizeFilterRowOperator", () => {
-  it("maps API multi-value operators back to panel operators before apply", () => {
+  it("maps list operators to canonical equality panel operators before apply", () => {
     expect(
       normalizeFilterRowOperator({
         field: "status",
@@ -53,7 +53,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "in",
         value: ["OK"],
       }).operator,
-    ).toBe("is");
+    ).toBe("equals");
 
     expect(
       normalizeFilterRowOperator({
@@ -62,10 +62,10 @@ describe("normalizeFilterRowOperator", () => {
         operator: "not_in",
         value: ["ERROR"],
       }).operator,
-    ).toBe("is_not");
+    ).toBe("not_equals");
   });
 
-  it("keeps canonical number ops and maps backend date ops to valid panel operators", () => {
+  it("keeps canonical number and date ops", () => {
     expect(
       normalizeFilterRowOperator({
         field: "latency_ms",
@@ -82,7 +82,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "less_than",
         value: "2026-05-09T00:00",
       }).operator,
-    ).toBe("before");
+    ).toBe("less_than");
   });
 
   it("falls back to the first valid operator for restricted id fields", () => {
@@ -93,10 +93,10 @@ describe("normalizeFilterRowOperator", () => {
         operator: "contains",
         value: "abc",
       }).operator,
-    ).toBe("is");
+    ).toBe("equals");
   });
 
-  it("maps legacy annotation equality operators to the restricted annotator operator", () => {
+  it("keeps canonical annotation equality operators for the restricted annotator operator", () => {
     expect(
       normalizeFilterRowOperator({
         field: "annotator",
@@ -104,7 +104,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "equals",
         value: ["user-a", "user-b"],
       }).operator,
-    ).toBe("is");
+    ).toBe("equals");
   });
 });
 

@@ -117,11 +117,11 @@ export const applyQuickFilters =
     let filter = null;
     if (!col.groupBy) {
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: "number",
-          filterOp: "equals",
-          filterValue: [value, ""],
+        column_id: col.id,
+        filter_config: {
+          filter_type: "number",
+          filter_op: "equals",
+          filter_value: [value, ""],
         },
         _meta: {
           parentProperty: col.id,
@@ -133,11 +133,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -151,11 +151,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "System Metrics",
@@ -169,11 +169,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Annotation Metrics",
@@ -204,6 +204,6 @@ export const getFilterExtraProperties = (val) => {
     return {};
   }
   return {
-    colType,
+    col_type: colType,
   };
 };

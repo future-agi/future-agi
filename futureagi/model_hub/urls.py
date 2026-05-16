@@ -48,6 +48,7 @@ from model_hub.views.derived_variables import (
 from model_hub.views.develop_annotations import (
     AnnotationsLabelsViewSet,
     AnnotationSummaryView,
+    AnnotationTaskViewSet,
     AnnotationsViewSet,
     UserViewSet,
 )
@@ -253,6 +254,7 @@ router.register(
     basename="prompt-history-executions",
 )
 router.register(r"feedback", FeedbackViewSet, basename="feedback")  # noqa: F405
+router.register(r"annotation-tasks", AnnotationTaskViewSet, basename="annotation-tasks")
 router.register(r"annotations", AnnotationsViewSet, basename="annotations")
 router.register(
     r"annotations-labels", AnnotationsLabelsViewSet, basename="annotations-labels"

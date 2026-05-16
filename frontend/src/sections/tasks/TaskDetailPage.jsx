@@ -19,6 +19,7 @@ import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
   extractAttributeFilters,
+  getTaskFilterApiKey,
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
 
@@ -128,7 +129,7 @@ const TaskDetailPage = () => {
       // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
       // so the BE always sees a flat list of selected values.
       const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observation_type")
+        .filter((f) => getTaskFilterApiKey(f.property) === "observation_type")
         .flatMap((f) => {
           const v = f?.filterConfig?.filterValue;
           if (Array.isArray(v)) return v;

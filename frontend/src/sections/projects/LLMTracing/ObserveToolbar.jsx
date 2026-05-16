@@ -24,6 +24,7 @@ import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -258,18 +259,18 @@ const ObserveToolbar = ({
         fieldType: isGlobalAnnotatorFilter
           ? "annotator"
           : isBooleanType
-          ? "boolean"
-          : isNumberType
-            ? "number"
-            : rawFilterType === "number"
+            ? "boolean"
+            : isNumberType
               ? "number"
-              : rawFilterType === "thumbs" || looksLikeThumbsValues
-                ? "thumbs"
-                : rawFilterType === "categorical"
-                  ? "categorical"
-                  : rawFilterType === "text" && rawColType === "ANNOTATION"
-                    ? "text"
-                    : "string",
+              : rawFilterType === "number"
+                ? "number"
+                : rawFilterType === "thumbs" || looksLikeThumbsValues
+                  ? "thumbs"
+                  : rawFilterType === "categorical"
+                    ? "categorical"
+                    : rawFilterType === "text" && rawColType === "ANNOTATION"
+                      ? "text"
+                      : "string",
         apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
         operator: rawOp,
         value,
@@ -429,87 +430,7 @@ const ObserveToolbar = ({
                 }
                 return;
               }
-              // Panel and backend share canonical op names — no translation.
-              const typeMap = {
-                string: "text",
-                number: "number",
-                boolean: "boolean",
-                categorical: "categorical",
-                thumbs: "thumbs",
-                text: "text",
-                annotator: "text",
-              };
-              const colTypeMap = {
-                attribute: "SPAN_ATTRIBUTE",
-                system: "SYSTEM_METRIC",
-                eval: "EVAL_METRIC",
-                annotation: "ANNOTATION",
-              };
-              const RANGE_OPS = new Set(["between", "not_between"]);
-              const LIST_OPS = new Set(["in", "not_in"]);
-              // Legacy panel ops emitted by THUMBS_OPS / CATEGORICAL_OPS /
-              // ID_ONLY_OPS — translate to canonical so BE accepts them.
-              const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
-              const apiFilters = newFilters.map((f) => {
-                const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
-                const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
-                let filterValue = f.value;
-                if (Array.isArray(filterValue)) {
-                  if (RANGE_OPS.has(filterOp)) {
-                    // Coerce numeric range bounds.
-                    filterValue = filterValue.map((v) =>
-                      f.fieldType === "number" && v !== "" && v !== null
-                        ? Number(v)
-                        : v,
-                    );
-                  } else if (LIST_OPS.has(filterOp)) {
-                    filterValue = filterValue.filter(
-                      (v) => v !== "" && v !== null && v !== undefined,
-                    );
-                  } else if (filterValue.length === 1) {
-                    filterValue = filterValue[0];
-                  }
-                } else if (LIST_OPS.has(filterOp)) {
-                  // Scalar handed to a list op; wrap as 1-element list.
-                  filterValue =
-                    filterValue === "" ||
-                    filterValue === null ||
-                    filterValue === undefined
-                      ? []
-                      : [filterValue];
-                }
-                // Coerce TextField string to Number for the wire.
-                if (
-                  f.fieldType === "number" &&
-                  !Array.isArray(filterValue) &&
-                  filterValue !== "" &&
-                  filterValue !== null &&
-                  filterValue !== undefined
-                ) {
-                  const n = Number(filterValue);
-                  if (!Number.isNaN(n)) filterValue = n;
-                }
-                // Coerce MUI Select "true"/"false" string to native bool.
-                if (f.fieldType === "boolean") {
-                  if (filterValue === "true" || filterValue === true) {
-                    filterValue = true;
-                  } else if (filterValue === "false" || filterValue === false) {
-                    filterValue = false;
-                  }
-                }
-                return {
-                  column_id: f.field,
-                  ...(f.fieldName && { display_name: f.fieldName }),
-                  filter_config: {
-                    filter_type: typeMap[f.fieldType] || "text",
-                    filter_op: filterOp,
-                    filter_value: filterValue,
-                    ...(apiColType && {
-                      col_type: apiColType,
-                    }),
-                  },
-                };
-              });
+              const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
                 onApplyCompareExtraFilters(apiFilters);

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { objectCamelToSnake } from "src/utils/utils";
 import {
   buildAnnotatorFilterChipLabelMap,
   buildSimulationSelectorColumnDefs,
@@ -265,18 +264,18 @@ describe("Session add-items filters", () => {
     const filters = buildSessionSelectionFilters(
       [
         {
-          columnId: "total_traces_count",
-          filterConfig: {
-            filterType: "number",
-            filterOp: "greater_than",
-            filterValue: "2",
+          column_id: "total_traces_count",
+          filter_config: {
+            filter_type: "number",
+            filter_op: "greater_than",
+            filter_value: "2",
           },
         },
       ],
       { dateFilter: ["2026-01-01", "2026-02-01"] },
     );
 
-    expect(objectCamelToSnake(filters)).toEqual([
+    expect(filters).toEqual([
       {
         column_id: "total_traces_count",
         filter_config: {

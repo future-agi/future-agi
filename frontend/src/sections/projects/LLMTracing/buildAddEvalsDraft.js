@@ -9,22 +9,15 @@ const COL_TYPE_TO_CATEGORY = {
   ANNOTATION: "annotation",
 };
 
-const readField = (f) => f?.columnId ?? f?.column_id;
-const readCfg = (f) => f?.filterConfig ?? f?.filter_config ?? {};
-const readType = (cfg) => cfg.filterType ?? cfg.filter_type;
-const readOp = (cfg) => cfg.filterOp ?? cfg.filter_op;
-const readVal = (cfg) => cfg.filterValue ?? cfg.filter_value;
-const readColType = (cfg) => cfg.colType ?? cfg.col_type;
-
 const toFormRows = (sourceFilters = []) => {
   const out = [];
   (sourceFilters || []).forEach((f) => {
-    const field = readField(f);
+    const field = f?.column_id;
     if (!field || field === "created_at") return;
-    const cfg = readCfg(f);
-    const category = COL_TYPE_TO_CATEGORY[readColType(cfg)] ?? "system";
+    const cfg = f?.filter_config || {};
+    const category = COL_TYPE_TO_CATEGORY[cfg.col_type] ?? "system";
     const isAttribute = category === "attribute";
-    const raw = readVal(cfg);
+    const raw = cfg.filter_value;
     const values = Array.isArray(raw)
       ? raw
       : typeof raw === "string"
@@ -44,8 +37,8 @@ const toFormRows = (sourceFilters = []) => {
         fieldCategory: category,
         fieldLabel: field,
         filterConfig: {
-          filterType: readType(cfg) === "number" ? "number" : "text",
-          filterOp: readOp(cfg) || "equals",
+          filterType: cfg.filter_type === "number" ? "number" : "text",
+          filterOp: cfg.filter_op || "equals",
           filterValue: v,
         },
       });

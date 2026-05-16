@@ -13,6 +13,7 @@ import React, { useState, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 
 // ── Tag colors ──
@@ -38,20 +39,23 @@ function getTagColor(tag) {
 // ── API ──
 
 const fetchProjectTags = async (projectId) => {
-  const { data } = await axios.get(`/tracer/project/${projectId}/`);
+  const { data } = await axios.get(
+    apiPath("/tracer/project/{id}/", { id: projectId }),
+  );
   const result = data?.result || data;
   return result?.tags || [];
 };
 
 const updateProjectTags = async (projectId, tags) => {
-  const { data } = await axios.patch(`/tracer/project/${projectId}/tags/`, {
-    tags,
-  });
+  const { data } = await axios.patch(
+    apiPath("/tracer/project/{id}/tags/", { id: projectId }),
+    { tags },
+  );
   return data?.result?.tags || tags;
 };
 
 const fetchAllKnownTags = async () => {
-  const { data } = await axios.get("/tracer/project/list_projects/", {
+  const { data } = await axios.get(apiPath("/tracer/project/list_projects/"), {
     params: { project_type: "observe", page_size: 100, page_number: 0 },
   });
   const projects = data?.result?.table || [];

@@ -904,15 +904,17 @@ class TestCompleteItem:
         assert detail["annotations"][0]["value"] == "positive"
         assert detail["existing_notes"] == "whole item history note"
 
-    def test_history_uses_source_scores_even_if_queue_item_provenance_moves(
+    def test_history_is_isolated_per_queue_item(
         self, auth_client, queue_with_items, user
     ):
-        """A score for the same source remains visible in every queue item history.
+        """Each queue keeps its own Score row for the same (source, label,
+        annotator) tuple, so the same source scored in two queues yields
+        two independent annotation histories.
 
-        Score rows are source-scoped. Re-submitting the same source/label from a
-        second queue updates the same Score row and may move its queue_item
-        provenance. The first queue item should still show that annotation when
-        the user navigates back from the queue list.
+        Pre-revamp the Score row was source-scoped and re-submitting the
+        same label from a second queue silently updated the first queue's
+        annotation. Now uniqueness includes queue_item, so each queue has
+        an independent review context.
         """
         queue_id, item_ids, label = queue_with_items
         first_item = QueueItem.objects.get(pk=item_ids[0])
@@ -963,24 +965,33 @@ class TestCompleteItem:
             format="json",
         )
         assert submit_second_resp.status_code == status.HTTP_200_OK
-        score = Score.objects.get(
-            dataset_row_id=first_item.dataset_row_id,
-            label=label,
-            annotator=user,
-            deleted=False,
-        )
-        assert score.queue_item_id == second_item.id
 
+        # Two independent Score rows now exist — one per queue context.
+        scores = list(
+            Score.objects.filter(
+                dataset_row_id=first_item.dataset_row_id,
+                label=label,
+                annotator=user,
+                deleted=False,
+            ).order_by("created_at")
+        )
+        assert len(scores) == 2
+        scores_by_item = {s.queue_item_id: s for s in scores}
+        assert scores_by_item[first_item.id].value == "positive"
+        assert scores_by_item[second_item.id].value == "negative"
+
+        # The first queue's history still shows the original positive value;
+        # queue 2's negative submission does not leak into it.
         history_resp = auth_client.get(annotations_list_url(queue_id, first_item.id))
         assert history_resp.status_code == status.HTTP_200_OK
         history = _result(history_resp)
         assert len(history) == 1
-        assert history[0]["value"] == "negative"
-        assert str(history[0]["queue_item"]) == str(second_item.id)
+        assert history[0]["value"] == "positive"
+        assert str(history[0]["queue_item"]) == str(first_item.id)
 
         detail_resp = auth_client.get(annotate_detail_url(queue_id, first_item.id))
         assert detail_resp.status_code == status.HTTP_200_OK
-        assert _result(detail_resp)["annotations"][0]["value"] == "negative"
+        assert _result(detail_resp)["annotations"][0]["value"] == "positive"
 
     def test_completed_queue_item_can_be_edited(self, auth_client, queue_with_items):
         """Completed queues still allow revising an already completed item."""
@@ -3043,6 +3054,31 @@ class TestNextItem:
         )
         assert include_resp.status_code == status.HTTP_200_OK
         assert _result(include_resp)["item"]["id"] == str(item_ids[0])
+
+    def test_previous_navigation_with_completed_toggle_respects_assignment_scope(
+        self, auth_client, queue_with_items, user, second_user
+    ):
+        """Show completed must not let annotators browse another user's items."""
+        queue_id, item_ids, _ = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        queue.auto_assign = False
+        queue.save(update_fields=["auto_assign", "updated_at"])
+        base_time = timezone.now()
+        QueueItem.objects.filter(pk=item_ids[0]).update(
+            created_at=base_time + timedelta(minutes=1),
+            status=QueueItemStatus.COMPLETED.value,
+        )
+        QueueItem.objects.filter(pk=item_ids[1]).update(created_at=base_time)
+        QueueItemAssignment.objects.create(queue_item_id=item_ids[0], user=second_user)
+        QueueItemAssignment.objects.create(queue_item_id=item_ids[1], user=user)
+
+        resp = auth_client.get(
+            next_item_url(queue_id),
+            {"before": str(item_ids[1]), "include_completed": "true"},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["item"] is None
 
     def test_next_can_filter_pending_review_items(self, auth_client, queue_with_items):
         queue_id, item_ids, _ = queue_with_items

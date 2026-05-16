@@ -68,6 +68,57 @@ class CreateScoreSerializer(serializers.Serializer):
         required=False,
         default=ScoreSource.HUMAN.value,
     )
+    # Optional explicit queue context. When omitted, the view falls back to
+    # the source's default queue (auto-created if missing) so every Score
+    # row has a non-null queue_item — required by the new (source, label,
+    # annotator, queue_item) uniqueness.
+    queue_item_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
+
+
+class ScoreListQuerySerializer(serializers.Serializer):
+    source_type = serializers.ChoiceField(
+        choices=list(SCORE_SOURCE_FK_MAP.keys()),
+        required=False,
+    )
+    source_id = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.UUIDField(required=False)
+    annotator_id = serializers.UUIDField(required=False)
+
+
+class ScoreForSourceQuerySerializer(serializers.Serializer):
+    source_type = serializers.ChoiceField(choices=list(SCORE_SOURCE_FK_MAP.keys()))
+    source_id = serializers.CharField()
+
+
+class ScoreResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ScoreSerializer()
+
+
+class BulkCreateScoresResultSerializer(serializers.Serializer):
+    scores = ScoreSerializer(many=True)
+    errors = serializers.ListField(child=serializers.CharField())
+
+
+class BulkCreateScoresResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = BulkCreateScoresResultSerializer()
+
+
+class ScoreForSourceResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ScoreSerializer(many=True)
+    span_notes = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+    )
+
+
+class ScoreDeleteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.BooleanField())
 
 
 class BulkCreateScoresSerializer(serializers.Serializer):
@@ -88,6 +139,10 @@ class BulkCreateScoresSerializer(serializers.Serializer):
     )
     span_notes_source_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
+    )
+    # Optional explicit queue context — same rationale as in CreateScoreSerializer.
+    queue_item_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
     )
 
     def validate_scores(self, value):

@@ -497,7 +497,7 @@ export const useThrottle = (callback, delay) => {
   return [throttledFn, stop, resume];
 };
 
-// Converts a camelCase string to snake_case. Used by objectCamelToSnake for filter serialization.
+// Converts a camelCase string to snake_case for narrow, explicit call sites.
 export const camelToSnakeCase = (str, strict = false) => {
   if (!strict) {
     return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -806,26 +806,6 @@ export const canonicalEntries = (obj) => {
 export const canonicalValues = (obj) => {
   if (!obj || typeof obj !== "object") return [];
   return canonicalKeys(obj).map((key) => obj[key]);
-};
-
-export const objectCamelToSnake = (obj) => {
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map((item) => objectCamelToSnake(item));
-  }
-
-  if (typeof obj !== "object") {
-    return obj;
-  }
-
-  return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = camelToSnakeCase(key);
-    acc[snakeKey] = objectCamelToSnake(obj[key]);
-    return acc;
-  }, {});
 };
 
 // Converts object keys from snake_case to camelCase

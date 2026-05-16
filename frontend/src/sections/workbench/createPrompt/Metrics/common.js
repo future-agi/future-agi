@@ -1,6 +1,6 @@
 import _ from "lodash";
 import { LABELS } from "./constants";
-import { getRandomId, objectCamelToSnake, safeParse } from "src/utils/utils";
+import { getRandomId, safeParse } from "src/utils/utils";
 import CustomTraceRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceRenderer";
 import CustomTraceGroupHeaderRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceGroupHeaderRenderer";
 import { isCellValueEmpty } from "src/components/table/utils";
@@ -137,7 +137,7 @@ export const normalizeFilters = (filters = []) => {
             .filter((v) => v !== "" && v != null)
             .map(Number);
 
-          if (["between", "not_in_between"].includes(filterOp)) {
+          if (["between", "not_between"].includes(filterOp)) {
             filterValue = cleaned.length === 2 ? cleaned : null;
           } else {
             filterValue = cleaned.length > 0 ? cleaned[0] : null;
@@ -171,7 +171,7 @@ export const normalizeFilters = (filters = []) => {
           ) {
             filterConfig.filterValue = cleaned.length > 0 ? cleaned[0] : null;
           } else if (
-            ["between", "not_in_between"].includes(filterConfig.filterOp)
+            ["between", "not_between"].includes(filterConfig.filterOp)
           ) {
             filterConfig.filterValue = cleaned.length === 2 ? cleaned : null;
           }
@@ -189,9 +189,14 @@ export const normalizeFilters = (filters = []) => {
         }
       }
 
-      newFilter.filterConfig = filterConfig;
-
-      return objectCamelToSnake(newFilter);
+      return {
+        column_id: newFilter.columnId,
+        filter_config: {
+          filter_type: filterConfig.filterType,
+          filter_op: filterConfig.filterOp,
+          filter_value: filterConfig.filterValue,
+        },
+      };
     });
 };
 

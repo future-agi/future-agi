@@ -149,9 +149,9 @@ const NUMBER_OPS = [
 ];
 
 const DATE_OPS = [
-  { value: "before", label: "before" },
-  { value: "after", label: "after" },
-  { value: "on", label: "on" },
+  { value: "less_than", label: "before" },
+  { value: "greater_than", label: "after" },
+  { value: "equals", label: "on" },
   { value: "between", label: "between", range: true },
   { value: "not_between", label: "not between", range: true },
 ];
@@ -167,17 +167,17 @@ const BOOLEAN_OPS = [
 // Distinct from CATEGORICAL_OPS — we don't expose contains/not_contains for a
 // 2-value enum.
 const THUMBS_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
 ];
 
-const ANNOTATOR_OPS = [{ value: "is", label: "is" }];
+const ANNOTATOR_OPS = [{ value: "equals", label: "is" }];
 
 // Direct ID columns on `spans` — the dashboard filter pipeline resolves
 // them via equality only (no col_type, no LIKE/IN expansion), so any
 // other operator silently no-ops. Restrict the UI accordingly.
 const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
-const ID_ONLY_OPS = [{ value: "is", label: "is" }];
+const ID_ONLY_OPS = [{ value: "equals", label: "is" }];
 
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
@@ -187,8 +187,8 @@ const ARRAY_OPS = [
 ];
 
 const CATEGORICAL_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
 ];
@@ -267,26 +267,15 @@ const getDefaultOperatorForFilter = (filter, ops) => {
   const defaultOp =
     DEFAULT_OP_FOR_TYPE[filter?.fieldType] ||
     DEFAULT_OP_FOR_TYPE[normalizeFieldType(filter?.fieldType)] ||
-    "is";
+    "equals";
   return ops.some((op) => op.value === defaultOp)
     ? defaultOp
-    : ops[0]?.value || "is";
+    : ops[0]?.value || "equals";
 };
 
-const getPanelOperatorAlias = (operator, filter) => {
-  const normalizedType = normalizeFieldType(filter?.fieldType);
-  if (operator === "equal_to") return "equals";
-  if (operator === "not_equal_to") return "not_equals";
-  if (operator === "in" || operator === "equals") {
-    if (normalizedType === "date") return "on";
-    return "is";
-  }
-  if (operator === "not_in" || operator === "not_equals") {
-    return "is_not";
-  }
-  if (operator === "not_in_between") return "not_between";
-  if (operator === "less_than" && normalizedType === "date") return "before";
-  if (operator === "greater_than" && normalizedType === "date") return "after";
+const getEquivalentPanelOperator = (operator) => {
+  if (operator === "in") return "equals";
+  if (operator === "not_in") return "not_equals";
   return operator;
 };
 
@@ -294,26 +283,27 @@ export const normalizeFilterRowOperator = (filter) => {
   const ops = getOperatorsForFilter(filter);
   if (ops.some((op) => op.value === filter?.operator)) return filter;
 
-  const alias = getPanelOperatorAlias(filter?.operator, filter);
-  const operator = ops.some((op) => op.value === alias)
-    ? alias
+  const equivalentOperator = getEquivalentPanelOperator(filter?.operator);
+  const operator = ops.some((op) => op.value === equivalentOperator)
+    ? equivalentOperator
     : getDefaultOperatorForFilter(filter, ops);
   return { ...filter, operator };
 };
 
 const DEFAULT_OP_FOR_TYPE = {
   number: "equals",
-  date: "on",
+  date: "equals",
   boolean: "equals",
   array: "contains",
   string: "in",
-  categorical: "is",
-  thumbs: "is",
+  categorical: "equals",
+  thumbs: "equals",
   text: "in",
-  annotator: "is",
+  annotator: "equals",
 };
 
-// Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
+// String equality uses the list picker so single and multi-value filters share
+// the same canonical `in` / `not_in` API shape.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 const NO_VALUE_OPS = new Set([
@@ -1236,7 +1226,11 @@ function FilterRow({
       }
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
       // Multi → single: drop stale extra picks.
-      if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
+      if (
+        SINGLE_VALUE_OPS.has(newOp) &&
+        Array.isArray(newVal) &&
+        newVal.length > 1
+      ) {
         newVal = [newVal[0]];
       }
       // Single → list: picker expects an array.
@@ -1461,8 +1455,7 @@ function FilterRow({
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
         singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) ||
-          SINGLE_VALUE_OPS.has(safeOperator)
+          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
         }
         onChange={(newVal) => updateRow({ value: newVal })}
       />
@@ -1580,6 +1573,7 @@ const TraceFilterPanel = ({
   showAi = true,
   showQueryTab = true,
   categories: categoriesOverride,
+  propertyFilter,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1596,7 +1590,11 @@ const TraceFilterPanel = ({
     });
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
-    if (propertiesOverride) return propertiesOverride;
+    if (propertiesOverride) {
+      return propertyFilter
+        ? propertiesOverride.filter(propertyFilter)
+        : propertiesOverride;
+    }
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
@@ -1633,8 +1631,16 @@ const TraceFilterPanel = ({
         category: "system",
         type: f.type || "string",
       }));
-    return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride, tab, isSpansView]);
+    const merged = [...staticProps, ...dynamicExtras, ...fieldExtras];
+    return propertyFilter ? merged.filter(propertyFilter) : merged;
+  }, [
+    dynamicProperties,
+    filterFields,
+    propertiesOverride,
+    propertyFilter,
+    tab,
+    isSpansView,
+  ]);
   const propertyById = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p])),
     [properties],
@@ -1712,13 +1718,9 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          // ID-only fields (trace_id / span_id) bypass the string-op
-          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
-          // than "is" renders blank in the operator Select.
-          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
-            ? "is"
-            : (fieldType === "string" || fieldType === "text") &&
-                HYDRATE_STRING_OP[f.operator]
+          const hydratedOp =
+            (fieldType === "string" || fieldType === "text") &&
+            HYDRATE_STRING_OP[f.operator]
               ? HYDRATE_STRING_OP[f.operator]
               : f.operator;
           // Scalar legacy `equals` value → array for the multi-select picker.
@@ -2096,6 +2098,7 @@ TraceFilterPanel.propTypes = {
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
+  propertyFilter: PropTypes.func,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

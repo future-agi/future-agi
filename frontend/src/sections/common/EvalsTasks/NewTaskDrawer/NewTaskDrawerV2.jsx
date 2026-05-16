@@ -38,7 +38,6 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 
 // ── Configured Eval Card ──
@@ -254,7 +253,7 @@ const NewTaskDrawerV2 = ({
         params: {
           project_id: project,
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
+          filters: JSON.stringify(filtersWithoutDate),
         },
       }),
     select: (data) => data.data?.result,

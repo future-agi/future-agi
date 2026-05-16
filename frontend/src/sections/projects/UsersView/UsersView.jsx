@@ -98,8 +98,8 @@ const USER_FILTER_FIELDS = [
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -253,48 +253,10 @@ const UsersView = ({
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so useGetValidatedFilters in UsersGrid accepts them
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
-
-    // ObserveToolbar number operators → Zod AllowedOperators
-    const opFixMap = {
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_between: "not_in_between",
-    };
-
-    const normalized = extraFilters.map((f) => {
-      const rawOp =
-        f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals";
-      const rawType =
-        f.filter_config?.filter_type || f.filterConfig?.filterType || "text";
-      const rawValue =
-        f.filter_config?.filter_value ?? f.filterConfig?.filterValue ?? "";
-
-      // Number values arrive as comma-joined strings; Zod expects arrays
-      let filterValue = rawValue;
-      if (rawType === "number" && typeof rawValue === "string") {
-        filterValue = rawValue.includes(",") ? rawValue.split(",") : [rawValue];
-      }
-
-      return {
-        columnId: f.column_id || f.columnId || "",
-        _meta: { parentProperty: "" },
-        filterConfig: {
-          filterType: rawType,
-          filterOp: opFixMap[rawOp] || rawOp,
-          filterValue,
-          ...(f.filter_config?.col_type && {
-            col_type: f.filter_config.col_type,
-          }),
-        },
-      };
-    });
-    return [...validatedFilters, ...normalized];
+    return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
   // --- Row height ---
@@ -373,7 +335,8 @@ const UsersView = ({
       skipNextSaveRef.current = true;
       const saved = JSON.parse(raw);
       if (saved.cellHeight) setCellHeight(saved.cellHeight);
-      if (typeof saved.showErrors === "boolean") setShowErrors(saved.showErrors);
+      if (typeof saved.showErrors === "boolean")
+        setShowErrors(saved.showErrors);
       if (typeof saved.showNonAnnotated === "boolean") {
         setShowNonAnnotated(saved.showNonAnnotated);
       }
@@ -524,7 +487,10 @@ const UsersView = ({
       if (display.visibleColumns && columns?.length) {
         updateColumnVisibility(display.visibleColumns);
       }
-      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      if (
+        Array.isArray(display.columnState) &&
+        display.columnState.length > 0
+      ) {
         // Defer columnState when custom cols are being added — AG Grid's
         // columnDefs prop only flips next render, so applying this tick
         // would drop entries for the custom colIds. Drained by the
@@ -592,8 +558,7 @@ const UsersView = ({
     const baselineFilters = activeViewConfig.filters || {};
     const baselineDisplay = activeViewConfig.display || {};
     const baselineExtraFilters = baselineFilters.extraFilters || [];
-    const baselineDateOption =
-      baselineFilters.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineFilters.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -679,9 +644,7 @@ const UsersView = ({
 
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    const key = isObservePath
-      ? params.get("tab")
-      : params.get("usersTab");
+    const key = isObservePath ? params.get("tab") : params.get("usersTab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isObservePath]);
 

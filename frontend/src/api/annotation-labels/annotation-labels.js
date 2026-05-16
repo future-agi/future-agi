@@ -1,15 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
+import { apiPath } from "src/api/contracts/api-surface";
+import {
+  modelHubAnnotationsLabelsCreate,
+  modelHubAnnotationsLabelsDelete,
+  modelHubAnnotationsLabelsList,
+  modelHubAnnotationsLabelsRestore,
+  modelHubAnnotationsLabelsUpdate,
+} from "src/generated/api-contracts/api";
 
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
 export const annotationLabelEndpoints = {
-  list: "/model-hub/annotations-labels/",
-  create: "/model-hub/annotations-labels/",
-  detail: (id) => `/model-hub/annotations-labels/${id}/`,
-  restore: (id) => `/model-hub/annotations-labels/${id}/restore/`,
+  list: apiPath("/model-hub/annotations-labels/"),
+  create: apiPath("/model-hub/annotations-labels/"),
+  detail: (id) => apiPath("/model-hub/annotations-labels/{id}/", { id }),
+  restore: (id) =>
+    apiPath("/model-hub/annotations-labels/{id}/restore/", { id }),
 };
 
 // ---------------------------------------------------------------------------
@@ -28,9 +36,8 @@ export const annotationLabelKeys = {
 export const useAnnotationLabelsList = (filters = {}, options = {}) => {
   return useQuery({
     queryKey: annotationLabelKeys.list(filters),
-    queryFn: () =>
-      axios.get(annotationLabelEndpoints.list, { params: filters }),
-    select: (d) => d.data,
+    queryFn: () => modelHubAnnotationsLabelsList(filters),
+    select: (d) => d?.data || d,
     staleTime: 1000 * 60 * 2,
     ...options,
   });
@@ -39,13 +46,19 @@ export const useAnnotationLabelsList = (filters = {}, options = {}) => {
 export const useCreateAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data) => axios.post(annotationLabelEndpoints.create, data),
+    mutationFn: (data) => modelHubAnnotationsLabelsCreate(data),
     onSuccess: () => {
       enqueueSnackbar("Label created successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to create label";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to create label";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -56,14 +69,19 @@ export const useCreateAnnotationLabel = () => {
 export const useUpdateAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }) =>
-      axios.put(annotationLabelEndpoints.detail(id), data),
+    mutationFn: ({ id, ...data }) => modelHubAnnotationsLabelsUpdate(id, data),
     onSuccess: () => {
       enqueueSnackbar("Label updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to update label";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to update label";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -74,7 +92,7 @@ export const useUpdateAnnotationLabel = () => {
 export const useDeleteAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => axios.delete(annotationLabelEndpoints.detail(id)),
+    mutationFn: (id) => modelHubAnnotationsLabelsDelete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
     },
@@ -87,7 +105,7 @@ export const useDeleteAnnotationLabel = () => {
 export const useRestoreAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => axios.post(annotationLabelEndpoints.restore(id)),
+    mutationFn: (id) => modelHubAnnotationsLabelsRestore(id),
     onSuccess: () => {
       enqueueSnackbar("Label restored", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });

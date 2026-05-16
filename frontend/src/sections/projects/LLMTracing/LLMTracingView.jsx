@@ -27,12 +27,7 @@ import Iconify from "src/components/iconify";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import {
-  getRandomId,
-  getUniqueColorPalette,
-  objectCamelToSnake,
-} from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -70,7 +65,7 @@ const convertGraphSelectionsToFilters = (
       if (!value && value !== 0) return;
 
       // For between operators, require both values
-      const isBetweenOp = ["between", "not_in_between"].includes(operator);
+      const isBetweenOp = ["between", "not_between"].includes(operator);
       if (isBetweenOp && !value2 && value2 !== 0) return;
 
       // Convert to percentage values (divide by 100) for backend
@@ -79,11 +74,11 @@ const convertGraphSelectionsToFilters = (
         : parseFloat(value) / 100;
 
       filters.push({
-        columnId: String(evalItem.id),
-        filterConfig: {
-          filterType: "number",
-          filterOp: operator,
-          filterValue: filterValue,
+        column_id: String(evalItem.id),
+        filter_config: {
+          filter_type: "number",
+          filter_op: operator,
+          filter_value: filterValue,
         },
       });
       return;
@@ -119,11 +114,11 @@ const convertGraphSelectionsToFilters = (
     }
 
     filters.push({
-      columnId: String(evalItem.id),
-      filterConfig: {
-        filterType: filterType,
-        filterOp: "equals",
-        filterValue: filterValue,
+      column_id: String(evalItem.id),
+      filter_config: {
+        filter_type: filterType,
+        filter_op: "equals",
+        filter_value: filterValue,
       },
     });
   });
@@ -256,11 +251,11 @@ const ComponentLoader = () => (
 );
 
 const defaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 const getDefaultDateRange = () => {
@@ -1103,11 +1098,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       isUserMode && userIdForUserMode
         ? [
             {
-              columnId: "user_id",
-              filterConfig: {
-                filterType: "text",
-                filterOp: "equals",
-                filterValue: userIdForUserMode,
+              column_id: "user_id",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: userIdForUserMode,
               },
             },
           ]
@@ -2260,8 +2255,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     };
     const mapFilters = (filters) =>
       (filters || []).map((f) => ({
-        columnId: f.columnId,
-        filterConfig: f.filterConfig,
+        column_id: f.column_id,
+        filter_config: f.filter_config,
       }));
     const config = {
       display: currentDisplay,
@@ -2980,8 +2975,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               try {
                 const mapFilters = (filters) =>
                   (filters || []).map((f) => ({
-                    columnId: f.columnId,
-                    filterConfig: f.filterConfig,
+                    column_id: f.column_id,
+                    filter_config: f.filter_config,
                   }));
                 localStorage.setItem(
                   filtersStorageKey,
@@ -3051,8 +3046,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   try {
                     const mapFilters = (filters) =>
                       (filters || []).map((f) => ({
-                        columnId: f.columnId,
-                        filterConfig: f.filterConfig,
+                        column_id: f.column_id,
+                        filter_config: f.filter_config,
                       }));
                     localStorage.setItem(
                       filtersStorageKey,
@@ -4175,37 +4170,31 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // set than the grid, leading to the bug where "N selected"
                   // under a chip/metric filter adds MORE than N to the queue.
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return canonicalizeApiFilterColumnIds([
-                      ...objectCamelToSnake([
-                        ...primaryCombinedFilters,
-                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                      ]),
+                    return [
+                      ...primaryCombinedFilters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ]);
+                    ];
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
-                    return canonicalizeApiFilterColumnIds([
-                      ...objectCamelToSnake([
-                        ...primarySpanValidatedFilters,
-                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                      ]),
+                    return [
+                      ...primarySpanValidatedFilters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ]);
+                    ];
                   }
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
                   ) {
-                    return canonicalizeApiFilterColumnIds([
-                      ...objectCamelToSnake([
-                        ...primaryCombinedFilters,
-                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                      ]),
+                    return [
+                      ...primaryCombinedFilters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ]);
+                    ];
                   }
                   return null;
                 })()}
@@ -4552,16 +4541,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify(
-                    canonicalizeApiFilterColumnIds([
-                      ...objectCamelToSnake([
-                        ...primaryCombinedFilters,
-                        ...(extraFilters || []),
-                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                      ]),
-                      ...(metricFilters || []),
-                    ]),
-                  ),
+                  filters: JSON.stringify([
+                    ...primaryCombinedFilters,
+                    ...(extraFilters || []),
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(metricFilters || []),
+                  ]),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
@@ -4592,16 +4577,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify(
-                    canonicalizeApiFilterColumnIds([
-                      ...objectCamelToSnake([
-                        ...compareCombinedFilters,
-                        ...(compareExtraFilters || []),
-                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                      ]),
-                      ...(metricFilters || []),
-                    ]),
-                  ),
+                  filters: JSON.stringify([
+                    ...compareCombinedFilters,
+                    ...(compareExtraFilters || []),
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(metricFilters || []),
+                  ]),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}

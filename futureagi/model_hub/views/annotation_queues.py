@@ -11,6 +11,7 @@ from django.db import transaction
 from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
+from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -50,12 +51,53 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
 from model_hub.serializers.annotation_queues import (
     AddItemsSerializer,
+    AnnotationQueueListQuerySerializer,
     AnnotateDetailSerializer,
     AnnotationQueueSerializer,
+    AssignItemsSerializer,
+    AutomationRuleEvaluateAcceptedResponseSerializer,
     AutomationRuleSerializer,
+    BulkRemoveItemsSerializer,
+    DiscussionCommentRequestSerializer,
+    DiscussionReactionRequestSerializer,
+    DiscussionThreadStatusRequestSerializer,
+    ImportAnnotationsSerializer,
+    QueueAddItemsResponseSerializer,
+    QueueAddLabelResponseSerializer,
+    QueueAnnotateDetailResponseSerializer,
+    QueueAssignItemsResponseSerializer,
+    QueueBulkRemoveItemsResponseSerializer,
+    QueueDefaultRequestSerializer,
+    QueueDefaultResponseSerializer,
+    QueueDiscussionResponseSerializer,
+    QueueExportAnnotationsResponseSerializer,
+    QueueExportQuerySerializer,
+    QueueExportToDatasetResponseSerializer,
+    QueueExportToDatasetRequestSerializer,
+    QueueForSourceQuerySerializer,
+    QueueHardDeleteRequestSerializer,
+    QueueHardDeleteResponseSerializer,
+    QueueImportAnnotationsResponseSerializer,
+    QueueItemAnnotationsResponseSerializer,
+    QueueItemAnnotateDetailQuerySerializer,
+    QueueItemListQuerySerializer,
+    QueueItemNavigationRequestSerializer,
+    QueueItemNextQuerySerializer,
+    QueueJsonResponseSerializer,
     QueueItemReviewCommentSerializer,
     QueueItemReviewThreadSerializer,
     QueueItemSerializer,
+    QueueLabelRequestSerializer,
+    QueueNavigationResponseSerializer,
+    QueueNextItemResponseSerializer,
+    QueueProgressResponseSerializer,
+    QueueReleaseReservationResponseSerializer,
+    QueueRemoveLabelResponseSerializer,
+    QueueReviewItemResponseSerializer,
+    QueueStatusRequestSerializer,
+    QueueStatusResponseSerializer,
+    QueueSubmitAnnotationsResponseSerializer,
+    ReviewItemRequestSerializer,
     SubmitAnnotationsSerializer,
 )
 from model_hub.serializers.scores import ScoreSerializer
@@ -75,6 +117,10 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.utils.api_serializers import (
+    ApiErrorResponseSerializer,
+    ApiSelectionTooLargeErrorSerializer,
+)
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -83,6 +129,14 @@ from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    409: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 # Shared cap for filter-mode bulk add. Phase 11 may introduce an async job
 # path for selections exceeding this; until then, the endpoint errors with
@@ -839,43 +893,29 @@ def _mark_review_threads_addressed(item, user, organization, workspace):
 
 
 def _scores_for_queue_item(item):
-    """Return queue-item scores plus source-level scores for this item's labels."""
+    """Return the scores attributed to this queue item.
+
+    Strictly per-queue: with the new ``(source, label, annotator, queue_item)``
+    uniqueness, every Score belongs to exactly one queue's review
+    context. Cross-queue scores must never leak into this queue's history
+    or completion gating.
+
+    Orphan scores (``queue_item IS NULL``) are not surfaced here — they
+    are handled by the on_commit auto-attach hook in
+    ``model_hub.views.scores._auto_create_queue_items_for_default_queues``,
+    which migrates orphans onto a default-queue item asynchronously. If
+    an orphan score actually belongs to *this* queue's item, the hook
+    will eventually attach it and a refetch will pick it up.
+    """
     label_ids = list(
         item.queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
     )
     if not label_ids:
         return Score.objects.none()
 
-    base_q = Q(queue_item=item, label_id__in=label_ids)
-    fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-    source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
-    if fk_field and source_id:
-        # Score is source-scoped; queue_item is provenance, not ownership. A
-        # source can appear in multiple items from this queue, and editing it
-        # may move queue_item provenance to the latest item. Keep source-level
-        # scores visible for this queue's members without leaking unrelated
-        # annotators from a different queue that happens to use the same source.
-        queue_member_ids = AnnotationQueueAnnotator.objects.filter(
-            queue_id=item.queue_id,
-            deleted=False,
-        ).values("user_id")
-        base_q |= Q(
-            source_type=item.source_type,
-            label_id__in=label_ids,
-            queue_item__isnull=True,
-            **{f"{fk_field}_id": source_id},
-        ) | Q(
-            source_type=item.source_type,
-            label_id__in=label_ids,
-            queue_item__queue_id=item.queue_id,
-            **{f"{fk_field}_id": source_id},
-        ) | Q(
-            source_type=item.source_type,
-            label_id__in=label_ids,
-            annotator_id__in=queue_member_ids,
-            **{f"{fk_field}_id": source_id},
-        )
-    return Score.objects.filter(base_q, deleted=False)
+    return Score.objects.filter(
+        queue_item=item, label_id__in=label_ids, deleted=False
+    )
 
 
 def _required_label_ids_for_queue(queue):
@@ -1039,19 +1079,37 @@ def _span_note_rows(span):
     )
 
 
-def _item_note_payloads(item, span_notes_target=None):
-    """Return whole-item notes from queue storage plus legacy span notes."""
+def _item_note_payloads(item, span_notes_target=None, viewer_user_id=None):
+    """Return whole-item notes from queue storage plus legacy span notes.
+
+    When ``viewer_user_id`` is provided, the requester's own SpanNote is
+    filtered out — they shouldn't see "their" note in a read-only list
+    when the editable field above it is per-queue and empty (the
+    SpanNote was written via another queue or the legacy inline endpoint
+    and is not associated with this queue). Other annotators' SpanNotes
+    remain visible as cross-queue historical context.
+    """
     queue_notes = _item_note_rows(item)
     seen_user_ids = {note.annotator_id for note in queue_notes if note.annotator_id}
     payloads = [_serialize_queue_item_note(note) for note in queue_notes]
     for span_note in _span_note_rows(span_notes_target):
         if span_note.created_by_user_id in seen_user_ids:
             continue
+        if viewer_user_id and span_note.created_by_user_id == viewer_user_id:
+            continue
         payloads.append(_serialize_span_note(span_note))
     return payloads
 
 
-def _existing_item_note_for_user(item, user_id, span_notes_target=None):
+def _existing_item_note_for_user(item, user_id):
+    """Return this user's whole-item note for this queue's item.
+
+    Strictly queue-scoped via ``QueueItemNote``. Pre-revamp this used to
+    fall back to a span-level ``SpanNote``, which leaked notes written
+    via Queue A (or the legacy inline endpoint) into every other queue
+    containing the same span. SpanNotes now surface only as read-only
+    context via ``_item_note_payloads``.
+    """
     if not user_id:
         return ""
     queue_note = (
@@ -1063,19 +1121,7 @@ def _existing_item_note_for_user(item, user_id, span_notes_target=None):
         .order_by("-updated_at", "-created_at")
         .first()
     )
-    if queue_note:
-        return queue_note.notes
-    if span_notes_target is None:
-        return ""
-    span_note = (
-        SpanNotes.objects.filter(
-            span=span_notes_target,
-            created_by_user_id=user_id,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-    return span_note.notes if span_note else ""
+    return queue_note.notes if queue_note else ""
 
 
 def _source_id_for_queue_item(item):
@@ -1115,18 +1161,18 @@ def _first_existing(content, *keys):
 
 
 def _latest_item_note(item):
+    """Latest whole-item note for this queue's item — queue-scoped only.
+
+    Pre-revamp this fell back to the most recent ``SpanNote`` on the
+    item's source span, leaking notes from other queues. Now strictly
+    reads ``QueueItemNote`` attached to this ``queue_item``.
+    """
     queue_note = (
         QueueItemNote.no_workspace_objects.filter(queue_item=item, deleted=False)
         .order_by("-updated_at", "-created_at")
         .first()
     )
-    if queue_note:
-        return queue_note.notes
-    span = _span_notes_target_for_queue_item(item)
-    if span is None:
-        return ""
-    note = SpanNotes.objects.filter(span=span).order_by("-created_at").first()
-    return note.notes if note else ""
+    return queue_note.notes if queue_note else ""
 
 
 def _span_note_targets_for_queue_items(items):
@@ -1166,6 +1212,13 @@ def _span_note_targets_for_queue_items(items):
 
 
 def _latest_item_notes_for_queue_items(items):
+    """Bulk version of ``_latest_item_note`` — queue-scoped only.
+
+    Pre-revamp this filled missing entries from span-level ``SpanNotes``
+    on the item's root span, which leaked one queue's note into every
+    other queue containing the same source on export. Now strictly
+    reads ``QueueItemNote`` attached to each ``queue_item``.
+    """
     item_ids = [item.id for item in items]
     notes_by_item = {}
     for note in (
@@ -1177,21 +1230,6 @@ def _latest_item_notes_for_queue_items(items):
         .values("queue_item_id", "notes")
     ):
         notes_by_item.setdefault(note["queue_item_id"], note["notes"])
-
-    targets = _span_note_targets_for_queue_items(items)
-    span_ids = [span.id for span in targets.values() if span is not None]
-    if not span_ids:
-        return notes_by_item
-
-    notes_by_span = {}
-    for note in SpanNotes.objects.filter(span_id__in=span_ids).order_by(
-        "span_id", "-created_at"
-    ):
-        notes_by_span.setdefault(note.span_id, note.notes)
-
-    for item_id, span in targets.items():
-        if span is not None and item_id not in notes_by_item:
-            notes_by_item[item_id] = notes_by_span.get(span.id, "")
     return notes_by_item
 
 
@@ -1205,75 +1243,34 @@ def _normalize_export_status_filter(status_filter):
 
 
 def _scores_for_queue_items(items, queue_label_ids):
+    """Bulk variant of ``_scores_for_queue_item`` — same per-queue scoping.
+
+    Strictly returns scores attributed to one of *items* via ``queue_item``.
+    No cross-queue, no orphan, no queue-member fallback — those would leak
+    a sibling queue's value into this queue's export/dataset payload, which
+    contradicts the per-queue Score uniqueness contract.
+    """
     if not items or not queue_label_ids:
         return {}
 
     item_ids = [item.id for item in items]
-    queue_ids = {item.queue_id for item in items}
-    source_score_scope = Q(queue_item__isnull=True)
-    if queue_ids:
-        queue_member_ids = AnnotationQueueAnnotator.objects.filter(
-            queue_id__in=queue_ids,
-            deleted=False,
-        ).values("user_id")
-        source_score_scope |= Q(queue_item__queue_id__in=queue_ids)
-        source_score_scope |= Q(annotator_id__in=queue_member_ids)
-
-    score_filter = Q(queue_item_id__in=item_ids, label_id__in=queue_label_ids)
-    source_items = {}
-    for item in items:
-        fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-        source_id = getattr(item, f"{fk_field}_id", None) if fk_field else None
-        if fk_field and source_id:
-            source_items.setdefault((item.source_type, str(source_id)), []).append(
-                item.id
-            )
-
-    for source_type, fk_field in SCORE_SOURCE_FK_MAP.items():
-        source_ids = [
-            source_id
-            for (item_source_type, source_id) in source_items
-            if item_source_type == source_type
-        ]
-        if source_ids:
-            score_filter |= Q(
-                source_type=source_type,
-                label_id__in=queue_label_ids,
-                **{f"{fk_field}_id__in": source_ids},
-            ) & source_score_scope
-
     scores_by_item = {item_id: [] for item_id in item_ids}
-    seen_by_item = {item_id: set() for item_id in item_ids}
     scores = (
-        Score.objects.filter(score_filter, deleted=False)
+        Score.objects.filter(
+            queue_item_id__in=item_ids,
+            label_id__in=queue_label_ids,
+            deleted=False,
+        )
         .select_related("label", "annotator")
         .order_by("created_at")
     )
     for score in scores:
-        matched_item_ids = []
         if score.queue_item_id in scores_by_item:
-            matched_item_ids.append(score.queue_item_id)
+            scores_by_item[score.queue_item_id].append(score)
 
-        fk_field = SCORE_SOURCE_FK_MAP.get(score.source_type)
-        source_id = getattr(score, f"{fk_field}_id", None) if fk_field else None
-        if score.queue_item_id is None and fk_field and source_id:
-            matched_item_ids.extend(
-                source_items.get((score.source_type, str(source_id)), [])
-            )
-
-        for item_id in matched_item_ids:
-            if score.id in seen_by_item[item_id]:
-                continue
-            seen_by_item[item_id].add(score.id)
-            scores_by_item[item_id].append(score)
-
-    for item_id, item_scores in scores_by_item.items():
-        # Queue-specific submissions must fill the first export slots. Older
-        # inline/source-level annotations are still useful context, but if they
-        # sort first the value/annotator/notes columns look shifted or missing.
+    for item_scores in scores_by_item.values():
         item_scores.sort(
             key=lambda score: (
-                0 if score.queue_item_id == item_id else 1,
                 score.created_at.isoformat() if score.created_at else "",
                 str(score.id),
             )
@@ -2696,6 +2693,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return queryset.order_by("-created_at")
 
+    @swagger_auto_schema(query_serializer=AnnotationQueueListQuerySerializer)
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         org = getattr(request, "organization", None) or request.user.organization
@@ -2794,6 +2795,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             {"deleted": True, "archived": True, "queue_id": str(instance.pk)}
         )
 
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={200: QueueStatusResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
         try:
@@ -2811,6 +2816,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        request_body=QueueHardDeleteRequestSerializer,
+        responses={200: QueueHardDeleteResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="hard-delete")
     def hard_delete(self, request, pk=None):
         """Permanently remove a queue + everything attached.
@@ -2822,13 +2831,16 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         a typo'd request.
         """
         queue = self.get_object()
-        if request.data.get("force") is not True:
+        serializer = QueueHardDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if data.get("force") is not True:
             return self._gm.bad_request(
                 "Hard delete requires force=true. Use the archive endpoint "
                 "(DELETE /annotation-queues/<id>/) for soft-delete with "
                 "restore."
             )
-        confirm_name = request.data.get("confirm_name") or ""
+        confirm_name = data.get("confirm_name") or ""
         if confirm_name != queue.name:
             return self._gm.bad_request(
                 "confirm_name must match the queue's exact name to hard-delete it."
@@ -2842,6 +2854,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             {"deleted": True, "hard_deleted": True, "queue_id": queue_id}
         )
 
+    @swagger_auto_schema(
+        responses={200: QueueProgressResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="progress")
     def progress(self, request, pk=None):
         queue = self.get_object()
@@ -2951,10 +2966,16 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(
+        request_body=QueueStatusRequestSerializer,
+        responses={200: QueueStatusResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="update-status")
     def update_status(self, request, pk=None):
         queue = self.get_object()
-        new_status = request.data.get("status")
+        serializer = QueueStatusRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_status = serializer.validated_data.get("status")
 
         if not new_status:
             return self._gm.bad_request("Status is required.")
@@ -2976,6 +2997,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        query_serializer=QueueExportQuerySerializer,
+        responses={200: QueueExportAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get"], url_path="export")
     def export_annotations(self, request, pk=None):
         """Export all items with their annotations."""
@@ -3117,6 +3142,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response(result)
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="analytics")
     def analytics(self, request, pk=None):
         """Queue analytics: throughput, annotator performance, label distribution."""
@@ -3207,22 +3233,30 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="export-fields")
     def export_fields(self, request, pk=None):
         """Return source/label/attribute fields available for dataset export."""
         queue = self.get_object()
         return self._gm.success_response(_build_annotation_queue_export_fields(queue))
 
+    @swagger_auto_schema(
+        request_body=QueueExportToDatasetRequestSerializer,
+        responses={200: QueueExportToDatasetResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="export-to-dataset")
     def export_to_dataset(self, request, pk=None):
         """Export queue items to a dataset using a user-editable column mapping."""
         from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
         queue = self.get_object()
-        dataset_id = request.data.get("dataset_id")
-        dataset_name = request.data.get("dataset_name")
+        serializer = QueueExportToDatasetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        dataset_id = data.get("dataset_id")
+        dataset_name = data.get("dataset_name")
         status_filter = _normalize_export_status_filter(
-            request.data.get("status_filter", "completed")
+            data.get("status_filter", "completed")
         )
 
         if not dataset_id and not dataset_name:
@@ -3277,7 +3311,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             queue, sample_items=items_list[:100]
         )
         fields_by_id = {field["id"]: field for field in export_field_defs["fields"]}
-        requested_mapping = request.data.get("column_mapping") or []
+        requested_mapping = data.get("column_mapping") or []
         if not requested_mapping:
             requested_mapping = export_field_defs["default_mapping"]
 
@@ -3456,6 +3490,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="agreement")
     def agreement(self, request, pk=None):
         """Calculate inter-annotator agreement metrics."""
@@ -3479,6 +3514,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         result = calculate_agreement(queue)
         return self._gm.success_response(result)
 
+    @swagger_auto_schema(
+        request_body=QueueDefaultRequestSerializer,
+        responses={200: QueueDefaultResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="get-or-create-default")
     def get_or_create_default(self, request):
         """
@@ -3494,9 +3533,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         from simulate.models.agent_definition import AgentDefinition
         from tracer.models.project import Project
 
-        project_id = request.data.get("project_id")
-        dataset_id = request.data.get("dataset_id")
-        agent_definition_id = request.data.get("agent_definition_id")
+        serializer = QueueDefaultRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        project_id = data.get("project_id")
+        dataset_id = data.get("dataset_id")
+        agent_definition_id = data.get("agent_definition_id")
 
         org = request.organization
 
@@ -3616,6 +3658,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(
+        request_body=QueueLabelRequestSerializer,
+        responses={200: QueueAddLabelResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="add-label")
     def add_label(self, request, pk=None):
         """
@@ -3624,8 +3670,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         Queue items are created lazily when someone actually annotates.
         """
         queue = self.get_object()
-        label_id = request.data.get("label_id")
-        required = _is_truthy(request.data.get("required", True))
+        serializer = QueueLabelRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        label_id = data.get("label_id")
+        required = _is_truthy(data.get("required", True))
 
         if not label_id:
             return self._gm.bad_request("label_id is required.")
@@ -3686,11 +3735,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
+    @swagger_auto_schema(
+        request_body=QueueLabelRequestSerializer,
+        responses={200: QueueRemoveLabelResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="remove-label")
     def remove_label(self, request, pk=None):
         """Remove a label from an annotation queue."""
         queue = self.get_object()
-        label_id = request.data.get("label_id")
+        serializer = QueueLabelRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        label_id = serializer.validated_data.get("label_id")
 
         if not label_id:
             return self._gm.bad_request("label_id is required.")
@@ -3704,6 +3759,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response({"removed": True})
 
+    @swagger_auto_schema(
+        query_serializer=QueueForSourceQuerySerializer,
+        responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"], url_path="for-source")
     def for_source(self, request):
         """
@@ -3841,18 +3900,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 for ql in queue_labels
             ]
 
-            # Fetch existing scores by this user for these labels on this source
+            # Fetch existing scores by this user for these labels on this
+            # source, scoped strictly to *this* queue's review context.
+            # Score uniqueness now includes queue_item, so each queue keeps
+            # its own value for the same (source, label, annotator); a
+            # value filled in queue A must not surface as a prefill in
+            # queue B. Queues without their own score yet show empty.
             existing_scores = {}
             existing_notes = ""
             existing_label_notes = {}
             fk_field = SCORE_SOURCE_FK_MAP.get(source_type_for_scores)
-            if fk_field and source_id_for_scores:
+            if fk_field and source_id_for_scores and item is not None:
                 label_ids = [ql.label_id for ql in queue_labels]
                 user_scores = Score.objects.filter(
                     **{f"{fk_field}_id": source_id_for_scores},
                     source_type=source_type_for_scores,
                     label_id__in=label_ids,
                     annotator=request.user,
+                    queue_item=item,
                     deleted=False,
                 )
                 for sc in user_scores:
@@ -3894,19 +3959,23 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 seen_user_ids = {
                     note.annotator_id for note in queue_note_rows if note.annotator_id
                 }
+                # SpanNotes is span-level, independent of any queue. We
+                # surface them as read-only context but:
+                #   1. Don't prefill the editable existing_notes box —
+                #      that previously leaked a note written via Queue A
+                #      into every other queue containing the same span.
+                #   2. Filter out the **requesting user's own** SpanNote.
+                #      Showing it here would mean "you see your own note
+                #      from another queue but can't edit it from this
+                #      queue" — visually confusing. After the notes
+                #      backfill runs, the user's legacy SpanNote will
+                #      appear in the default queue's editable field.
                 span_notes.extend(
                     _serialize_span_note(note)
                     for note in db_notes
                     if note.created_by_user_id not in seen_user_ids
+                    and note.created_by_user_id != request.user.pk
                 )
-                # Pre-populate existing_notes from the current user's own SpanNote
-                # only when a queue item note is not available.
-                user_span_note = next(
-                    (n for n in db_notes if n.created_by_user_id == request.user.pk),
-                    None,
-                )
-                if user_span_note and not existing_notes:
-                    existing_notes = user_span_note.notes
 
             return {
                 "queue": {
@@ -4197,6 +4266,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             *queue_item_ordering.get(ordering, queue_item_ordering["-created_at"])
         )
 
+    @swagger_auto_schema(query_serializer=QueueItemListQuerySerializer)
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         queue_id = self.kwargs.get("queue_id")
         queue = AnnotationQueue.objects.get(
@@ -4226,6 +4299,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return denied
         return super().destroy(request, *args, **kwargs)
 
+    @swagger_auto_schema(
+        request_body=AddItemsSerializer,
+        responses={
+            200: QueueAddItemsResponseSerializer,
+            400: ApiSelectionTooLargeErrorSerializer,
+            403: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="add-items")
     def add_items(self, request, queue_id=None):
         serializer = AddItemsSerializer(data=request.data)
@@ -4361,17 +4443,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.bad_request(str(e))
 
         if result.truncated:
+            message = (
+                f"Selection matches {result.total_matching} items, "
+                f"which exceeds the {MAX_SELECTION_CAP}-item cap. "
+                "Narrow the filter and retry."
+            )
             return Response(
                 {
+                    "status": False,
                     "result": None,
+                    "message": message,
                     "code": 400,
                     "error": {
                         "type": "selection_too_large",
-                        "message": (
-                            f"Selection matches {result.total_matching} items, "
-                            f"which exceeds the {MAX_SELECTION_CAP}-item cap. "
-                            "Narrow the filter and retry."
-                        ),
+                        "message": message,
                         "total_matching": result.total_matching,
                         "cap": MAX_SELECTION_CAP,
                     },
@@ -4435,6 +4520,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
+    @swagger_auto_schema(
+        request_body=BulkRemoveItemsSerializer,
+        responses={200: QueueBulkRemoveItemsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="bulk-remove")
     def bulk_remove(self, request, queue_id=None):
         queue = self._get_queue_for_management(queue_id, request)
@@ -4444,7 +4533,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if denied is not None:
             return denied
 
-        item_ids = request.data.get("item_ids", [])
+        serializer = BulkRemoveItemsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item_ids = serializer.validated_data["item_ids"]
         if not item_ids:
             return self._gm.bad_request("item_ids is required.")
 
@@ -4554,6 +4645,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         return available_qs.order_by(*QUEUE_ITEM_WORK_ORDERING).first()
 
+    @swagger_auto_schema(
+        request_body=SubmitAnnotationsSerializer,
+        responses={200: QueueSubmitAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="annotations/submit")
     def submit_annotations(self, request, queue_id=None, pk=None):
         """Submit or update annotations for a queue item."""
@@ -4718,17 +4813,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
             # cannot be applied to the nullable side of an outer join".
             if source_obj and source_fk_field:
+                # Scope the upsert by queue_item so each queue review context
+                # owns its own Score row even when the same annotator scores
+                # the same label across multiple queues.
                 score, _ = Score.no_workspace_objects.update_or_create(
                     **{f"{source_fk_field}_id": source_obj.pk},
                     label_id=label.pk,
                     annotator_id=request.user.pk,
+                    queue_item=item,
                     deleted=False,
                     defaults={
                         "source_type": item.source_type,
                         "value": value,
                         "score_source": "human",
                         "notes": per_label_notes,
-                        "queue_item": item,
                         "organization": request.organization,
                     },
                 )
@@ -4816,9 +4914,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item.reserved_at = None
         item.reservation_expires_at = None
 
+    @swagger_auto_schema(
+        request_body=QueueItemNavigationRequestSerializer,
+        responses={200: QueueNavigationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="complete")
     def complete_item(self, request, queue_id=None, pk=None):
         """Mark item as completed and return next pending item."""
+        serializer = QueueItemNavigationRequestSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
             item = QueueItem.objects.select_related("queue").get(
                 pk=pk,
@@ -4888,15 +4993,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         self._maybe_auto_complete_queue(queue_id)
 
         exclude_ids = self._parse_exclude_ids(
-            request.data.get("exclude", []), current_pk=pk
+            data.get("exclude", []), current_pk=pk
         )
 
         next_item = self._get_next_pending_item(
             queue_id,
             exclude_ids=exclude_ids or None,
             user=request.user,
-            exclude_review_status=request.data.get("exclude_review_status"),
-            include_completed=_is_truthy(request.data.get("include_completed")),
+            exclude_review_status=data.get("exclude_review_status"),
+            include_completed=_is_truthy(data.get("include_completed")),
         )
         next_item_data = QueueItemSerializer(next_item).data if next_item else None
 
@@ -4907,9 +5012,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
+    @swagger_auto_schema(
+        request_body=QueueItemNavigationRequestSerializer,
+        responses={200: QueueNavigationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="skip")
     def skip_item(self, request, queue_id=None, pk=None):
         """Mark item as skipped and return next pending item."""
+        serializer = QueueItemNavigationRequestSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
             item = QueueItem.objects.get(
                 pk=pk,
@@ -4947,15 +5059,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
 
         exclude_ids = self._parse_exclude_ids(
-            request.data.get("exclude", []), current_pk=pk
+            data.get("exclude", []), current_pk=pk
         )
 
         next_item = self._get_next_pending_item(
             queue_id,
             exclude_ids=exclude_ids or None,
             user=request.user,
-            exclude_review_status=request.data.get("exclude_review_status"),
-            include_completed=_is_truthy(request.data.get("include_completed")),
+            exclude_review_status=data.get("exclude_review_status"),
+            include_completed=_is_truthy(data.get("include_completed")),
         )
         next_item_data = QueueItemSerializer(next_item).data if next_item else None
 
@@ -4966,6 +5078,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
+    @swagger_auto_schema(
+        query_serializer=QueueItemNextQuerySerializer,
+        responses={200: QueueNextItemResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"], url_path="next-item")
     def next_item(self, request, queue_id=None):
         """Get the next or previous item in the queue.
@@ -5000,6 +5116,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except QueueItem.DoesNotExist:
                 return self._gm.success_response({"item": None})
             prev_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
+            queue = AnnotationQueue.objects.filter(pk=queue_id).first()
             if not include_completed:
                 prev_qs = prev_qs.filter(
                     status__in=[
@@ -5015,8 +5132,23 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 user=request.user,
                 is_reviewer=is_review_navigation,
             )
-            if review_status != "pending_review":
+            if (
+                queue
+                and not queue.auto_assign
+                and not is_review_navigation
+            ):
+                prev_qs = _queue_item_user_scope(
+                    prev_qs,
+                    request.user,
+                    include_unassigned=True,
+                )
+            if not is_reviewer and review_status != "pending_review":
                 prev_qs = _scope_targeted_rework_items(prev_qs, request.user)
+            prev_qs = prev_qs.filter(
+                Q(reserved_by__isnull=True)
+                | Q(reserved_by=request.user)
+                | Q(reservation_expires_at__lt=timezone.now())
+            )
             prev_item = _queue_items_before_work_cursor(prev_qs, current).first()
             item_data = QueueItemSerializer(prev_item).data if prev_item else None
             return self._gm.success_response({"item": item_data})
@@ -5037,6 +5169,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_data = QueueItemSerializer(item).data
         return self._gm.success_response({"item": item_data})
 
+    @swagger_auto_schema(
+        query_serializer=QueueItemAnnotateDetailQuerySerializer,
+        responses={200: QueueAnnotateDetailResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get"], url_path="annotate-detail")
     def annotate_detail(self, request, queue_id=None, pk=None):
         """Get full annotation workspace data for an item."""
@@ -5145,13 +5281,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         span_notes_target = _span_notes_target_for_queue_item(item)
         if span_notes_target is not None:
             span_notes_source_id = span_notes_target.id
-        span_notes = _item_note_payloads(item, span_notes_target)
-        notes_user_id = viewing_annotator_id or request.user.pk
-        existing_notes = _existing_item_note_for_user(
-            item,
-            notes_user_id,
-            span_notes_target,
+        span_notes = _item_note_payloads(
+            item, span_notes_target, viewer_user_id=request.user.pk
         )
+        notes_user_id = viewing_annotator_id or request.user.pk
+        existing_notes = _existing_item_note_for_user(item, notes_user_id)
 
         # Manual queues show overall progress. Distributed queues show the
         # current annotator's slice, so "2/4" means their assigned workload,
@@ -5262,6 +5396,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer = AnnotateDetailSerializer(data, context={"request": request})
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        request_body=AssignItemsSerializer,
+        responses={200: QueueAssignItemsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="assign")
     def assign_items(self, request, queue_id=None):
         """Assign items to one or more annotators.
@@ -5280,10 +5418,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if queue is None:
             return self._gm.not_found("Queue not found.")
 
-        item_ids = request.data.get("item_ids", [])
-        user_ids = request.data.get("user_ids", [])
-        user_id = request.data.get("user_id")
-        action = request.data.get("action", "add")
+        serializer = AssignItemsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item_ids = serializer.validated_data["item_ids"]
+        user_ids = serializer.validated_data.get("user_ids", [])
+        user_id = serializer.validated_data.get("user_id")
+        action = serializer.validated_data.get("action", "add")
 
         # Legacy compat: single user_id
         if user_id is not None and not user_ids:
@@ -5422,6 +5562,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         return self._gm.success_response({"assigned": len(item_pks) * len(user_ids)})
 
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={200: QueueReleaseReservationResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="release")
     def release_reservation(self, request, queue_id=None, pk=None):
         """Release reservation on an item."""
@@ -5449,6 +5593,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         return self._gm.success_response({"released": True})
 
+    @swagger_auto_schema(
+        responses={200: QueueItemAnnotationsResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="annotations")
     def annotations_list(self, request, queue_id=None, pk=None):
         """List all annotations for a queue item (across all annotators)."""
@@ -5589,6 +5736,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+    @swagger_auto_schema(
+        method="get",
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
+    @swagger_auto_schema(
+        method="post",
+        request_body=DiscussionCommentRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get", "post"], url_path="discussion")
     def discussion(self, request, queue_id=None, pk=None):
         """List or create non-blocking discussion comments for a queue item."""
@@ -5624,9 +5780,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 ).data
             return self._gm.success_response(payload)
 
-        comment = str(
-            request.data.get("comment") or request.data.get("content") or ""
-        ).strip()
+        serializer = DiscussionCommentRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        comment = str(data.get("comment") or data.get("content") or "").strip()
         if not comment:
             return self._gm.bad_request("Comment text is required.")
 
@@ -5637,7 +5795,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             ).select_related("label")
         }
         label = None
-        label_id = request.data.get("label_id") or request.data.get("label")
+        label_id = data.get("label_id") or data.get("label")
         if label_id:
             label = queue_labels.get(str(label_id))
             if not label:
@@ -5647,7 +5805,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         member_ids = _queue_member_ids(queue_id)
         target_annotator = None
-        target_annotator_id = request.data.get("target_annotator_id")
+        target_annotator_id = data.get("target_annotator_id")
         if target_annotator_id:
             try:
                 target_uuid = uuid.UUID(str(target_annotator_id))
@@ -5666,7 +5824,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 return self._gm.bad_request("Target annotator not found.")
 
         thread = None
-        thread_id = request.data.get("thread_id") or request.data.get("thread")
+        thread_id = data.get("thread_id") or data.get("thread")
         if thread_id:
             try:
                 thread_uuid = uuid.UUID(str(thread_id))
@@ -5686,9 +5844,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             label = thread.label
             target_annotator = thread.target_annotator
 
-        raw_mentions = request.data.get("mentioned_user_ids")
+        raw_mentions = data.get("mentioned_user_ids")
         if raw_mentions is None:
-            raw_mentions = request.data.get("mentions", [])
+            raw_mentions = data.get("mentions", [])
         if isinstance(raw_mentions, str):
             raw_mentions = [raw_mentions]
         if not isinstance(raw_mentions, list):
@@ -5779,6 +5937,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+    @swagger_auto_schema(
+        request_body=DiscussionThreadStatusRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5793,6 +5955,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             next_status=QueueItemReviewThread.STATUS_RESOLVED,
         )
 
+    @swagger_auto_schema(
+        request_body=DiscussionThreadStatusRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5807,6 +5973,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             next_status=QueueItemReviewThread.STATUS_REOPENED,
         )
 
+    @swagger_auto_schema(
+        request_body=DiscussionReactionRequestSerializer,
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -5841,7 +6011,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if comment is None:
             return self._gm.not_found("Discussion comment not found.")
 
-        emoji = str(request.data.get("emoji") or request.data.get("reaction") or "")
+        serializer = DiscussionReactionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        emoji = str(
+            serializer.validated_data.get("emoji")
+            or serializer.validated_data.get("reaction")
+            or ""
+        )
         if not _is_supported_discussion_reaction(emoji):
             return self._gm.bad_request("Unsupported reaction emoji.")
 
@@ -5869,6 +6045,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+    @swagger_auto_schema(
+        request_body=ReviewItemRequestSerializer,
+        responses={200: QueueReviewItemResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
@@ -5907,7 +6087,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         except QueueItem.DoesNotExist:
             return self._gm.not_found("Queue item not found.")
 
-        requested_action = request.data.get("action")
+        serializer = ReviewItemRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        requested_action = data.get("action")
         action_aliases = {
             "approve": QueueItemReviewComment.ACTION_APPROVE,
             "reject": QueueItemReviewComment.ACTION_REQUEST_CHANGES,
@@ -5931,8 +6115,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "Only items pending review can be approved or sent back."
             )
 
-        notes = str(request.data.get("notes") or "").strip()
-        raw_label_comments = request.data.get("label_comments") or []
+        notes = str(data.get("notes") or "").strip()
+        raw_label_comments = data.get("label_comments") or []
         if not isinstance(raw_label_comments, list):
             return self._gm.bad_request("label_comments must be a list.")
 
@@ -6183,6 +6367,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
+    @swagger_auto_schema(
+        request_body=ImportAnnotationsSerializer,
+        responses={200: QueueImportAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="annotations/import")
     def import_annotations(self, request, queue_id=None, pk=None):
         """Import annotations from external sources."""
@@ -6248,10 +6436,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 continue
 
             if source_obj and source_fk_field:
+                # Scope the upsert by queue_item so an import lands in this
+                # queue's review context. Without queue_item in the lookup
+                # we'd hit the per-queue uniqueness constraint as soon as
+                # the same (source, label, annotator) is imported into a
+                # second queue.
                 score, _ = Score.no_workspace_objects.update_or_create(
                     **{f"{source_fk_field}_id": source_obj.pk},
                     label_id=label.pk,
                     annotator_id=annotator.pk,
+                    queue_item=item,
                     deleted=False,
                     defaults={
                         "source_type": item.source_type,
@@ -6259,7 +6453,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         "score_source": score_source or "human",
                         "notes": "",
                         "organization": request.organization,
-                        "queue_item": item,
                     },
                 )
                 imported += 1
@@ -6360,9 +6553,29 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             created_by=self.request.user,
         )
 
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={
+            200: QueueJsonResponseSerializer,
+            202: AutomationRuleEvaluateAcceptedResponseSerializer,
+            **ERROR_RESPONSES,
+        },
+    )
     @action(detail=True, methods=["post"], url_path="evaluate")
     def evaluate(self, request, queue_id=None, pk=None):
-        """Manually trigger rule evaluation."""
+        """Trigger a manual rule run with a sync-or-async branch.
+
+        Small runs (filter resolves to ≤ ``RULE_RUN_SYNC_THRESHOLD``) finish
+        in the HTTP request and return 200 with the result — fast feedback
+        for the common case. Large runs (mostly first-ever runs on backlogs
+        or rules with wide filters) hand the work to a Temporal activity and
+        return 202 immediately. The activity emails creator + queue managers
+        on completion.
+
+        The peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) — sub-
+        100ms even on 10M+ row trace tables — so this branch costs little
+        even when it ends up taking the sync path.
+        """
         manager_error = self._queue_manager_error(request, queue_id=queue_id)
         if manager_error:
             return manager_error
@@ -6392,9 +6605,124 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 ),
             )
 
-        result = evaluate_rule(rule, user=request.user)
-        return self._gm.success_response(result)
+        # Multi-click guard. If the rule fired in the last 30s, refuse with
+        # 409 so a second click while the first run is still in flight
+        # doesn't blow up to two workflows + two emails + two PG row-lock
+        # waits. The lower-level QueueItem unique constraint already prevents
+        # data corruption, but it's still wasteful work and confusing UX.
+        # 30s is small enough that legitimate re-runs aren't impacted —
+        # users can wait, and the FE keeps the Run button disabled for the
+        # same window.
+        if rule.last_triggered_at and (
+            timezone.now() - rule.last_triggered_at
+        ) < timedelta(seconds=30):
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                result=(
+                    "A run is already in progress for this rule. "
+                    "Please wait a few seconds before trying again."
+                ),
+            )
 
+        from model_hub.utils.annotation_queue_helpers import (
+            RULE_RUN_SYNC_THRESHOLD,
+        )
+
+        # Cheap peek: dry_run with cap=SYNC_THRESHOLD. Returns ≤ cap+1 ids
+        # without doing the bulk_create/finalize work, then we branch.
+        # If the peek itself errors out, fall back to the async path so
+        # the user gets a clean response rather than a 500.
+        try:
+            peek = evaluate_rule(
+                rule,
+                dry_run=True,
+                user=request.user,
+                cap=RULE_RUN_SYNC_THRESHOLD,
+            )
+        except Exception as exc:
+            logger.warning(
+                "automation_rule_manual_peek_failed",
+                rule_id=str(rule.pk),
+                error=str(exc),
+            )
+            peek = {"truncated": True}
+
+        if not peek.get("truncated"):
+            # Small enough to handle inline — user sees the result
+            # immediately, no email overhead.
+            result = evaluate_rule(
+                rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD
+            )
+            return self._gm.success_response(result)
+
+        # Large run — hand off to Temporal. task_id is suffixed with a
+        # millisecond timestamp so two clicks of "Run" don't collide on the
+        # same workflow_id. Activity-level serialisation already handles
+        # concurrency: ``evaluate_rule`` holds a ``select_for_update`` on
+        # the rule row inside the activity, and ``QueueItem`` unique
+        # constraints make the bulk_create idempotent.
+        from tfc.temporal.drop_in.runner import start_activity_sync
+
+        # Reserve the rule *before* scheduling — the 30s multi-click guard
+        # above only catches in-flight runs once the worker has bumped
+        # ``last_triggered_at`` via ``_update_rule_stats``. For async runs
+        # that bump happens minutes later (inside the Temporal activity),
+        # leaving a window where two clicks both pass the guard and schedule
+        # duplicate workflows + duplicate completion emails. Bump now from
+        # the view so the second click sees a fresh timestamp.
+        previous_last_triggered_at = rule.last_triggered_at
+        scheduled_at = timezone.now()
+        AutomationRule.objects.filter(pk=rule.pk).update(
+            last_triggered_at=scheduled_at
+        )
+        rule.last_triggered_at = scheduled_at
+
+        task_id = (
+            f"automation-rule-eval-{rule.pk}-"
+            f"{int(scheduled_at.timestamp() * 1000)}"
+        )
+
+        try:
+            workflow_id = start_activity_sync(
+                activity_name="evaluate_rule_manual_async",
+                kwargs={
+                    "rule_id": str(rule.pk),
+                    "triggered_by_user_id": (
+                        str(request.user.id) if request.user else None
+                    ),
+                },
+                queue="tasks_l",
+                task_id=task_id,
+            )
+        except Exception as exc:
+            # Schedule failed — release the reservation so the user can
+            # retry immediately without waiting out the 30s lockout.
+            AutomationRule.objects.filter(pk=rule.pk).update(
+                last_triggered_at=previous_last_triggered_at
+            )
+            rule.last_triggered_at = previous_last_triggered_at
+            logger.exception(
+                "automation_rule_manual_run_schedule_failed",
+                rule_id=str(rule.pk),
+                error=str(exc),
+            )
+            return self._gm.internal_server_error_response(
+                f"Failed to schedule rule run: {exc}"
+            )
+
+        return Response(
+            {
+                "status": "scheduled",
+                "workflow_id": workflow_id,
+                "message": (
+                    "We're preparing your data. You'll get an email when "
+                    "it's ready."
+                ),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, queue_id=None, pk=None):
         """Preview how many items match a rule (dry run)."""

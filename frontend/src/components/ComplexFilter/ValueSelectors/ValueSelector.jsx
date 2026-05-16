@@ -13,7 +13,7 @@ import DevelopTextFilter from "src/sections/evals/DevelopFilters/DevelopTextFilt
 import AutocompleteTextValueSelector from "./AutocompleteTextValueSelector";
 
 const ValueSelector = ({ definition, filter, updateFilter }) => {
-  // Return null if filterType is not defined yet
+  // Return null if filter_type is not defined yet
   if (!definition?.filterType?.type) {
     return null;
   }
@@ -51,7 +51,7 @@ const ValueSelector = ({ definition, filter, updateFilter }) => {
     return (
       <>
         <ShowComponent
-          condition={!NULL_OPERATORS.includes(filter?.filterConfig?.filterOp)}
+          condition={!NULL_OPERATORS.includes(filter?.filter_config?.filter_op)}
         >
           <TextValueSelector
             definition={definition}

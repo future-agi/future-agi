@@ -16,7 +16,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { AGGridCellDataType } from "src/utils/constant";
 import { defaultRowHeightMapping } from "src/utils/constants";
 import DevelopFilterBox from "../../DevelopFilters/DevelopFilterBox";
-import { getRandomId, objectCamelToSnake } from "src/utils/utils";
+import { getRandomId } from "src/utils/utils";
 import {
   DefaultFilter,
   transformFilter,
@@ -368,7 +368,7 @@ const LogsTabGrid = ({
         const createdAtFieldId = createdAtColumn?.field || "created_at";
         // Skip default dateFilter if user already has a Created At filter applied
         const hasCreatedAtFilter = debouncedFilters.some(
-          (f) => f.columnId === createdAtFieldId,
+          (f) => f.column_id === createdAtFieldId,
         );
         if (dateFilter && !hasCreatedAtFilter) {
           filters.push({
@@ -387,7 +387,7 @@ const LogsTabGrid = ({
                 eval_template_id: evalsId,
                 current_page_index: pageNumber,
                 page_size: pageSize,
-                filters: JSON.stringify(objectCamelToSnake(filters)),
+                filters: JSON.stringify(filters),
                 search: search,
                 sort: JSON.stringify(
                   request?.sortModel?.map(({ colId, sort }) => ({

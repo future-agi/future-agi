@@ -31,7 +31,9 @@ from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, JSONObject, Round
 from django.http import FileResponse
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from litellm import cost_per_token
+from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -108,6 +110,20 @@ from tracer.utils.otel import (
     calculate_cost_from_tokens,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+
+class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    annotation_values = serializers.DictField(child=serializers.JSONField())
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("observation_span_id") and not attrs.get("trace_id"):
+            raise serializers.ValidationError(
+                "observation_span_id or trace_id is required."
+            )
+        return attrs
 
 
 def _validate_add_annotation_value(
@@ -1197,9 +1213,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -1773,9 +1789,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -2005,11 +2021,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # the filter to `end_user_id` scoped to this project + organization.
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col = _f.get("column_id")
+            _cfg = _f.get("filter_config") or {}
+            _col_type = _cfg.get("col_type") or "NORMAL"
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:
@@ -2248,10 +2264,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
@@ -3309,13 +3325,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error in exporting the spans list of observe: {str(e)}")
             return self._gm.bad_request(get_error_message(""))
 
+    @swagger_auto_schema(request_body=AddObservationSpanAnnotationsSerializer)
     @action(detail=False, methods=["post"])
     def add_annotations(self, request, *args, **kwargs):
         try:
-            observation_span_id = self.request.data.get("observation_span_id")
-            annotation_values = self.request.data.get("annotation_values")
-            trace_id = self.request.data.get("trace_id")
-            notes = self.request.data.get("notes")
+            serializer = AddObservationSpanAnnotationsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            observation_span_id = data.get("observation_span_id")
+            annotation_values = data.get("annotation_values")
+            trace_id = data.get("trace_id")
+            notes = data.get("notes")
 
             if (not observation_span_id and not trace_id) or not annotation_values:
                 raise Exception(
@@ -3378,10 +3398,43 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # LEFT JOIN on nullable workspace FK that triggers
                     # PostgreSQL's "FOR UPDATE cannot be applied to the
                     # nullable side of an outer join".
+                    #
+                    # Resolve a default queue item up-front so the upsert
+                    # lookup keys on queue_item — the per-queue Score
+                    # uniqueness ``(source, label, annotator, queue_item)``
+                    # would otherwise produce duplicate orphan rows on
+                    # repeated writes from this legacy endpoint. Falls
+                    # back to NULL if the source has no resolvable scope
+                    # (rare, e.g. orphaned span).
+                    from model_hub.utils.annotation_queue_helpers import (
+                        resolve_default_queue_item_for_source,
+                    )
+
+                    default_item = resolve_default_queue_item_for_source(
+                        "observation_span",
+                        observation_span,
+                        request.user.organization,
+                        request.user,
+                    )
+                    if default_item is None:
+                        # Per-queue Score uniqueness requires a queue_item.
+                        # Skip rather than insert with queue_item=NULL —
+                        # NULL ≠ NULL in Postgres, so a silent orphan
+                        # insert could accumulate duplicates the on_commit
+                        # auto-attach hook can no longer migrate safely.
+                        failed_labels.append(label_id)
+                        logger.warning(
+                            "score_skip_no_default_queue_scope",
+                            source_type="observation_span",
+                            source_id=str(observation_span.pk),
+                            label_id=str(annotation_label.pk),
+                        )
+                        continue
                     score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
                         annotator_id=request.user.pk,
+                        queue_item=default_item,
                         deleted=False,
                         defaults={
                             "source_type": "observation_span",
@@ -3663,9 +3716,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (
@@ -3744,6 +3797,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not span_id:
                 raise Exception("Span id is required")
 
+            project_id = request.query_params.get(
+                "project_id"
+            ) or request.query_params.get("projectId")
+            if not project_id:
+                raise Exception("Project id is required")
+
             user_id = request.query_params.get("user_id") or request.query_params.get(
                 "userId"
             )
@@ -3756,17 +3815,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             user_id=user_id,
                             organization=getattr(request, "organization", None)
                             or request.user.organization,
-                            project=project,
+                            project_id=project_id,
                         ).id
                     )
                 except EndUser.DoesNotExist as e:
                     raise Exception("User not found for the given user_id") from e
-
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
 
             project = Project.objects.get(
                 id=project_id,
@@ -3941,9 +3994,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (

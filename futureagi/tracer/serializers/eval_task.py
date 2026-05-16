@@ -9,6 +9,7 @@ from tracer.models.eval_task import (
     RunType,
 )
 from tracer.models.project import Project
+from tracer.serializers.filters import eval_task_filters_field
 
 
 class PaginationQuerySerializer(serializers.Serializer):
@@ -51,6 +52,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     # continuous tasks, which run indefinitely and don't have a
     # meaningful "expected" total.
     progress = serializers.SerializerMethodField()
+    filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
 
     class Meta:
         model = EvalTask
@@ -126,7 +128,7 @@ class EditEvalTaskSerializer(serializers.Serializer):
     name = serializers.CharField(
         required=False, allow_blank=False, min_length=1, max_length=255
     )
-    filters = serializers.JSONField(required=False, allow_null=True)
+    filters = eval_task_filters_field(required=False, allow_null=True)
     sampling_rate = serializers.FloatField(
         required=False, allow_null=True, min_value=1.0, max_value=100.0
     )

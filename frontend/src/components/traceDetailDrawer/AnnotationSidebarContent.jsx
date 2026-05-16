@@ -471,10 +471,16 @@ function QueueAnnotationSection({
 
     if (scores.length === 0) return;
 
+    // Send queue_item_id so the bulk score write lands in *this* queue's
+    // review context. Without it the backend falls back to the source's
+    // default queue, and every section in this drawer would write to the
+    // same row — making cross-queue values collapse into the last one
+    // saved.
     bulkCreate(
       {
         sourceType: itemSourceType,
         sourceId,
+        queueItemId: item?.id,
         scores,
         notes: "",
         spanNotes: notes,
@@ -495,6 +501,7 @@ function QueueAnnotationSection({
     notesTouched,
     existingNotes,
     labelNotes,
+    item?.id,
     itemSourceType,
     sourceId,
     spanNotesSourceId,

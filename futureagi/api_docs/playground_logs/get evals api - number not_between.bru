@@ -1,5 +1,5 @@
 meta {
-  name: get evals api - number not_in_between
+  name: get evals api - number not_between
   type: http
   seq: 73
 }
@@ -16,15 +16,15 @@ auth:bearer {
 
 body:json {
   {
-    "evalTemplateId": "9812a98e-9689-43b5-93a8-ba5a763e91aa",
-    "currentPageIndex": 4,
+    "eval_template_id": "9812a98e-9689-43b5-93a8-ba5a763e91aa",
+    "current_page_index": 4,
     "filters": [
       {
-        "columnId": "column4",
-        "filterConfig": {
-          "filterType": "number",
-          "filterOp": "not_in_between",
-          "filterValue": [50, 100]
+        "column_id": "column4",
+        "filter_config": {
+          "filter_type": "number",
+          "filter_op": "not_between",
+          "filter_value": [50, 100]
         }
       },
       {

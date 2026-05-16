@@ -111,8 +111,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -145,7 +148,7 @@ def apply_filters(row_data, filters):
                     "greater_than_or_equal": lambda x, y: x >= y,
                     "less_than_or_equal": lambda x, y: x <= y,
                     "between": lambda x, y: y[0] <= x <= y[1],
-                    "not_in_between": lambda x, y: x < y[0] or x > y[1],
+                    "not_between": lambda x, y: x < y[0] or x > y[1],
                 }
                 result = []
                 if filter_op in operator_map:
@@ -230,12 +233,8 @@ def get_eval_metric_data(eval_template, filters, logs, error=False):
 
     query = Q()
     if filters:
-        filter_config = filters[0].get("filterConfig") or filters[0].get(
-            "filter_config"
-        )
-        start_date, end_date = filter_config.get(
-            "filterValue", []
-        ) or filter_config.get("filter_value", [])
+        filter_config = filters[0].get("filter_config") or {}
+        start_date, end_date = filter_config.get("filter_value", [])
 
         if start_date:
             query &= Q(created_at__gte=start_date)
@@ -5967,9 +5966,7 @@ class TestEvaluationTemplateAPIView(APIView):
             elif template_type == EvalTemplateType.LLM.value:
                 eval_id = "CustomPromptEvaluator"
                 data_config = config.get("config", {})
-                data_config["organization_id"] = str(
-                    org.id
-                )
+                data_config["organization_id"] = str(org.id)
                 config["config"] = data_config
 
             elif template_type == EvalTemplateType.FUNCTION.value:

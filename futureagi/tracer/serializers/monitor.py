@@ -10,6 +10,7 @@ from tracer.models.monitor import (
 )
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.serializers.filters import filter_list_field
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
@@ -259,7 +260,7 @@ class MetricDetailSerializer(serializers.ModelSerializer):
 
 class FetchGraphSerializer(serializers.Serializer):
     interval = serializers.CharField()
-    filters = serializers.ListField(child=serializers.JSONField())
+    filters = filter_list_field()
     property = serializers.CharField()
     req_data_config = serializers.JSONField()
     project_id = serializers.CharField()

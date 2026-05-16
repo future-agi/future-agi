@@ -194,8 +194,9 @@ const buildFilterChips = (filtersApplied) => {
   if (!filtersApplied) return [];
   const chips = [];
 
-  if (filtersApplied.dateRange?.length === 2) {
-    const [start, end] = filtersApplied.dateRange;
+  const dateRange = filtersApplied.date_range || filtersApplied.dateRange;
+  if (dateRange?.length === 2) {
+    const [start, end] = dateRange;
     const fmt = (d) => {
       try {
         return new Date(d).toLocaleDateString(undefined, {
@@ -209,11 +210,16 @@ const buildFilterChips = (filtersApplied) => {
     };
     chips.push(`Date: ${fmt(start)} → ${fmt(end)}`);
   }
-  if (filtersApplied.observationType?.length) {
-    filtersApplied.observationType.forEach((t) => chips.push(`Type: ${t}`));
+  const observationTypes =
+    filtersApplied.observation_type || filtersApplied.observationType;
+  if (observationTypes?.length) {
+    observationTypes.forEach((t) => chips.push(`Type: ${t}`));
   }
-  if (filtersApplied.spanAttributesFilters?.length) {
-    filtersApplied.spanAttributesFilters.forEach((f) => {
+  const spanAttributeFilters =
+    filtersApplied.span_attributes_filters ||
+    filtersApplied.spanAttributesFilters;
+  if (spanAttributeFilters?.length) {
+    spanAttributeFilters.forEach((f) => {
       const key = f.key || f.field || f.name;
       const op = f.operator || f.op || "=";
       const val = f.value ?? "";

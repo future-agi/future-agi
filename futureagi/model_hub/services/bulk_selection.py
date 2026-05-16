@@ -62,7 +62,11 @@ from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.annotations import build_annotation_subqueries
-from tracer.utils.filters import FilterEngine, apply_created_at_filters
+from tracer.utils.filters import (
+    FilterEngine,
+    apply_created_at_filters,
+    normalize_filter_item,
+)
 from tracer.utils.helper import get_annotation_labels_for_project
 
 logger = structlog.get_logger(__name__)
@@ -80,6 +84,14 @@ class ResolveResult:
 _USER_SCOPED_COLUMN_IDS = {"my_annotations", "annotator"}
 
 
+def _filter_column_id(filter_item: dict) -> str:
+    return normalize_filter_item(filter_item)["column_id"] or ""
+
+
+def _filter_config(filter_item: dict) -> dict:
+    return normalize_filter_item(filter_item)["filter_config"]
+
+
 def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
     """Return True only when the saved filter payload includes a real time bound.
 
@@ -90,28 +102,21 @@ def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
     checks for the delta.
     """
     for filter_item in filters or []:
-        column_id = filter_item.get("column_id") or filter_item.get("columnId")
+        column_id = _filter_column_id(filter_item)
         if column_id not in {"created_at", "start_time"}:
             continue
-        config = (
-            filter_item.get("filter_config")
-            or filter_item.get("filterConfig")
-            or {}
-        )
-        filter_type = config.get("filter_type") or config.get("filterType")
+        config = _filter_config(filter_item)
+        filter_type = config.get("filter_type")
         if filter_type not in {"datetime", "date"}:
             continue
-        value = config.get("filter_value", config.get("filterValue"))
+        value = config.get("filter_value")
         if value not in (None, "", []):
             return True
     return False
 
 
 def _filter_col_type(filter_item: dict) -> str:
-    config = filter_item.get("filter_config") or filter_item.get("filterConfig") or {}
-    return config.get("col_type") or config.get("colType") or filter_item.get(
-        "col_type", filter_item.get("colType", "")
-    )
+    return _filter_config(filter_item).get("col_type") or ""
 
 
 def _needs_eval_metric_annotations(filters) -> bool:
@@ -155,8 +160,7 @@ def _annotate_eval_metrics(qs, *, project_id, organization, source_type: str):
     for config in eval_configs:
         choices = (
             config.eval_template.choices
-            if getattr(config, "eval_template", None)
-            and config.eval_template.choices
+            if getattr(config, "eval_template", None) and config.eval_template.choices
             else None
         )
         metric_qs = (
@@ -211,7 +215,9 @@ def _annotate_eval_metrics(qs, *, project_id, organization, source_type: str):
                 f"metric_{config.id}": Case(
                     When(
                         Exists(exists_qs.filter(output_float__isnull=False)),
-                        then=JSONObject(score=Subquery(metric_qs.values("float_score"))),
+                        then=JSONObject(
+                            score=Subquery(metric_qs.values("float_score"))
+                        ),
                     ),
                     When(
                         Exists(exists_qs.filter(output_bool__isnull=False)),
@@ -234,7 +240,7 @@ def _validate_user_scoped_filters(filters, user):
     if user is not None:
         return
     for f in filters or []:
-        col = f.get("column_id") or f.get("columnId")
+        col = _filter_column_id(f)
         if col in _USER_SCOPED_COLUMN_IDS:
             raise ValueError(
                 f"Filter references user-scoped column {col!r} but user is None"
@@ -330,7 +336,9 @@ def _build_trace_base_queryset(project_id, organization, workspace=None):
     return qs
 
 
-def _apply_voice_call_constraints(qs, filters: list[dict], *, remove_simulation_calls: bool = False):
+def _apply_voice_call_constraints(
+    qs, filters: list[dict], *, remove_simulation_calls: bool = False
+):
     """Narrow a Trace queryset to match ``list_voice_calls``'s result set.
 
     Simulator/voice projects render the grid via ``list_voice_calls`` which
@@ -404,18 +412,13 @@ def _apply_trace_filters(
         combined &= system_conds
 
     # 2. Separate annotation filters from eval filters (must precede #3 and #4)
-    def _col_type(f):
-        fc = f.get("filter_config", {})
-        return fc.get("col_type", f.get("col_type", ""))
-
     annotation_col_types = {"ANNOTATION"}
     annotation_column_ids = {"my_annotations", "annotator"}
     non_annotation = [
         f
         for f in filters
-        if _col_type(f) not in annotation_col_types
-        and (f.get("column_id") or f.get("columnId"))
-        not in annotation_column_ids
+        if _filter_col_type(f) not in annotation_col_types
+        and _filter_column_id(f) not in annotation_column_ids
     ]
 
     # 3. Non-system (eval) metrics, excluding annotation columns
@@ -505,25 +508,14 @@ def _resolve_voice_call_ids_clickhouse(
         annotation_label_ids=annotation_label_ids,
         remove_simulation_calls=remove_simulation_calls,
     )
-    # build() must run before build_count_query() because the former is
-    # what populates self.params with start_date / end_date.
+    # Skip the separate `uniqExact(trace_id)` count query — on large filter
+    # results it was the dominant /preview timeout. ``build()`` already adds
+    # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
+    # us "≥ cap" without a second scan.
     ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(
-        ids_query, ids_params, timeout_ms=15_000
-    )
-    ids = [
-        str(r.get("trace_id", ""))
-        for r in ids_result.data
-        if r.get("trace_id")
-    ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
+    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
+    raw_truncated = len(ids) > cap
 
     # VoiceCallListQueryBuilder's SQL simulation filter is a no-op (the
     # phone numbers live in the heavy span_attributes_raw blob). The list
@@ -531,14 +523,17 @@ def _resolve_voice_call_ids_clickhouse(
     # toggle is on.
     if remove_simulation_calls and ids:
         ids = _filter_out_simulator_calls_ch(ids, project_id, analytics)
-        total_matching = len(ids) + len(exclude_ids or set())
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -576,7 +571,10 @@ def _filter_out_simulator_calls_ch(trace_ids, project_id, analytics):
       AND observation_type = 'conversation'
       AND trace_id IN %(trace_ids)s
     """
-    params = {"project_id": str(project_id), "trace_ids": tuple(str(t) for t in trace_ids)}
+    params = {
+        "project_id": str(project_id),
+        "trace_ids": tuple(str(t) for t in trace_ids),
+    }
     result = analytics.execute_ch_query(query, params, timeout_ms=15_000)
     sim_trace_ids = set()
     for row in result.data:
@@ -585,7 +583,9 @@ def _filter_out_simulator_calls_ch(trace_ids, project_id, analytics):
             attrs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
         except (_json.JSONDecodeError, TypeError):
             attrs = {}
-        if VoiceCallListQueryBuilder.is_simulator_call(attrs, row.get("provider") or ""):
+        if VoiceCallListQueryBuilder.is_simulator_call(
+            attrs, row.get("provider") or ""
+        ):
             sim_trace_ids.add(str(row.get("trace_id", "")))
     return [t for t in trace_ids if t not in sim_trace_ids]
 
@@ -632,32 +632,24 @@ def _resolve_trace_ids_clickhouse(
         # Phase 1 light columns are all we need — we only want trace_id.
         columns=["trace_id"],
     )
-    # build() must run before build_count_query() because it populates
-    # self.params with start_date / end_date that the count query reads.
+    # Skip the separate count query — the builder already does ``LIMIT cap + 1``
+    # (trace_list.py:134) so the cap+1 sentinel tells us "≥ cap" without a
+    # second uniqExact scan that was the dominant /preview timeout source.
     ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(
-        ids_query, ids_params, timeout_ms=15_000
-    )
-    ids = [
-        str(r.get("trace_id", ""))
-        for r in ids_result.data
-        if r.get("trace_id")
-    ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
+    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
+    raw_truncated = len(ids) > cap
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -800,10 +792,14 @@ def resolve_filtered_trace_ids(
         )
     ).order_by("-start_time", "-id")
 
-    # One COUNT + one SELECT for the capped IDs. Two queries total.
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # Capped fetch — one LIMIT cap+1 SELECT instead of COUNT(*) + SELECT.
+    # The exact total_matching on huge results was the primary /preview timeout
+    # source (full-table scan on 10M+ row trace tables); the caller only needs
+    # "≥ cap" to decide truncation.
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace",
@@ -879,9 +875,8 @@ def _apply_span_filters(base_qs, filters: list[dict], *, user, organization):
     non_annotation = [
         f
         for f in filters
-        if f.get("col_type") not in annotation_col_types
-        and (f.get("column_id") or f.get("columnId"))
-        not in annotation_column_ids
+        if _filter_col_type(f) not in annotation_col_types
+        and _filter_column_id(f) not in annotation_column_ids
     ]
 
     # 3. Non-system (eval) metrics
@@ -986,9 +981,7 @@ def resolve_filtered_span_ids(
             organization,
             span_filter_kwargs={"observation_span_id": OuterRef("id")},
         )
-    qs = _apply_span_filters(
-        base, filters or [], user=user, organization=organization
-    )
+    qs = _apply_span_filters(base, filters or [], user=user, organization=organization)
 
     if exclude_ids:
         qs = qs.exclude(id__in=list(exclude_ids))
@@ -996,9 +989,11 @@ def resolve_filtered_span_ids(
     # ObservationSpan has real start_time / id columns — order directly.
     qs = qs.order_by("-start_time", "-id")
 
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_span",
@@ -1072,23 +1067,25 @@ def _apply_session_filters(base_sessions_qs, filters, *, project_id, organizatio
     # Pre-aggregation: user_id system filter applied before grouping.
     needs_first_last_cols = {"first_message", "last_message"}
     needs_first_last = any(
-        f.get("column_id") in needs_first_last_cols for f in remaining_filters
+        _filter_column_id(f) in needs_first_last_cols for f in remaining_filters
     )
 
     pre_agg_q = FilterEngine.get_filter_conditions_for_system_metrics(
-        [f for f in remaining_filters if f.get("column_id") in _SESSION_PRE_AGG_FIELDS],
+        [
+            f
+            for f in remaining_filters
+            if _filter_column_id(f) in _SESSION_PRE_AGG_FIELDS
+        ],
         field_map=_SESSION_PRE_AGG_FIELDS,
     )
     remaining_filters = [
         f
         for f in remaining_filters
-        if f.get("column_id") not in _SESSION_PRE_AGG_FIELDS
+        if _filter_column_id(f) not in _SESSION_PRE_AGG_FIELDS
     ]
 
     aggregated = (
-        ObservationSpan.objects.filter(
-            pre_agg_q, trace__session_id__in=session_ids
-        )
+        ObservationSpan.objects.filter(pre_agg_q, trace__session_id__in=session_ids)
         .values("trace__session_id")
         .annotate(
             start_time=Min("start_time"),
@@ -1145,7 +1142,7 @@ def _apply_session_filters(base_sessions_qs, filters, *, project_id, organizatio
     system_filters = []
     score_filters = []
     for f in remaining_filters:
-        col_id = f.get("column_id", "")
+        col_id = _filter_column_id(f)
         if col_id in score_label_ids:
             score_filters.append(f)
         else:
@@ -1160,9 +1157,9 @@ def _apply_session_filters(base_sessions_qs, filters, *, project_id, organizatio
 
     # Score-based filters mirror list_sessions lines 1097-1139.
     for sf in score_filters:
-        col_id = sf.get("column_id")
-        fc = sf.get("filter_config", {})
-        filter_op = fc.get("filter_op", "equals")
+        col_id = _filter_column_id(sf)
+        fc = _filter_config(sf)
+        filter_op = fc.get("filter_op") or "equals"
         filter_val = fc.get("filter_value")
         base_score_q = Score.objects.filter(
             trace_session_id=OuterRef("trace__session_id"),
@@ -1176,14 +1173,14 @@ def _apply_session_filters(base_sessions_qs, filters, *, project_id, organizatio
         else:
             if isinstance(filter_val, str) and "," in filter_val:
                 filter_val = [v.strip() for v in filter_val.split(",") if v.strip()]
-            if filter_op in ("equals", "is"):
+            if filter_op == "equals":
                 score_q = (
                     base_score_q.filter(value__in=filter_val)
                     if isinstance(filter_val, list)
                     else base_score_q.filter(value=filter_val)
                 )
                 aggregated = aggregated.filter(Exists(score_q))
-            elif filter_op in ("not_equals", "is_not"):
+            elif filter_op == "not_equals":
                 score_q = (
                     base_score_q.filter(value__in=filter_val)
                     if isinstance(filter_val, list)
@@ -1232,12 +1229,14 @@ def resolve_filtered_session_ids(
 
     aggregated = aggregated.order_by("-start_time", "-trace__session_id")
 
-    total_matching = aggregated.count()
-    ids = [
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = [
         row["trace__session_id"]
-        for row in aggregated.values("trace__session_id")[:cap]
+        for row in aggregated.values("trace__session_id")[: cap + 1]
     ]
-    truncated = total_matching > cap
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_session",
@@ -1284,14 +1283,10 @@ def _apply_call_execution_filters(qs, filters):
     """
     unsupported: list[str] = []
     for f in filters:
-        col = f.get("column_id") or f.get("columnId")
-        cfg = f.get("filter_config") or f.get("filterConfig") or {}
-        op = cfg.get("filter_op") or cfg.get("filterOp")
-        value = (
-            cfg.get("filter_value")
-            if "filter_value" in cfg
-            else cfg.get("filterValue")
-        )
+        col = _filter_column_id(f)
+        cfg = _filter_config(f)
+        op = cfg.get("filter_op")
+        value = cfg.get("filter_value")
         if is_persona_filter_column(col):
             try:
                 qs = apply_persona_filter(
@@ -1299,7 +1294,7 @@ def _apply_call_execution_filters(qs, filters):
                     col,
                     op,
                     value,
-                    cfg.get("filter_type") or cfg.get("filterType"),
+                    cfg.get("filter_type"),
                 )
             except UnsupportedPersonaFilter:
                 unsupported.append(col or "<unknown>")
@@ -1319,13 +1314,13 @@ def _apply_call_execution_filters(qs, filters):
             continue
 
         try:
-            if op in ("equals", "eq"):
+            if op == "equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.filter(**{orm_field: values[0]})
                 else:
                     qs = qs.filter(**{f"{orm_field}__in": values})
-            elif op in ("not_equals", "ne"):
+            elif op == "not_equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.exclude(**{orm_field: values[0]})
@@ -1337,24 +1332,28 @@ def _apply_call_execution_filters(qs, filters):
             elif op == "not_in":
                 values = value if isinstance(value, list) else [value]
                 qs = qs.exclude(**{f"{orm_field}__in": values})
-            elif op in ("contains", "icontains"):
+            elif op == "contains":
                 qs = qs.filter(**{f"{orm_field}__icontains": value})
-            elif op in ("not_contains",):
+            elif op == "not_contains":
                 qs = qs.exclude(**{f"{orm_field}__icontains": value})
-            elif op in ("more_than", "gt"):
+            elif op == "starts_with":
+                qs = qs.filter(**{f"{orm_field}__istartswith": value})
+            elif op == "ends_with":
+                qs = qs.filter(**{f"{orm_field}__iendswith": value})
+            elif op == "greater_than":
                 qs = qs.filter(**{f"{orm_field}__gt": value})
-            elif op in ("less_than", "lt"):
+            elif op == "less_than":
                 qs = qs.filter(**{f"{orm_field}__lt": value})
-            elif op in ("more_than_or_equal", "gte"):
+            elif op == "greater_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__gte": value})
-            elif op in ("less_than_or_equal", "lte"):
+            elif op == "less_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__lte": value})
             elif op == "between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.filter(**{f"{orm_field}__range": (value[0], value[1])})
                 else:
                     unsupported.append(col)
-            elif op in ("not_between", "not_in_between"):
+            elif op == "not_between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.exclude(**{f"{orm_field}__range": (value[0], value[1])})
                 else:
@@ -1417,9 +1416,11 @@ def resolve_filtered_call_execution_ids(
 
     qs = qs.order_by("-created_at", "-id")
 
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_call_execution",

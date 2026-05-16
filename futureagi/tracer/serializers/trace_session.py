@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.filters import filter_list_field
 from tracer.utils.helper import validate_filters_helper, validate_sort_params_helper
 
 
@@ -16,9 +17,7 @@ class TraceSessionSerializer(serializers.ModelSerializer):
 
 
 class TraceSessionExportSerializer(serializers.Serializer):
-    filters = serializers.ListField(
-        required=False, default=[], child=serializers.JSONField()
-    )
+    filters = filter_list_field(required=False, default=[])
     sort_params = serializers.ListField(
         required=False, default=[], child=serializers.JSONField()
     )

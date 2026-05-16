@@ -37,8 +37,8 @@ def _make_annotation_filter(
     """Build a single annotation filter item."""
     return {
         "column_id": column_id,
-        "col_type": col_type,
         "filter_config": {
+            "col_type": col_type,
             "filter_type": filter_type,
             "filter_op": filter_op,
             "filter_value": filter_value,
@@ -1167,8 +1167,9 @@ class TestAnnotationFilterSeparation:
         non_annotation_filters = [
             f
             for f in filters
-            if f.get("col_type") not in annotation_col_types
-            and (f.get("column_id") or f.get("columnId")) not in annotation_column_ids
+            if (f.get("filter_config") or {}).get("col_type")
+            not in annotation_col_types
+            and f.get("column_id") not in annotation_column_ids
         ]
         return non_annotation_filters
 
@@ -1183,8 +1184,8 @@ class TestAnnotationFilterSeparation:
         filters = [
             {
                 "column_id": str(uuid.uuid4()),
-                "col_type": "EVAL_METRIC",
                 "filter_config": {
+                    "col_type": "EVAL_METRIC",
                     "filter_type": "number",
                     "filter_op": "greater_than",
                     "filter_value": 0.8,
@@ -1231,8 +1232,8 @@ class TestAnnotationFilterSeparation:
             _make_annotation_filter(ann_uid, "number", "greater_than", 3.0),
             {
                 "column_id": eval_uid,
-                "col_type": "EVAL_METRIC",
                 "filter_config": {
+                    "col_type": "EVAL_METRIC",
                     "filter_type": "number",
                     "filter_op": "equals",
                     "filter_value": 0.95,
@@ -1256,8 +1257,8 @@ class TestAnnotationFilterSeparation:
             },
             {
                 "column_id": "created_at",
-                "col_type": "SYSTEM",
                 "filter_config": {
+                    "col_type": "SYSTEM",
                     "filter_type": "datetime",
                     "filter_op": "between",
                     "filter_value": ["2025-01-01", "2026-01-01"],
@@ -1270,9 +1271,7 @@ class TestAnnotationFilterSeparation:
         assert eval_uid in ids
         assert "created_at" in ids
 
-    def test_columnId_key_also_checked(self):
-        """The separation uses (f.get('column_id') or f.get('columnId'))
-        so camelCase key should also be excluded."""
+    def test_camel_case_key_is_not_part_of_filter_contract(self):
         filters = [
             {
                 "columnId": "my_annotations",
@@ -1284,7 +1283,7 @@ class TestAnnotationFilterSeparation:
             },
         ]
         result = self._separate_filters(filters)
-        assert result == []
+        assert result == filters
 
     def test_empty_filters(self):
         assert self._separate_filters([]) == []

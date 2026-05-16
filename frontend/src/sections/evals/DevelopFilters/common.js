@@ -19,7 +19,7 @@ export const MapColumnTypeToFilterType = {
 };
 // Filter looks like this a valid filter should have columnId string length > 0 &
 // filterConfig.filterValue, filterConfig.filterOp, filterConfig.filterType should not be undefined
-// if filterOp is between or no_between then filterConfig.filterValue should be an array of 2 elements
+// if filterOp is between or not_between then filterConfig.filterValue should be an array of 2 elements
 export const validateFilter = (filter) => {
   return (
     filter.columnId.length > 0 &&
@@ -27,7 +27,7 @@ export const validateFilter = (filter) => {
     filter.filterConfig.filterOp !== "" &&
     filter.filterConfig.filterType !== "" &&
     (filter.filterConfig.filterOp === "between" ||
-    filter.filterConfig.filterOp === "not_in_between"
+    filter.filterConfig.filterOp === "not_between"
       ? Array.isArray(filter.filterConfig.filterValue) &&
         filter.filterConfig?.filterValue?.length === 2 &&
         filter.filterConfig.filterValue[0] != null &&
@@ -69,10 +69,11 @@ const transformFilterValue = (filterValue, filterType) => {
 };
 
 export const transformFilter = (filter) => ({
-  columnId: filter.columnId,
-  filterConfig: {
-    ...filter.filterConfig,
-    filterValue: transformFilterValue(
+  column_id: filter.columnId,
+  filter_config: {
+    filter_type: filter.filterConfig.filterType,
+    filter_op: filter.filterConfig.filterOp,
+    filter_value: transformFilterValue(
       filter.filterConfig.filterValue,
       filter.filterConfig.filterType,
       filter.filterConfig.filterOp,

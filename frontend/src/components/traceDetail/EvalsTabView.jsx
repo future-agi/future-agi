@@ -94,7 +94,12 @@ export function scoreColor(score) {
 }
 
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const sc = scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";

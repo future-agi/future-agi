@@ -735,9 +735,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filter_params
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Eval metric filters (excluding annotation filters)
@@ -1715,9 +1715,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filter_params
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Eval metric filters (excluding annotation filters)

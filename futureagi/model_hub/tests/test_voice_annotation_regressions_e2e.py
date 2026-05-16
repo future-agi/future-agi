@@ -319,11 +319,17 @@ class TestVoiceAnnotationRegressionE2E:
             status=QueueItemStatus.PENDING.value,
         )
 
+        # Score writes are now per-queue. Pass queue_item_id explicitly so
+        # the bulk score lands in this test queue's review context. Without
+        # it, the score would resolve to the project's default queue and
+        # this queue's annotate-detail would stay empty (correct under the
+        # new policy but not what this regression is exercising).
         bulk_resp = auth_client.post(
             "/model-hub/scores/bulk/",
             {
                 "source_type": QueueItemSourceType.TRACE.value,
                 "source_id": str(observe_trace.id),
+                "queue_item_id": str(item.id),
                 "scores": [
                     {
                         "label_id": str(thumbs_label.id),
@@ -343,6 +349,7 @@ class TestVoiceAnnotationRegressionE2E:
             trace=observe_trace,
             label=thumbs_label,
             annotator=user,
+            queue_item=item,
             deleted=False,
         ).exists()
         assert not Score.objects.filter(
@@ -1050,7 +1057,14 @@ class TestVoiceAnnotationRegressionE2E:
         assert cells["source_identifier"] == root_conversation_span.id
         assert cells["latency_ms"] == "1000"
         assert cells["response_time_ms"] == "321.0"
-        assert cells["item_notes"] == "whole item export note"
+        # Per-queue scoping: SpanNote ("whole item export note") was never
+        # written through this queue's annotation flow, so item_notes is
+        # empty for this queue's export. Pre-revamp the span-level note
+        # leaked into every queue's export — that's the leak this work
+        # removes. To carry whole-item notes into a queue's export, the
+        # user must save them via the queue's own submit/bulk flow which
+        # writes a ``QueueItemNote``.
+        assert cells["item_notes"] == ""
         assert cells["review_status"] == "approved"
         assert cells["reviewer_email"] == reviewer.email
         assert cells["review_notes"] == "review export note"
@@ -1094,7 +1108,8 @@ class TestVoiceAnnotationRegressionE2E:
         )
         assert exported_item["evals"]["Export Quality"]["score"] == 0.82
         assert exported_item["review"]["notes"] == "review export note"
-        assert exported_item["item_notes"] == "whole item export note"
+        # Same per-queue scoping for the JSON download — see cell assertion above.
+        assert exported_item["item_notes"] == ""
 
         duplicate_resp = auth_client.post(
             f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
@@ -1443,8 +1458,13 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"]
             for annotation in download_resp.data["result"][0]["annotations"]
         }
+        # Strict per-queue scoping: this queue's export shows only the
+        # score attributed to this queue's item. The orphan ("inline"
+        # source-level score) and the other queue's score must both be
+        # excluded. Pre-revamp the orphan was leaked in, which is the
+        # behavior the queue-scoped uniqueness explicitly removes.
         assert "current queue score" in notes
-        assert "inline source score" in notes
+        assert "inline source score" not in notes
         assert "other queue score" not in notes
 
         dataset_resp = auth_client.post(
@@ -1470,8 +1490,11 @@ class TestVoiceAnnotationRegressionE2E:
             for entries in row.metadata["annotations"].values()
             for entry in entries
         }
+        # Same scoping rule applies to dataset export — only this queue's
+        # own scores. Orphans surface separately once the on_commit hook
+        # attaches them to a default queue's item.
         assert "current queue score" in exported_notes
-        assert "inline source score" in exported_notes
+        assert "inline source score" not in exported_notes
         assert "other queue score" not in exported_notes
 
         annotations_resp = auth_client.get(
@@ -1482,7 +1505,7 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"] for annotation in annotations_resp.data["result"]
         }
         assert "current queue score" in annotation_notes
-        assert "inline source score" in annotation_notes
+        assert "inline source score" not in annotation_notes
         assert "other queue score" not in annotation_notes
 
         complete_resp = auth_client.post(_complete_url(queue, item), {}, format="json")
@@ -1607,16 +1630,26 @@ class TestVoiceAnnotationRegressionE2E:
             cell.column.name: cell.value
             for cell in Cell.objects.filter(row=row).select_related("column")
         }
+        # Per-queue strict scoping: only the queue-attributed score lands
+        # in the export. The older inline (orphan) score belongs to no
+        # queue and is excluded — pre-revamp it would have filled slot 2,
+        # which is what this regression test originally guarded against.
         assert cells["slot_1_value"] == json.dumps({"value": "up"})
         assert cells["slot_1_notes"] == "queue label note"
         assert cells["slot_1_annotator"] == user.email
-        assert cells["slot_2_value"] == json.dumps({"value": "down"})
-        assert cells["slot_2_notes"] == "older inline source note"
+        # Slot 2 is empty because nothing else was scored *in this queue*.
+        assert cells.get("slot_2_value") in (None, "")
+        assert cells.get("slot_2_notes") in (None, "")
         metrics = json.loads(cells["annotation_metrics"])[thumbs_label.name]
-        assert [entry["notes"] for entry in metrics] == [
-            "queue label note",
-            "older inline source note",
-        ]
+        # ``metrics`` may serialize as either a list of entries or a single
+        # entry depending on count. Either way, the queue label note must
+        # appear and the inline note must not.
+        if isinstance(metrics, list):
+            notes = [entry.get("notes") for entry in metrics]
+        else:
+            notes = [metrics.get("notes")]
+        assert "queue label note" in notes
+        assert "older inline source note" not in notes
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "queue label note"
         )

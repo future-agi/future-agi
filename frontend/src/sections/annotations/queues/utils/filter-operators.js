@@ -1,5 +1,4 @@
-// Keep the annotation queue add-items dialog on the same canonical filter
-// contract as Observe. Legacy panel names are accepted only at the boundary.
+// Keep annotation queue filters on the same canonical API contract as Observe.
 
 export const PANEL_OP_TO_API = {
   is: "equals",
@@ -18,8 +17,6 @@ export const PANEL_OP_TO_API = {
   less_than_or_equal: "less_than_or_equal",
   between: "between",
   not_between: "not_between",
-  not_in_between: "not_between",
-  inBetween: "between",
   is_empty: "is_null",
   is_not_empty: "is_not_null",
   is_null: "is_null",
@@ -29,15 +26,6 @@ export const PANEL_OP_TO_API = {
   on: "equals",
   in: "in",
   not_in: "not_in",
-};
-
-const API_OP_ALIASES = {
-  is: "equals",
-  is_not: "not_equals",
-  equal_to: "equals",
-  not_equal_to: "not_equals",
-  not_in_between: "not_between",
-  inBetween: "between",
 };
 
 const NUMBER_API_TO_PANEL = {
@@ -82,8 +70,7 @@ const VALUELESS_FILTER_OPS = new Set([
 ]);
 
 export function normalizeApiFilterOp(op) {
-  if (!op) return op;
-  return API_OP_ALIASES[op] || op;
+  return op;
 }
 
 export function panelOpToApi(op) {
@@ -118,11 +105,11 @@ export function panelOperatorAndValueToApi(operator, value) {
 }
 
 export function apiFilterHasValue(filter) {
-  const op = normalizeApiFilterOp(filter?.filterConfig?.filterOp);
-  if (!filter?.columnId || !op) return false;
+  const op = normalizeApiFilterOp(filter?.filter_config?.filter_op);
+  if (!filter?.column_id || !op) return false;
   if (VALUELESS_FILTER_OPS.has(op)) return true;
 
-  const value = filter?.filterConfig?.filterValue;
+  const value = filter?.filter_config?.filter_value;
   if (Array.isArray(value)) {
     return value.length > 0 && value.every((v) => v !== "" && v != null);
   }

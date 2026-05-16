@@ -115,28 +115,36 @@ const MetricsContent = () => {
       }
     }
 
-    const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-      if (!AllowedGroups.includes(group) && cols.length === 1) {
-        const c = cols[0];
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getMetricsListColumnDefs(c);
-      } else {
-        return {
-          headerName: group,
-          children: cols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-            const colDef = getMetricsListColumnDefs(c, "evaluation");
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-          headerGroupComponent: CustomTraceGroupHeaderRenderer,
-        };
-      }
-    });
+    const columnDefsResult = Object.entries(grouping).flatMap(
+      ([group, cols]) => {
+        if (group === "Annotation Metrics") {
+          return cols.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getMetricsListColumnDefs(c, "evaluation");
+          });
+        }
+        if (!AllowedGroups.includes(group) && cols.length === 1) {
+          const c = cols[0];
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getMetricsListColumnDefs(c);
+        } else {
+          return {
+            headerName: group,
+            children: cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+              const colDef = getMetricsListColumnDefs(c, "evaluation");
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }),
+            headerGroupComponent: CustomTraceGroupHeaderRenderer,
+          };
+        }
+      },
+    );
 
     return {
       columnDefs: columnDefsResult,

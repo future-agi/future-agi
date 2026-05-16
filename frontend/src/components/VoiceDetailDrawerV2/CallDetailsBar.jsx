@@ -4,6 +4,7 @@ import { Box, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { fDateTime } from "src/utils/format-time";
 import TagChip from "src/components/traceDetail/TagChip";
@@ -88,7 +89,9 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
 
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
-      axios.patch(`/tracer/trace/${traceId}/tags/`, { tags: newTags }),
+      axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
+        tags: newTags,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
@@ -266,9 +269,7 @@ const CallDetailsBar = ({ data, onAction }) => {
             actions={
               data?.trace_id
                 ? VOICE_ACTIONS
-                : VOICE_ACTIONS.filter(
-                    (a) => !TRACE_GATED_ACTION_IDS.has(a.id),
-                  )
+                : VOICE_ACTIONS.filter((a) => !TRACE_GATED_ACTION_IDS.has(a.id))
             }
           />
         </Stack>

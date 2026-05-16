@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
 from tracer.models.dashboard import Dashboard, DashboardWidget
+from tracer.serializers.filters import filter_list_field
 
 
 class DashboardWidgetSerializer(serializers.ModelSerializer):
@@ -146,9 +147,7 @@ class DashboardQuerySerializer(serializers.Serializer):
     metrics = serializers.ListField(
         child=serializers.DictField(), min_length=1, max_length=5
     )
-    filters = serializers.ListField(
-        child=serializers.DictField(), required=False, default=list
-    )
+    filters = filter_list_field(required=False, default=list)
     breakdowns = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )

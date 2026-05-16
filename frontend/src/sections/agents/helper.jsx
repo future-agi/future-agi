@@ -13,7 +13,6 @@ import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
-import headerComponentLabels from "./headerComponetLabels";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
 
 export const agentDefinitionSections = [
@@ -142,36 +141,36 @@ export const createAgentDefinitionSchema = (options) => {
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
         // if (!hasWebBridgeCreds) {
-          if (!hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (!hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
+        if (!hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (!hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
         // } else {
-          // Both are optional, but if one is provided the other is required
-          if (hasContactNumber && !hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required when contact number is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (hasCountryCode && !hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required when country code is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
+        // Both are optional, but if one is provided the other is required
+        if (hasContactNumber && !hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required when contact number is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (hasCountryCode && !hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required when country code is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
         // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
@@ -455,9 +454,8 @@ const generateAnnotationColumnsFromConfig = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotation_label_type;
@@ -466,7 +464,6 @@ const generateAnnotationColumnsFromConfig = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: `annotation_outputs.${metricId}`,
@@ -477,6 +474,7 @@ const generateAnnotationColumnsFromConfig = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -494,7 +492,8 @@ const generateAnnotationColumnsFromConfig = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -502,10 +501,14 @@ const generateAnnotationColumnsFromConfig = (
         field: `annotation_outputs.${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -528,10 +531,14 @@ const generateAnnotationColumnsFromConfig = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -551,21 +558,12 @@ const generateAnnotationColumnsFromConfig = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 // Generate AG Grid columns from evalOutputs

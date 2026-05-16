@@ -127,19 +127,57 @@ class UpdateTraceAnnotationTool(BaseTool):
                 raw_value = annotation.annotation_value_str_list
 
             if raw_value is not None:
-                score_value = _to_score_value(label.type, raw_value)
-                Score.no_workspace_objects.update_or_create(
-                    observation_span_id=annotation.observation_span_id,
-                    label_id=label.pk,
-                    annotator_id=annotation.user_id or context.user.pk,
-                    deleted=False,
-                    defaults={
-                        "source_type": "observation_span",
-                        "value": score_value,
-                        "score_source": "human",
-                        "organization": context.organization,
-                    },
+                # Resolve default queue item — same rationale as in
+                # create_trace_annotation.py: per-queue Score uniqueness
+                # demands every write be scoped by queue_item.
+                from model_hub.utils.annotation_queue_helpers import (
+                    resolve_default_queue_item_for_source,
                 )
+
+                span_obj = None
+                if annotation.observation_span_id:
+                    from tracer.models.observation_span import ObservationSpan
+
+                    span_obj = ObservationSpan.objects.filter(
+                        id=annotation.observation_span_id
+                    ).first()
+                default_item = (
+                    resolve_default_queue_item_for_source(
+                        "observation_span",
+                        span_obj,
+                        context.organization,
+                        context.user,
+                    )
+                    if span_obj
+                    else None
+                )
+                if default_item is None:
+                    # Skip the Score update — the legacy TraceAnnotation
+                    # write succeeds, but we don't accumulate an orphan
+                    # Score row that the on_commit hook can no longer
+                    # safely move under per-queue uniqueness.
+                    import structlog as _structlog
+
+                    _structlog.get_logger(__name__).warning(
+                        "score_update_skip_no_default_queue_scope",
+                        annotation_id=str(annotation.id),
+                        label_id=str(label.pk),
+                    )
+                else:
+                    score_value = _to_score_value(label.type, raw_value)
+                    Score.no_workspace_objects.update_or_create(
+                        observation_span_id=annotation.observation_span_id,
+                        label_id=label.pk,
+                        annotator_id=annotation.user_id or context.user.pk,
+                        queue_item=default_item,
+                        deleted=False,
+                        defaults={
+                            "source_type": "observation_span",
+                            "value": score_value,
+                            "score_source": "human",
+                            "organization": context.organization,
+                        },
+                    )
 
         label_name = label.name if label else "—"
 

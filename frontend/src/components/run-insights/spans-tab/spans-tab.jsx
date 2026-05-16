@@ -23,17 +23,15 @@ import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterCo
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
 import { useQuery } from "@tanstack/react-query";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -135,9 +133,10 @@ const SpanTab = React.forwardRef(
 
     useEffect(() => {
       const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-          ? f.filterConfig.filterValue.length > 0
-          : f.filterConfig.filterValue !== "",
+        f.filter_config?.filter_value &&
+        Array.isArray(f.filter_config.filter_value)
+          ? f.filter_config.filter_value.length > 0
+          : f.filter_config.filter_value !== "",
       );
       setIsFilterApplied(hasActiveFilter);
       trackEvent(Events.filterApplied);
@@ -234,7 +233,13 @@ const SpanTab = React.forwardRef(
         }
       });
       if (annotationColumns.length > 0) {
-        columnDefsResult.push(annotationColumns[0]);
+        for (const group of annotationColumns) {
+          if (group.children) {
+            columnDefsResult.push(...group.children);
+          } else {
+            columnDefsResult.push(group);
+          }
+        }
       }
       return {
         columnDefs: columnDefsResult,
@@ -260,11 +265,7 @@ const SpanTab = React.forwardRef(
 
               {
                 params: {
-                  filters: JSON.stringify(
-                    canonicalizeApiFilterColumnIds(
-                      objectCamelToSnake(debouncedValidatedFilters),
-                    ),
-                  ),
+                  filters: JSON.stringify(debouncedValidatedFilters),
                   project: projectId,
                   project_version_id: runId,
                   page_number: pageNumber,

@@ -21,11 +21,11 @@ const ChartsViewProvider = ({ children }) => {
   const filters = useMemo(
     () => [
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: convertToISO(parentDateFilter),
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: convertToISO(parentDateFilter),
         },
       },
     ],

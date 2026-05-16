@@ -52,7 +52,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # ClickHouse to scan all historical spans — triggering OOM on large
         # projects and the intermittent errors seen in TH-4422.
         has_date_filter = any(
-            (f.get("column_id") or f.get("columnId")) in ("created_at", "start_time")
+            f.get("column_id") in ("created_at", "start_time")
             for f in self.filters
         )
         if not has_date_filter:

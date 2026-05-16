@@ -121,16 +121,15 @@ export const UsersHeaderActions = () => {
     const hasValidFilters =
       debouncedValidatedFilters && debouncedValidatedFilters.length > 0;
     const hasNonDefaultFilters = filters.some((filter) => {
-      // Handle the actual filter structure with filterConfig
-      const filterConfig = filter.filterConfig || {};
-      const defaultConfig = userDefaultFilter.filterConfig || {};
+      const filterConfig = filter.filter_config || {};
+      const defaultConfig = userDefaultFilter.filter_config || {};
 
       return (
-        filter.columnId !== userDefaultFilter.columnId ||
-        filterConfig.filterOp !== defaultConfig.filterOp ||
-        filterConfig.filterValue !== defaultConfig.filterValue ||
-        filterConfig.filterType !== defaultConfig.filterType ||
-        (filterConfig.filterValue && filterConfig.filterValue.length > 0)
+        filter.column_id !== userDefaultFilter.column_id ||
+        filterConfig.filter_op !== defaultConfig.filter_op ||
+        filterConfig.filter_value !== defaultConfig.filter_value ||
+        filterConfig.filter_type !== defaultConfig.filter_type ||
+        (filterConfig.filter_value && filterConfig.filter_value.length > 0)
       );
     });
 

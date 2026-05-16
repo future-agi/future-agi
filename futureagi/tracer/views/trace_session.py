@@ -237,7 +237,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             explanation_map = {}  # config_id_str -> explanation
 
             if eval_config_ids:
-
                 eval_aggs = (
                     EvalLogger.objects.filter(
                         trace_id__in=paginated_trace_ids,
@@ -1135,13 +1134,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                                 v.strip() for v in filter_val.split(",") if v.strip()
                             ]
 
-                        if filter_op in ("equals", "is"):
+                        if filter_op == "equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
                                 score_q = base_score_q.filter(value=filter_val)
                             base_query = base_query.filter(Exists(score_q))
-                        elif filter_op in ("not_equals", "is_not"):
+                        elif filter_op == "not_equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
@@ -1383,6 +1382,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         sort_params = validated_data.get("sort_params", [])
         page_number = int(request.query_params.get("page_number", 0))
         page_size = int(request.query_params.get("page_size", 30))
+        org = getattr(request, "organization", None) or request.user.organization
         user_id_qp = request.query_params.get("user_id") or request.query_params.get(
             "userId"
         )
@@ -1396,11 +1396,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         user_id_raw: Optional[str] = user_id_qp or None
         _remaining: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col = _f.get("column_id")
+            _cfg = _f.get("filter_config") or {}
+            _col_type = _cfg.get("col_type") or "NORMAL"
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 if isinstance(_val, list):
                     _val = _val[0] if _val else None
                 if _val and not user_id_raw:
@@ -1911,6 +1911,4 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(paginated.data)
         except Exception as e:
             logger.exception(f"Error in fetching session eval logs: {str(e)}")
-            return self._gm.bad_request(
-                f"Error fetching session eval logs: {str(e)}"
-            )
+            return self._gm.bad_request(f"Error fetching session eval logs: {str(e)}")

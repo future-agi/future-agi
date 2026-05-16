@@ -60,7 +60,14 @@ const EvaluationCell = ({ value, column }) => {
   if (column?.outputType === OutputTypes.NUMERIC) {
     if (isMissing) {
       return (
-        <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+        <div
+          style={{
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            height: "100%",
+          }}
+        >
           -
         </div>
       );
@@ -72,7 +79,14 @@ const EvaluationCell = ({ value, column }) => {
   if (column?.outputType === "Pass/Fail") {
     if (isMissing) {
       return (
-        <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+        <div
+          style={{
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            height: "100%",
+          }}
+        >
           -
         </div>
       );
@@ -130,7 +144,14 @@ const EvaluationCell = ({ value, column }) => {
   // instead of "0.00%" to distinguish no-data from an actual zero score.
   if (isMissing) {
     return (
-      <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+      <div
+        style={{
+          padding: "0 12px",
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+        }}
+      >
         -
       </div>
     );
@@ -138,7 +159,14 @@ const EvaluationCell = ({ value, column }) => {
   const numericValue = parseFloat(value);
   if (isNaN(numericValue)) {
     return (
-      <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+      <div
+        style={{
+          padding: "0 12px",
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+        }}
+      >
         -
       </div>
     );

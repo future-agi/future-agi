@@ -11,6 +11,7 @@ from django.db import transaction
 from django.db.models import Case, CharField, Q, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
@@ -32,9 +33,12 @@ from model_hub.models.choices import (
 )
 
 # from ee.agenthub.feedback_agent_updated.utils import RAG
+from model_hub.models import AnnotationTask
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
+from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.develop_annotations import (
+    AnnotationSummaryResponseSerializer,
     AnnotationsLabelsSerializer,
     AnnotationsSerializer,
     UserSerializer,
@@ -44,9 +48,60 @@ from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import corpus_builder
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.ee_gating import FeatureUnavailable
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
+
+
+class AnnotationTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AnnotationTaskSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = ExtendedPageNumberPagination
+
+    def get_queryset(self):
+        queryset = (
+            AnnotationTask.objects.select_related(
+                "ai_model", "organization", "workspace"
+            )
+            .prefetch_related("assigned_users")
+            .filter(is_deleted=False)
+            .order_by("-created_at")
+        )
+
+        organization = getattr(self.request, "organization", None)
+        if not organization:
+            from accounts.utils import get_user_organization
+
+            organization = get_user_organization(self.request.user)
+        if organization:
+            queryset = queryset.filter(organization=organization)
+
+        workspace = getattr(self.request, "workspace", None)
+        if workspace:
+            if getattr(workspace, "is_default", False):
+                queryset = queryset.filter(
+                    Q(workspace=workspace)
+                    | Q(
+                        workspace__is_default=True,
+                        workspace__organization=workspace.organization,
+                    )
+                    | Q(workspace__isnull=True)
+                )
+            else:
+                queryset = queryset.filter(workspace=workspace)
+
+        predictive_journey = self.request.query_params.get("predictiveJourney")
+        if predictive_journey:
+            queryset = queryset.filter(ai_model_id=predictive_journey)
+
+        return queryset
 
 
 class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
@@ -267,6 +322,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
 
         return self._gm.success_response("Annotation label created successfully")
 
+    @swagger_auto_schema(request_body=no_body)
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
         """Restore a soft-deleted (archived) annotation label."""
@@ -341,8 +397,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
                 org = (
-                    getattr(request, "organization", None)
-                    or request.user.organization
+                    getattr(request, "organization", None) or request.user.organization
                 )
                 check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
@@ -442,8 +497,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
                 org = (
-                    getattr(request, "organization", None)
-                    or request.user.organization
+                    getattr(request, "organization", None) or request.user.organization
                 )
                 check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
@@ -1481,13 +1535,17 @@ class UserViewSet(viewsets.ModelViewSet):
                 explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
                     workspace=workspace, is_active=True
                 ).values_list("user_id", flat=True)
-                auto_access_user_ids = OrganizationMembership.no_workspace_objects.filter(
-                    organization_id=organization_id,
-                    is_active=True,
-                ).filter(
-                    Q(level__gte=Level.ADMIN)
-                    | Q(level__isnull=True, role__in=["Admin", "Owner"])
-                ).values_list("user_id", flat=True)
+                auto_access_user_ids = (
+                    OrganizationMembership.no_workspace_objects.filter(
+                        organization_id=organization_id,
+                        is_active=True,
+                    )
+                    .filter(
+                        Q(level__gte=Level.ADMIN)
+                        | Q(level__isnull=True, role__in=["Admin", "Owner"])
+                    )
+                    .values_list("user_id", flat=True)
+                )
                 user_ids = list(explicit_workspace_user_ids) + list(
                     auto_access_user_ids
                 )
@@ -1728,6 +1786,9 @@ class AnnotationSummaryView(APIView):
             return [self.nan_to_none(x) for x in obj]
         return obj
 
+    @swagger_auto_schema(
+        responses={200: AnnotationSummaryResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, dataset_id):
         try:
             organization = (

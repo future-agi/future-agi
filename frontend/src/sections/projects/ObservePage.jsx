@@ -1,4 +1,10 @@
-import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
+import React, {
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+  startTransition,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -16,10 +22,7 @@ import ObserveTabs from "./ObserveTabs";
 import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetSavedViews,
-  SAVED_VIEWS_KEY,
-} from "src/api/project/saved-views";
+import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -209,10 +212,7 @@ const ObservePage = React.memo(() => {
         } else if (isSessionsView) {
           // Sessions uses sessionFilter / sessionDateFilter URL keys.
           if (activeConfig?.filters) {
-            params.set(
-              "sessionFilter",
-              JSON.stringify(activeConfig.filters),
-            );
+            params.set("sessionFilter", JSON.stringify(activeConfig.filters));
           }
           if (activeConfig?.display?.dateFilter) {
             params.set(

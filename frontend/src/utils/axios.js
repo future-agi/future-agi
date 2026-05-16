@@ -12,6 +12,11 @@ import {
   setSession,
 } from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
+import { apiPath } from "src/api/contracts/api-surface";
+import {
+  assertContractedRequestConfig,
+  assertContractedResponse,
+} from "src/api/contracts/openapi-contract";
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
@@ -188,7 +193,7 @@ axiosInstance.interceptors.request.use((config) => {
   } catch {
     // Never break a request because of response-shape compatibility cleanup.
   }
-  return config;
+  return assertContractedRequestConfig(config);
 });
 
 axiosInstance.interceptors.response.use(
@@ -200,7 +205,7 @@ axiosInstance.interceptors.response.use(
     } catch {
       // Never break a successful response because of compatibility aliases.
     }
-    return res;
+    return assertContractedResponse(res);
   },
   async (error) => {
     const currentPath = window.location.href;
@@ -483,7 +488,10 @@ export const endpoints = {
     createProperty: "/model-hub/dataset/properties/",
     promptSummary: (id) => `/model-hub/dataset/${id}/run-prompt-stats/`,
     evalsSummary: (id) => `/model-hub/dataset/${id}/eval-stats/`,
-    annotationSummary: (id) => `/model-hub/dataset/${id}/annotation-summary/`,
+    annotationSummary: (id) =>
+      apiPath("/model-hub/dataset/{dataset_id}/annotation-summary/", {
+        dataset_id: id,
+      }),
     baseColumndata: "/model-hub/datasets/get-base-columns/",
     criticalIssue: (id) => `/model-hub/datasets/explanation-summary/${id}/`,
     criticalIssueRefresh: (id) =>
@@ -510,22 +518,27 @@ export const endpoints = {
     uniqueProperties: "/model-hub/unique-properties/",
   },
   annotation: {
-    list: "/model-hub/annotation-tasks/",
-    annotationLabelText: "/model-hub/annotations-labels/",
+    list: apiPath("/model-hub/annotation-tasks/"),
+    annotationLabelText: apiPath("/model-hub/annotations-labels/"),
     annotationsListByDataSetId: (dataSetId) =>
-      "/model-hub/annotations/?dataset=" + dataSetId,
-    previewAnnotations: "/model-hub/annotations/preview_annotations/",
-    createNewAnnotation: "/model-hub/annotations/",
-    getAnnotationById: (id) => `/model-hub/annotations/${id}/`,
-    putAnnotationById: `/model-hub/annotations/`,
-    annotateRow: (id) => `/model-hub/annotations/${id}/annotate_row/`,
+      `${apiPath("/model-hub/annotations/")}?dataset=${dataSetId}`,
+    previewAnnotations: apiPath("/model-hub/annotations/preview_annotations/"),
+    createNewAnnotation: apiPath("/model-hub/annotations/"),
+    getAnnotationById: (id) => apiPath("/model-hub/annotations/{id}/", { id }),
+    putAnnotationById: apiPath("/model-hub/annotations/"),
+    annotateRow: (id) =>
+      apiPath("/model-hub/annotations/{id}/annotate_row/", { id }),
     annotationsUser: (id) => `/model-hub/organizations/${id}/users/`,
-    deleteAnnotation: (id) => `/model-hub/annotations/${id}/`,
-    deleteAnnotations: `/model-hub/annotations/bulk_destroy/`,
+    deleteAnnotation: (id) => apiPath("/model-hub/annotations/{id}/", { id }),
+    deleteAnnotations: apiPath("/model-hub/annotations/bulk_destroy/"),
     updateAnnotation: (annotationId) =>
-      `/model-hub/annotations/${annotationId}/update_cells/`,
+      apiPath("/model-hub/annotations/{id}/update_cells/", {
+        id: annotationId,
+      }),
     resetAnnotation: (annotationId) =>
-      `/model-hub/annotations/${annotationId}/reset_annotations/`,
+      apiPath("/model-hub/annotations/{id}/reset_annotations/", {
+        id: annotationId,
+      }),
   },
   knowledge: {
     knowledgeBase: "/model-hub/knowledge-base/",
@@ -819,7 +832,7 @@ export const endpoints = {
       runEval: `/model-hub/run-eval`,
       getEvalConfigs: `/model-hub/get-eval-config`,
       getEvalNames: `/model-hub/get-eval-template-names`,
-      aiFilter: `/model-hub/ai-filter/`,
+      aiFilter: apiPath("/model-hub/ai-filter/"),
       aiEvalWriter: `/model-hub/ai-eval-writer/`,
       summaryTemplates: `/model-hub/eval-summary-templates/`,
       summaryTemplate: (id) => `/model-hub/eval-summary-templates/${id}/`,
@@ -1017,66 +1030,77 @@ export const endpoints = {
     downloadInvoice: "/usage/download-invoice/",
   },
   project: {
-    projectExperimentList: "/tracer/project/",
-    projectObserveList: "/tracer/project/list_projects/",
-    updateProject: `/tracer/project/update_project_name/`,
-    projectSessionList: () => "/tracer/trace-session/list_sessions/",
-    projectSessionListExport:
+    projectExperimentList: apiPath("/tracer/project/"),
+    projectObserveList: apiPath("/tracer/project/list_projects/"),
+    updateProject: apiPath("/tracer/project/update_project_name/"),
+    projectSessionList: () => apiPath("/tracer/trace-session/list_sessions/"),
+    projectSessionListExport: apiPath(
       "/tracer/trace-session/get_trace_session_export_data/",
+    ),
     updateSessionListColumnVisibility: () =>
-      "/tracer/project/update_project_session_config/",
-    traceSession: "/tracer/trace-session/",
-    projectExperimentDetail: (projectId) => `/tracer/project/${projectId}/`,
-    deleteObservePrototype: "/tracer/project/",
-    updateProjectName: () => `/tracer/project/update_project_name/`,
+      apiPath("/tracer/project/update_project_session_config/"),
+    traceSession: apiPath("/tracer/trace-session/"),
+    projectExperimentDetail: (projectId) =>
+      apiPath("/tracer/project/{id}/", { id: projectId }),
+    deleteObservePrototype: apiPath("/tracer/project/"),
+    updateProjectName: () => apiPath("/tracer/project/update_project_name/"),
     projectExperimentRun: () => `/tracer/project-version/list_runs/`,
     updateProjectColumnVisibility: () =>
-      `/tracer/project/update_project_config/`,
+      apiPath("/tracer/project/update_project_config/"),
     updateProjectVersionColumnVisibility: () =>
       `/tracer/project-version/update_project_version_config/`,
     chooseWinner: () => `/tracer/project-version/project_version_winner/`,
     deleteRuns: () => `/tracer/project-version/delete_runs/`,
     exportRuns: () => `/tracer/project-version/get_export_data/`,
     runListSearch: () => `/tracer/project-version/get_project_version_ids/`,
-    compareTraces: "/tracer/trace/compare_traces/",
-    getTrace: (traceId) => `/tracer/trace/${traceId}/`,
-    getTraceList: () => `/tracer/trace/list_traces/`,
-    getSpanList: () => `/tracer/observation-span/list_spans/`,
-    getProjectById: (id) => `/tracer/project/${id}/`,
+    compareTraces: apiPath("/tracer/trace/compare_traces/"),
+    getTrace: (traceId) => apiPath("/tracer/trace/{id}/", { id: traceId }),
+    getTraceList: () => apiPath("/tracer/trace/list_traces/"),
+    getSpanList: () => apiPath("/tracer/observation-span/list_spans/"),
+    getProjectById: (id) => apiPath("/tracer/project/{id}/", { id }),
     getProjectVersion: (runId) => `/tracer/project-version/${runId}/`,
     getProjectVersionInsight: () => `/tracer/project-version/get_run_insights/`,
-    createLabel: () => `/model-hub/annotations-labels/`,
-    updateLabel: (id) => `/model-hub/annotations-labels/${id}/`,
-    deleteLabel: () => `/tracer/observation-span/delete_annotation_label/`,
-    getAnnotationLabels: () => `/model-hub/annotations-labels/`,
-    saveAnnotationLabel: () => `/tracer/project-version/add_annotations/`,
-    getTraceIdByIndex: () => `/tracer/trace/get_trace_id_by_index/`,
-    addAnnotationValues: () => `/tracer/observation-span/add_annotations/`,
+    createLabel: () => apiPath("/model-hub/annotations-labels/"),
+    updateLabel: (id) => apiPath("/model-hub/annotations-labels/{id}/", { id }),
+    deleteLabel: () =>
+      apiPath("/tracer/observation-span/delete_annotation_label/"),
+    getAnnotationLabels: () => apiPath("/model-hub/annotations-labels/"),
+    saveAnnotationLabel: () =>
+      apiPath("/tracer/project-version/add_annotations/"),
+    getTraceIdByIndex: () => apiPath("/tracer/trace/get_trace_id_by_index/"),
+    addAnnotationValues: () =>
+      apiPath("/tracer/observation-span/add_annotations/"),
     getTraceIdByIndexObserve: (observeId) =>
-      `/tracer/trace/get_trace_id_by_index_observe/?project_id=${observeId}`,
+      `${apiPath("/tracer/trace/get_trace_id_by_index_observe/")}?project_id=${observeId}`,
     getTraceIdByIndexSpansAsBase: () =>
-      `/tracer/observation-span/get_trace_id_by_index_spans_as_base/`,
+      apiPath("/tracer/observation-span/get_trace_id_by_index_spans_as_base/"),
     getTraceIdByIndexSpansAsObserve: (observeId) =>
-      `/tracer/observation-span/get_trace_id_by_index_spans_as_observe/?project_id=${observeId}`,
+      `${apiPath("/tracer/observation-span/get_trace_id_by_index_spans_as_observe/")}?project_id=${observeId}`,
     addAnnotationValuesForSpan: () =>
-      `/tracer/observation-span/add_annotations/`,
-    getObservationSpan: (id) => `/tracer/observation-span/${id}/`,
+      apiPath("/tracer/observation-span/add_annotations/"),
+    getObservationSpan: (id) =>
+      apiPath("/tracer/observation-span/{id}/", { id }),
     getObservationSpanLoading: (id) =>
-      `/tracer/observation-span/retrieve_loading/?observation_span_id=${id}`,
-    getTracesForObserveProject: () => `/tracer/trace/list_traces_of_session/`,
-    getAgentGraph: () => `/tracer/trace/agent_graph/`,
-    getTraceForObserveExport: `/tracer/trace/get_trace_export_data/`,
+      `${apiPath("/tracer/observation-span/retrieve_loading/")}?observation_span_id=${id}`,
+    getTracesForObserveProject: () =>
+      apiPath("/tracer/trace/list_traces_of_session/"),
+    getAgentGraph: () => apiPath("/tracer/trace/agent_graph/"),
+    getTraceForObserveExport: apiPath("/tracer/trace/get_trace_export_data/"),
     getSpansForObserveProject: () =>
-      `/tracer/observation-span/list_spans_observe/`,
-    getSpansForObserveExport: `/tracer/observation-span/get_spans_export_data/`,
-    getTraceProperties: `/tracer/trace/get_properties/`,
-    getTraceEvals: () => `/tracer/trace/get_eval_names/`,
+      apiPath("/tracer/observation-span/list_spans_observe/"),
+    getSpansForObserveExport: apiPath(
+      "/tracer/observation-span/get_spans_export_data/",
+    ),
+    getTraceProperties: apiPath("/tracer/trace/get_properties/"),
+    getTraceEvals: () => apiPath("/tracer/trace/get_eval_names/"),
     getTraceErrorAnalysis: (id) => `/tracer/trace-error-analysis/${id}/`,
-    getTraceGraphData: () => `/tracer/trace/get_graph_methods/`,
-    getSessionGraphData: () => `/tracer/trace-session/get_session_graph_data/`,
+    getTraceGraphData: () => apiPath("/tracer/trace/get_graph_methods/"),
+    getSessionGraphData: () =>
+      apiPath("/tracer/trace-session/get_session_graph_data/"),
     getSessionFilterValues: () =>
-      `/tracer/trace-session/get_session_filter_values/`,
-    getSpanGraphData: () => `/tracer/observation-span/get_graph_methods/`,
+      apiPath("/tracer/trace-session/get_session_filter_values/"),
+    getSpanGraphData: () =>
+      apiPath("/tracer/observation-span/get_graph_methods/"),
     getEvalTaskList: () => `/tracer/eval-task/list_eval_tasks/`,
     getEvalTasksWithProjectName: () =>
       `/tracer/eval-task/list_eval_tasks_with_project_name/`,
@@ -1084,8 +1108,8 @@ export const endpoints = {
     updateEvalTask: (id) => `/tracer/eval-task/${id}/`,
     listEvalsWithProject: () =>
       `/tracer/eval-task/list_eval_tasks_with_project_name/`,
-    listProjects: () => `/tracer/project/list_project_ids/`,
-    showCharts: () => `/tracer/project/get_graph_data/`,
+    listProjects: () => apiPath("/tracer/project/list_project_ids/"),
+    showCharts: () => apiPath("/tracer/project/get_graph_data/"),
     getMonitorList: () => `/tracer/user-alerts/list_monitors/`,
     getMonitorLogs: (id) => `/tracer/user-alerts/${id}/fetch_logs/`,
     getMonitorMetricList: () => `/tracer/user-alerts/get_metric_details/`,
@@ -1093,11 +1117,13 @@ export const endpoints = {
     createMonitor: `/tracer/user-alerts/`,
     getMonitorGraph: () => `/tracer/user-alerts/create_graph/`,
     getEvalAttributeList: () =>
-      `/tracer/observation-span/get_eval_attributes_list/`,
-    submitFeedback: `/tracer/observation-span/submit_feedback/`,
-    applySubmitFeedback: `/tracer/observation-span/submit_feedback_action_type/`,
+      apiPath("/tracer/observation-span/get_eval_attributes_list/"),
+    submitFeedback: apiPath("/tracer/observation-span/submit_feedback/"),
+    applySubmitFeedback: apiPath(
+      "/tracer/observation-span/submit_feedback_action_type/",
+    ),
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
-      `/tracer/observation-span/get_evaluation_details?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
+      `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => `/tracer/eval-task/`,
     getEvalTaskDetails: (id) =>
       `/tracer/eval-task/get_eval_details/?eval_id=${id}`,
@@ -1105,7 +1131,7 @@ export const endpoints = {
     getEvalTaskLogs: () => `/tracer/eval-task/get_eval_task_logs/`,
     getEvalTaskUsage: () => `/tracer/eval-task/get_usage/`,
     getSessionEvalLogs: (sessionId) =>
-      `/tracer/trace-session/${sessionId}/eval_logs/`,
+      apiPath("/tracer/trace-session/{id}/eval_logs/", { id: sessionId }),
     createEvalTaskConfig: () => `/tracer/custom-eval-config/`,
     updateEvalTaskConfig: (id) => `/tracer/custom-eval-config/${id}/`,
     getEvalTaskConfig: () =>
@@ -1115,27 +1141,29 @@ export const endpoints = {
     resumeEvalTask: (id) =>
       `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
     getAnnotationsForSpanId: () =>
-      `/tracer/trace-annotation/get_annotation_values/`,
-    getObservationSpanField: `/tracer/observation-span/get_observation_span_fields/`,
+      apiPath("/tracer/trace-annotation/get_annotation_values/"),
+    getObservationSpanField: apiPath(
+      "/tracer/observation-span/get_observation_span_fields/",
+    ),
     addExistingDataset: `/tracer/dataset/add_to_existing_dataset/`,
     addNewDataset: `/tracer/dataset/add_to_new_dataset/`,
     reRunTracerEvalutation: `/tracer/custom-eval-config/run_evaluation/`,
-    getCodeBlockTracer: `/tracer/project/project_sdk_code/`,
+    getCodeBlockTracer: apiPath("/tracer/project/project_sdk_code/"),
     getEvalGraph: `/tracer/charts/fetch_graph/`,
-    getSystemMetricList: "/tracer/project/fetch_system_metrics/",
+    getSystemMetricList: apiPath("/tracer/project/fetch_system_metrics/"),
     muteAlerts: "/tracer/user-alerts/bulk-mute/",
     resolveAlerts: "/tracer/user-alert-logs/resolve/",
     getAlertDetails: (alertId) => `/tracer/user-alerts/${alertId}/details/`,
     getAlertGraph: (alertId) => `/tracer/user-alerts/${alertId}/graph/`,
     getAlertGraphPreview: `/tracer/user-alerts/preview-graph/`,
-    getUserExampleCode: () => `/tracer/users/get_code_example/`,
-    getUsersList: () => "/tracer/users/",
-    getUserGraphData: () => `/tracer/project/get_user_graph_data/`,
+    getUserExampleCode: () => apiPath("/tracer/users/get_code_example/"),
+    getUsersList: () => apiPath("/tracer/users/"),
+    getUserGraphData: () => apiPath("/tracer/project/get_user_graph_data/"),
     getUsersAggregateGraphData: () =>
-      `/tracer/project/get_users_aggregate_graph_data/`,
-    getUserMetrics: () => "/tracer/project/get_user_metrics/",
-    getCallLogs: `/tracer/trace/list_voice_calls/`,
-    getVoiceCallDetail: `/tracer/trace/voice_call_detail/`,
+      apiPath("/tracer/project/get_users_aggregate_graph_data/"),
+    getUserMetrics: () => apiPath("/tracer/project/get_user_metrics/"),
+    getCallLogs: apiPath("/tracer/trace/list_voice_calls/"),
+    getVoiceCallDetail: apiPath("/tracer/trace/voice_call_detail/"),
 
     // replay sessions
     prefetchAgentData: `/tracer/replay-session/prefetch-agent-data/`,
@@ -1145,9 +1173,9 @@ export const endpoints = {
       `/tracer/replay-session/${id}/generate-scenario/`,
 
     // Span Attribute Discovery (ClickHouse)
-    spanAttributeKeys: () => `/api/traces/span-attribute-keys/`,
-    spanAttributeValues: () => `/api/traces/span-attribute-values/`,
-    spanAttributeDetail: () => `/api/traces/span-attribute-detail/`,
+    spanAttributeKeys: () => apiPath("/api/traces/span-attribute-keys/"),
+    spanAttributeValues: () => apiPath("/api/traces/span-attribute-values/"),
+    spanAttributeDetail: () => apiPath("/api/traces/span-attribute-detail/"),
     clickhouseHealth: `/api/health/clickhouse/`,
   },
   row: {
@@ -1274,26 +1302,42 @@ export const endpoints = {
     switch: "/accounts/workspace/switch/",
   },
   dashboard: {
-    list: "/tracer/dashboard/",
-    create: "/tracer/dashboard/",
-    detail: (id) => `/tracer/dashboard/${id}/`,
-    update: (id) => `/tracer/dashboard/${id}/`,
-    delete: (id) => `/tracer/dashboard/${id}/`,
-    query: "/tracer/dashboard/query/",
-    metrics: "/tracer/dashboard/metrics/",
-    filterValues: "/tracer/dashboard/filter_values/",
-    simulationAgents: "/tracer/dashboard/simulation-agents/",
-    widgets: (dashboardId) => `/tracer/dashboard/${dashboardId}/widgets/`,
+    list: apiPath("/tracer/dashboard/"),
+    create: apiPath("/tracer/dashboard/"),
+    detail: (id) => apiPath("/tracer/dashboard/{id}/", { id }),
+    update: (id) => apiPath("/tracer/dashboard/{id}/", { id }),
+    delete: (id) => apiPath("/tracer/dashboard/{id}/", { id }),
+    query: apiPath("/tracer/dashboard/query/"),
+    metrics: apiPath("/tracer/dashboard/metrics/"),
+    filterValues: apiPath("/tracer/dashboard/filter_values/"),
+    simulationAgents: apiPath("/tracer/dashboard/simulation-agents/"),
+    widgets: (dashboardId) =>
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/", {
+        dashboard_pk: dashboardId,
+      }),
     widgetDetail: (dashboardId, widgetId) =>
-      `/tracer/dashboard/${dashboardId}/widgets/${widgetId}/`,
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/{id}/", {
+        dashboard_pk: dashboardId,
+        id: widgetId,
+      }),
     widgetQuery: (dashboardId, widgetId) =>
-      `/tracer/dashboard/${dashboardId}/widgets/${widgetId}/query/`,
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/", {
+        dashboard_pk: dashboardId,
+        id: widgetId,
+      }),
     widgetPreview: (dashboardId) =>
-      `/tracer/dashboard/${dashboardId}/widgets/preview/`,
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/preview/", {
+        dashboard_pk: dashboardId,
+      }),
     widgetReorder: (dashboardId) =>
-      `/tracer/dashboard/${dashboardId}/widgets/reorder/`,
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/reorder/", {
+        dashboard_pk: dashboardId,
+      }),
     widgetDuplicate: (dashboardId, widgetId) =>
-      `/tracer/dashboard/${dashboardId}/widgets/${widgetId}/duplicate/`,
+      apiPath("/tracer/dashboard/{dashboard_pk}/widgets/{id}/duplicate/", {
+        dashboard_pk: dashboardId,
+        id: widgetId,
+      }),
   },
   savedViews: {
     list: "/tracer/saved-views/",

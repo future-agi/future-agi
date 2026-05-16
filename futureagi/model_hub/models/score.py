@@ -144,38 +144,49 @@ class Score(BaseModel):
             models.Index(fields=["queue_item"]),
         ]
         constraints = [
-            # One score per (source, label, annotator)
+            # One score per (source, label, annotator, queue_item). Including
+            # queue_item lets the same annotator score the same label on the
+            # same source independently per queue — required because a trace
+            # can belong to multiple annotation queues with overlapping labels
+            # and each queue is its own review context.
             models.UniqueConstraint(
-                fields=["trace", "label", "annotator"],
+                fields=["trace", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, trace__isnull=False),
                 name="unique_score_trace_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["observation_span", "label", "annotator"],
+                fields=["observation_span", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, observation_span__isnull=False),
                 name="unique_score_span_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["trace_session", "label", "annotator"],
+                fields=["trace_session", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, trace_session__isnull=False),
                 name="unique_score_session_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["call_execution", "label", "annotator"],
+                fields=["call_execution", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, call_execution__isnull=False),
                 name="unique_score_call_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["prototype_run", "label", "annotator"],
+                fields=["prototype_run", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, prototype_run__isnull=False),
                 name="unique_score_run_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["dataset_row", "label", "annotator"],
+                fields=["dataset_row", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, dataset_row__isnull=False),
                 name="unique_score_row_label_annotator",
             ),
-            # Duplicate constraints for NULL annotator (PostgreSQL NULL != NULL)
+            # Duplicate constraints for NULL annotator (PostgreSQL NULL != NULL).
+            # Kept at the pre-revamp (source, label) grain rather than adding
+            # ``queue_item`` here: null-annotator rows are programmatic/auto
+            # scores, ``queue_item`` itself can be NULL for them, and NULL ≠
+            # NULL in Postgres uniqueness — so a (source, label, queue_item)
+            # constraint would silently allow duplicate auto-scores. Keep
+            # the strict (source, label) uniqueness for programmatic scores
+            # and accept that they aren't per-queue.
             models.UniqueConstraint(
                 fields=["trace", "label"],
                 condition=Q(
