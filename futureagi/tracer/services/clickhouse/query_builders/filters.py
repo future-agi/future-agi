@@ -39,10 +39,11 @@ def _coerce_strict_bool(v: Any) -> int:
 
 
 _SPAN_ATTR_TYPE_META: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
-    "text":    ("span_attr_str",  lambda v: v if isinstance(v, str) else str(v)),
-    "number":  ("span_attr_num",  lambda v: float(v)),
+    "text": ("span_attr_str", lambda v: v if isinstance(v, str) else str(v)),
+    "number": ("span_attr_num", lambda v: float(v)),
     "boolean": ("span_attr_bool", _coerce_strict_bool),
 }
+
 
 class ClickHouseFilterBuilder:
     """Translates frontend filter format to ClickHouse WHERE clauses.
@@ -466,9 +467,7 @@ class ClickHouseFilterBuilder:
         distinct: bool = True,
     ) -> str:
         if self.query_mode == self.QUERY_MODE_SPAN:
-            return self._score_span_select(
-                extra_where, alias=alias, distinct=distinct
-            )
+            return self._score_span_select(extra_where, alias=alias, distinct=distinct)
         return self._score_trace_select(extra_where, alias=alias, distinct=distinct)
 
     def _score_entity_column(self) -> str:
@@ -526,7 +525,7 @@ class ClickHouseFilterBuilder:
                 continue
 
             if col_id == "annotator" and col_type != self.ANNOTATION:
-                cond = self._build_annotator_condition(filter_value)
+                cond = self._build_annotator_condition(filter_value, filter_op)
                 if cond:
                     conditions.append(cond)
                 continue
@@ -1074,6 +1073,39 @@ class ClickHouseFilterBuilder:
         """
         param = self._next_param("expr")
 
+        if filter_op == "is_null":
+            return f"({expr}) IS NULL"
+        if filter_op == "is_not_null":
+            return f"({expr}) IS NOT NULL"
+        if filter_op == "contains":
+            self._params[param] = f"%{filter_value}%"
+            return f"({expr}) LIKE %({param})s"
+        if filter_op == "not_contains":
+            self._params[param] = f"%{filter_value}%"
+            return f"({expr}) NOT LIKE %({param})s"
+        if filter_op == "starts_with":
+            self._params[param] = f"{filter_value}%"
+            return f"({expr}) LIKE %({param})s"
+        if filter_op == "ends_with":
+            self._params[param] = f"%{filter_value}"
+            return f"({expr}) LIKE %({param})s"
+        if filter_op == "in":
+            values = (
+                list(filter_value) if isinstance(filter_value, list) else [filter_value]
+            )
+            if not values:
+                return "0 = 1"
+            self._params[param] = tuple(values)
+            return f"({expr}) IN %({param})s"
+        if filter_op == "not_in":
+            values = (
+                list(filter_value) if isinstance(filter_value, list) else [filter_value]
+            )
+            if not values:
+                return "1 = 1"
+            self._params[param] = tuple(values)
+            return f"({expr}) NOT IN %({param})s"
+
         if filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
@@ -1131,9 +1163,7 @@ class ClickHouseFilterBuilder:
                 else eval_id
             )
             tmpl = (
-                EvalTemplate.no_workspace_objects.filter(
-                    id=template_id, deleted=False
-                )
+                EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
                 .values("config")
                 .first()
             )
@@ -1253,11 +1283,7 @@ class ClickHouseFilterBuilder:
             # Parse output_str_list before membership checks so choice filters
             # are exact and the CH query stays valid.
             if not values:
-                return (
-                    "1 = 1"
-                    if filter_op in negative_ops
-                    else "0 = 1"
-                )
+                return "1 = 1" if filter_op in negative_ops else "0 = 1"
             choice_array = self._eval_choice_array_expr()
             choice_exists = (
                 f"(notEmpty({choice_array}) "
@@ -1375,6 +1401,11 @@ class ClickHouseFilterBuilder:
         score_value = "s.value"
         score_annotator = "s.annotator_id"
 
+        if filter_op == "is_null":
+            return f"{target_column} NOT IN ({base_where})"
+        if filter_op == "is_not_null":
+            return f"{target_column} IN ({base_where})"
+
         if filter_type == "number":
             param = self._next_param("ann")
 
@@ -1449,9 +1480,10 @@ class ClickHouseFilterBuilder:
                 bool_match = "'up'" if filter_value else "'down'"
             else:
                 return None
+            sql_op = "!=" if filter_op == "not_equals" else "="
             return (
                 f"{target_column} IN ({base_where} "
-                f"AND JSONExtractString({score_value}, 'value') = {bool_match})"
+                f"AND JSONExtractString({score_value}, 'value') {sql_op} {bool_match})"
             )
 
         elif filter_type == "thumbs":
@@ -1613,22 +1645,21 @@ class ClickHouseFilterBuilder:
         elif filter_type == "annotator":
             # Per-label annotator filter: check if specific user(s) annotated
             # this label.
-            if isinstance(filter_value, list):
-                uuid_list = self._uuid_in_clause(filter_value, "ann")
-                if not uuid_list:
-                    return None
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
+            uuid_list = self._uuid_in_clause(values, "ann")
+            if not uuid_list:
+                return None
+            matched_annotator = (
+                f"{target_column} IN ({base_where} "
+                f"AND {score_annotator} IN ({uuid_list}))"
+            )
+            if filter_op in ("not_equals", "not_in"):
                 return (
-                    f"{target_column} IN ({base_where} "
+                    f"{target_column} IN ({base_where}) "
+                    f"AND {target_column} NOT IN ({base_where} "
                     f"AND {score_annotator} IN ({uuid_list}))"
                 )
-            elif filter_value:
-                param = self._next_param("ann")
-                self._params[param] = str(filter_value)
-                return (
-                    f"{target_column} IN ({base_where} "
-                    f"AND {score_annotator} = toUUID(%({param})s))"
-                )
-            return None
+            return matched_annotator
 
         else:
             # Fallback: existence check — trace has any annotation with
@@ -1742,25 +1773,31 @@ class ClickHouseFilterBuilder:
     def _build_annotator_condition(
         self,
         filter_value: Any,
+        filter_op: Optional[str] = None,
     ) -> Optional[str]:
         """Handle global ``annotator`` filter (across all annotation labels):
         check if any annotation by the given user(s) exists on the trace."""
+        target_column = self._score_entity_column()
+
+        if filter_op == "is_null":
+            return f"{target_column} NOT IN ({self._score_entity_select()})"
+        if filter_op == "is_not_null":
+            return (
+                f"{target_column} IN "
+                f"({self._score_entity_select('AND isNotNull(s.annotator_id)')})"
+            )
+
         if not filter_value:
             return None
-        if isinstance(filter_value, list):
-            uuid_list = self._uuid_in_clause(filter_value, "uid")
-            if not uuid_list:
-                return None
-            user_clause = f"AND s.annotator_id IN ({uuid_list})"
+        values = filter_value if isinstance(filter_value, list) else [filter_value]
+        uuid_list = self._uuid_in_clause(values, "uid")
+        if not uuid_list:
+            return None
+        user_clause = f"AND s.annotator_id IN ({uuid_list})"
+        if filter_op in ("not_equals", "not_in"):
             return (
-                f"{self._score_entity_column()} IN "
+                f"{target_column} IN ({self._score_entity_select()}) "
+                f"AND {target_column} NOT IN "
                 f"({self._score_entity_select(user_clause)})"
             )
-        else:
-            param = self._next_param("uid")
-            self._params[param] = str(filter_value)
-            user_clause = f"AND s.annotator_id = toUUID(%({param})s)"
-            return (
-                f"{self._score_entity_column()} IN "
-                f"({self._score_entity_select(user_clause)})"
-            )
+        return f"{target_column} IN ({self._score_entity_select(user_clause)})"

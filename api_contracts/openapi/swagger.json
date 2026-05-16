@@ -1,9 +1,9 @@
 {
     "swagger": "2.0",
     "info": {
-        "title": "TFC Management API",
-        "description": "The endpoints defined below allow users to programmatically carry out various actions on the tfc platform.",
-        "termsOfService": "https://tfc.com/legal",
+        "title": "Future AGI Management API",
+        "description": "The endpoints defined below allow users to programmatically carry out various actions on the Future AGI platform.",
+        "termsOfService": "https://futureagi.com/legal",
         "contact": {
             "email": "help@futureagi.com"
         },

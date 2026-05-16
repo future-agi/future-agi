@@ -3,7 +3,7 @@
  * To modify these types, update Django serializers/views, regenerate OpenAPI, then run:
  *   yarn contracts:generate
  *
- * TFC Management API - annotation/filter contracts
+ * Future AGI Management API - annotation/filter contracts
  * OpenAPI spec version: v1
  */
 import type {
