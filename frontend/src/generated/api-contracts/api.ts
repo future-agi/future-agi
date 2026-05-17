@@ -984,19 +984,34 @@ import type {
   UsageAdminPricingDeleteParams,
   UsageAdminPricingListParams,
   UsageApiCallCountListParams,
+  UsageBillingOverviewResponseApi,
+  UsageBudgetDeleteResponseApi,
+  UsageBudgetListResponseApi,
+  UsageBudgetMutationRequestApi,
+  UsageBudgetMutationResponseApi,
   UsageEmptyRequestApi,
   UsageErrorResponseApi,
+  UsageInvoiceDetailResponseApi,
+  UsageInvoiceListResponseApi,
   UsageJSONResponseApi,
   UsageMessageResponseApi,
+  UsageNotificationsResponseApi,
   UsageOrganizationBillingApi,
   UsageOrganizationSubscriptionCreateApi,
+  UsageOverviewResponseApi,
+  UsagePlansAndAddonsResponseApi,
   UsagePricingCreateApi,
   UsageRateLimitCreateApi,
   UsageResourceLimitCreateApi,
   UsageStringResponseApi,
   UsageSubscriptionTierApi,
   UsageSummaryResponseApi,
+  UsageTimeSeriesResponseApi,
   UsageUsageSummaryListParams,
+  UsageV2UsageOverviewListParams,
+  UsageV2UsageTimeSeriesListParams,
+  UsageV2UsageWorkspaceBreakdownListParams,
+  UsageWorkspaceBreakdownResponseApi,
   UsageWorkspaceEvalSummaryListParams,
   UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
@@ -63054,6 +63069,352 @@ export const usageV2AddonDelete = async ( options?: RequestInit): Promise<usageV
 
 
 
+export type usageV2BillingOverviewListResponse200 = {
+  data: UsageBillingOverviewResponseApi
+  status: 200
+}
+
+export type usageV2BillingOverviewListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BillingOverviewListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BillingOverviewListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BillingOverviewListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BillingOverviewListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BillingOverviewListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BillingOverviewListResponseSuccess = (usageV2BillingOverviewListResponse200) & {
+  headers: Headers;
+};
+export type usageV2BillingOverviewListResponseError = (usageV2BillingOverviewListResponse400 | usageV2BillingOverviewListResponse401 | usageV2BillingOverviewListResponse402 | usageV2BillingOverviewListResponse403 | usageV2BillingOverviewListResponse404 | usageV2BillingOverviewListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2BillingOverviewListResponse = (usageV2BillingOverviewListResponseSuccess | usageV2BillingOverviewListResponseError)
+
+export const getUsageV2BillingOverviewListUrl = () => {
+
+
+
+
+  return `/usage/v2/billing-overview/`
+}
+
+/**
+ * Returns platform fee + per-dimension costs + credits + total.
+ * @summary Get current billing period cost breakdown for the billing page.
+ */
+export const usageV2BillingOverviewList = async ( options?: RequestInit): Promise<usageV2BillingOverviewListResponse> => {
+
+  return apiMutator<usageV2BillingOverviewListResponse>(getUsageV2BillingOverviewListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2BudgetsListResponse200 = {
+  data: UsageBudgetListResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsListResponseSuccess = (usageV2BudgetsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsListResponseError = (usageV2BudgetsListResponse400 | usageV2BudgetsListResponse401 | usageV2BudgetsListResponse402 | usageV2BudgetsListResponse403 | usageV2BudgetsListResponse404 | usageV2BudgetsListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsListResponse = (usageV2BudgetsListResponseSuccess | usageV2BudgetsListResponseError)
+
+export const getUsageV2BudgetsListUrl = () => {
+
+
+
+
+  return `/usage/v2/budgets/`
+}
+
+/**
+ * List or create usage budgets.
+ */
+export const usageV2BudgetsList = async ( options?: RequestInit): Promise<usageV2BudgetsListResponse> => {
+
+  return apiMutator<usageV2BudgetsListResponse>(getUsageV2BudgetsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2BudgetsCreateResponse200 = {
+  data: UsageBudgetMutationResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsCreateResponseSuccess = (usageV2BudgetsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsCreateResponseError = (usageV2BudgetsCreateResponse400 | usageV2BudgetsCreateResponse401 | usageV2BudgetsCreateResponse402 | usageV2BudgetsCreateResponse403 | usageV2BudgetsCreateResponse404 | usageV2BudgetsCreateResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsCreateResponse = (usageV2BudgetsCreateResponseSuccess | usageV2BudgetsCreateResponseError)
+
+export const getUsageV2BudgetsCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/budgets/`
+}
+
+/**
+ * List or create usage budgets.
+ */
+export const usageV2BudgetsCreate = async (usageBudgetMutationRequestApi: UsageBudgetMutationRequestApi, options?: RequestInit): Promise<usageV2BudgetsCreateResponse> => {
+
+  return apiMutator<usageV2BudgetsCreateResponse>(getUsageV2BudgetsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageBudgetMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageV2BudgetsUpdateResponse200 = {
+  data: UsageBudgetMutationResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsUpdateResponseSuccess = (usageV2BudgetsUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsUpdateResponseError = (usageV2BudgetsUpdateResponse400 | usageV2BudgetsUpdateResponse401 | usageV2BudgetsUpdateResponse402 | usageV2BudgetsUpdateResponse403 | usageV2BudgetsUpdateResponse404 | usageV2BudgetsUpdateResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsUpdateResponse = (usageV2BudgetsUpdateResponseSuccess | usageV2BudgetsUpdateResponseError)
+
+export const getUsageV2BudgetsUpdateUrl = (budgetId: string,) => {
+
+
+
+
+  return `/usage/v2/budgets/${budgetId}/`
+}
+
+/**
+ * Update or delete a budget.
+ */
+export const usageV2BudgetsUpdate = async (budgetId: string,
+    usageBudgetMutationRequestApi: UsageBudgetMutationRequestApi, options?: RequestInit): Promise<usageV2BudgetsUpdateResponse> => {
+
+  return apiMutator<usageV2BudgetsUpdateResponse>(getUsageV2BudgetsUpdateUrl(budgetId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageBudgetMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageV2BudgetsDeleteResponse200 = {
+  data: UsageBudgetDeleteResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsDeleteResponseSuccess = (usageV2BudgetsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsDeleteResponseError = (usageV2BudgetsDeleteResponse400 | usageV2BudgetsDeleteResponse401 | usageV2BudgetsDeleteResponse402 | usageV2BudgetsDeleteResponse403 | usageV2BudgetsDeleteResponse404 | usageV2BudgetsDeleteResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsDeleteResponse = (usageV2BudgetsDeleteResponseSuccess | usageV2BudgetsDeleteResponseError)
+
+export const getUsageV2BudgetsDeleteUrl = (budgetId: string,) => {
+
+
+
+
+  return `/usage/v2/budgets/${budgetId}/`
+}
+
+/**
+ * Update or delete a budget.
+ */
+export const usageV2BudgetsDelete = async (budgetId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2BudgetsDeleteResponse> => {
+
+  return apiMutator<usageV2BudgetsDeleteResponse>(getUsageV2BudgetsDeleteUrl(budgetId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
 export type usageV2DowngradeToFreeCreateResponse200 = {
   data: PlanResponseApi
   status: 200
@@ -63120,6 +63481,211 @@ export const usageV2DowngradeToFreeCreate = async (usageEmptyRequestApi: UsageEm
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2InvoicesListResponse200 = {
+  data: UsageInvoiceListResponseApi
+  status: 200
+}
+
+export type usageV2InvoicesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2InvoicesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2InvoicesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2InvoicesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2InvoicesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2InvoicesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2InvoicesListResponseSuccess = (usageV2InvoicesListResponse200) & {
+  headers: Headers;
+};
+export type usageV2InvoicesListResponseError = (usageV2InvoicesListResponse400 | usageV2InvoicesListResponse401 | usageV2InvoicesListResponse402 | usageV2InvoicesListResponse403 | usageV2InvoicesListResponse404 | usageV2InvoicesListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2InvoicesListResponse = (usageV2InvoicesListResponseSuccess | usageV2InvoicesListResponseError)
+
+export const getUsageV2InvoicesListUrl = () => {
+
+
+
+
+  return `/usage/v2/invoices/`
+}
+
+/**
+ * Get invoice history for the billing page.
+ */
+export const usageV2InvoicesList = async ( options?: RequestInit): Promise<usageV2InvoicesListResponse> => {
+
+  return apiMutator<usageV2InvoicesListResponse>(getUsageV2InvoicesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2InvoicesReadResponse200 = {
+  data: UsageInvoiceDetailResponseApi
+  status: 200
+}
+
+export type usageV2InvoicesReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2InvoicesReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2InvoicesReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2InvoicesReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2InvoicesReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2InvoicesReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2InvoicesReadResponseSuccess = (usageV2InvoicesReadResponse200) & {
+  headers: Headers;
+};
+export type usageV2InvoicesReadResponseError = (usageV2InvoicesReadResponse400 | usageV2InvoicesReadResponse401 | usageV2InvoicesReadResponse402 | usageV2InvoicesReadResponse403 | usageV2InvoicesReadResponse404 | usageV2InvoicesReadResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2InvoicesReadResponse = (usageV2InvoicesReadResponseSuccess | usageV2InvoicesReadResponseError)
+
+export const getUsageV2InvoicesReadUrl = (invoiceId: string,) => {
+
+
+
+
+  return `/usage/v2/invoices/${invoiceId}/`
+}
+
+/**
+ * Get invoice detail with line items.
+ */
+export const usageV2InvoicesRead = async (invoiceId: string, options?: RequestInit): Promise<usageV2InvoicesReadResponse> => {
+
+  return apiMutator<usageV2InvoicesReadResponse>(getUsageV2InvoicesReadUrl(invoiceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2NotificationsListResponse200 = {
+  data: UsageNotificationsResponseApi
+  status: 200
+}
+
+export type usageV2NotificationsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2NotificationsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2NotificationsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2NotificationsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2NotificationsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2NotificationsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2NotificationsListResponseSuccess = (usageV2NotificationsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2NotificationsListResponseError = (usageV2NotificationsListResponse400 | usageV2NotificationsListResponse401 | usageV2NotificationsListResponse402 | usageV2NotificationsListResponse403 | usageV2NotificationsListResponse404 | usageV2NotificationsListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2NotificationsListResponse = (usageV2NotificationsListResponseSuccess | usageV2NotificationsListResponseError)
+
+export const getUsageV2NotificationsListUrl = () => {
+
+
+
+
+  return `/usage/v2/notifications/`
+}
+
+/**
+ * Used by the frontend to show billing warnings/alerts.
+ * @summary Get active notification banners for the org.
+ */
+export const usageV2NotificationsList = async ( options?: RequestInit): Promise<usageV2NotificationsListResponse> => {
+
+  return apiMutator<usageV2NotificationsListResponse>(getUsageV2NotificationsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -63752,6 +64318,75 @@ export const usageV2PaymentMethodsDefaultDelete = async (pmId: string, options?:
 
 
 
+export type usageV2PlansAndAddonsListResponse200 = {
+  data: UsagePlansAndAddonsResponseApi
+  status: 200
+}
+
+export type usageV2PlansAndAddonsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PlansAndAddonsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PlansAndAddonsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PlansAndAddonsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PlansAndAddonsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PlansAndAddonsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PlansAndAddonsListResponseSuccess = (usageV2PlansAndAddonsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2PlansAndAddonsListResponseError = (usageV2PlansAndAddonsListResponse400 | usageV2PlansAndAddonsListResponse401 | usageV2PlansAndAddonsListResponse402 | usageV2PlansAndAddonsListResponse403 | usageV2PlansAndAddonsListResponse404 | usageV2PlansAndAddonsListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2PlansAndAddonsListResponse = (usageV2PlansAndAddonsListResponseSuccess | usageV2PlansAndAddonsListResponseError)
+
+export const getUsageV2PlansAndAddonsListUrl = () => {
+
+
+
+
+  return `/usage/v2/plans-and-addons/`
+}
+
+/**
+ * Returns 2 tiers + 3 add-ons with features, limits, pricing.
+ * @summary Get plan comparison data for the pricing page.
+ */
+export const usageV2PlansAndAddonsList = async ( options?: RequestInit): Promise<usageV2PlansAndAddonsListResponse> => {
+
+  return apiMutator<usageV2PlansAndAddonsListResponse>(getUsageV2PlansAndAddonsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export type usageV2ReinstateAddonCreateResponse200 = {
   data: AddonPostResponseApi
   status: 200
@@ -64368,6 +65003,245 @@ export const usageV2UpgradeToPaygUpdate = async (upgradeToPaygConfirmRequestApi:
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       upgradeToPaygConfirmRequestApi,)
+  }
+);}
+
+
+
+export type usageV2UsageOverviewListResponse200 = {
+  data: UsageOverviewResponseApi
+  status: 200
+}
+
+export type usageV2UsageOverviewListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageOverviewListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageOverviewListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageOverviewListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageOverviewListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageOverviewListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageOverviewListResponseSuccess = (usageV2UsageOverviewListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageOverviewListResponseError = (usageV2UsageOverviewListResponse400 | usageV2UsageOverviewListResponse401 | usageV2UsageOverviewListResponse402 | usageV2UsageOverviewListResponse403 | usageV2UsageOverviewListResponse404 | usageV2UsageOverviewListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2UsageOverviewListResponse = (usageV2UsageOverviewListResponseSuccess | usageV2UsageOverviewListResponseError)
+
+export const getUsageV2UsageOverviewListUrl = (params?: UsageV2UsageOverviewListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-overview/?${stringifiedParams}` : `/usage/v2/usage-overview/`
+}
+
+/**
+ * Returns per-dimension totals, free allowances, estimated costs,
+and projected month-end usage.
+
+Query params:
+    period: YYYY-MM (default: current month)
+    workspace_id: optional (filter by workspace)
+ * @summary Get usage overview for the current billing period.
+ */
+export const usageV2UsageOverviewList = async (params?: UsageV2UsageOverviewListParams, options?: RequestInit): Promise<usageV2UsageOverviewListResponse> => {
+
+  return apiMutator<usageV2UsageOverviewListResponse>(getUsageV2UsageOverviewListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2UsageTimeSeriesListResponse200 = {
+  data: UsageTimeSeriesResponseApi
+  status: 200
+}
+
+export type usageV2UsageTimeSeriesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageTimeSeriesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageTimeSeriesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageTimeSeriesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageTimeSeriesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageTimeSeriesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageTimeSeriesListResponseSuccess = (usageV2UsageTimeSeriesListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageTimeSeriesListResponseError = (usageV2UsageTimeSeriesListResponse400 | usageV2UsageTimeSeriesListResponse401 | usageV2UsageTimeSeriesListResponse402 | usageV2UsageTimeSeriesListResponse403 | usageV2UsageTimeSeriesListResponse404 | usageV2UsageTimeSeriesListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2UsageTimeSeriesListResponse = (usageV2UsageTimeSeriesListResponseSuccess | usageV2UsageTimeSeriesListResponseError)
+
+export const getUsageV2UsageTimeSeriesListUrl = (params: UsageV2UsageTimeSeriesListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-time-series/?${stringifiedParams}` : `/usage/v2/usage-time-series/`
+}
+
+/**
+ * Query params:
+    dimension: required (e.g., "storage", "ai_credits")
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get daily usage time-series for a dimension.
+ */
+export const usageV2UsageTimeSeriesList = async (params: UsageV2UsageTimeSeriesListParams, options?: RequestInit): Promise<usageV2UsageTimeSeriesListResponse> => {
+
+  return apiMutator<usageV2UsageTimeSeriesListResponse>(getUsageV2UsageTimeSeriesListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2UsageWorkspaceBreakdownListResponse200 = {
+  data: UsageWorkspaceBreakdownResponseApi
+  status: 200
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponseSuccess = (usageV2UsageWorkspaceBreakdownListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageWorkspaceBreakdownListResponseError = (usageV2UsageWorkspaceBreakdownListResponse400 | usageV2UsageWorkspaceBreakdownListResponse401 | usageV2UsageWorkspaceBreakdownListResponse402 | usageV2UsageWorkspaceBreakdownListResponse403 | usageV2UsageWorkspaceBreakdownListResponse404 | usageV2UsageWorkspaceBreakdownListResponse500) & {
+  headers: Headers;
+};
+
+export type usageV2UsageWorkspaceBreakdownListResponse = (usageV2UsageWorkspaceBreakdownListResponseSuccess | usageV2UsageWorkspaceBreakdownListResponseError)
+
+export const getUsageV2UsageWorkspaceBreakdownListUrl = (params: UsageV2UsageWorkspaceBreakdownListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-workspace-breakdown/?${stringifiedParams}` : `/usage/v2/usage-workspace-breakdown/`
+}
+
+/**
+ * Query params:
+    dimension: required
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get per-workspace usage breakdown for a dimension.
+ */
+export const usageV2UsageWorkspaceBreakdownList = async (params: UsageV2UsageWorkspaceBreakdownListParams, options?: RequestInit): Promise<usageV2UsageWorkspaceBreakdownListResponse> => {
+
+  return apiMutator<usageV2UsageWorkspaceBreakdownListResponse>(getUsageV2UsageWorkspaceBreakdownListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

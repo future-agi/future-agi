@@ -43518,6 +43518,177 @@ export const UsageV2AddonDeleteResponse = zod.object({
 
 
 /**
+ * Returns platform fee + per-dimension costs + credits + total.
+ * @summary Get current billing period cost breakdown for the billing page.
+ */
+
+
+
+
+
+
+
+
+
+export const UsageV2BillingOverviewListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "org_id": zod.string().uuid().optional(),
+  "period": zod.string().min(1).optional(),
+  "plan": zod.string().min(1).optional(),
+  "platform_fee": zod.string().optional(),
+  "usage_total": zod.string().optional(),
+  "credits_applied": zod.string().optional(),
+  "subtotal": zod.string().optional(),
+  "tax": zod.string().optional(),
+  "total": zod.string().optional(),
+  "line_items": zod.array(zod.object({
+  "line_type": zod.string().min(1),
+  "dimension": zod.string().min(1).optional(),
+  "description": zod.string().min(1),
+  "quantity": zod.string(),
+  "unit": zod.string().optional(),
+  "unit_price": zod.string(),
+  "amount": zod.string(),
+  "tier_breakdown": zod.object({
+
+}).passthrough().optional(),
+  "credit_id": zod.number().optional()
+})).optional(),
+  "error": zod.string().min(1).optional(),
+  "pending_cancel": zod.boolean().optional(),
+  "cancel_at": zod.string().min(1).optional()
+})
+})
+
+
+/**
+ * List or create usage budgets.
+ */
+
+
+
+
+
+
+
+export const UsageV2BudgetsListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "budgets": zod.array(zod.object({
+  "id": zod.number(),
+  "name": zod.string().min(1),
+  "scope": zod.string().min(1).optional(),
+  "threshold_value": zod.string(),
+  "action": zod.string().min(1),
+  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
+  "is_active": zod.boolean().optional(),
+  "last_triggered_period": zod.string().min(1).optional(),
+  "last_triggered_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional()
+}))
+})
+})
+
+
+/**
+ * List or create usage budgets.
+ */
+
+
+
+
+
+export const UsageV2BudgetsCreateBody = zod.object({
+  "name": zod.string().min(1).optional(),
+  "scope": zod.string().min(1).optional(),
+  "threshold_value": zod.string().optional(),
+  "action": zod.enum(['notify', 'warn', 'pause']).optional(),
+  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
+  "notify_slack_webhook": zod.string().url().optional(),
+  "is_active": zod.boolean().optional()
+})
+
+
+
+
+
+
+
+export const UsageV2BudgetsCreateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "id": zod.number(),
+  "name": zod.string().min(1),
+  "scope": zod.string().min(1).optional(),
+  "threshold_value": zod.string().min(1),
+  "action": zod.string().min(1),
+  "is_active": zod.boolean().optional()
+})
+})
+
+
+/**
+ * Update or delete a budget.
+ */
+export const UsageV2BudgetsUpdateParams = zod.object({
+  "budget_id": zod.string()
+})
+
+
+
+
+
+
+export const UsageV2BudgetsUpdateBody = zod.object({
+  "name": zod.string().min(1).optional(),
+  "scope": zod.string().min(1).optional(),
+  "threshold_value": zod.string().optional(),
+  "action": zod.enum(['notify', 'warn', 'pause']).optional(),
+  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
+  "notify_slack_webhook": zod.string().url().optional(),
+  "is_active": zod.boolean().optional()
+})
+
+
+
+
+
+
+
+export const UsageV2BudgetsUpdateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "id": zod.number(),
+  "name": zod.string().min(1),
+  "scope": zod.string().min(1).optional(),
+  "threshold_value": zod.string().min(1),
+  "action": zod.string().min(1),
+  "is_active": zod.boolean().optional()
+})
+})
+
+
+/**
+ * Update or delete a budget.
+ */
+export const UsageV2BudgetsDeleteParams = zod.object({
+  "budget_id": zod.string()
+})
+
+export const UsageV2BudgetsDeleteBody = zod.object({
+
+}).passthrough()
+
+export const UsageV2BudgetsDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "deleted": zod.boolean()
+})
+})
+
+
+/**
  * Cancels any active Stripe subscription and resets plan to free.
 If user has an add-on, it must be removed first.
  * @summary Downgrade from PAYG to Free.
@@ -43533,6 +43704,112 @@ export const UsageV2DowngradeToFreeCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "plan": zod.string().min(1)
+})
+})
+
+
+/**
+ * Get invoice history for the billing page.
+ */
+
+
+
+
+export const UsageV2InvoicesListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "invoices": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "period_start": zod.string().date(),
+  "period_end": zod.string().date(),
+  "plan": zod.string().min(1),
+  "platform_fee": zod.string(),
+  "usage_total": zod.string(),
+  "credits_applied": zod.string(),
+  "subtotal": zod.string(),
+  "tax": zod.string(),
+  "total": zod.string(),
+  "status": zod.string().min(1),
+  "stripe_invoice_url": zod.string().url().optional(),
+  "stripe_pdf_url": zod.string().url().optional(),
+  "created_at": zod.string().datetime({"offset":true})
+}))
+})
+})
+
+
+/**
+ * Get invoice detail with line items.
+ */
+export const UsageV2InvoicesReadParams = zod.object({
+  "invoice_id": zod.string()
+})
+
+
+
+
+
+
+
+
+export const UsageV2InvoicesReadResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "invoice": zod.object({
+  "id": zod.string().uuid(),
+  "period_start": zod.string().date(),
+  "period_end": zod.string().date(),
+  "plan": zod.string().min(1),
+  "platform_fee": zod.number(),
+  "usage_total": zod.number(),
+  "credits_applied": zod.number(),
+  "subtotal": zod.number(),
+  "tax": zod.number(),
+  "total": zod.number(),
+  "status": zod.string().min(1),
+  "stripe_pdf_url": zod.string().url().optional()
+}),
+  "line_items": zod.array(zod.object({
+  "line_type": zod.string().min(1),
+  "dimension": zod.string().min(1).optional(),
+  "description": zod.string().min(1),
+  "quantity": zod.string(),
+  "unit": zod.string().optional(),
+  "unit_price": zod.string(),
+  "amount": zod.string(),
+  "tier_breakdown": zod.object({
+
+}).passthrough().optional(),
+  "credit_id": zod.number().optional()
+}))
+})
+})
+
+
+/**
+ * Used by the frontend to show billing warnings/alerts.
+ * @summary Get active notification banners for the org.
+ */
+
+
+
+
+
+
+
+export const UsageV2NotificationsListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "banners": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "type": zod.string().min(1),
+  "message": zod.string().min(1),
+  "action": zod.object({
+  "label": zod.string().min(1),
+  "url": zod.string().min(1)
+}).optional(),
+  "dismissible": zod.boolean().optional()
+}))
 })
 })
 
@@ -43726,6 +44003,72 @@ export const UsageV2PaymentMethodsDefaultDeleteResponse = zod.object({
 
 
 /**
+ * Returns 2 tiers + 3 add-ons with features, limits, pricing.
+ * @summary Get plan comparison data for the pricing page.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+export const UsageV2PlansAndAddonsListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "current_plan": zod.string().min(1),
+  "billing_interval": zod.string().min(1),
+  "tiers": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "display_name": zod.string().min(1),
+  "platform_fee_monthly": zod.number(),
+  "is_current": zod.boolean(),
+  "features": zod.record(zod.string(), zod.object({
+
+}).passthrough())
+})),
+  "addons": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "display_name": zod.string().min(1),
+  "platform_fee_monthly": zod.number(),
+  "is_current": zod.boolean(),
+  "features": zod.record(zod.string(), zod.object({
+
+}).passthrough())
+})),
+  "pricing": zod.record(zod.string(), zod.object({
+  "display_name": zod.string().min(1),
+  "display_unit": zod.string().min(1),
+  "tiers": zod.array(zod.object({
+  "up_to": zod.number().optional(),
+  "price_per_unit": zod.number()
+}))
+})),
+  "isCustomPricing": zod.boolean(),
+  "customDetails": zod.object({
+  "platform_fee": zod.number(),
+  "platform_fee_billing_cycle": zod.number(),
+  "per_charge_amount": zod.number(),
+  "contract_end_date": zod.string().min(1).optional(),
+  "features": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "pricing": zod.record(zod.string(), zod.object({
+
+}).passthrough())
+}).optional(),
+  "pending_cancel": zod.boolean(),
+  "cancel_at": zod.string().min(1).optional()
+})
+})
+
+
+/**
  * Add or remove an add-on subscription.
  */
 export const UsageV2ReinstateAddonCreateBody = zod.object({
@@ -43890,6 +44233,160 @@ export const UsageV2UpgradeToPaygUpdateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "plan": zod.string().min(1)
+})
+})
+
+
+/**
+ * Returns per-dimension totals, free allowances, estimated costs,
+and projected month-end usage.
+
+Query params:
+    period: YYYY-MM (default: current month)
+    workspace_id: optional (filter by workspace)
+ * @summary Get usage overview for the current billing period.
+ */
+
+
+export const usageV2UsageOverviewListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const usageV2UsageOverviewListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const UsageV2UsageOverviewListQueryParams = zod.object({
+  "period": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodRegExp).optional(),
+  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional(),
+  "workspace_id": zod.string().uuid().optional()
+})
+
+
+
+
+
+
+
+
+
+
+
+
+export const UsageV2UsageOverviewListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "plan": zod.string().min(1),
+  "plan_display_name": zod.string().min(1),
+  "platform_fee": zod.number(),
+  "period": zod.string().min(1),
+  "billing_period_start": zod.string().min(1),
+  "billing_period_end": zod.string().min(1),
+  "total_estimated_cost": zod.number(),
+  "total_with_platform": zod.number(),
+  "dimensions": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "display_name": zod.string().min(1),
+  "display_unit": zod.string().min(1),
+  "current_usage": zod.number(),
+  "current_usage_raw": zod.number(),
+  "free_allowance": zod.number(),
+  "projected_usage": zod.number(),
+  "estimated_cost": zod.number(),
+  "tier_breakdown": zod.array(zod.object({
+  "tier_start": zod.number().optional(),
+  "tier_end": zod.number().optional(),
+  "quantity": zod.number().optional(),
+  "rate": zod.number().optional(),
+  "cost": zod.number().optional()
+})).optional(),
+  "usage_pct": zod.number()
+})),
+  "pending_cancel": zod.boolean(),
+  "cancel_at": zod.string().min(1).optional()
+})
+})
+
+
+/**
+ * Query params:
+    dimension: required (e.g., "storage", "ai_credits")
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get daily usage time-series for a dimension.
+ */
+
+
+
+export const usageV2UsageTimeSeriesListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const usageV2UsageTimeSeriesListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const UsageV2UsageTimeSeriesListQueryParams = zod.object({
+  "dimension": zod.string().min(1),
+  "period": zod.string().min(1).regex(usageV2UsageTimeSeriesListQueryPeriodRegExp).optional(),
+  "period_end": zod.string().min(1).regex(usageV2UsageTimeSeriesListQueryPeriodEndRegExp).optional()
+})
+
+
+
+
+
+
+
+export const UsageV2UsageTimeSeriesListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "dimension": zod.string().min(1),
+  "period": zod.string().min(1),
+  "period_end": zod.string().min(1),
+  "series": zod.array(zod.object({
+  "date": zod.string().min(1),
+  "usage": zod.number()
+}))
+})
+})
+
+
+/**
+ * Query params:
+    dimension: required
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get per-workspace usage breakdown for a dimension.
+ */
+
+
+
+export const usageV2UsageWorkspaceBreakdownListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const usageV2UsageWorkspaceBreakdownListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const UsageV2UsageWorkspaceBreakdownListQueryParams = zod.object({
+  "dimension": zod.string().min(1),
+  "period": zod.string().min(1).regex(usageV2UsageWorkspaceBreakdownListQueryPeriodRegExp).optional(),
+  "period_end": zod.string().min(1).regex(usageV2UsageWorkspaceBreakdownListQueryPeriodEndRegExp).optional()
+})
+
+
+
+
+
+
+
+export const UsageV2UsageWorkspaceBreakdownListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "dimension": zod.string().min(1),
+  "period": zod.string().min(1),
+  "period_end": zod.string().min(1),
+  "workspaces": zod.array(zod.object({
+  "workspace_id": zod.string().uuid().optional(),
+  "workspace_name": zod.string().min(1),
+  "usage": zod.number()
+}))
 })
 })
 

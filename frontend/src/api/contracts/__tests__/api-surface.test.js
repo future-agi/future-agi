@@ -87,6 +87,12 @@ describe("api surface contract", () => {
       "post",
       "put",
     ]);
+    expect(getContractedApiMethods("/usage/v2/usage-overview/")).toEqual([
+      "get",
+    ]);
+    expect(
+      apiPath("/usage/v2/invoices/{invoice_id}/", { invoice_id: "invoice/1" }),
+    ).toBe("/usage/v2/invoices/invoice%2F1/");
     expect(getContractedApiMethods("/usage/ee/licenses/")).toEqual([
       "get",
       "post",
@@ -115,12 +121,7 @@ describe("api surface contract", () => {
       group: "model-management",
       status: "active_uncontracted",
     });
-    expect(
-      getApiContractExceptionMeta("/usage/v2/usage-overview/"),
-    ).toMatchObject({
-      group: "usage",
-      status: "enterprise_contract_pending",
-    });
+    expect(isApiContractExceptionPath("/usage/v2/usage-overview/")).toBe(false);
     expect(() => uncontractedApiPath("/model-hub/legacy/")).toThrow(
       "API contract exception path is not registered",
     );

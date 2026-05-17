@@ -13873,6 +13873,122 @@ export interface AddonPostResponseApi {
   result: AddonPostResultApi;
 }
 
+export type UsageInvoiceLineItemApiTierBreakdown = { [key: string]: unknown };
+
+export interface UsageInvoiceLineItemApi {
+  /** @minLength 1 */
+  line_type: string;
+  /** @minLength 1 */
+  dimension?: string;
+  /** @minLength 1 */
+  description: string;
+  quantity: string;
+  unit?: string;
+  unit_price: string;
+  amount: string;
+  tier_breakdown?: UsageInvoiceLineItemApiTierBreakdown;
+  credit_id?: number;
+}
+
+export interface UsageBillingOverviewResultApi {
+  org_id?: string;
+  /** @minLength 1 */
+  period?: string;
+  /** @minLength 1 */
+  plan?: string;
+  platform_fee?: string;
+  usage_total?: string;
+  credits_applied?: string;
+  subtotal?: string;
+  tax?: string;
+  total?: string;
+  line_items?: UsageInvoiceLineItemApi[];
+  /** @minLength 1 */
+  error?: string;
+  pending_cancel?: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsageBillingOverviewResponseApi {
+  status: boolean;
+  result: UsageBillingOverviewResultApi;
+}
+
+export interface UsageBudgetApi {
+  id: number;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  scope?: string;
+  threshold_value: string;
+  /** @minLength 1 */
+  action: string;
+  notify_emails?: string[];
+  is_active?: boolean;
+  /** @minLength 1 */
+  last_triggered_period?: string;
+  last_triggered_at?: string;
+  created_at?: string;
+}
+
+export interface UsageBudgetListResultApi {
+  budgets: UsageBudgetApi[];
+}
+
+export interface UsageBudgetListResponseApi {
+  status: boolean;
+  result: UsageBudgetListResultApi;
+}
+
+export type UsageBudgetMutationRequestApiAction = typeof UsageBudgetMutationRequestApiAction[keyof typeof UsageBudgetMutationRequestApiAction];
+
+
+export const UsageBudgetMutationRequestApiAction = {
+  notify: 'notify',
+  warn: 'warn',
+  pause: 'pause',
+} as const;
+
+export interface UsageBudgetMutationRequestApi {
+  /** @minLength 1 */
+  name?: string;
+  /** @minLength 1 */
+  scope?: string;
+  threshold_value?: string;
+  action?: UsageBudgetMutationRequestApiAction;
+  notify_emails?: string[];
+  notify_slack_webhook?: string;
+  is_active?: boolean;
+}
+
+export interface UsageBudgetMutationResultApi {
+  id: number;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  scope?: string;
+  /** @minLength 1 */
+  threshold_value: string;
+  /** @minLength 1 */
+  action: string;
+  is_active?: boolean;
+}
+
+export interface UsageBudgetMutationResponseApi {
+  status: boolean;
+  result: UsageBudgetMutationResultApi;
+}
+
+export interface UsageBudgetDeleteResultApi {
+  deleted: boolean;
+}
+
+export interface UsageBudgetDeleteResponseApi {
+  status: boolean;
+  result: UsageBudgetDeleteResultApi;
+}
+
 export interface PlanResultApi {
   /** @minLength 1 */
   plan: string;
@@ -13881,6 +13997,88 @@ export interface PlanResultApi {
 export interface PlanResponseApi {
   status: boolean;
   result: PlanResultApi;
+}
+
+export interface UsageInvoiceSummaryApi {
+  id: string;
+  period_start: string;
+  period_end: string;
+  /** @minLength 1 */
+  plan: string;
+  platform_fee: string;
+  usage_total: string;
+  credits_applied: string;
+  subtotal: string;
+  tax: string;
+  total: string;
+  /** @minLength 1 */
+  status: string;
+  stripe_invoice_url?: string;
+  stripe_pdf_url?: string;
+  created_at: string;
+}
+
+export interface UsageInvoiceListResultApi {
+  invoices: UsageInvoiceSummaryApi[];
+}
+
+export interface UsageInvoiceListResponseApi {
+  status: boolean;
+  result: UsageInvoiceListResultApi;
+}
+
+export interface UsageInvoiceDetailApi {
+  id: string;
+  period_start: string;
+  period_end: string;
+  /** @minLength 1 */
+  plan: string;
+  platform_fee: number;
+  usage_total: number;
+  credits_applied: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  /** @minLength 1 */
+  status: string;
+  stripe_pdf_url?: string;
+}
+
+export interface UsageInvoiceDetailResultApi {
+  invoice: UsageInvoiceDetailApi;
+  line_items: UsageInvoiceLineItemApi[];
+}
+
+export interface UsageInvoiceDetailResponseApi {
+  status: boolean;
+  result: UsageInvoiceDetailResultApi;
+}
+
+export interface UsageNotificationActionApi {
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface UsageNotificationBannerApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  message: string;
+  action?: UsageNotificationActionApi;
+  dismissible?: boolean;
+}
+
+export interface UsageNotificationsResultApi {
+  banners: UsageNotificationBannerApi[];
+}
+
+export interface UsageNotificationsResponseApi {
+  status: boolean;
+  result: UsageNotificationsResultApi;
 }
 
 export interface PaymentMethodApi {
@@ -13924,6 +14122,67 @@ export interface PaymentMethodConfirmResponseApi {
   result: PaymentMethodConfirmResultApi;
 }
 
+export type UsagePlanOptionApiFeatures = {[key: string]: { [key: string]: unknown }};
+
+export interface UsagePlanOptionApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  display_name: string;
+  platform_fee_monthly: number;
+  is_current: boolean;
+  features: UsagePlanOptionApiFeatures;
+}
+
+export interface UsagePricingTierApi {
+  up_to?: number;
+  price_per_unit: number;
+}
+
+export interface UsagePricingDimensionApi {
+  /** @minLength 1 */
+  display_name: string;
+  /** @minLength 1 */
+  display_unit: string;
+  tiers: UsagePricingTierApi[];
+}
+
+export type UsageCustomPlanDetailsApiFeatures = {[key: string]: { [key: string]: unknown }};
+
+export type UsageCustomPlanDetailsApiPricing = {[key: string]: { [key: string]: unknown }};
+
+export interface UsageCustomPlanDetailsApi {
+  platform_fee: number;
+  platform_fee_billing_cycle: number;
+  per_charge_amount: number;
+  /** @minLength 1 */
+  contract_end_date?: string;
+  features: UsageCustomPlanDetailsApiFeatures;
+  pricing: UsageCustomPlanDetailsApiPricing;
+}
+
+export type UsagePlansAndAddonsResultApiPricing = {[key: string]: UsagePricingDimensionApi};
+
+export interface UsagePlansAndAddonsResultApi {
+  /** @minLength 1 */
+  current_plan: string;
+  /** @minLength 1 */
+  billing_interval: string;
+  tiers: UsagePlanOptionApi[];
+  addons: UsagePlanOptionApi[];
+  pricing: UsagePlansAndAddonsResultApiPricing;
+  isCustomPricing: boolean;
+  customDetails?: UsageCustomPlanDetailsApi;
+  pending_cancel: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsagePlansAndAddonsResponseApi {
+  status: boolean;
+  result: UsagePlansAndAddonsResultApi;
+}
+
 export type StripeWebhookRequestApiData = {[key: string]: string};
 
 export interface StripeWebhookRequestApi {
@@ -13950,6 +14209,98 @@ export interface UpgradeToPaygPostResponseApi {
 export interface UpgradeToPaygConfirmRequestApi {
   /** @minLength 1 */
   session_id: string;
+}
+
+export interface UsageTierBreakdownApi {
+  tier_start?: number;
+  tier_end?: number;
+  quantity?: number;
+  rate?: number;
+  cost?: number;
+}
+
+export interface UsageOverviewDimensionApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  display_name: string;
+  /** @minLength 1 */
+  display_unit: string;
+  current_usage: number;
+  current_usage_raw: number;
+  free_allowance: number;
+  projected_usage: number;
+  estimated_cost: number;
+  tier_breakdown?: UsageTierBreakdownApi[];
+  usage_pct: number;
+}
+
+export interface UsageOverviewResultApi {
+  /** @minLength 1 */
+  plan: string;
+  /** @minLength 1 */
+  plan_display_name: string;
+  platform_fee: number;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  billing_period_start: string;
+  /** @minLength 1 */
+  billing_period_end: string;
+  total_estimated_cost: number;
+  total_with_platform: number;
+  dimensions: UsageOverviewDimensionApi[];
+  pending_cancel: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsageOverviewResponseApi {
+  status: boolean;
+  result: UsageOverviewResultApi;
+}
+
+export interface UsageTimeSeriesPointApi {
+  /** @minLength 1 */
+  date: string;
+  usage: number;
+}
+
+export interface UsageTimeSeriesResultApi {
+  /** @minLength 1 */
+  dimension: string;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  period_end: string;
+  series: UsageTimeSeriesPointApi[];
+}
+
+export interface UsageTimeSeriesResponseApi {
+  status: boolean;
+  result: UsageTimeSeriesResultApi;
+}
+
+export interface UsageWorkspaceBreakdownItemApi {
+  workspace_id?: string;
+  /** @minLength 1 */
+  workspace_name: string;
+  usage: number;
+}
+
+export interface UsageWorkspaceBreakdownResultApi {
+  /** @minLength 1 */
+  dimension: string;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  period_end: string;
+  workspaces: UsageWorkspaceBreakdownItemApi[];
+}
+
+export interface UsageWorkspaceBreakdownResponseApi {
+  status: boolean;
+  result: UsageWorkspaceBreakdownResultApi;
 }
 
 export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
@@ -17491,6 +17842,54 @@ export type UsageUsageSummaryListParams = {
  */
 month?: number;
 year?: number;
+};
+
+export type UsageV2UsageOverviewListParams = {
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
+workspace_id?: string;
+};
+
+export type UsageV2UsageTimeSeriesListParams = {
+/**
+ * @minLength 1
+ */
+dimension: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
+};
+
+export type UsageV2UsageWorkspaceBreakdownListParams = {
+/**
+ * @minLength 1
+ */
+dimension: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
 };
 
 export type UsageWorkspaceEvalSummaryListParams = {

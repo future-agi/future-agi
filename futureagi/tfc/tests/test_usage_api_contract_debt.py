@@ -7,9 +7,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -51,9 +49,7 @@ def test_usage_mutations_have_request_contracts():
     expected = {
         ("POST", "/usage/admin/custom-plan/"): "AdminCustomPlanRequest",
         ("PUT", "/usage/admin/custom-plan/"): "AdminCustomPlanRequest",
-        ("POST", "/usage/admin/entitlements/"): (
-            "AdminEntitlementMutationRequest"
-        ),
+        ("POST", "/usage/admin/entitlements/"): ("AdminEntitlementMutationRequest"),
         ("POST", "/usage/admin/invoice/generate/"): "AdminInvoiceRequest",
         ("POST", "/usage/admin/invoice/preview/"): "AdminInvoiceRequest",
         ("POST", "/usage/admin/pricing/"): "AdminPricingMutationRequest",
@@ -70,6 +66,9 @@ def test_usage_mutations_have_request_contracts():
         ("POST", "/usage/resource-limits/"): "UsageResourceLimitCreate",
         ("POST", "/usage/subscription-tier/"): "UsageSubscriptionTier",
         ("POST", "/usage/v2/addon/"): "AddonRequest",
+        ("POST", "/usage/v2/budgets/"): "UsageBudgetMutationRequest",
+        ("PUT", "/usage/v2/budgets/{budget_id}/"): "UsageBudgetMutationRequest",
+        ("DELETE", "/usage/v2/budgets/{budget_id}/"): "UsageEmptyRequest",
         ("POST", "/usage/v2/payment-methods/"): "UsageEmptyRequest",
         ("PUT", "/usage/v2/payment-methods/"): "SetupIntentConfirmRequest",
         ("POST", "/usage/v2/stripe-webhook/"): "StripeWebhookRequest",
@@ -96,10 +95,24 @@ def test_usage_endpoints_have_response_contracts():
         ("GET", "/usage/resource-limits/"): "ResourceLimitListResponse",
         ("GET", "/usage/subscription-tier/"): "SubscriptionTierListResponse",
         ("GET", "/usage/usage-summary/"): "UsageSummaryResponse",
+        ("GET", "/usage/v2/billing-overview/"): "UsageBillingOverviewResponse",
+        ("GET", "/usage/v2/budgets/"): "UsageBudgetListResponse",
+        ("POST", "/usage/v2/budgets/"): "UsageBudgetMutationResponse",
+        ("PUT", "/usage/v2/budgets/{budget_id}/"): "UsageBudgetMutationResponse",
+        ("DELETE", "/usage/v2/budgets/{budget_id}/"): "UsageBudgetDeleteResponse",
+        ("GET", "/usage/v2/invoices/"): "UsageInvoiceListResponse",
+        ("GET", "/usage/v2/invoices/{invoice_id}/"): ("UsageInvoiceDetailResponse"),
+        ("GET", "/usage/v2/notifications/"): "UsageNotificationsResponse",
         ("GET", "/usage/v2/payment-methods/"): "PaymentMethodsResponse",
         ("PUT", "/usage/v2/payment-methods/"): "PaymentMethodConfirmResponse",
+        ("GET", "/usage/v2/plans-and-addons/"): "UsagePlansAndAddonsResponse",
         ("POST", "/usage/v2/upgrade-to-payg/"): "UpgradeToPaygPostResponse",
         ("PUT", "/usage/v2/upgrade-to-payg/"): "PlanResponse",
+        ("GET", "/usage/v2/usage-overview/"): "UsageOverviewResponse",
+        ("GET", "/usage/v2/usage-time-series/"): "UsageTimeSeriesResponse",
+        ("GET", "/usage/v2/usage-workspace-breakdown/"): (
+            "UsageWorkspaceBreakdownResponse"
+        ),
         ("GET", "/usage/workspace-usage-summary/"): "UsageSummaryResponse",
     }
 
