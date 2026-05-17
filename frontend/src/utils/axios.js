@@ -503,84 +503,30 @@ export const endpoints = {
       }),
   },
   model: {
-    list: legacyApiPath(
-      "/model-hub/ai-models/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
-    details: legacyApiPath(
-      "/model-hub/ai-models/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
-    updateMetric: legacyApiPath(
-      "/model-hub/ai-models/update-metric/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
-    performance: legacyApiPath(
-      "/model-hub/ai-models/performance",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
-    create: legacyApiPath(
-      "/model-hub/ai_models/create/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
+    list: legacyApiPath("/model-hub/ai-models/"),
+    details: legacyApiPath("/model-hub/ai-models/"),
+    updateMetric: legacyApiPath("/model-hub/ai-models/update-metric/"),
+    performance: legacyApiPath("/model-hub/ai-models/performance"),
+    create: legacyApiPath("/model-hub/ai_models/create/"),
     updateDefaultDataset: legacyApiPath(
       "/model-hub/ai_models/update-baseline/",
-      "Legacy model-management API is not exposed in Swagger yet.",
     ),
-    modelList: legacyApiPath(
-      "/model-hub/ai-models/list/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
+    modelList: legacyApiPath("/model-hub/ai-models/list/"),
     deleteModel: (id) =>
-      legacyApiPath(
-        "/model-hub/ai_models/delete/{id}/",
-        { id },
-        "Legacy model-management API is not exposed in Swagger yet.",
-      ),
-    getModelDetail: legacyApiPath(
-      "/model-hub/get-model-details/",
-      "Legacy model-management API is not exposed in Swagger yet.",
-    ),
+      legacyApiPath("/model-hub/ai_models/delete/{id}/", { id }),
+    getModelDetail: legacyApiPath("/model-hub/get-model-details/"),
   },
   dataset: {
-    list: legacyApiPath(
-      "/model-hub/dataset/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    summary: legacyApiPath(
-      "/model-hub/dataset/summary",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    options: legacyApiPath(
-      "/model-hub/dataset/options/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    getColumns: legacyApiPath(
-      "/model-hub/dataset/column-config/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    updateColumns: legacyApiPath(
-      "/model-hub/dataset/column-config/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    createDataset: legacyApiPath(
-      "/model-hub/dataset/create/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
-    propertyList: legacyApiPath(
-      "/model-hub/dataset/properties/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
+    list: legacyApiPath("/model-hub/dataset/"),
+    summary: legacyApiPath("/model-hub/dataset/summary"),
+    options: legacyApiPath("/model-hub/dataset/options/"),
+    getColumns: legacyApiPath("/model-hub/dataset/column-config/"),
+    updateColumns: legacyApiPath("/model-hub/dataset/column-config/"),
+    createDataset: legacyApiPath("/model-hub/dataset/create/"),
+    propertyList: legacyApiPath("/model-hub/dataset/properties/"),
     propertyDetail: (id) =>
-      legacyApiPath(
-        "/model-hub/dataset/properties/{id}/",
-        { id },
-        "Legacy model dataset API is not exposed in Swagger yet.",
-      ),
-    createProperty: legacyApiPath(
-      "/model-hub/dataset/properties/",
-      "Legacy model dataset API is not exposed in Swagger yet.",
-    ),
+      legacyApiPath("/model-hub/dataset/properties/{id}/", { id }),
+    createProperty: legacyApiPath("/model-hub/dataset/properties/"),
     promptSummary: (id) =>
       apiPath("/model-hub/dataset/{dataset_id}/run-prompt-stats/", {
         dataset_id: id,
@@ -625,40 +571,16 @@ export const endpoints = {
       }),
   },
   dataPoints: {
-    getColumns: legacyApiPath(
-      "/model-hub/data-points/column-config/",
-      "Legacy model data-points API is not exposed in Swagger yet.",
-    ),
-    updateColumns: legacyApiPath(
-      "/model-hub/data-points/column-config/",
-      "Legacy model data-points API is not exposed in Swagger yet.",
-    ),
-    list: legacyApiPath(
-      "/model-hub/data-points/",
-      "Legacy model data-points API is not exposed in Swagger yet.",
-    ),
-    create: legacyApiPath(
-      "/model-hub/data-points/create/",
-      "Legacy model data-points API is not exposed in Swagger yet.",
-    ),
-    metrics: legacyApiPath(
-      "/model-hub/data-points/metrics/",
-      "Legacy model data-points API is not exposed in Swagger yet.",
-    ),
+    getColumns: legacyApiPath("/model-hub/data-points/column-config/"),
+    updateColumns: legacyApiPath("/model-hub/data-points/column-config/"),
+    list: legacyApiPath("/model-hub/data-points/"),
+    create: legacyApiPath("/model-hub/data-points/create/"),
+    metrics: legacyApiPath("/model-hub/data-points/metrics/"),
   },
   event: {
-    names: legacyApiPath(
-      "/model-hub/event-names/",
-      "Legacy model event API is not exposed in Swagger yet.",
-    ),
-    list: legacyApiPath(
-      "/model-hub/events/",
-      "Legacy model event API is not exposed in Swagger yet.",
-    ),
-    uniqueProperties: legacyApiPath(
-      "/model-hub/unique-properties/",
-      "Legacy model event API is not exposed in Swagger yet.",
-    ),
+    names: legacyApiPath("/model-hub/event-names/"),
+    list: legacyApiPath("/model-hub/events/"),
+    uniqueProperties: legacyApiPath("/model-hub/unique-properties/"),
   },
   annotation: {
     list: apiPath("/model-hub/annotation-tasks/"),
@@ -692,10 +614,7 @@ export const endpoints = {
     files: apiPath("/model-hub/knowledge-base/files/"),
   },
   customMetric: {
-    list: legacyApiPath(
-      "/model-hub/custom-metric/",
-      "Legacy custom metric collection API is not exposed in Swagger yet.",
-    ),
+    list: legacyApiPath("/model-hub/custom-metric/"),
     create: apiPath("/model-hub/custom-metric/create/"),
     edit: apiPath("/model-hub/custom-metric/update/"),
     all: (modelId) =>
@@ -709,10 +628,7 @@ export const endpoints = {
     testMetric: apiPath("/model-hub/custom-metric/test/"),
   },
   performance: {
-    graphData: legacyApiPath(
-      "/model-hub/performance/",
-      "Legacy model performance collection API is not exposed in Swagger yet.",
-    ),
+    graphData: legacyApiPath("/model-hub/performance/"),
     tableData: (id) => apiPath("/model-hub/performance/detail/{id}/", { id }),
     tableExport: (id) => apiPath("/model-hub/performance/export/{id}/", { id }),
     getFilterOptions: (modelId) =>
@@ -822,58 +738,23 @@ export const endpoints = {
       deleteModel: apiPath("/model-hub/custom_models/delete/"),
     },
     getLatestPrices: apiPath("/usage/get_latest_prices/"),
-    getAvailableMonths: legacyApiPath(
-      "/usage/available-months/",
-      "Legacy/EE usage billing API is not exposed in Swagger yet.",
-    ),
+    getAvailableMonths: legacyApiPath("/usage/available-months/"),
     usageTotals: apiPath("/usage/workspace-usage-summary/"),
     workspaceUsage: apiPath("/usage/workspace-eval-summary/"),
     usageMetrics: apiPath("/usage/usage-summary/"),
     v2: {
-      usageOverview: legacyApiPath(
-        "/usage/v2/usage-overview/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      usageTimeSeries: legacyApiPath(
-        "/usage/v2/usage-time-series/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
+      usageOverview: legacyApiPath("/usage/v2/usage-overview/"),
+      usageTimeSeries: legacyApiPath("/usage/v2/usage-time-series/"),
       usageWorkspaceBreakdown: legacyApiPath(
         "/usage/v2/usage-workspace-breakdown/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
       ),
-      plansAndAddons: legacyApiPath(
-        "/usage/v2/plans-and-addons/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      billingOverview: legacyApiPath(
-        "/usage/v2/billing-overview/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      invoices: legacyApiPath(
-        "/usage/v2/invoices/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      invoiceDetail: (id) =>
-        legacyApiPath(
-          "/usage/v2/invoices/{id}/",
-          { id },
-          "Legacy/EE usage billing API is not exposed in Swagger yet.",
-        ),
-      notifications: legacyApiPath(
-        "/usage/v2/notifications/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      budgets: legacyApiPath(
-        "/usage/v2/budgets/",
-        "Legacy/EE usage billing API is not exposed in Swagger yet.",
-      ),
-      budgetDetail: (id) =>
-        legacyApiPath(
-          "/usage/v2/budgets/{id}/",
-          { id },
-          "Legacy/EE usage billing API is not exposed in Swagger yet.",
-        ),
+      plansAndAddons: legacyApiPath("/usage/v2/plans-and-addons/"),
+      billingOverview: legacyApiPath("/usage/v2/billing-overview/"),
+      invoices: legacyApiPath("/usage/v2/invoices/"),
+      invoiceDetail: (id) => legacyApiPath("/usage/v2/invoices/{id}/", { id }),
+      notifications: legacyApiPath("/usage/v2/notifications/"),
+      budgets: legacyApiPath("/usage/v2/budgets/"),
+      budgetDetail: (id) => legacyApiPath("/usage/v2/budgets/{id}/", { id }),
       upgradeToPayg: apiPath("/usage/v2/upgrade-to-payg/"),
       downgradeToFree: apiPath("/usage/v2/downgrade-to-free/"),
       addAddon: apiPath("/usage/v2/add-addon/"),
@@ -1031,11 +912,9 @@ export const endpoints = {
           dataset_id: datasetId,
         }),
       executeCode: (datasetId) =>
-        legacyApiPath(
-          "/model-hub/datasets/{dataset_id}/execute-code/",
-          { dataset_id: datasetId },
-          "Deprecated dynamic column execute-code route is no longer present in backend URLs.",
-        ),
+        legacyApiPath("/model-hub/datasets/{dataset_id}/execute-code/", {
+          dataset_id: datasetId,
+        }),
       extractEntities: (datasetId) =>
         apiPath("/model-hub/datasets/{dataset_id}/extract-entities/", {
           dataset_id: datasetId,
@@ -1100,7 +979,6 @@ export const endpoints = {
         legacyApiPath(
           "/model-hub/develops/get_preset_eval_structure/{template_id}/",
           { template_id: templateId },
-          "Legacy preset eval structure API is not present in backend URLs.",
         ),
       getPreviouslyConfiguredEvalTemplateConfig: (datasetId, templateId) =>
         apiPath(
@@ -1161,10 +1039,7 @@ export const endpoints = {
         }),
       getEvalsLogs: apiPath("/model-hub/get-eval-logs-details"),
       getEvalMetrics: apiPath("/model-hub/get-eval-metrics"),
-      getEvalFeedbacks: legacyApiPath(
-        "/model-hub/get-eval-feedback",
-        "Legacy eval feedback API is not present in backend URLs.",
-      ),
+      getEvalFeedbacks: legacyApiPath("/model-hub/get-eval-feedback"),
       getEvalTemplates: apiPath("/model-hub/get-eval-templates"),
       listEvalTemplates: apiPath("/model-hub/eval-templates/list/"),
       listEvalTemplateCharts: apiPath("/model-hub/eval-templates/list-charts/"),
@@ -1268,10 +1143,7 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/", {
           ground_truth_id: id,
         }),
-      runEval: legacyApiPath(
-        "/model-hub/run-eval",
-        "Legacy standalone run-eval API is not present in backend URLs.",
-      ),
+      runEval: legacyApiPath("/model-hub/run-eval"),
       getEvalConfigs: apiPath("/model-hub/get-eval-config"),
       getEvalNames: apiPath("/model-hub/get-eval-template-names"),
       aiFilter: apiPath("/model-hub/ai-filter/"),
@@ -1284,10 +1156,7 @@ export const endpoints = {
       evalPlayground: apiPath("/model-hub/eval-playground/"),
       updateEvalsTemplate: apiPath("/model-hub/update-eval-template/"),
       testEvaluation: apiPath("/model-hub/test-evaluation/"),
-      evalPlaygroundLog: legacyApiPath(
-        "/model-hub/eval-playground-logs/",
-        "Legacy eval playground logs API is not present in backend URLs.",
-      ),
+      evalPlaygroundLog: legacyApiPath("/model-hub/eval-playground-logs/"),
       addEvalsFeedback: apiPath("/model-hub/eval-playground/feedback/"),
       duplicateEvalsTemplate: apiPath("/model-hub/duplicate-eval-template/"),
       deleteEvalsTemplate: apiPath("/model-hub/delete-eval-template/"),
@@ -1519,7 +1388,6 @@ export const endpoints = {
         legacyApiPath(
           "/model-hub/experiments/{experiment_id}/re-run/{col_id}/",
           { experiment_id: experimentId, col_id: colId },
-          "Legacy experiment rerun column API is not present in backend URLs.",
         ),
       reRunExperimentCell: (experimentId) =>
         apiPath("/model-hub/experiments/v2/{experiment_id}/rerun-cells/", {
@@ -1591,10 +1459,7 @@ export const endpoints = {
       "/usage/create-billing-portal-session/",
     ),
     createAutoRechargeSession: apiPath("/usage/create-auto-recharge-session/"),
-    createTopupSession: legacyApiPath(
-      "/usage/create-topup-session/",
-      "Legacy top-up billing API is not exposed in Swagger yet.",
-    ),
+    createTopupSession: legacyApiPath("/usage/create-topup-session/"),
     getLast4Digits: apiPath("/usage/get-last-four-digits/"),
     updateAutoReloadSettings: apiPath("/usage/update-auto-reload-settings/"),
     getAutoReloadSettings: apiPath("/usage/get-auto-reload-settings/"),
@@ -1689,27 +1554,12 @@ export const endpoints = {
     showCharts: () => apiPath("/tracer/project/get_graph_data/"),
     getMonitorList: () => apiPath("/tracer/user-alerts/list_monitors/"),
     getMonitorLogs: (id) =>
-      legacyApiPath(
-        "/tracer/user-alerts/{id}/fetch_logs/",
-        { id },
-        "Legacy monitor logs action is not exposed in Swagger yet.",
-      ),
+      legacyApiPath("/tracer/user-alerts/{id}/fetch_logs/", { id }),
     getMonitorMetricList: () =>
-      legacyApiPath(
-        "/tracer/user-alerts/get_metric_details/",
-        "Legacy monitor metric details API is not exposed in Swagger yet.",
-      ),
-    duplicateMonitorList: () =>
-      legacyApiPath(
-        "/tracer/user-alerts/duplicate/",
-        "Legacy monitor duplicate API is not exposed in Swagger yet.",
-      ),
+      legacyApiPath("/tracer/user-alerts/get_metric_details/"),
+    duplicateMonitorList: () => legacyApiPath("/tracer/user-alerts/duplicate/"),
     createMonitor: apiPath("/tracer/user-alerts/"),
-    getMonitorGraph: () =>
-      legacyApiPath(
-        "/tracer/user-alerts/create_graph/",
-        "Legacy monitor graph API is not exposed in Swagger yet.",
-      ),
+    getMonitorGraph: () => legacyApiPath("/tracer/user-alerts/create_graph/"),
     getEvalAttributeList: () =>
       apiPath("/tracer/observation-span/get_eval_attributes_list/"),
     submitFeedback: apiPath("/tracer/observation-span/submit_feedback/"),
@@ -1773,7 +1623,6 @@ export const endpoints = {
     // replay sessions
     prefetchAgentData: legacyApiPath(
       "/tracer/replay-session/prefetch-agent-data/",
-      "Legacy replay-session prefetch API is not exposed in Swagger yet.",
     ),
     getEvalConfigs: apiPath("/tracer/replay-session/eval-configs/"),
     replaySession: apiPath("/tracer/replay-session/"),
@@ -1883,12 +1732,7 @@ export const endpoints = {
       apiPath("/simulate/run-tests/{run_test_id}/scenarios/", {
         run_test_id: id,
       }),
-    runTest: (id) =>
-      legacyApiPath(
-        "/simulate/run-tests/{id}/execute/",
-        { id },
-        "Legacy run-test execute API is not exposed in Swagger yet.",
-      ),
+    runTest: (id) => legacyApiPath("/simulate/run-tests/{id}/execute/", { id }),
     callExecutionDetail: (id) =>
       apiPath("/simulate/call-executions/{call_execution_id}/", {
         call_execution_id: id,
@@ -2114,16 +1958,9 @@ export const endpoints = {
     update: apiPath("/accounts/organizations/update/"),
   },
   feed: {
-    getFeed: legacyApiPath(
-      "/tracer/trace-error-analysis/clusters/feed/",
-      "Deprecated trace error cluster API is commented out in backend URLs.",
-    ),
+    getFeed: legacyApiPath("/tracer/trace-error-analysis/clusters/feed/"),
     getFeedDetails: (id) =>
-      legacyApiPath(
-        "/tracer/trace-error-analysis/clusters/{id}/",
-        { id },
-        "Deprecated trace error cluster API is commented out in backend URLs.",
-      ),
+      legacyApiPath("/tracer/trace-error-analysis/clusters/{id}/", { id }),
   },
   errorFeed: {
     list: apiPath("/tracer/feed/issues/"),
@@ -2493,11 +2330,7 @@ export const endpoints = {
         conversation_id: id,
       }),
     messages: (id) =>
-      legacyApiPath(
-        "/falcon-ai/conversations/{id}/messages/",
-        { id },
-        "Legacy Falcon conversation messages API is not exposed in Swagger yet.",
-      ),
+      legacyApiPath("/falcon-ai/conversations/{id}/messages/", { id }),
     feedback: (id) =>
       apiPath("/falcon-ai/messages/{message_id}/feedback/", { message_id: id }),
     connectors: apiPath("/falcon-ai/mcp-connectors/"),

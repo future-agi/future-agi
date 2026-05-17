@@ -11,6 +11,7 @@ import {
   API_SURFACE_CONTRACT,
   API_SURFACE_PATHS,
 } from "../src/api/contracts/api-surface.generated.js";
+import { LEGACY_API_SURFACE } from "../src/api/contracts/legacy-api-surface.js";
 
 const traverse = traverseModule.default;
 
@@ -25,6 +26,7 @@ const endpointRegistryPath = path.join(
 const MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS = 0;
 const MAX_RAW_REGISTRY_PATHS = 0;
 const MAX_LEGACY_REGISTRY_PATHS = 55;
+const MAX_LEGACY_SURFACE_PATHS = 51;
 const MANAGEMENT_API_GROUPS = Object.keys(API_SURFACE_CONTRACT.groups)
   .filter((groupName) => groupName !== "root")
   .sort();
@@ -140,11 +142,10 @@ function collectLegacyRegistryPaths() {
 
       const [templateArg, secondArg, thirdArg] = nodePath.node.arguments;
       const value = staticStringValue(templateArg);
-      const reasonArg = thirdArg || secondArg;
-      const reason = staticStringValue(reasonArg);
+      const inlineReason = Boolean(staticStringValue(thirdArg || secondArg));
       legacyPaths.push({
         value,
-        reason,
+        inlineReason,
         line:
           templateArg?.loc?.start?.line || nodePath.node.loc?.start?.line || 1,
       });
@@ -167,19 +168,36 @@ const uncontracted = registryPaths.filter(
   (rawPath) => !rawPath.contractTemplate,
 );
 const legacyPaths = collectLegacyRegistryPaths();
+const legacySurfacePaths = Object.keys(LEGACY_API_SURFACE);
+const usedLegacySurfacePaths = new Set(legacyPaths.map(({ value }) => value));
+const unusedLegacySurfacePaths = legacySurfacePaths.filter(
+  (value) => !usedLegacySurfacePaths.has(value),
+);
+const missingLegacyMetadata = legacySurfacePaths.filter((value) => {
+  const meta = LEGACY_API_SURFACE[value];
+  return !meta?.group || !meta?.status || !meta?.reason || !meta?.next;
+});
+const contractedLegacySurfacePaths = legacySurfacePaths.filter((value) =>
+  matchedContractTemplate(value),
+);
 const invalidLegacyPaths = legacyPaths.filter(
   (rawPath) =>
     !rawPath.value ||
-    !rawPath.reason ||
+    rawPath.inlineReason ||
     !API_PATH_RE.test(rawPath.value) ||
-    matchedContractTemplate(rawPath.value),
+    matchedContractTemplate(rawPath.value) ||
+    !Object.prototype.hasOwnProperty.call(LEGACY_API_SURFACE, rawPath.value),
 );
 
 if (
   registryPaths.length > MAX_RAW_REGISTRY_PATHS ||
   uncontracted.length > MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS ||
   legacyPaths.length > MAX_LEGACY_REGISTRY_PATHS ||
-  invalidLegacyPaths.length
+  legacySurfacePaths.length > MAX_LEGACY_SURFACE_PATHS ||
+  invalidLegacyPaths.length ||
+  unusedLegacySurfacePaths.length ||
+  missingLegacyMetadata.length ||
+  contractedLegacySurfacePaths.length
 ) {
   console.error(
     [
@@ -187,16 +205,26 @@ if (
       `Raw registry paths: ${registryPaths.length}/${MAX_RAW_REGISTRY_PATHS}`,
       `Unmarked uncontracted paths: ${uncontracted.length}/${MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS}`,
       `Marked legacy paths: ${legacyPaths.length}/${MAX_LEGACY_REGISTRY_PATHS}`,
-      "Add the missing backend Swagger serializer/path first, switch contracted endpoints to apiPath(), or mark genuinely deprecated endpoints with legacyApiPath(path, reason).",
+      `Legacy surface manifest paths: ${legacySurfacePaths.length}/${MAX_LEGACY_SURFACE_PATHS}`,
+      "Add the missing backend Swagger serializer/path first, switch contracted endpoints to apiPath(), or register genuinely deprecated endpoints in legacy-api-surface.js and use legacyApiPath(path).",
       ...uncontracted
         .slice(0, 80)
         .map(({ line, value }) => `  - src/utils/axios.js:${line}: ${value}`),
       ...invalidLegacyPaths
         .slice(0, 80)
         .map(
-          ({ line, value, reason }) =>
-            `  - invalid legacy src/utils/axios.js:${line}: ${value || "<dynamic>"} (${reason || "missing reason or now contracted"})`,
+          ({ line, value, inlineReason }) =>
+            `  - invalid legacy src/utils/axios.js:${line}: ${value || "<dynamic>"} (${inlineReason ? "inline reason should move to legacy-api-surface.js" : "missing manifest entry or now contracted"})`,
         ),
+      ...unusedLegacySurfacePaths
+        .slice(0, 80)
+        .map((value) => `  - unused legacy manifest path: ${value}`),
+      ...missingLegacyMetadata
+        .slice(0, 80)
+        .map((value) => `  - incomplete legacy manifest metadata: ${value}`),
+      ...contractedLegacySurfacePaths
+        .slice(0, 80)
+        .map((value) => `  - legacy manifest path is now contracted: ${value}`),
     ].join("\n"),
   );
   process.exit(1);
@@ -209,5 +237,6 @@ console.log(
     `  contracted by Swagger: ${registryPaths.length - uncontracted.length}`,
     `  unmarked uncontracted paths: ${uncontracted.length}/${MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS}`,
     `  marked legacy paths: ${legacyPaths.length}/${MAX_LEGACY_REGISTRY_PATHS}`,
+    `  legacy surface manifest paths: ${legacySurfacePaths.length}/${MAX_LEGACY_SURFACE_PATHS}`,
   ].join("\n"),
 );

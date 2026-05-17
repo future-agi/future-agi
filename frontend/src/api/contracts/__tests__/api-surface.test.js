@@ -7,7 +7,9 @@ import {
 import {
   apiPath,
   getContractedApiMethods,
+  getLegacyApiPathMeta,
   isContractedApiPath,
+  isLegacyApiPath,
   legacyApiPath,
 } from "../api-surface";
 
@@ -102,23 +104,23 @@ describe("api surface contract", () => {
     );
   });
 
-  it("requires explicit reasons for legacy paths", () => {
+  it("allows only manifest-registered legacy paths", () => {
     expect(
-      legacyApiPath(
-        "/model-hub/legacy/{id}/",
-        { id: "item/1" },
-        "Not exposed in Swagger yet.",
-      ),
-    ).toBe("/model-hub/legacy/item%2F1/");
+      legacyApiPath("/model-hub/ai_models/delete/{id}/", { id: "item/1" }),
+    ).toBe("/model-hub/ai_models/delete/item%2F1/");
+    expect(isLegacyApiPath("/model-hub/ai-models/")).toBe(true);
+    expect(getLegacyApiPathMeta("/model-hub/ai-models/")).toMatchObject({
+      group: "model-management",
+      status: "active_uncontracted",
+    });
     expect(() => legacyApiPath("/model-hub/legacy/")).toThrow(
-      "Legacy API path needs a deprecation reason",
+      "Legacy API path is not registered",
     );
     expect(() =>
-      legacyApiPath(
-        "/model-hub/legacy/{id}/",
-        {},
-        "Not exposed in Swagger yet.",
-      ),
+      legacyApiPath("/model-hub/ai-models/", "Not exposed in Swagger yet."),
+    ).toThrow("Legacy API path metadata belongs in legacy-api-surface.js");
+    expect(() =>
+      legacyApiPath("/model-hub/ai_models/delete/{id}/", {}),
     ).toThrow('Missing legacy API path param "id"');
   });
 
