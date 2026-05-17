@@ -911,10 +911,6 @@ export const endpoints = {
         apiPath("/model-hub/datasets/{dataset_id}/add-api-column/", {
           dataset_id: datasetId,
         }),
-      executeCode: (datasetId) =>
-        legacyApiPath("/model-hub/datasets/{dataset_id}/execute-code/", {
-          dataset_id: datasetId,
-        }),
       extractEntities: (datasetId) =>
         apiPath("/model-hub/datasets/{dataset_id}/extract-entities/", {
           dataset_id: datasetId,
@@ -975,11 +971,6 @@ export const endpoints = {
         }),
       getCompareEvalsList: () =>
         apiPath("/model-hub/datasets/compare/get-evals-list/"),
-      getEvalTemplateConfig: (templateId) =>
-        legacyApiPath(
-          "/model-hub/develops/get_preset_eval_structure/{template_id}/",
-          { template_id: templateId },
-        ),
       getPreviouslyConfiguredEvalTemplateConfig: (datasetId, templateId) =>
         apiPath(
           "/model-hub/develops/{dataset_id}/get_eval_structure/{eval_id}/",
@@ -1143,7 +1134,7 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/", {
           ground_truth_id: id,
         }),
-      runEval: legacyApiPath("/model-hub/run-eval"),
+      runEval: apiPath("/model-hub/test-evaluation/"),
       getEvalConfigs: apiPath("/model-hub/get-eval-config"),
       getEvalNames: apiPath("/model-hub/get-eval-template-names"),
       aiFilter: apiPath("/model-hub/ai-filter/"),
@@ -1156,7 +1147,6 @@ export const endpoints = {
       evalPlayground: apiPath("/model-hub/eval-playground/"),
       updateEvalsTemplate: apiPath("/model-hub/update-eval-template/"),
       testEvaluation: apiPath("/model-hub/test-evaluation/"),
-      evalPlaygroundLog: legacyApiPath("/model-hub/eval-playground-logs/"),
       addEvalsFeedback: apiPath("/model-hub/eval-playground/feedback/"),
       duplicateEvalsTemplate: apiPath("/model-hub/duplicate-eval-template/"),
       deleteEvalsTemplate: apiPath("/model-hub/delete-eval-template/"),
@@ -1384,11 +1374,6 @@ export const endpoints = {
           experiment_id: experimentId,
           row_id: rowId,
         }),
-      reRunExperimentColumn: (experimentId, colId) =>
-        legacyApiPath(
-          "/model-hub/experiments/{experiment_id}/re-run/{col_id}/",
-          { experiment_id: experimentId, col_id: colId },
-        ),
       reRunExperimentCell: (experimentId) =>
         apiPath("/model-hub/experiments/v2/{experiment_id}/rerun-cells/", {
           experiment_id: experimentId,

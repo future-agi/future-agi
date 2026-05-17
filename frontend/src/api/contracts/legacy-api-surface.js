@@ -147,27 +147,6 @@ export const LEGACY_API_SURFACE = Object.freeze({
       "Legacy model dataset summary endpoint is still used by old model dataset screens.",
     next: "Contract the old model dataset API or retire the legacy model dataset screens.",
   },
-  "/model-hub/datasets/{dataset_id}/execute-code/": {
-    group: "datasets",
-    status: LEGACY_API_STATUSES.DEPRECATED_DEAD_REFERENCE,
-    reason:
-      "Dynamic column execute-code route is no longer registered in backend URLs.",
-    next: "Remove the frontend execute-code affordance or replace it with a contracted dynamic-column operation.",
-  },
-  "/model-hub/develops/get_preset_eval_structure/{template_id}/": {
-    group: "develops",
-    status: LEGACY_API_STATUSES.DEPRECATED_DEAD_REFERENCE,
-    reason:
-      "Preset eval structure route is no longer registered in backend URLs.",
-    next: "Remove the old preset eval call site or replace it with the contracted eval structure endpoint.",
-  },
-  "/model-hub/eval-playground-logs/": {
-    group: "evals",
-    status: LEGACY_API_STATUSES.DEPRECATED_DEAD_REFERENCE,
-    reason:
-      "Eval playground logs route is no longer registered in backend URLs.",
-    next: "Remove the old eval playground log call site or add a contracted replacement endpoint.",
-  },
   "/model-hub/event-names/": {
     group: "model-management",
     status: LEGACY_API_STATUSES.ACTIVE_UNCONTRACTED,
@@ -181,13 +160,6 @@ export const LEGACY_API_SURFACE = Object.freeze({
     reason:
       "Legacy model events endpoint is still referenced by old model screens.",
     next: "Contract the old event metadata API or migrate the old model screens.",
-  },
-  "/model-hub/experiments/{experiment_id}/re-run/{col_id}/": {
-    group: "experiments",
-    status: LEGACY_API_STATUSES.DEPRECATED_DEAD_REFERENCE,
-    reason:
-      "Old experiment column rerun route is no longer registered in backend URLs.",
-    next: "Remove the old call site and use the contracted V2 rerun-cells endpoint.",
   },
   "/model-hub/get-eval-feedback": {
     group: "evals",
@@ -208,13 +180,6 @@ export const LEGACY_API_SURFACE = Object.freeze({
     reason:
       "Legacy model performance graph endpoint is still used by the model Performance page.",
     next: "Add serializers/OpenAPI coverage for performance graph data, then move this path to apiPath(...).",
-  },
-  "/model-hub/run-eval": {
-    group: "evals",
-    status: LEGACY_API_STATUSES.DEPRECATED_DEAD_REFERENCE,
-    reason:
-      "Standalone run-eval route is no longer registered in backend URLs.",
-    next: "Remove the old standalone run-eval call site or replace it with contracted eval execution APIs.",
   },
   "/model-hub/unique-properties/": {
     group: "model-management",
