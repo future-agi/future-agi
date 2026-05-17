@@ -465,6 +465,7 @@ import type {
   OTLPTraceResponseApi,
   ObservabilityProviderApi,
   ObservationSpanApi,
+  OptimizationDatasetApi,
   OptimizationDatasetGetApi,
   OptimizationDetailApi,
   OptimizeDatasetKnowledgeBaseRequestApi,
@@ -30709,17 +30710,44 @@ export const modelHubOptimisationList = async (params?: ModelHubOptimisationList
 
 
 
-export type modelHubOptimisationCreateCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimisationCreateCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimisationCreateCreateResponseSuccess = (modelHubOptimisationCreateCreateResponse201) & {
+export type modelHubOptimisationCreateCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimisationCreateCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimisationCreateCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimisationCreateCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimisationCreateCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimisationCreateCreateResponseSuccess = (modelHubOptimisationCreateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimisationCreateCreateResponseError = (modelHubOptimisationCreateCreateResponse400 | modelHubOptimisationCreateCreateResponse403 | modelHubOptimisationCreateCreateResponse404 | modelHubOptimisationCreateCreateResponse409 | modelHubOptimisationCreateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimisationCreateCreateResponse = (modelHubOptimisationCreateCreateResponseSuccess)
+export type modelHubOptimisationCreateCreateResponse = (modelHubOptimisationCreateCreateResponseSuccess | modelHubOptimisationCreateCreateResponseError)
 
 export const getModelHubOptimisationCreateCreateUrl = () => {
 
@@ -30729,30 +30757,58 @@ export const getModelHubOptimisationCreateCreateUrl = () => {
   return `/model-hub/optimisation/create/`
 }
 
-export const modelHubOptimisationCreateCreate = async ( options?: RequestInit): Promise<modelHubOptimisationCreateCreateResponse> => {
+export const modelHubOptimisationCreateCreate = async (optimizationDatasetApi: NonReadonly<OptimizationDatasetApi>, options?: RequestInit): Promise<modelHubOptimisationCreateCreateResponse> => {
 
   return apiMutator<modelHubOptimisationCreateCreateResponse>(getModelHubOptimisationCreateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizationDatasetApi,)
   }
 );}
 
 
 
 export type modelHubOptimisationCreateUpdateResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimisationCreateUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimisationCreateUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimisationCreateUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimisationCreateUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimisationCreateUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimisationCreateUpdateResponseSuccess = (modelHubOptimisationCreateUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimisationCreateUpdateResponseError = (modelHubOptimisationCreateUpdateResponse400 | modelHubOptimisationCreateUpdateResponse403 | modelHubOptimisationCreateUpdateResponse404 | modelHubOptimisationCreateUpdateResponse409 | modelHubOptimisationCreateUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimisationCreateUpdateResponse = (modelHubOptimisationCreateUpdateResponseSuccess)
+export type modelHubOptimisationCreateUpdateResponse = (modelHubOptimisationCreateUpdateResponseSuccess | modelHubOptimisationCreateUpdateResponseError)
 
 export const getModelHubOptimisationCreateUpdateUrl = () => {
 
@@ -30762,30 +30818,58 @@ export const getModelHubOptimisationCreateUpdateUrl = () => {
   return `/model-hub/optimisation/create/`
 }
 
-export const modelHubOptimisationCreateUpdate = async ( options?: RequestInit): Promise<modelHubOptimisationCreateUpdateResponse> => {
+export const modelHubOptimisationCreateUpdate = async (optimizationDatasetApi: NonReadonly<OptimizationDatasetApi>, options?: RequestInit): Promise<modelHubOptimisationCreateUpdateResponse> => {
 
   return apiMutator<modelHubOptimisationCreateUpdateResponse>(getModelHubOptimisationCreateUpdateUrl(),
   {
     ...options,
-    method: 'PUT'
-
-
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizationDatasetApi,)
   }
 );}
 
 
 
-export type modelHubOptimisationUpdateCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimisationUpdateCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimisationUpdateCreateResponseSuccess = (modelHubOptimisationUpdateCreateResponse201) & {
+export type modelHubOptimisationUpdateCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimisationUpdateCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimisationUpdateCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimisationUpdateCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimisationUpdateCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimisationUpdateCreateResponseSuccess = (modelHubOptimisationUpdateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimisationUpdateCreateResponseError = (modelHubOptimisationUpdateCreateResponse400 | modelHubOptimisationUpdateCreateResponse403 | modelHubOptimisationUpdateCreateResponse404 | modelHubOptimisationUpdateCreateResponse409 | modelHubOptimisationUpdateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimisationUpdateCreateResponse = (modelHubOptimisationUpdateCreateResponseSuccess)
+export type modelHubOptimisationUpdateCreateResponse = (modelHubOptimisationUpdateCreateResponseSuccess | modelHubOptimisationUpdateCreateResponseError)
 
 export const getModelHubOptimisationUpdateCreateUrl = (id: string,) => {
 
@@ -30795,30 +30879,59 @@ export const getModelHubOptimisationUpdateCreateUrl = (id: string,) => {
   return `/model-hub/optimisation/update/${id}/`
 }
 
-export const modelHubOptimisationUpdateCreate = async (id: string, options?: RequestInit): Promise<modelHubOptimisationUpdateCreateResponse> => {
+export const modelHubOptimisationUpdateCreate = async (id: string,
+    optimizationDatasetApi: NonReadonly<OptimizationDatasetApi>, options?: RequestInit): Promise<modelHubOptimisationUpdateCreateResponse> => {
 
   return apiMutator<modelHubOptimisationUpdateCreateResponse>(getModelHubOptimisationUpdateCreateUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizationDatasetApi,)
   }
 );}
 
 
 
 export type modelHubOptimisationUpdateUpdateResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimisationUpdateUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimisationUpdateUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimisationUpdateUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimisationUpdateUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimisationUpdateUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimisationUpdateUpdateResponseSuccess = (modelHubOptimisationUpdateUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimisationUpdateUpdateResponseError = (modelHubOptimisationUpdateUpdateResponse400 | modelHubOptimisationUpdateUpdateResponse403 | modelHubOptimisationUpdateUpdateResponse404 | modelHubOptimisationUpdateUpdateResponse409 | modelHubOptimisationUpdateUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimisationUpdateUpdateResponse = (modelHubOptimisationUpdateUpdateResponseSuccess)
+export type modelHubOptimisationUpdateUpdateResponse = (modelHubOptimisationUpdateUpdateResponseSuccess | modelHubOptimisationUpdateUpdateResponseError)
 
 export const getModelHubOptimisationUpdateUpdateUrl = (id: string,) => {
 
@@ -30828,14 +30941,16 @@ export const getModelHubOptimisationUpdateUpdateUrl = (id: string,) => {
   return `/model-hub/optimisation/update/${id}/`
 }
 
-export const modelHubOptimisationUpdateUpdate = async (id: string, options?: RequestInit): Promise<modelHubOptimisationUpdateUpdateResponse> => {
+export const modelHubOptimisationUpdateUpdate = async (id: string,
+    optimizationDatasetApi: NonReadonly<OptimizationDatasetApi>, options?: RequestInit): Promise<modelHubOptimisationUpdateUpdateResponse> => {
 
   return apiMutator<modelHubOptimisationUpdateUpdateResponse>(getModelHubOptimisationUpdateUpdateUrl(id),
   {
     ...options,
-    method: 'PUT'
-
-
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizationDatasetApi,)
   }
 );}
 

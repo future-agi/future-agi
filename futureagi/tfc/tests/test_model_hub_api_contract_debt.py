@@ -82,6 +82,8 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
         "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
         "/model-hub/optimize-dataset/{model_id}/{optimization_id}/",
+        "/model-hub/optimisation/create/",
+        "/model-hub/optimisation/update/{id}/",
     }
 
     body_gaps = {
@@ -159,6 +161,10 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
             "POST",
             "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
         ): "OptimizeDatasetOperationRequest",
+        ("POST", "/model-hub/optimisation/create/"): "OptimizationDataset",
+        ("PUT", "/model-hub/optimisation/create/"): "OptimizationDataset",
+        ("POST", "/model-hub/optimisation/update/{id}/"): "OptimizationDataset",
+        ("PUT", "/model-hub/optimisation/update/{id}/"): "OptimizationDataset",
     }
 
     for (method, path), definition_name in expected.items():
@@ -255,6 +261,10 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/optimize-dataset/{model_id}/{optimization_id}/"): (
             "ModelHubJSONResponse"
         ),
+        ("POST", "/model-hub/optimisation/create/"): "ModelHubJSONResponse",
+        ("PUT", "/model-hub/optimisation/create/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/optimisation/update/{id}/"): "ModelHubJSONResponse",
+        ("PUT", "/model-hub/optimisation/update/{id}/"): "ModelHubJSONResponse",
     }
 
     for (method, path), definition_name in expected.items():

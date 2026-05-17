@@ -16648,13 +16648,191 @@ export const ModelHubOptimisationListResponse = zod.object({
 })
 
 
+export const modelHubOptimisationCreateCreateBodyNameMax = 2000;
+
+export const modelHubOptimisationCreateCreateBodyPromptNameMax = 2000;
+
+
+
+export const ModelHubOptimisationCreateCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubOptimisationCreateCreateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid().optional(),
+  "messages": zod.array(zod.object({
+
+}).passthrough()).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "model_config": zod.object({
+
+}).passthrough(),
+  "optimize_type": zod.enum(['PROMPT_TEMPLATE', 'RIGHT_ANSWER', 'RAG_PROMPT_TEMPLATE']),
+  "user_eval_template_mapping": zod.object({
+
+}).passthrough().optional(),
+  "prompt_name": zod.string().max(modelHubOptimisationCreateCreateBodyPromptNameMax).optional(),
+  "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
+})
+
+export const ModelHubOptimisationCreateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubOptimisationCreateUpdateBodyNameMax = 2000;
+
+export const modelHubOptimisationCreateUpdateBodyPromptNameMax = 2000;
+
+
+
+export const ModelHubOptimisationCreateUpdateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubOptimisationCreateUpdateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid().optional(),
+  "messages": zod.array(zod.object({
+
+}).passthrough()).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "model_config": zod.object({
+
+}).passthrough(),
+  "optimize_type": zod.enum(['PROMPT_TEMPLATE', 'RIGHT_ANSWER', 'RAG_PROMPT_TEMPLATE']),
+  "user_eval_template_mapping": zod.object({
+
+}).passthrough().optional(),
+  "prompt_name": zod.string().max(modelHubOptimisationCreateUpdateBodyPromptNameMax).optional(),
+  "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
+})
+
+export const ModelHubOptimisationCreateUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubOptimisationUpdateCreateParams = zod.object({
   "id": zod.string()
+})
+
+export const modelHubOptimisationUpdateCreateBodyNameMax = 2000;
+
+export const modelHubOptimisationUpdateCreateBodyPromptNameMax = 2000;
+
+
+
+export const ModelHubOptimisationUpdateCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubOptimisationUpdateCreateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid().optional(),
+  "messages": zod.array(zod.object({
+
+}).passthrough()).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "model_config": zod.object({
+
+}).passthrough(),
+  "optimize_type": zod.enum(['PROMPT_TEMPLATE', 'RIGHT_ANSWER', 'RAG_PROMPT_TEMPLATE']),
+  "user_eval_template_mapping": zod.object({
+
+}).passthrough().optional(),
+  "prompt_name": zod.string().max(modelHubOptimisationUpdateCreateBodyPromptNameMax).optional(),
+  "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
+})
+
+export const ModelHubOptimisationUpdateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
 export const ModelHubOptimisationUpdateUpdateParams = zod.object({
   "id": zod.string()
+})
+
+export const modelHubOptimisationUpdateUpdateBodyNameMax = 2000;
+
+export const modelHubOptimisationUpdateUpdateBodyPromptNameMax = 2000;
+
+
+
+export const ModelHubOptimisationUpdateUpdateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubOptimisationUpdateUpdateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid().optional(),
+  "messages": zod.array(zod.object({
+
+}).passthrough()).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "model_config": zod.object({
+
+}).passthrough(),
+  "optimize_type": zod.enum(['PROMPT_TEMPLATE', 'RIGHT_ANSWER', 'RAG_PROMPT_TEMPLATE']),
+  "user_eval_template_mapping": zod.object({
+
+}).passthrough().optional(),
+  "prompt_name": zod.string().max(modelHubOptimisationUpdateUpdateBodyPromptNameMax).optional(),
+  "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
+})
+
+export const ModelHubOptimisationUpdateUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 

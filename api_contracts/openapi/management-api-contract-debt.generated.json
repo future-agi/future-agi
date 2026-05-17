@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 125,
-    "operations_without_response_schema": 202
+    "mutation_endpoints_without_body_schema": 121,
+    "operations_without_response_schema": 198
   },
   "by_group": {
     "accounts": {
@@ -70,8 +70,8 @@
     "model-hub": {
       "paths": 365,
       "operations": 478,
-      "mutation_endpoints_without_body_schema": 125,
-      "operations_without_response_schema": 202
+      "mutation_endpoints_without_body_schema": 121,
+      "operations_without_response_schema": 198
     },
     "saml2_auth": {
       "paths": 12,
@@ -1079,42 +1079,6 @@
       "method": "POST",
       "path": "/model-hub/ground-truth/{ground_truth_id}/search/",
       "operation_id": "model-hub_ground-truth_search_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimisation/create/",
-      "operation_id": "model-hub_optimisation_create_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PUT",
-      "path": "/model-hub/optimisation/create/",
-      "operation_id": "model-hub_optimisation_create_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimisation/update/{id}/",
-      "operation_id": "model-hub_optimisation_update_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PUT",
-      "path": "/model-hub/optimisation/update/{id}/",
-      "operation_id": "model-hub_optimisation_update_update",
       "tags": [
         "model-hub"
       ]
@@ -2818,42 +2782,6 @@
       "method": "GET",
       "path": "/model-hub/metrics/by-column/",
       "operation_id": "model-hub_metrics_by-column_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimisation/create/",
-      "operation_id": "model-hub_optimisation_create_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PUT",
-      "path": "/model-hub/optimisation/create/",
-      "operation_id": "model-hub_optimisation_create_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimisation/update/{id}/",
-      "operation_id": "model-hub_optimisation_update_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PUT",
-      "path": "/model-hub/optimisation/update/{id}/",
-      "operation_id": "model-hub_optimisation_update_update",
       "tags": [
         "model-hub"
       ]

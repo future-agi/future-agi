@@ -1,6 +1,7 @@
 import structlog
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 
 # views.py
 from rest_framework import filters, generics
@@ -9,10 +10,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.develop_optimisation import (
     OptimizationDatasetGetSerializer,
     OptimizationDatasetSerializer,
@@ -24,11 +28,17 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 
+logger = structlog.get_logger(__name__)
+
 
 class OptimisationCreateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=OptimizationDatasetSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             serializer = OptimizationDatasetSerializer(data=request.data)
@@ -74,6 +84,10 @@ class OptimisationCreateView(APIView):
                 get_error_message("FAILED_TO_CREATE_OPTIMIZE_DATASET")
             )
 
+    @swagger_auto_schema(
+        request_body=OptimizationDatasetSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, pk):
         try:
             optimization_dataset = get_object_or_404(OptimizationDataset, pk=pk)
