@@ -210,10 +210,22 @@ class CustomPromptEvaluator(LLM):
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
             if isinstance(value, str) and len(value) > 15000:
+                logger.warning(
+                    "custom_prompt_eval_input_truncated",
+                    key=key,
+                    original_length=len(value),
+                    limit=15000,
+                )
                 value = fit_to_context(value, max_total_chars=15000, label=key)
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
                 if len(serialized) > 15000:
+                    logger.warning(
+                        "custom_prompt_eval_input_truncated",
+                        key=key,
+                        original_length=len(serialized),
+                        limit=15000,
+                    )
                     value = fit_to_context(value, max_total_chars=15000, label=key)
             template_context[key] = value
 
@@ -296,6 +308,12 @@ class CustomPromptEvaluator(LLM):
             else:
                 ctx_str = str(row_context)
                 if len(ctx_str) > 15000:
+                    logger.warning(
+                        "custom_prompt_eval_input_truncated",
+                        key="row_context",
+                        original_length=len(ctx_str),
+                        limit=15000,
+                    )
                     ctx_str = fit_to_context(ctx_str, max_total_chars=15000, label="data")
                 rendered_prompt += ctx_str
 
