@@ -5,7 +5,7 @@
     "operations": 1336,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
-    "broad_success_response_schemas": 356
+    "broad_success_response_schemas": 346
   },
   "by_group": {
     "accounts": {
@@ -13,7 +13,7 @@
       "operations": 103,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 86
+      "broad_success_response_schemas": 76
     },
     "agent-playground": {
       "paths": 24,
@@ -493,90 +493,6 @@
     },
     {
       "group": "accounts",
-      "method": "POST",
-      "path": "/accounts/organization/invite/",
-      "operation_id": "accounts_organization_invite_create",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "DELETE",
-      "path": "/accounts/organization/invite/cancel/",
-      "operation_id": "accounts_organization_invite_cancel_delete",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "POST",
-      "path": "/accounts/organization/invite/resend/",
-      "operation_id": "accounts_organization_invite_resend_create",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "GET",
-      "path": "/accounts/organization/members/",
-      "operation_id": "accounts_organization_members_list",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "POST",
-      "path": "/accounts/organization/members/reactivate/",
-      "operation_id": "accounts_organization_members_reactivate_create",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "DELETE",
-      "path": "/accounts/organization/members/remove/",
-      "operation_id": "accounts_organization_members_remove_delete",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "POST",
-      "path": "/accounts/organization/members/role/",
-      "operation_id": "accounts_organization_members_role_create",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
       "method": "GET",
       "path": "/accounts/organizations/",
       "operation_id": "accounts_organizations_list",
@@ -952,42 +868,6 @@
       "method": "POST",
       "path": "/accounts/workspace/switch/",
       "operation_id": "accounts_workspace_switch_create",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "GET",
-      "path": "/accounts/workspace/{workspace_id}/members/",
-      "operation_id": "accounts_workspace_members_list",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "DELETE",
-      "path": "/accounts/workspace/{workspace_id}/members/remove/",
-      "operation_id": "accounts_workspace_members_remove_delete",
-      "tags": [
-        "accounts"
-      ],
-      "status_code": "200",
-      "schema": "AccountsJSONResponse",
-      "reason": "AccountsJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "accounts",
-      "method": "POST",
-      "path": "/accounts/workspace/{workspace_id}/members/role/",
-      "operation_id": "accounts_workspace_members_role_create",
       "tags": [
         "accounts"
       ],

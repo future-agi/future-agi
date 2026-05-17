@@ -57,11 +57,21 @@ def test_accounts_mutations_have_request_contracts():
         ("POST", "/accounts/key/generate_secret_key/"): "CreateSecretKey",
         ("POST", "/accounts/me/timezone/"): "TimezoneRequest",
         ("POST", "/accounts/organization/invite/"): "InviteCreate",
+        ("DELETE", "/accounts/organization/invite/cancel/"): "InviteCancel",
+        ("POST", "/accounts/organization/invite/resend/"): "InviteResend",
+        ("DELETE", "/accounts/organization/members/remove/"): "MemberRemove",
+        ("POST", "/accounts/organization/members/reactivate/"): "MemberRemove",
         ("POST", "/accounts/organization/members/role/"): "MemberRoleUpdate",
         ("POST", "/accounts/passkey/register/options/"): "AccountsEmptyRequest",
         ("PATCH", "/accounts/passkeys/{id}/"): "PasskeyRename",
         ("POST", "/accounts/token/refresh/"): "TokenRefreshRequest",
         ("POST", "/accounts/workspace/invite/"): "WorkspaceInvite",
+        ("DELETE", "/accounts/workspace/{workspace_id}/members/remove/"): (
+            "WorkspaceMemberRemove"
+        ),
+        ("POST", "/accounts/workspace/{workspace_id}/members/role/"): (
+            "WorkspaceMemberRoleUpdate"
+        ),
         ("POST", "/accounts/workspaces/"): "WorkspaceCreateRequest",
         ("POST", "/accounts/workspaces/{workspace_id}/members/"): (
             "WorkspaceMembersRequest"
@@ -82,10 +92,31 @@ def test_accounts_endpoints_have_response_contracts():
         ("GET", "/accounts/config/"): "AccountsJSONResponse",
         ("GET", "/accounts/key/get_secret_keys/"): "AccountsPaginatedResponse",
         ("POST", "/accounts/me/timezone/"): "TimezoneResponse",
-        ("GET", "/accounts/organization/members/"): "AccountsJSONResponse",
+        ("POST", "/accounts/organization/invite/"): "InviteCreateResponse",
+        ("DELETE", "/accounts/organization/invite/cancel/"): "RBACMessageResponse",
+        ("POST", "/accounts/organization/invite/resend/"): "RBACMessageResponse",
+        ("GET", "/accounts/organization/members/"): "MemberListResponse",
+        ("DELETE", "/accounts/organization/members/remove/"): (
+            "MemberUserMutationResponse"
+        ),
+        ("POST", "/accounts/organization/members/reactivate/"): (
+            "MemberUserMutationResponse"
+        ),
+        ("POST", "/accounts/organization/members/role/"): (
+            "MemberRoleUpdateResponse"
+        ),
         ("POST", "/accounts/passkey/register/options/"): "PasskeyOptionsResponse",
         ("PATCH", "/accounts/passkeys/{id}/"): "AccountsJSONResponse",
         ("POST", "/accounts/token/refresh/"): "AccountsAccessTokenResponse",
+        ("GET", "/accounts/workspace/{workspace_id}/members/"): (
+            "MemberListResponse"
+        ),
+        ("DELETE", "/accounts/workspace/{workspace_id}/members/remove/"): (
+            "MemberUserMutationResponse"
+        ),
+        ("POST", "/accounts/workspace/{workspace_id}/members/role/"): (
+            "WorkspaceMemberRoleUpdateResponse"
+        ),
         ("GET", "/accounts/workspace/list/"): "AccountsJSONResponse",
         ("GET", "/accounts/workspaces/"): "AccountsJSONResponse",
         ("POST", "/accounts/workspaces/{workspace_id}/members/"): (

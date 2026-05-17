@@ -2247,7 +2247,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/InviteCreateResponse"
                         }
                     },
                     "400": {
@@ -2305,7 +2305,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/RBACMessageResponse"
                         }
                     },
                     "400": {
@@ -2363,7 +2363,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/RBACMessageResponse"
                         }
                     },
                     "400": {
@@ -2473,7 +2473,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberListResponse"
                         }
                     },
                     "400": {
@@ -2532,7 +2532,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberUserMutationResponse"
                         }
                     },
                     "400": {
@@ -2591,7 +2591,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberUserMutationResponse"
                         }
                     },
                     "400": {
@@ -2650,7 +2650,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberRoleUpdateResponse"
                         }
                     },
                     "400": {
@@ -4913,7 +4913,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberListResponse"
                         }
                     },
                     "400": {
@@ -4979,7 +4979,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/MemberUserMutationResponse"
                         }
                     },
                     "400": {
@@ -5045,7 +5045,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsJSONResponse"
+                            "$ref": "#/definitions/WorkspaceMemberRoleUpdateResponse"
                         }
                     },
                     "400": {
@@ -60883,6 +60883,46 @@
                 }
             }
         },
+        "InviteCreateResult": {
+            "required": [
+                "invited"
+            ],
+            "type": "object",
+            "properties": {
+                "invited": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                },
+                "already_members": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "InviteCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/InviteCreateResult"
+                }
+            }
+        },
         "InviteCancel": {
             "required": [
                 "invite_id"
@@ -60893,6 +60933,35 @@
                     "title": "Invite id",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "RBACMessageResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "RBACMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RBACMessageResult"
                 }
             }
         },
@@ -60920,6 +60989,162 @@
                 }
             }
         },
+        "MemberWorkspaceAccess": {
+            "required": [
+                "workspace_id",
+                "workspace_name",
+                "ws_level",
+                "ws_role"
+            ],
+            "type": "object",
+            "properties": {
+                "workspace_id": {
+                    "title": "Workspace id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workspace_name": {
+                    "title": "Workspace name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "ws_level": {
+                    "title": "Ws level",
+                    "type": "integer"
+                },
+                "ws_role": {
+                    "title": "Ws role",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "auto_access": {
+                    "title": "Auto access",
+                    "type": "boolean"
+                }
+            }
+        },
+        "MemberListItem": {
+            "required": [
+                "id",
+                "name",
+                "email",
+                "status",
+                "created_at",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "org_level": {
+                    "title": "Org level",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "org_role": {
+                    "title": "Org role",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "ws_level": {
+                    "title": "Ws level",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ws_role": {
+                    "title": "Ws role",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "workspaces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MemberWorkspaceAccess"
+                    }
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string"
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "member",
+                        "invite"
+                    ]
+                },
+                "auto_access": {
+                    "title": "Auto access",
+                    "type": "boolean"
+                }
+            }
+        },
+        "MemberListResult": {
+            "required": [
+                "results",
+                "total",
+                "page",
+                "limit"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MemberListItem"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer"
+                }
+            }
+        },
+        "MemberListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/MemberListResult"
+                }
+            }
+        },
         "MemberRemove": {
             "required": [
                 "user_id"
@@ -60930,6 +61155,41 @@
                     "title": "User id",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "MemberUserMutationResult": {
+            "required": [
+                "message",
+                "user_id"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "MemberUserMutationResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/MemberUserMutationResult"
                 }
             }
         },
@@ -60983,6 +61243,40 @@
                         }
                     },
                     "default": []
+                }
+            }
+        },
+        "MemberRoleUpdateResult": {
+            "required": [
+                "message",
+                "changes"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "changes": {
+                    "title": "Changes",
+                    "type": "object"
+                }
+            }
+        },
+        "MemberRoleUpdateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/MemberRoleUpdateResult"
                 }
             }
         },
@@ -61493,6 +61787,52 @@
                         3,
                         1
                     ]
+                }
+            }
+        },
+        "WorkspaceMemberRoleUpdateResult": {
+            "required": [
+                "message",
+                "user_id",
+                "ws_level",
+                "ws_role"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ws_level": {
+                    "title": "Ws level",
+                    "type": "integer"
+                },
+                "ws_role": {
+                    "title": "Ws role",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "WorkspaceMemberRoleUpdateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/WorkspaceMemberRoleUpdateResult"
                 }
             }
         },

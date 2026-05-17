@@ -407,6 +407,7 @@ import type {
   IntegrationsSyncLogsListParams,
   InviteCancelApi,
   InviteCreateApi,
+  InviteCreateResponseApi,
   InviteResendApi,
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
@@ -457,8 +458,11 @@ import type {
   MCPToolGroupsResponseApi,
   MCPToolListResponseApi,
   ManualDatasetCreateRequestApi,
+  MemberListResponseApi,
   MemberRemoveApi,
   MemberRoleUpdateApi,
+  MemberRoleUpdateResponseApi,
+  MemberUserMutationResponseApi,
   MergeDatasetRequestApi,
   MessageFeedbackApi,
   MessageFeedbackResponseApi,
@@ -654,6 +658,7 @@ import type {
   QueueSubmitAnnotationsResponseApi,
   QuickAnalysisApi,
   QuickAnalysisResponseApi,
+  RBACMessageResponseApi,
   RateLimitDetailResponseApi,
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
@@ -1059,6 +1064,7 @@ import type {
   WorkspaceInviteApi,
   WorkspaceMemberRemoveApi,
   WorkspaceMemberRoleUpdateApi,
+  WorkspaceMemberRoleUpdateResponseApi,
   WorkspaceMembersRequestApi,
   WorkspaceUpdateRequestApi
 } from './api.schemas';
@@ -3483,7 +3489,7 @@ export const accountsOrganization2faPolicyUpdate = async (orgTwoFactorPolicyApi:
 
 
 export type accountsOrganizationInviteCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: InviteCreateResponseApi
   status: 200
 }
 
@@ -3549,7 +3555,7 @@ export const accountsOrganizationInviteCreate = async (inviteCreateApi: InviteCr
 
 
 export type accountsOrganizationInviteCancelDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: RBACMessageResponseApi
   status: 200
 }
 
@@ -3614,7 +3620,7 @@ export const accountsOrganizationInviteCancelDelete = async (inviteCancelApi: In
 
 
 export type accountsOrganizationInviteResendCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: RBACMessageResponseApi
   status: 200
 }
 
@@ -3679,7 +3685,7 @@ export const accountsOrganizationInviteResendCreate = async (inviteResendApi: In
 
 
 export type accountsOrganizationMembersListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberListResponseApi
   status: 200
 }
 
@@ -3751,7 +3757,7 @@ export const accountsOrganizationMembersList = async (params?: AccountsOrganizat
 
 
 export type accountsOrganizationMembersReactivateCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberUserMutationResponseApi
   status: 200
 }
 
@@ -3818,7 +3824,7 @@ export const accountsOrganizationMembersReactivateCreate = async (memberRemoveAp
 
 
 export type accountsOrganizationMembersRemoveDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberUserMutationResponseApi
   status: 200
 }
 
@@ -3884,7 +3890,7 @@ export const accountsOrganizationMembersRemoveDelete = async (memberRemoveApi: M
 
 
 export type accountsOrganizationMembersRoleCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberRoleUpdateResponseApi
   status: 200
 }
 
@@ -6211,7 +6217,7 @@ export const accountsWorkspaceSwitchCreate = async (switchWorkspaceApi: SwitchWo
 
 
 export type accountsWorkspaceMembersListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberListResponseApi
   status: 200
 }
 
@@ -6285,7 +6291,7 @@ export const accountsWorkspaceMembersList = async (workspaceId: string,
 
 
 export type accountsWorkspaceMembersRemoveDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: MemberUserMutationResponseApi
   status: 200
 }
 
@@ -6351,7 +6357,7 @@ export const accountsWorkspaceMembersRemoveDelete = async (workspaceId: string,
 
 
 export type accountsWorkspaceMembersRoleCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceMemberRoleUpdateResponseApi
   status: 200
 }
 

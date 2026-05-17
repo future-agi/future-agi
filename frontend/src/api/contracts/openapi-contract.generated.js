@@ -1114,7 +1114,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/InviteCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1143,7 +1143,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/RBACMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1172,7 +1172,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/RBACMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1259,7 +1259,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberListResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1288,7 +1288,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberUserMutationResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1317,7 +1317,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberUserMutationResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1346,7 +1346,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberRoleUpdateResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -2565,7 +2565,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberListResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -2594,7 +2594,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/MemberUserMutationResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -2623,7 +2623,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsJSONResponse"
+            "$ref": "#/definitions/WorkspaceMemberRoleUpdateResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -45083,6 +45083,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "InviteCreateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/InviteCreateResult"
+        }
+      }
+    },
     "InviteResend": {
       "required": [
         "invite_id"
@@ -46379,6 +46395,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "MemberListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/MemberListResult"
+        }
+      }
+    },
     "MemberRemove": {
       "required": [
         "user_id"
@@ -46442,6 +46474,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           },
           "default": []
+        }
+      }
+    },
+    "MemberRoleUpdateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/MemberRoleUpdateResult"
+        }
+      }
+    },
+    "MemberUserMutationResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/MemberUserMutationResult"
         }
       }
     },
@@ -50728,6 +50792,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Result",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "RBACMessageResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/RBACMessageResult"
         }
       }
     },
@@ -57523,6 +57603,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "WorkspaceMemberRoleUpdateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/WorkspaceMemberRoleUpdateResult"
+        }
+      }
+    },
     "WorkspaceMembersRequest": {
       "required": [
         "users"
@@ -60644,6 +60740,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "InviteCreateResult": {
+      "required": [
+        "invited"
+      ],
+      "type": "object",
+      "properties": {
+        "invited": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          }
+        },
+        "already_members": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "EmbeddingModelOption": {
       "required": [
         "value",
@@ -61432,6 +61552,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "x-nullable": true
+        }
+      }
+    },
+    "MemberListResult": {
+      "required": [
+        "results",
+        "total",
+        "page",
+        "limit"
+      ],
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MemberListItem"
+          }
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer"
+        },
+        "page": {
+          "title": "Page",
+          "type": "integer"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "integer"
+        }
+      }
+    },
+    "MemberRoleUpdateResult": {
+      "required": [
+        "message",
+        "changes"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "changes": {
+          "title": "Changes",
+          "type": "object"
+        }
+      }
+    },
+    "MemberUserMutationResult": {
+      "required": [
+        "message",
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -62828,6 +63014,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "submitted": {
           "title": "Submitted",
           "type": "integer"
+        }
+      }
+    },
+    "RBACMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -65182,6 +65381,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "WorkspaceMemberRoleUpdateResult": {
+      "required": [
+        "message",
+        "user_id",
+        "ws_level",
+        "ws_role"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "ws_level": {
+          "title": "Ws level",
+          "type": "integer"
+        },
+        "ws_role": {
+          "title": "Ws role",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "AIFilterCondition": {
       "required": [
         "field",
@@ -66550,6 +66779,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "object",
           "readOnly": true,
           "x-nullable": true
+        }
+      }
+    },
+    "MemberListItem": {
+      "required": [
+        "id",
+        "name",
+        "email",
+        "status",
+        "created_at",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "minLength": 1
+        },
+        "org_level": {
+          "title": "Org level",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "org_role": {
+          "title": "Org role",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "ws_level": {
+          "title": "Ws level",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "ws_role": {
+          "title": "Ws role",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MemberWorkspaceAccess"
+          }
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "member",
+            "invite"
+          ]
+        },
+        "auto_access": {
+          "title": "Auto access",
+          "type": "boolean"
         }
       }
     },
@@ -68402,6 +68708,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Required",
           "type": "boolean",
           "readOnly": true
+        }
+      }
+    },
+    "MemberWorkspaceAccess": {
+      "required": [
+        "workspace_id",
+        "workspace_name",
+        "ws_level",
+        "ws_role"
+      ],
+      "type": "object",
+      "properties": {
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace_name": {
+          "title": "Workspace name",
+          "type": "string",
+          "minLength": 1
+        },
+        "ws_level": {
+          "title": "Ws level",
+          "type": "integer"
+        },
+        "ws_role": {
+          "title": "Ws role",
+          "type": "string",
+          "minLength": 1
+        },
+        "auto_access": {
+          "title": "Auto access",
+          "type": "boolean"
         }
       }
     },

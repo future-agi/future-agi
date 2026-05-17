@@ -261,8 +261,28 @@ export interface InviteCreateApi {
   workspace_access?: InviteCreateApiWorkspaceAccessItem[];
 }
 
+export interface InviteCreateResultApi {
+  invited: string[];
+  already_members?: string[];
+}
+
+export interface InviteCreateResponseApi {
+  status: boolean;
+  result: InviteCreateResultApi;
+}
+
 export interface InviteCancelApi {
   invite_id: string;
+}
+
+export interface RBACMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface RBACMessageResponseApi {
+  status: boolean;
+  result: RBACMessageResultApi;
 }
 
 export type InviteResendApiOrgLevel = typeof InviteResendApiOrgLevel[keyof typeof InviteResendApiOrgLevel];
@@ -280,8 +300,68 @@ export interface InviteResendApi {
   org_level?: InviteResendApiOrgLevel;
 }
 
+export interface MemberWorkspaceAccessApi {
+  workspace_id: string;
+  /** @minLength 1 */
+  workspace_name: string;
+  ws_level: number;
+  /** @minLength 1 */
+  ws_role: string;
+  auto_access?: boolean;
+}
+
+export type MemberListItemApiType = typeof MemberListItemApiType[keyof typeof MemberListItemApiType];
+
+
+export const MemberListItemApiType = {
+  member: 'member',
+  invite: 'invite',
+} as const;
+
+export interface MemberListItemApi {
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  email: string;
+  org_level?: number;
+  /** @minLength 1 */
+  org_role?: string;
+  ws_level?: number;
+  /** @minLength 1 */
+  ws_role?: string;
+  workspaces?: MemberWorkspaceAccessApi[];
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  type: MemberListItemApiType;
+  auto_access?: boolean;
+}
+
+export interface MemberListResultApi {
+  results: MemberListItemApi[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface MemberListResponseApi {
+  status: boolean;
+  result: MemberListResultApi;
+}
+
 export interface MemberRemoveApi {
   user_id: string;
+}
+
+export interface MemberUserMutationResultApi {
+  /** @minLength 1 */
+  message: string;
+  user_id: string;
+}
+
+export interface MemberUserMutationResponseApi {
+  status: boolean;
+  result: MemberUserMutationResultApi;
 }
 
 export type MemberRoleUpdateApiOrgLevel = typeof MemberRoleUpdateApiOrgLevel[keyof typeof MemberRoleUpdateApiOrgLevel];
@@ -313,6 +393,19 @@ export interface MemberRoleUpdateApi {
   workspace_id?: string;
   /** List of {workspace_id, level} for explicit workspace grants on demotion. */
   workspace_access?: MemberRoleUpdateApiWorkspaceAccessItem[];
+}
+
+export type MemberRoleUpdateResultApiChanges = { [key: string]: unknown };
+
+export interface MemberRoleUpdateResultApi {
+  /** @minLength 1 */
+  message: string;
+  changes: MemberRoleUpdateResultApiChanges;
+}
+
+export interface MemberRoleUpdateResponseApi {
+  status: boolean;
+  result: MemberRoleUpdateResultApi;
 }
 
 export interface OrganizationSwitchRequestApi {
@@ -549,6 +642,20 @@ export const WorkspaceMemberRoleUpdateApiWsLevel = {
 export interface WorkspaceMemberRoleUpdateApi {
   user_id: string;
   ws_level: WorkspaceMemberRoleUpdateApiWsLevel;
+}
+
+export interface WorkspaceMemberRoleUpdateResultApi {
+  /** @minLength 1 */
+  message: string;
+  user_id: string;
+  ws_level: number;
+  /** @minLength 1 */
+  ws_role: string;
+}
+
+export interface WorkspaceMemberRoleUpdateResponseApi {
+  status: boolean;
+  result: WorkspaceMemberRoleUpdateResultApi;
 }
 
 export interface WorkspaceCreateRequestApi {

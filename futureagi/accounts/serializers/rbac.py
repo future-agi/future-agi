@@ -52,6 +52,19 @@ class InviteCreateSerializer(serializers.Serializer):
         return sanitized
 
 
+class InviteCreateResultSerializer(serializers.Serializer):
+    invited = serializers.ListField(child=serializers.EmailField())
+    already_members = serializers.ListField(
+        child=serializers.EmailField(),
+        required=False,
+    )
+
+
+class InviteCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = InviteCreateResultSerializer()
+
+
 class InviteResendSerializer(serializers.Serializer):
     """POST /accounts/organization/invite/resend/"""
 
@@ -68,6 +81,15 @@ class InviteCancelSerializer(serializers.Serializer):
     """DELETE /accounts/organization/invite/cancel/"""
 
     invite_id = serializers.UUIDField()
+
+
+class RBACMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class RBACMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = RBACMessageResultSerializer()
 
 
 class MemberRoleUpdateSerializer(serializers.Serializer):
@@ -111,10 +133,65 @@ class MemberRoleUpdateSerializer(serializers.Serializer):
         return data
 
 
+class MemberWorkspaceAccessSerializer(serializers.Serializer):
+    workspace_id = serializers.UUIDField()
+    workspace_name = serializers.CharField()
+    ws_level = serializers.IntegerField()
+    ws_role = serializers.CharField()
+    auto_access = serializers.BooleanField(required=False)
+
+
+class MemberListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True)
+    email = serializers.EmailField()
+    org_level = serializers.IntegerField(required=False, allow_null=True)
+    org_role = serializers.CharField(required=False, allow_null=True)
+    ws_level = serializers.IntegerField(required=False, allow_null=True)
+    ws_role = serializers.CharField(required=False, allow_null=True)
+    workspaces = MemberWorkspaceAccessSerializer(many=True, required=False)
+    status = serializers.CharField()
+    created_at = serializers.CharField(allow_blank=True)
+    type = serializers.ChoiceField(choices=["member", "invite"])
+    auto_access = serializers.BooleanField(required=False)
+
+
+class MemberListResultSerializer(serializers.Serializer):
+    results = MemberListItemSerializer(many=True)
+    total = serializers.IntegerField()
+    page = serializers.IntegerField()
+    limit = serializers.IntegerField()
+
+
+class MemberListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberListResultSerializer()
+
+
+class MemberRoleUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    changes = serializers.JSONField()
+
+
+class MemberRoleUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberRoleUpdateResultSerializer()
+
+
 class MemberRemoveSerializer(serializers.Serializer):
     """DELETE /accounts/organization/members/remove/"""
 
     user_id = serializers.UUIDField()
+
+
+class MemberUserMutationResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_id = serializers.UUIDField()
+
+
+class MemberUserMutationResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberUserMutationResultSerializer()
 
 
 class MemberListRequestSerializer(serializers.Serializer):
@@ -171,3 +248,15 @@ class WorkspaceMemberRemoveSerializer(serializers.Serializer):
     """DELETE /accounts/workspace/<uuid>/members/remove/"""
 
     user_id = serializers.UUIDField()
+
+
+class WorkspaceMemberRoleUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_id = serializers.UUIDField()
+    ws_level = serializers.IntegerField()
+    ws_role = serializers.CharField()
+
+
+class WorkspaceMemberRoleUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = WorkspaceMemberRoleUpdateResultSerializer()

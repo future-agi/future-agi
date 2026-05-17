@@ -18,19 +18,22 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from accounts.serializers.contracts import (
-    ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
-)
+from accounts.serializers.contracts import ACCOUNTS_ERROR_RESPONSES
 from accounts.serializers.rbac import (
     InviteCancelSerializer,
+    InviteCreateResponseSerializer,
     InviteCreateSerializer,
     InviteResendSerializer,
     MemberListRequestSerializer,
+    MemberListResponseSerializer,
     MemberRemoveSerializer,
+    MemberRoleUpdateResponseSerializer,
     MemberRoleUpdateSerializer,
+    MemberUserMutationResponseSerializer,
+    RBACMessageResponseSerializer,
     WorkspaceMemberListRequestSerializer,
     WorkspaceMemberRemoveSerializer,
+    WorkspaceMemberRoleUpdateResponseSerializer,
     WorkspaceMemberRoleUpdateSerializer,
 )
 from accounts.utils import (
@@ -93,7 +96,7 @@ class InviteCreateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=InviteCreateSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         gm = GeneralMethods()
@@ -369,7 +372,7 @@ class InviteResendAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=InviteResendSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         gm = GeneralMethods()
@@ -433,7 +436,7 @@ class InviteCancelAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=InviteCancelSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def delete(self, request):
         gm = GeneralMethods()
@@ -511,7 +514,7 @@ class MemberListAPIView(APIView):
 
     @swagger_auto_schema(
         query_serializer=MemberListRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def get(self, request):
         gm = GeneralMethods()
@@ -843,7 +846,7 @@ class MemberRoleUpdateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=MemberRoleUpdateSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         gm = GeneralMethods()
@@ -1048,7 +1051,7 @@ class MemberRemoveAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=MemberRemoveSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def delete(self, request):
         gm = GeneralMethods()
@@ -1160,7 +1163,7 @@ class MemberReactivateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=MemberRemoveSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         gm = GeneralMethods()
@@ -1278,7 +1281,7 @@ class WorkspaceMemberListAPIView(APIView):
 
     @swagger_auto_schema(
         query_serializer=WorkspaceMemberListRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def get(self, request, workspace_id):
         gm = GeneralMethods()
@@ -1528,7 +1531,10 @@ class WorkspaceMemberRoleUpdateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceMemberRoleUpdateSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceMemberRoleUpdateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request, workspace_id):
         gm = GeneralMethods()
@@ -1632,7 +1638,7 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceMemberRemoveSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def delete(self, request, workspace_id):
         gm = GeneralMethods()
