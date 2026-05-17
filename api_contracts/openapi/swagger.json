@@ -25285,10 +25285,28 @@
             "post": {
                 "operationId": "simulate_api_personas_duplicate_create",
                 "description": "Duplicate a persona by ID",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/PersonaDuplicateRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "201": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PersonaDuplicateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -49290,88 +49308,17 @@
                 }
             }
         },
-        "PersonaFieldOptions": {
+        "PersonaDuplicateRequest": {
+            "required": [
+                "name"
+            ],
             "type": "object",
             "properties": {
-                "gender_choices": {
-                    "title": "Gender choices",
+                "name": {
+                    "title": "Name",
                     "type": "string",
-                    "readOnly": true
-                },
-                "age_group_choices": {
-                    "title": "Age group choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "location_choices": {
-                    "title": "Location choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "profession_choices": {
-                    "title": "Profession choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "personality_choices": {
-                    "title": "Personality choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "communication_style_choices": {
-                    "title": "Communication style choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "accent_choices": {
-                    "title": "Accent choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "language_choices": {
-                    "title": "Language choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "conversation_speed_choices": {
-                    "title": "Conversation speed choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "tone_choices": {
-                    "title": "Tone choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "verbosity_choices": {
-                    "title": "Verbosity choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "punctuation_choices": {
-                    "title": "Punctuation choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "emoji_usage_choices": {
-                    "title": "Emoji usage choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "slang_usage_choices": {
-                    "title": "Slang usage choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "typos_frequency_choices": {
-                    "title": "Typos frequency choices",
-                    "type": "string",
-                    "readOnly": true
-                },
-                "regional_mix_choices": {
-                    "title": "Regional mix choices",
-                    "type": "string",
-                    "readOnly": true
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         },
@@ -49643,6 +49590,104 @@
                         "detailed"
                     ],
                     "x-nullable": true
+                }
+            }
+        },
+        "PersonaDuplicateResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/Persona"
+                }
+            }
+        },
+        "PersonaFieldOptions": {
+            "type": "object",
+            "properties": {
+                "gender_choices": {
+                    "title": "Gender choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "age_group_choices": {
+                    "title": "Age group choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "location_choices": {
+                    "title": "Location choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "profession_choices": {
+                    "title": "Profession choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "personality_choices": {
+                    "title": "Personality choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "communication_style_choices": {
+                    "title": "Communication style choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "accent_choices": {
+                    "title": "Accent choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "language_choices": {
+                    "title": "Language choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "conversation_speed_choices": {
+                    "title": "Conversation speed choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "tone_choices": {
+                    "title": "Tone choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "verbosity_choices": {
+                    "title": "Verbosity choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "punctuation_choices": {
+                    "title": "Punctuation choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "emoji_usage_choices": {
+                    "title": "Emoji usage choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "slang_usage_choices": {
+                    "title": "Slang usage choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "typos_frequency_choices": {
+                    "title": "Typos frequency choices",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "regional_mix_choices": {
+                    "title": "Regional mix choices",
+                    "type": "string",
+                    "readOnly": true
                 }
             }
         },

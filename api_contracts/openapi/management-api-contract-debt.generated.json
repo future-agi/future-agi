@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 323,
-    "operations_without_response_schema": 556
+    "mutation_endpoints_without_body_schema": 322,
+    "operations_without_response_schema": 555
   },
   "by_group": {
     "accounts": {
@@ -88,8 +88,8 @@
     "simulate": {
       "paths": 105,
       "operations": 125,
-      "mutation_endpoints_without_body_schema": 15,
-      "operations_without_response_schema": 33
+      "mutation_endpoints_without_body_schema": 14,
+      "operations_without_response_schema": 32
     },
     "tracer": {
       "paths": 159,
@@ -2377,15 +2377,6 @@
       "operation_id": "sdk_api_v1_new-eval_create",
       "tags": [
         "sdk"
-      ]
-    },
-    {
-      "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/api/personas/duplicate/{persona_id}/",
-      "operation_id": "simulate_api_personas_duplicate_create",
-      "tags": [
-        "simulate"
       ]
     },
     {
@@ -6931,15 +6922,6 @@
       "method": "GET",
       "path": "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
       "operation_id": "simulate_agent-definitions_versions_eval-summary_list",
-      "tags": [
-        "simulate"
-      ]
-    },
-    {
-      "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/api/personas/duplicate/{persona_id}/",
-      "operation_id": "simulate_api_personas_duplicate_create",
       "tags": [
         "simulate"
       ]

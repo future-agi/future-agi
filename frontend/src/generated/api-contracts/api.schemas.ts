@@ -4781,23 +4781,12 @@ export interface PersonaCreateApi {
   verbosity?: string;
 }
 
-export interface PersonaFieldOptionsApi {
-  readonly gender_choices?: string;
-  readonly age_group_choices?: string;
-  readonly location_choices?: string;
-  readonly profession_choices?: string;
-  readonly personality_choices?: string;
-  readonly communication_style_choices?: string;
-  readonly accent_choices?: string;
-  readonly language_choices?: string;
-  readonly conversation_speed_choices?: string;
-  readonly tone_choices?: string;
-  readonly verbosity_choices?: string;
-  readonly punctuation_choices?: string;
-  readonly emoji_usage_choices?: string;
-  readonly slang_usage_choices?: string;
-  readonly typos_frequency_choices?: string;
-  readonly regional_mix_choices?: string;
+export interface PersonaDuplicateRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
 }
 
 /**
@@ -4810,73 +4799,6 @@ export const PersonaApiPersonaType = {
   system: 'system',
   workspace: 'workspace',
 } as const;
-
-/**
- * List of genders for the persona (e.g., ['male'], ['female'])
- */
-export type PersonaApiGender = { [key: string]: unknown };
-
-/**
- * List of age groups for the persona (e.g., ['18-25'], ['25-32'])
- */
-export type PersonaApiAgeGroup = { [key: string]: unknown };
-
-/**
- * List of occupations/professions for the persona (e.g., ['Engineer'], ['Teacher'])
- */
-export type PersonaApiOccupation = { [key: string]: unknown };
-
-/**
- * List of locations for the persona (e.g., ['United States'], ['Canada'])
- */
-export type PersonaApiLocation = { [key: string]: unknown };
-
-/**
- * List of personality types for the persona (e.g., ['Friendly and cooperative'])
- */
-export type PersonaApiPersonality = { [key: string]: unknown };
-
-/**
- * List of communication styles for the persona (e.g., ['Direct and concise'])
- */
-export type PersonaApiCommunicationStyle = { [key: string]: unknown };
-
-/**
- * List of languages the persona speaks (e.g., ['English', 'Hindi'])
- */
-export type PersonaApiLanguages = { [key: string]: unknown };
-
-/**
- * List of accents for the persona (e.g., ['American'], ['Australian'])
- */
-export type PersonaApiAccent = { [key: string]: unknown };
-
-/**
- * List of conversation speeds (e.g., ['1.0'], ['1.25'])
- */
-export type PersonaApiConversationSpeed = { [key: string]: unknown };
-
-/**
- * List of sensitivities for detecting when persona finished speaking (e.g., ['5'], ['6'])
- */
-export type PersonaApiFinishedSpeakingSensitivity = { [key: string]: unknown };
-
-/**
- * List of sensitivities for allowing interruptions (e.g., ['5'], ['6'])
- */
-export type PersonaApiInterruptSensitivity = { [key: string]: unknown };
-
-/**
- * List of keywords/tags describing the persona (e.g., ['Knowledgeable', 'Patient', 'Helpful'])
- */
-export type PersonaApiKeywords = { [key: string]: unknown };
-
-/**
- * Additional metadata for the persona (speech clarity, base emotion, etc.)
- */
-export type PersonaApiMetadata = { [key: string]: unknown };
-
-export type PersonaApiCustomProperties = { [key: string]: unknown };
 
 /**
  * Type of simulation for the persona
@@ -4978,6 +4900,73 @@ export const PersonaApiVerbosity = {
   detailed: 'detailed',
 } as const;
 
+/**
+ * List of genders for the persona (e.g., ['male'], ['female'])
+ */
+export type PersonaApiGender = { [key: string]: unknown };
+
+/**
+ * List of age groups for the persona (e.g., ['18-25'], ['25-32'])
+ */
+export type PersonaApiAgeGroup = { [key: string]: unknown };
+
+/**
+ * List of occupations/professions for the persona (e.g., ['Engineer'], ['Teacher'])
+ */
+export type PersonaApiOccupation = { [key: string]: unknown };
+
+/**
+ * List of locations for the persona (e.g., ['United States'], ['Canada'])
+ */
+export type PersonaApiLocation = { [key: string]: unknown };
+
+/**
+ * List of personality types for the persona (e.g., ['Friendly and cooperative'])
+ */
+export type PersonaApiPersonality = { [key: string]: unknown };
+
+/**
+ * List of communication styles for the persona (e.g., ['Direct and concise'])
+ */
+export type PersonaApiCommunicationStyle = { [key: string]: unknown };
+
+/**
+ * List of languages the persona speaks (e.g., ['English', 'Hindi'])
+ */
+export type PersonaApiLanguages = { [key: string]: unknown };
+
+/**
+ * List of accents for the persona (e.g., ['American'], ['Australian'])
+ */
+export type PersonaApiAccent = { [key: string]: unknown };
+
+/**
+ * List of conversation speeds (e.g., ['1.0'], ['1.25'])
+ */
+export type PersonaApiConversationSpeed = { [key: string]: unknown };
+
+/**
+ * List of sensitivities for detecting when persona finished speaking (e.g., ['5'], ['6'])
+ */
+export type PersonaApiFinishedSpeakingSensitivity = { [key: string]: unknown };
+
+/**
+ * List of sensitivities for allowing interruptions (e.g., ['5'], ['6'])
+ */
+export type PersonaApiInterruptSensitivity = { [key: string]: unknown };
+
+/**
+ * List of keywords/tags describing the persona (e.g., ['Knowledgeable', 'Patient', 'Helpful'])
+ */
+export type PersonaApiKeywords = { [key: string]: unknown };
+
+/**
+ * Additional metadata for the persona (speech clarity, base emotion, etc.)
+ */
+export type PersonaApiMetadata = { [key: string]: unknown };
+
+export type PersonaApiCustomProperties = { [key: string]: unknown };
+
 export interface PersonaApi {
   readonly id?: string;
   /** Type of persona (system or workspace-level) */
@@ -5047,6 +5036,30 @@ export interface PersonaApi {
   tone?: PersonaApiTone;
   /** Verbosity for the persona */
   verbosity?: PersonaApiVerbosity;
+}
+
+export interface PersonaDuplicateResponseApi {
+  status?: boolean;
+  result?: PersonaApi;
+}
+
+export interface PersonaFieldOptionsApi {
+  readonly gender_choices?: string;
+  readonly age_group_choices?: string;
+  readonly location_choices?: string;
+  readonly profession_choices?: string;
+  readonly personality_choices?: string;
+  readonly communication_style_choices?: string;
+  readonly accent_choices?: string;
+  readonly language_choices?: string;
+  readonly conversation_speed_choices?: string;
+  readonly tone_choices?: string;
+  readonly verbosity_choices?: string;
+  readonly punctuation_choices?: string;
+  readonly emoji_usage_choices?: string;
+  readonly slang_usage_choices?: string;
+  readonly typos_frequency_choices?: string;
+  readonly regional_mix_choices?: string;
 }
 
 export type RunTestResponseApiAgentVersion = {[key: string]: string};

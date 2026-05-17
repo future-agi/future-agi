@@ -317,6 +317,8 @@ import type {
   PerformanceSummaryApi,
   PersonaApi,
   PersonaCreateApi,
+  PersonaDuplicateRequestApi,
+  PersonaDuplicateResponseApi,
   ProjectApi,
   ProjectVersionApi,
   PromptBaseTemplateApi,
@@ -34166,16 +34168,23 @@ export const simulateApiPersonasCreate = async (personaCreateApi: PersonaCreateA
 
 
 export type simulateApiPersonasDuplicateCreateResponse201 = {
-  data: void
+  data: PersonaDuplicateResponseApi
   status: 201
+}
+
+export type simulateApiPersonasDuplicateCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
 }
 
 export type simulateApiPersonasDuplicateCreateResponseSuccess = (simulateApiPersonasDuplicateCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasDuplicateCreateResponseError = (simulateApiPersonasDuplicateCreateResponse400) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasDuplicateCreateResponse = (simulateApiPersonasDuplicateCreateResponseSuccess)
+export type simulateApiPersonasDuplicateCreateResponse = (simulateApiPersonasDuplicateCreateResponseSuccess | simulateApiPersonasDuplicateCreateResponseError)
 
 export const getSimulateApiPersonasDuplicateCreateUrl = (personaId: string,) => {
 
@@ -34188,14 +34197,16 @@ export const getSimulateApiPersonasDuplicateCreateUrl = (personaId: string,) => 
 /**
  * Duplicate a persona by ID
  */
-export const simulateApiPersonasDuplicateCreate = async (personaId: string, options?: RequestInit): Promise<simulateApiPersonasDuplicateCreateResponse> => {
+export const simulateApiPersonasDuplicateCreate = async (personaId: string,
+    personaDuplicateRequestApi: PersonaDuplicateRequestApi, options?: RequestInit): Promise<simulateApiPersonasDuplicateCreateResponse> => {
 
   return apiMutator<simulateApiPersonasDuplicateCreateResponse>(getSimulateApiPersonasDuplicateCreateUrl(personaId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      personaDuplicateRequestApi,)
   }
 );}
 

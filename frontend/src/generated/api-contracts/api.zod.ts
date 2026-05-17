@@ -16697,6 +16697,14 @@ export const SimulateApiPersonasDuplicateCreateParams = zod.object({
   "persona_id": zod.string()
 })
 
+export const simulateApiPersonasDuplicateCreateBodyNameMax = 255;
+
+
+
+export const SimulateApiPersonasDuplicateCreateBody = zod.object({
+  "name": zod.string().min(1).max(simulateApiPersonasDuplicateCreateBodyNameMax)
+})
+
 
 /**
  * Get field options/choices for persona creation

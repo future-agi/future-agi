@@ -13026,9 +13026,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/personas/duplicate/{persona_id}/": {
       "post": {
         "operationId": "simulate_api_personas_duplicate_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PersonaDuplicateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/PersonaDuplicateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/simulate/api/personas/field-options/": {
@@ -30140,6 +30149,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "default": "balanced",
           "x-nullable": true
+        }
+      }
+    },
+    "PersonaDuplicateRequest": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        }
+      }
+    },
+    "PersonaDuplicateResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/Persona"
         }
       }
     },

@@ -1,18 +1,21 @@
 import structlog
 from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import Persona
 from simulate.serializers.persona import (
     PersonaCreateSerializer,
+    PersonaDuplicateRequestSerializer,
+    PersonaDuplicateResponseSerializer,
     PersonaFieldOptionsSerializer,
     PersonaListSerializer,
     PersonaSerializer,
 )
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -225,7 +228,7 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         partial = kwargs.pop("partial", False)
         serializer = PersonaSerializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        persona = serializer.save()
+        serializer.save()
 
         return self._gm.success_response(serializer.data)
 
@@ -370,6 +373,13 @@ class PersonaDuplicateView(APIView):
         super().__init__(*args, **kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=PersonaDuplicateRequestSerializer,
+        responses={
+            201: PersonaDuplicateResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
     def post(self, request, persona_id):
         """Duplicate a persona by ID"""
         try:
