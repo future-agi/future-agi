@@ -1,5 +1,4 @@
 import os
-import traceback
 from datetime import timedelta
 
 import requests
@@ -17,6 +16,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -30,12 +30,20 @@ from accounts.models.auth_token import (
     AuthTokenType,
 )
 from accounts.models.organization import Organization
-from accounts.serializers import UserSignupSerializer
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AcceptInvitationRequestSerializer,
+    AccountsJSONRequestSerializer,
+    AccountsJSONResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+    PasswordResetConfirmRequestSerializer,
+    PasswordResetInitiateRequestSerializer,
+    UserFullNameUpdateRequestSerializer,
+    UserIdsRequestSerializer,
+)
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.utils import first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
-
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
@@ -57,6 +65,7 @@ try:
 except ImportError:
     create_organization_subscription_if_not_exists = None
 
+logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
 
@@ -101,6 +110,11 @@ def verify_recaptcha(token):
     return result.get("success", False)
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=AccountsJSONRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def user_signup(request):
     try:
@@ -169,6 +183,11 @@ def user_signup(request):
         return _gm.bad_request("An error occurred during signup.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=AccountsJSONRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def user_logout(request):
     try:
@@ -287,6 +306,11 @@ def activate_account(request, uidb64, token):
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=PasswordResetInitiateRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def initiate_password_reset(request):
     email = request.data.get("email", None)
@@ -357,6 +381,11 @@ def initiate_password_reset(request):
     return _gm.bad_request("An error occurred, please try again.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=PasswordResetConfirmRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def reset_password_confirm(request, uidb64, token):
     new_password = request.data.get("new_password")
@@ -458,6 +487,15 @@ def _activate_memberships(user):
     ).update(is_active=True)
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
+@swagger_auto_schema(
+    method="post",
+    request_body=AcceptInvitationRequestSerializer,
+    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET", "POST"])
 def accept_invitation_mail(request, uidb64, token):
     """Accept an invitation link.
@@ -660,6 +698,11 @@ def accept_invitation_mail(request, uidb64, token):
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UserIdsRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
 def resend_invitation_emails(request):
@@ -716,6 +759,11 @@ def resend_invitation_emails(request):
     return Response(responses, status=status.HTTP_200_OK)
 
 
+@swagger_auto_schema(
+    method="delete",
+    request_body=UserIdsRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
 def delete_users(request):
@@ -778,6 +826,11 @@ def delete_users(request):
     return Response(responses, status=status.HTTP_200_OK)
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UpdateUserSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def update_user(request):
@@ -854,6 +907,11 @@ def update_user(request):
     return _gm.success_response("User updated successfully.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UserFullNameUpdateRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def update_user_full_name(request):
@@ -877,6 +935,10 @@ def update_user_full_name(request):
     )
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_profile_details(request):

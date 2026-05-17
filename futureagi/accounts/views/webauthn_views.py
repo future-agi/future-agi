@@ -2,12 +2,21 @@ import json
 
 import structlog
 from django.core.cache import cache
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models.webauthn_credential import WebAuthnCredential
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsEmptyRequestSerializer,
+    AccountsJSONResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+    PasskeyCredentialRequestSerializer,
+    PasskeyOptionsResponseSerializer,
+)
 from accounts.serializers.two_factor import (
     PasskeyRegisterVerifySerializer,
     PasskeyRenameSerializer,
@@ -31,6 +40,10 @@ class PasskeyRegisterOptionsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=AccountsEmptyRequestSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             options_json, _ = get_registration_options(request.user)
@@ -48,6 +61,10 @@ class PasskeyRegisterVerifyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=PasskeyRegisterVerifySerializer,
+        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = PasskeyRegisterVerifySerializer(data=request.data)
         if not serializer.is_valid():
@@ -104,6 +121,9 @@ class PasskeyListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: WebAuthnCredentialSerializer(many=True), **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         passkeys = WebAuthnCredential.objects.filter(user=request.user)
         serializer = WebAuthnCredentialSerializer(passkeys, many=True)
@@ -116,6 +136,10 @@ class PasskeyDetailView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=PasskeyRenameSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def patch(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)
@@ -134,6 +158,7 @@ class PasskeyDetailView(APIView):
 
         return Response({"id": str(passkey.id), "name": passkey.name})
 
+    @swagger_auto_schema(responses={204: "Passkey deleted."})
     def delete(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)
@@ -162,6 +187,10 @@ class PasskeyAuthenticateOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=AccountsEmptyRequestSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             options_json, _ = get_authentication_options(user=None)
@@ -180,6 +209,13 @@ class PasskeyAuthenticateVerifyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=PasskeyCredentialRequestSerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         credential_response = request.data.get("credential")
         if not credential_response:

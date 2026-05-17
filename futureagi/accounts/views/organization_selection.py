@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -8,6 +9,11 @@ from rest_framework.views import APIView
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    OrganizationSwitchRequestSerializer,
+)
 from tfc.constants.roles import RoleMapping
 from tfc.utils.general_methods import GeneralMethods
 
@@ -27,6 +33,10 @@ class OrganizationSelectionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=OrganizationSwitchRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         """Select an organization for the current session."""
         try:
@@ -70,6 +80,9 @@ class OrganizationSelectionView(APIView):
             logger.error(f"Failed to select organization: {str(e)}")
             return self._gm.bad_request("Failed to select organization")
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         """Get all organizations the user has access to."""
         try:
@@ -148,6 +161,10 @@ class SwitchOrganizationView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=OrganizationSwitchRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         """Switch to a different organization.
 
@@ -276,6 +293,10 @@ class SwitchOrganizationView(APIView):
             return None
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_current_organization(request):

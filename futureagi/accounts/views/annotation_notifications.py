@@ -21,10 +21,18 @@ from datetime import timedelta
 import structlog
 from django.http import HttpResponse
 from django.utils import timezone
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    TimezoneRequestSerializer,
+    TimezoneResponseSerializer,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +59,10 @@ class UserTimezoneView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=TimezoneRequestSerializer,
+        responses={200: TimezoneResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         tz_name = (request.data or {}).get("timezone")
         if not _is_valid_iana_tz(tz_name):
@@ -88,6 +100,15 @@ class UnsubscribeAnnotationDigestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Response(
+                "HTML unsubscribe result",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            ),
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         from django.contrib.auth import get_user_model
 
@@ -125,6 +146,15 @@ class SnoozeAnnotationDigestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Response(
+                "HTML snooze result",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            ),
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         from django.contrib.auth import get_user_model
 

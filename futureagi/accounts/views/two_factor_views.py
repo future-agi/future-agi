@@ -4,6 +4,7 @@ import structlog
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -12,12 +13,21 @@ from rest_framework.views import APIView
 from webauthn.helpers import base64url_to_bytes
 
 from accounts.models.user import User
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsEmptyRequestSerializer,
+    AccountsJSONResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+    PasskeyOptionsResponseSerializer,
+    TwoFactorPasskeyVerifyRequestSerializer,
+)
 from accounts.serializers.two_factor import (
     OrgTwoFactorPolicySerializer,
     RecoveryCodesRegenerateSerializer,
     TOTPConfirmSerializer,
     TOTPDisableSerializer,
     TwoFactorChallengeTokenSerializer,
+    TwoFactorStatusSerializer,
     TwoFactorVerifyPasskeySerializer,
     TwoFactorVerifySerializer,
 )
@@ -62,6 +72,9 @@ class TwoFactorStatusView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: TwoFactorStatusSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         # Re-fetch user from DB to avoid stale cached reverse relations
         user = User.objects.get(pk=request.user.pk)
@@ -103,6 +116,10 @@ class TOTPSetupView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=AccountsEmptyRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             device, provisioning_uri, secret = create_totp_device(request.user)
@@ -126,6 +143,10 @@ class TOTPConfirmView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TOTPConfirmSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = TOTPConfirmSerializer(data=request.data)
         if not serializer.is_valid():
@@ -152,6 +173,10 @@ class TOTPDisableView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TOTPDisableSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def delete(self, request):
         serializer = TOTPDisableSerializer(data=request.data)
         if not serializer.is_valid():
@@ -179,6 +204,13 @@ class TwoFactorVerifyTOTPView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TwoFactorVerifySerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         serializer = TwoFactorVerifySerializer(data=request.data)
         if not serializer.is_valid():
@@ -218,6 +250,13 @@ class TwoFactorVerifyRecoveryView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TwoFactorVerifySerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         serializer = TwoFactorVerifySerializer(data=request.data)
         if not serializer.is_valid():
@@ -263,6 +302,10 @@ class TwoFactorVerifyPasskeyOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TwoFactorChallengeTokenSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = TwoFactorChallengeTokenSerializer(data=request.data)
         if not serializer.is_valid():
@@ -293,6 +336,13 @@ class TwoFactorVerifyPasskeyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TwoFactorPasskeyVerifyRequestSerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         serializer = TwoFactorVerifyPasskeySerializer(data=request.data)
         if not serializer.is_valid():
@@ -360,6 +410,9 @@ class RecoveryCodesView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         remaining = get_remaining_count(request.user)
         return Response({"remaining": remaining})
@@ -371,6 +424,10 @@ class RecoveryCodesRegenerateView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=RecoveryCodesRegenerateSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         user = request.user
         has_totp = False
@@ -418,6 +475,9 @@ class OrgTwoFactorPolicyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         org = getattr(request, "organization", None)
         if not org:
@@ -431,6 +491,10 @@ class OrgTwoFactorPolicyView(APIView):
             }
         )
 
+    @swagger_auto_schema(
+        request_body=OrgTwoFactorPolicySerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def put(self, request):
         org = getattr(request, "organization", None)
         if not org:

@@ -8,15 +8,21 @@ from django.contrib.auth.tokens import (
 from django.db import transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    WorkspaceCreateRequestSerializer,
+    WorkspaceMembersRequestSerializer,
+    WorkspaceUpdateRequestSerializer,
+)
 from accounts.utils import generate_password, resolve_org, resolve_org_role
-
-logger = structlog.get_logger(__name__)
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.settings import settings
@@ -24,11 +30,16 @@ from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
+logger = structlog.get_logger(__name__)
+
 
 class WorkspaceManagementView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         """Get workspaces for the current organization"""
         user = request.user
@@ -92,6 +103,10 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response)
 
+    @swagger_auto_schema(
+        request_body=WorkspaceCreateRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         """Create a new workspace"""
@@ -411,6 +426,10 @@ class WorkspaceManagementView(APIView):
             logger.exception(f"Failed to create workspace: {str(e)}")
             return self._gm.bad_request("Failed to create workspace")
 
+    @swagger_auto_schema(
+        request_body=WorkspaceUpdateRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def put(self, request, workspace_id, *args, **kwargs):
         """Update workspace details"""
         user = request.user
@@ -469,6 +488,9 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response_data)
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def delete(self, request, workspace_id, *args, **kwargs):
         """Delete a workspace"""
         user = request.user
@@ -511,6 +533,9 @@ class WorkspaceMembershipView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, workspace_id, *args, **kwargs):
         """Get members of a specific workspace"""
         user = request.user
@@ -581,6 +606,10 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.success_response(response)
 
+    @swagger_auto_schema(
+        request_body=WorkspaceMembersRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @transaction.atomic
     def post(self, request, workspace_id, *args, **kwargs):
         """Add users to workspace"""
@@ -631,12 +660,6 @@ class WorkspaceMembershipView(APIView):
             OrganizationRoles.MEMBER,
             OrganizationRoles.MEMBER_VIEW_ONLY,
         ]
-        workspace_level_roles = [
-            OrganizationRoles.WORKSPACE_ADMIN,
-            OrganizationRoles.WORKSPACE_MEMBER,
-            OrganizationRoles.WORKSPACE_VIEWER,
-        ]
-
         added_users = []
         errors = []
 
@@ -864,6 +887,9 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.create_response(response_data)
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def delete(self, request, workspace_id, member_id, *args, **kwargs):
         """Remove user from workspace"""
         user = request.user

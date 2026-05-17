@@ -5,8 +5,8 @@ import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
-from django.db import transaction
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -27,12 +27,17 @@ from accounts.models.auth_token import (
 )
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers import UserSerializer
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsAccessTokenResponseSerializer,
+    AccountsJSONResponseSerializer,
+    RedisKeyRequestSerializer,
+    TokenRefreshRequestSerializer,
+)
 from accounts.serializers.user import UserOnboardingSerializer
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.views.signup import verify_recaptcha
-
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -48,7 +53,19 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
+logger = structlog.get_logger(__name__)
 
+
+@swagger_auto_schema(
+    method="post",
+    request_body=RedisKeyRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
+@swagger_auto_schema(
+    method="delete",
+    request_body=RedisKeyRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST", "DELETE"])
 @permission_classes([IsAuthenticated])
 def manage_redis_key(request):
@@ -406,6 +423,13 @@ class CustomTokenRefreshView(APIView):
     _gm = GeneralMethods()
     permission_classes = [AllowAny]
 
+    @swagger_auto_schema(
+        request_body=TokenRefreshRequestSerializer,
+        responses={
+            200: AccountsAccessTokenResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Recaptcha verification
@@ -507,6 +531,10 @@ class CustomTokenRefreshView(APIView):
             return self._gm.bad_request("Failed to refresh token.")
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_info(request):
@@ -726,7 +754,6 @@ def get_user_info(request):
     # Add integer RBAC levels alongside existing string roles
     try:
         from accounts.models.organization_membership import OrganizationMembership
-        from tfc.constants.levels import Level
         from tfc.permissions.utils import get_effective_workspace_level
 
         org_membership = OrganizationMembership.objects.filter(
@@ -799,6 +826,9 @@ class FirstChecksView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         try:
             user = request.user
@@ -823,6 +853,15 @@ class FirstChecksView(APIView):
             )
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
+@swagger_auto_schema(
+    method="post",
+    request_body=UserOnboardingSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])
 def user_onboarding(request):

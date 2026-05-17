@@ -1,5 +1,6 @@
 import structlog
 from django.db import transaction
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -8,6 +9,13 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    OrganizationCreateRequestSerializer,
+    OrganizationNameRequestSerializer,
+    OrganizationUpdateRequestSerializer,
+)
 from accounts.utils import process_post_registration
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
@@ -27,6 +35,10 @@ class OrganizationCreateAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=OrganizationNameRequestSerializer,
+        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         user = request.user
@@ -136,6 +148,10 @@ class OrganizationUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=OrganizationUpdateRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def patch(self, request):
         org = getattr(request, "organization", None)
         if not org:
@@ -186,6 +202,10 @@ class CreateAdditionalOrganizationView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=OrganizationCreateRequestSerializer,
+        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         user = request.user

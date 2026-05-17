@@ -12,6 +12,21 @@ import type {
   APICallCountResponseApi,
   APICallTypeListResponseApi,
   APIKeyBulkResponseApi,
+  AWSMarketplaceLaunchRequestApi,
+  AWSMarketplaceSignupRequestApi,
+  AcceptInvitationRequestApi,
+  AccountsAccessTokenResponseApi,
+  AccountsAwsMarketplaceVerifyTokenCreateBody,
+  AccountsEmptyRequestApi,
+  AccountsErrorResponseApi,
+  AccountsJSONRequestApi,
+  AccountsJSONResponseApi,
+  AccountsOrganizationMembersListParams,
+  AccountsPaginatedResponseApi,
+  AccountsTokenPairResponseApi,
+  AccountsUserListListParams,
+  AccountsWorkspaceListListParams,
+  AccountsWorkspaceMembersListParams,
   AddEvalConfigsRequestApi,
   AddEvalConfigsResponseApi,
   AddItemsApi,
@@ -192,12 +207,14 @@ import type {
   ConversationUpdateRequestApi,
   CreateLinearIssueApi,
   CreateLinearIssueResponseApi,
+  CreateMemberApi,
   CreateNodeApi,
   CreateNodeConnectionApi,
   CreatePromptSimulationApi,
   CreateReplaySessionApi,
   CreateRunTestApi,
   CreateScoreApi,
+  CreateSecretKeyApi,
   CustomEvalConfigApi,
   CustomPaymentCheckoutRequestApi,
   CustomerInvoicesResponseApi,
@@ -209,10 +226,12 @@ import type {
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
   DatasetOptimizationDetailApi,
+  DeactivateUserApi,
   DeepAnalysisApiResponseApi,
   DeepAnalysisBodyApi,
   DeepAnalysisDispatchApiResponseApi,
   DeleteEvalConfigResponseApi,
+  DeleteUserApi,
   DeploymentInfoResponseApi,
   DevelopAnnotationsUserApi,
   DiscussionCommentRequestApi,
@@ -292,6 +311,9 @@ import type {
   IntegrationsConnectionsListParams,
   IntegrationsSyncLogsList200,
   IntegrationsSyncLogsListParams,
+  InviteCancelApi,
+  InviteCreateApi,
+  InviteResendApi,
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
   LangfuseHealthResponseApi,
@@ -334,6 +356,8 @@ import type {
   MCPToolGroupConfigUpdateApi,
   MCPToolGroupsResponseApi,
   MCPToolListResponseApi,
+  MemberRemoveApi,
+  MemberRoleUpdateApi,
   MessageFeedbackApi,
   MessageFeedbackResponseApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
@@ -425,14 +449,26 @@ import type {
   OptimizationDatasetGetApi,
   OptimizationDetailApi,
   OrgConfigBulkResponseApi,
+  OrgTwoFactorPolicyApi,
   OrganizationBillingDetailResponseApi,
   OrganizationBillingLegacyResponseApi,
   OrganizationBillingListResponseApi,
+  OrganizationCreateRequestApi,
   OrganizationListResponseApi,
+  OrganizationNameRequestApi,
   OrganizationSubscriptionListResponseApi,
   OrganizationSubscriptionMutationResponseApi,
+  OrganizationSwitchRequestApi,
+  OrganizationUpdateRequestApi,
   OverviewApiResponseApi,
   PIIEntitiesResponseApi,
+  PasskeyCredentialRequestApi,
+  PasskeyOptionsResponseApi,
+  PasskeyRegisterVerifyApi,
+  PasskeyRenameApi,
+  PasswordResetConfirmRequestApi,
+  PasswordResetInitiateRequestApi,
+  PasswordValidationApi,
   PaymentMethodCheckoutResponseApi,
   PaymentMethodConfirmResponseApi,
   PaymentMethodsResponseApi,
@@ -492,9 +528,12 @@ import type {
   RateLimitDetailResponseApi,
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
+  RecoveryCodesRegenerateApi,
+  RedisKeyRequestApi,
   ReplaySessionApi,
   ReplaySessionListApi,
   RerunCallsResponseApi,
+  ResendInviteApi,
   ResourceLimitDetailResponseApi,
   ResourceLimitListResponseApi,
   ResourceLimitMutationResponseApi,
@@ -528,6 +567,7 @@ import type {
   SDKStandaloneEvalResponseApi,
   SDKStandaloneEvalV2RequestApi,
   SDKStandaloneEvalV2ResponseApi,
+  SOSLoginApi,
   Saml2AuthAcsCreateBodyOne,
   Saml2AuthAcsCreateBodyTwo,
   Saml2AuthAuthCallbackListParams,
@@ -626,7 +666,10 @@ import type {
   SubscriptionStatusResponseApi,
   SubscriptionTierDetailResponseApi,
   SubscriptionTierListResponseApi,
+  SwitchWorkspaceApi,
   SyncLogApi,
+  TOTPConfirmApi,
+  TOTPDisableApi,
   TTSVoiceApi,
   TestExecutionAnalyticsApi,
   TestExecutionApi,
@@ -640,7 +683,10 @@ import type {
   TestExecutionRerunResponseApi,
   TestExecutionStatusApi,
   TestExecutionTranscriptsResponseApi,
+  TimezoneRequestApi,
+  TimezoneResponseApi,
   TokenObtainPairApi,
+  TokenRefreshRequestApi,
   ToolDiscoveryResponseApi,
   ToolsApi,
   TopicCategoriesResponseApi,
@@ -791,10 +837,15 @@ import type {
   TracesTabApiResponseApi,
   TrendsTabApiResponseApi,
   TriggerAnalysisApi,
+  TwoFactorChallengeTokenApi,
+  TwoFactorPasskeyVerifyRequestApi,
+  TwoFactorStatusApi,
+  TwoFactorVerifyApi,
   UpdateNodeApi,
   UpdateOrganizationBillingRequestApi,
   UpdatePortApi,
   UpdateRunTestApi,
+  UpdateUserApi,
   UpgradeToPaygConfirmRequestApi,
   UpgradeToPaygPostResponseApi,
   UsageAdminCustomPlanListParams,
@@ -821,17 +872,30 @@ import type {
   UserAlertMonitorApi,
   UserAlertMonitorLogApi,
   UserCodeExampleResponseApi,
+  UserCreateApi,
+  UserFullNameUpdateRequestApi,
+  UserIdsRequestApi,
+  UserOnboardingApi,
   UserResponseSchemaApi,
+  UserRoleUpdateApi,
+  UserSecretKeyApi,
   UsersResponseApi,
   ValidateCELRequestApi,
   ValidateCELResponseApi,
   ValidateLiveKitCredentialsRequestApi,
   ValidateLiveKitCredentialsResponseApi,
   WalletBalanceResponseApi,
+  WebAuthnCredentialApi,
   WebhookIngestResponseApi,
   WebhookLogsRequestApi,
   WebhookRequestApi,
-  WebhookResponseApi
+  WebhookResponseApi,
+  WorkspaceCreateRequestApi,
+  WorkspaceInviteApi,
+  WorkspaceMemberRemoveApi,
+  WorkspaceMemberRoleUpdateApi,
+  WorkspaceMembersRequestApi,
+  WorkspaceUpdateRequestApi
 } from './api.schemas';
 
 import { apiMutator } from '../../api/contracts/openapi-mutator';
@@ -864,16 +928,43 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
 
 
 export type accounts2faRecoveryCodesListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accounts2faRecoveryCodesListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faRecoveryCodesListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faRecoveryCodesListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faRecoveryCodesListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faRecoveryCodesListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accounts2faRecoveryCodesListResponseSuccess = (accounts2faRecoveryCodesListResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faRecoveryCodesListResponseError = (accounts2faRecoveryCodesListResponse400 | accounts2faRecoveryCodesListResponse401 | accounts2faRecoveryCodesListResponse403 | accounts2faRecoveryCodesListResponse404 | accounts2faRecoveryCodesListResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faRecoveryCodesListResponse = (accounts2faRecoveryCodesListResponseSuccess)
+export type accounts2faRecoveryCodesListResponse = (accounts2faRecoveryCodesListResponseSuccess | accounts2faRecoveryCodesListResponseError)
 
 export const getAccounts2faRecoveryCodesListUrl = () => {
 
@@ -899,17 +990,44 @@ export const accounts2faRecoveryCodesList = async ( options?: RequestInit): Prom
 
 
 
-export type accounts2faRecoveryCodesRegenerateCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faRecoveryCodesRegenerateCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accounts2faRecoveryCodesRegenerateCreateResponseSuccess = (accounts2faRecoveryCodesRegenerateCreateResponse201) & {
+export type accounts2faRecoveryCodesRegenerateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faRecoveryCodesRegenerateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faRecoveryCodesRegenerateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faRecoveryCodesRegenerateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faRecoveryCodesRegenerateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faRecoveryCodesRegenerateCreateResponseSuccess = (accounts2faRecoveryCodesRegenerateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faRecoveryCodesRegenerateCreateResponseError = (accounts2faRecoveryCodesRegenerateCreateResponse400 | accounts2faRecoveryCodesRegenerateCreateResponse401 | accounts2faRecoveryCodesRegenerateCreateResponse403 | accounts2faRecoveryCodesRegenerateCreateResponse404 | accounts2faRecoveryCodesRegenerateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faRecoveryCodesRegenerateCreateResponse = (accounts2faRecoveryCodesRegenerateCreateResponseSuccess)
+export type accounts2faRecoveryCodesRegenerateCreateResponse = (accounts2faRecoveryCodesRegenerateCreateResponseSuccess | accounts2faRecoveryCodesRegenerateCreateResponseError)
 
 export const getAccounts2faRecoveryCodesRegenerateCreateUrl = () => {
 
@@ -922,30 +1040,58 @@ export const getAccounts2faRecoveryCodesRegenerateCreateUrl = () => {
 /**
  * POST /accounts/2fa/recovery-codes/regenerate/ - Generate new codes.
  */
-export const accounts2faRecoveryCodesRegenerateCreate = async ( options?: RequestInit): Promise<accounts2faRecoveryCodesRegenerateCreateResponse> => {
+export const accounts2faRecoveryCodesRegenerateCreate = async (recoveryCodesRegenerateApi: RecoveryCodesRegenerateApi, options?: RequestInit): Promise<accounts2faRecoveryCodesRegenerateCreateResponse> => {
 
   return apiMutator<accounts2faRecoveryCodesRegenerateCreateResponse>(getAccounts2faRecoveryCodesRegenerateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      recoveryCodesRegenerateApi,)
   }
 );}
 
 
 
 export type accounts2faStatusListResponse200 = {
-  data: void
+  data: TwoFactorStatusApi
   status: 200
+}
+
+export type accounts2faStatusListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faStatusListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faStatusListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faStatusListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faStatusListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accounts2faStatusListResponseSuccess = (accounts2faStatusListResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faStatusListResponseError = (accounts2faStatusListResponse400 | accounts2faStatusListResponse401 | accounts2faStatusListResponse403 | accounts2faStatusListResponse404 | accounts2faStatusListResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faStatusListResponse = (accounts2faStatusListResponseSuccess)
+export type accounts2faStatusListResponse = (accounts2faStatusListResponseSuccess | accounts2faStatusListResponseError)
 
 export const getAccounts2faStatusListUrl = () => {
 
@@ -971,17 +1117,44 @@ export const accounts2faStatusList = async ( options?: RequestInit): Promise<acc
 
 
 
-export type accounts2faTotpDeleteResponse204 = {
-  data: void
-  status: 204
+export type accounts2faTotpDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accounts2faTotpDeleteResponseSuccess = (accounts2faTotpDeleteResponse204) & {
+export type accounts2faTotpDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faTotpDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faTotpDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faTotpDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faTotpDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faTotpDeleteResponseSuccess = (accounts2faTotpDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faTotpDeleteResponseError = (accounts2faTotpDeleteResponse400 | accounts2faTotpDeleteResponse401 | accounts2faTotpDeleteResponse403 | accounts2faTotpDeleteResponse404 | accounts2faTotpDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faTotpDeleteResponse = (accounts2faTotpDeleteResponseSuccess)
+export type accounts2faTotpDeleteResponse = (accounts2faTotpDeleteResponseSuccess | accounts2faTotpDeleteResponseError)
 
 export const getAccounts2faTotpDeleteUrl = () => {
 
@@ -994,30 +1167,58 @@ export const getAccounts2faTotpDeleteUrl = () => {
 /**
  * DELETE /accounts/2fa/totp/ - Disable TOTP.
  */
-export const accounts2faTotpDelete = async ( options?: RequestInit): Promise<accounts2faTotpDeleteResponse> => {
+export const accounts2faTotpDelete = async (tOTPDisableApi: TOTPDisableApi, options?: RequestInit): Promise<accounts2faTotpDeleteResponse> => {
 
   return apiMutator<accounts2faTotpDeleteResponse>(getAccounts2faTotpDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tOTPDisableApi,)
   }
 );}
 
 
 
-export type accounts2faTotpConfirmCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faTotpConfirmCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accounts2faTotpConfirmCreateResponseSuccess = (accounts2faTotpConfirmCreateResponse201) & {
+export type accounts2faTotpConfirmCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faTotpConfirmCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faTotpConfirmCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faTotpConfirmCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faTotpConfirmCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faTotpConfirmCreateResponseSuccess = (accounts2faTotpConfirmCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faTotpConfirmCreateResponseError = (accounts2faTotpConfirmCreateResponse400 | accounts2faTotpConfirmCreateResponse401 | accounts2faTotpConfirmCreateResponse403 | accounts2faTotpConfirmCreateResponse404 | accounts2faTotpConfirmCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faTotpConfirmCreateResponse = (accounts2faTotpConfirmCreateResponseSuccess)
+export type accounts2faTotpConfirmCreateResponse = (accounts2faTotpConfirmCreateResponseSuccess | accounts2faTotpConfirmCreateResponseError)
 
 export const getAccounts2faTotpConfirmCreateUrl = () => {
 
@@ -1030,30 +1231,58 @@ export const getAccounts2faTotpConfirmCreateUrl = () => {
 /**
  * POST /accounts/2fa/totp/confirm/ - Confirm TOTP with code.
  */
-export const accounts2faTotpConfirmCreate = async ( options?: RequestInit): Promise<accounts2faTotpConfirmCreateResponse> => {
+export const accounts2faTotpConfirmCreate = async (tOTPConfirmApi: TOTPConfirmApi, options?: RequestInit): Promise<accounts2faTotpConfirmCreateResponse> => {
 
   return apiMutator<accounts2faTotpConfirmCreateResponse>(getAccounts2faTotpConfirmCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tOTPConfirmApi,)
   }
 );}
 
 
 
-export type accounts2faTotpSetupCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faTotpSetupCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accounts2faTotpSetupCreateResponseSuccess = (accounts2faTotpSetupCreateResponse201) & {
+export type accounts2faTotpSetupCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faTotpSetupCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faTotpSetupCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faTotpSetupCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faTotpSetupCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faTotpSetupCreateResponseSuccess = (accounts2faTotpSetupCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faTotpSetupCreateResponseError = (accounts2faTotpSetupCreateResponse400 | accounts2faTotpSetupCreateResponse401 | accounts2faTotpSetupCreateResponse403 | accounts2faTotpSetupCreateResponse404 | accounts2faTotpSetupCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faTotpSetupCreateResponse = (accounts2faTotpSetupCreateResponseSuccess)
+export type accounts2faTotpSetupCreateResponse = (accounts2faTotpSetupCreateResponseSuccess | accounts2faTotpSetupCreateResponseError)
 
 export const getAccounts2faTotpSetupCreateUrl = () => {
 
@@ -1066,30 +1295,58 @@ export const getAccounts2faTotpSetupCreateUrl = () => {
 /**
  * POST /accounts/2fa/totp/setup/ - Begin TOTP setup.
  */
-export const accounts2faTotpSetupCreate = async ( options?: RequestInit): Promise<accounts2faTotpSetupCreateResponse> => {
+export const accounts2faTotpSetupCreate = async (accountsEmptyRequestApi: AccountsEmptyRequestApi, options?: RequestInit): Promise<accounts2faTotpSetupCreateResponse> => {
 
   return apiMutator<accounts2faTotpSetupCreateResponse>(getAccounts2faTotpSetupCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsEmptyRequestApi,)
   }
 );}
 
 
 
-export type accounts2faVerifyPasskeyCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faVerifyPasskeyCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accounts2faVerifyPasskeyCreateResponseSuccess = (accounts2faVerifyPasskeyCreateResponse201) & {
+export type accounts2faVerifyPasskeyCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faVerifyPasskeyCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faVerifyPasskeyCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faVerifyPasskeyCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faVerifyPasskeyCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faVerifyPasskeyCreateResponseSuccess = (accounts2faVerifyPasskeyCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faVerifyPasskeyCreateResponseError = (accounts2faVerifyPasskeyCreateResponse400 | accounts2faVerifyPasskeyCreateResponse401 | accounts2faVerifyPasskeyCreateResponse403 | accounts2faVerifyPasskeyCreateResponse404 | accounts2faVerifyPasskeyCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faVerifyPasskeyCreateResponse = (accounts2faVerifyPasskeyCreateResponseSuccess)
+export type accounts2faVerifyPasskeyCreateResponse = (accounts2faVerifyPasskeyCreateResponseSuccess | accounts2faVerifyPasskeyCreateResponseError)
 
 export const getAccounts2faVerifyPasskeyCreateUrl = () => {
 
@@ -1102,30 +1359,58 @@ export const getAccounts2faVerifyPasskeyCreateUrl = () => {
 /**
  * POST /accounts/2fa/verify/passkey/ - Verify passkey as 2FA during login.
  */
-export const accounts2faVerifyPasskeyCreate = async ( options?: RequestInit): Promise<accounts2faVerifyPasskeyCreateResponse> => {
+export const accounts2faVerifyPasskeyCreate = async (twoFactorPasskeyVerifyRequestApi: TwoFactorPasskeyVerifyRequestApi, options?: RequestInit): Promise<accounts2faVerifyPasskeyCreateResponse> => {
 
   return apiMutator<accounts2faVerifyPasskeyCreateResponse>(getAccounts2faVerifyPasskeyCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      twoFactorPasskeyVerifyRequestApi,)
   }
 );}
 
 
 
-export type accounts2faVerifyPasskeyOptionsCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faVerifyPasskeyOptionsCreateResponse200 = {
+  data: PasskeyOptionsResponseApi
+  status: 200
 }
 
-export type accounts2faVerifyPasskeyOptionsCreateResponseSuccess = (accounts2faVerifyPasskeyOptionsCreateResponse201) & {
+export type accounts2faVerifyPasskeyOptionsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faVerifyPasskeyOptionsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faVerifyPasskeyOptionsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faVerifyPasskeyOptionsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faVerifyPasskeyOptionsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faVerifyPasskeyOptionsCreateResponseSuccess = (accounts2faVerifyPasskeyOptionsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faVerifyPasskeyOptionsCreateResponseError = (accounts2faVerifyPasskeyOptionsCreateResponse400 | accounts2faVerifyPasskeyOptionsCreateResponse401 | accounts2faVerifyPasskeyOptionsCreateResponse403 | accounts2faVerifyPasskeyOptionsCreateResponse404 | accounts2faVerifyPasskeyOptionsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faVerifyPasskeyOptionsCreateResponse = (accounts2faVerifyPasskeyOptionsCreateResponseSuccess)
+export type accounts2faVerifyPasskeyOptionsCreateResponse = (accounts2faVerifyPasskeyOptionsCreateResponseSuccess | accounts2faVerifyPasskeyOptionsCreateResponseError)
 
 export const getAccounts2faVerifyPasskeyOptionsCreateUrl = () => {
 
@@ -1138,30 +1423,58 @@ export const getAccounts2faVerifyPasskeyOptionsCreateUrl = () => {
 /**
  * POST /accounts/2fa/verify/passkey/options/ - Get WebAuthn options for passkey as 2FA.
  */
-export const accounts2faVerifyPasskeyOptionsCreate = async ( options?: RequestInit): Promise<accounts2faVerifyPasskeyOptionsCreateResponse> => {
+export const accounts2faVerifyPasskeyOptionsCreate = async (twoFactorChallengeTokenApi: TwoFactorChallengeTokenApi, options?: RequestInit): Promise<accounts2faVerifyPasskeyOptionsCreateResponse> => {
 
   return apiMutator<accounts2faVerifyPasskeyOptionsCreateResponse>(getAccounts2faVerifyPasskeyOptionsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      twoFactorChallengeTokenApi,)
   }
 );}
 
 
 
-export type accounts2faVerifyRecoveryCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faVerifyRecoveryCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accounts2faVerifyRecoveryCreateResponseSuccess = (accounts2faVerifyRecoveryCreateResponse201) & {
+export type accounts2faVerifyRecoveryCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faVerifyRecoveryCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faVerifyRecoveryCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faVerifyRecoveryCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faVerifyRecoveryCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faVerifyRecoveryCreateResponseSuccess = (accounts2faVerifyRecoveryCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faVerifyRecoveryCreateResponseError = (accounts2faVerifyRecoveryCreateResponse400 | accounts2faVerifyRecoveryCreateResponse401 | accounts2faVerifyRecoveryCreateResponse403 | accounts2faVerifyRecoveryCreateResponse404 | accounts2faVerifyRecoveryCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faVerifyRecoveryCreateResponse = (accounts2faVerifyRecoveryCreateResponseSuccess)
+export type accounts2faVerifyRecoveryCreateResponse = (accounts2faVerifyRecoveryCreateResponseSuccess | accounts2faVerifyRecoveryCreateResponseError)
 
 export const getAccounts2faVerifyRecoveryCreateUrl = () => {
 
@@ -1174,30 +1487,58 @@ export const getAccounts2faVerifyRecoveryCreateUrl = () => {
 /**
  * POST /accounts/2fa/verify/recovery/ - Verify recovery code during login.
  */
-export const accounts2faVerifyRecoveryCreate = async ( options?: RequestInit): Promise<accounts2faVerifyRecoveryCreateResponse> => {
+export const accounts2faVerifyRecoveryCreate = async (twoFactorVerifyApi: TwoFactorVerifyApi, options?: RequestInit): Promise<accounts2faVerifyRecoveryCreateResponse> => {
 
   return apiMutator<accounts2faVerifyRecoveryCreateResponse>(getAccounts2faVerifyRecoveryCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      twoFactorVerifyApi,)
   }
 );}
 
 
 
-export type accounts2faVerifyTotpCreateResponse201 = {
-  data: void
-  status: 201
+export type accounts2faVerifyTotpCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accounts2faVerifyTotpCreateResponseSuccess = (accounts2faVerifyTotpCreateResponse201) & {
+export type accounts2faVerifyTotpCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accounts2faVerifyTotpCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accounts2faVerifyTotpCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accounts2faVerifyTotpCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accounts2faVerifyTotpCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accounts2faVerifyTotpCreateResponseSuccess = (accounts2faVerifyTotpCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accounts2faVerifyTotpCreateResponseError = (accounts2faVerifyTotpCreateResponse400 | accounts2faVerifyTotpCreateResponse401 | accounts2faVerifyTotpCreateResponse403 | accounts2faVerifyTotpCreateResponse404 | accounts2faVerifyTotpCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accounts2faVerifyTotpCreateResponse = (accounts2faVerifyTotpCreateResponseSuccess)
+export type accounts2faVerifyTotpCreateResponse = (accounts2faVerifyTotpCreateResponseSuccess | accounts2faVerifyTotpCreateResponseError)
 
 export const getAccounts2faVerifyTotpCreateUrl = () => {
 
@@ -1210,30 +1551,58 @@ export const getAccounts2faVerifyTotpCreateUrl = () => {
 /**
  * POST /accounts/2fa/verify/totp/ - Verify TOTP during login (Phase 2).
  */
-export const accounts2faVerifyTotpCreate = async ( options?: RequestInit): Promise<accounts2faVerifyTotpCreateResponse> => {
+export const accounts2faVerifyTotpCreate = async (twoFactorVerifyApi: TwoFactorVerifyApi, options?: RequestInit): Promise<accounts2faVerifyTotpCreateResponse> => {
 
   return apiMutator<accounts2faVerifyTotpCreateResponse>(getAccounts2faVerifyTotpCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      twoFactorVerifyApi,)
   }
 );}
 
 
 
 export type accountsAcceptInvitationReadResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsAcceptInvitationReadResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAcceptInvitationReadResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAcceptInvitationReadResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAcceptInvitationReadResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAcceptInvitationReadResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsAcceptInvitationReadResponseSuccess = (accountsAcceptInvitationReadResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAcceptInvitationReadResponseError = (accountsAcceptInvitationReadResponse400 | accountsAcceptInvitationReadResponse401 | accountsAcceptInvitationReadResponse403 | accountsAcceptInvitationReadResponse404 | accountsAcceptInvitationReadResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAcceptInvitationReadResponse = (accountsAcceptInvitationReadResponseSuccess)
+export type accountsAcceptInvitationReadResponse = (accountsAcceptInvitationReadResponseSuccess | accountsAcceptInvitationReadResponseError)
 
 export const getAccountsAcceptInvitationReadUrl = (uidb64: string,
     token: string,) => {
@@ -1265,17 +1634,44 @@ export const accountsAcceptInvitationRead = async (uidb64: string,
 
 
 
-export type accountsAcceptInvitationCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsAcceptInvitationCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accountsAcceptInvitationCreateResponseSuccess = (accountsAcceptInvitationCreateResponse201) & {
+export type accountsAcceptInvitationCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAcceptInvitationCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAcceptInvitationCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAcceptInvitationCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAcceptInvitationCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsAcceptInvitationCreateResponseSuccess = (accountsAcceptInvitationCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAcceptInvitationCreateResponseError = (accountsAcceptInvitationCreateResponse400 | accountsAcceptInvitationCreateResponse401 | accountsAcceptInvitationCreateResponse403 | accountsAcceptInvitationCreateResponse404 | accountsAcceptInvitationCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAcceptInvitationCreateResponse = (accountsAcceptInvitationCreateResponseSuccess)
+export type accountsAcceptInvitationCreateResponse = (accountsAcceptInvitationCreateResponseSuccess | accountsAcceptInvitationCreateResponseError)
 
 export const getAccountsAcceptInvitationCreateUrl = (uidb64: string,
     token: string,) => {
@@ -1294,30 +1690,59 @@ POST — set the user's password, activate the account, accept the invite,
  * @summary Accept an invitation link.
  */
 export const accountsAcceptInvitationCreate = async (uidb64: string,
-    token: string, options?: RequestInit): Promise<accountsAcceptInvitationCreateResponse> => {
+    token: string,
+    acceptInvitationRequestApi: AcceptInvitationRequestApi, options?: RequestInit): Promise<accountsAcceptInvitationCreateResponse> => {
 
   return apiMutator<accountsAcceptInvitationCreateResponse>(getAccountsAcceptInvitationCreateUrl(uidb64,token),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      acceptInvitationRequestApi,)
   }
 );}
 
 
 
 export type accountsAppsmithUsersListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsAppsmithUsersListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAppsmithUsersListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAppsmithUsersListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAppsmithUsersListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAppsmithUsersListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsAppsmithUsersListResponseSuccess = (accountsAppsmithUsersListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAppsmithUsersListResponseError = (accountsAppsmithUsersListResponse400 | accountsAppsmithUsersListResponse401 | accountsAppsmithUsersListResponse403 | accountsAppsmithUsersListResponse404 | accountsAppsmithUsersListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAppsmithUsersListResponse = (accountsAppsmithUsersListResponseSuccess)
+export type accountsAppsmithUsersListResponse = (accountsAppsmithUsersListResponseSuccess | accountsAppsmithUsersListResponseError)
 
 export const getAccountsAppsmithUsersListUrl = () => {
 
@@ -1341,16 +1766,43 @@ export const accountsAppsmithUsersList = async ( options?: RequestInit): Promise
 
 
 export type accountsAppsmithUsersCreateResponse201 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 201
+}
+
+export type accountsAppsmithUsersCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAppsmithUsersCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAppsmithUsersCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAppsmithUsersCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAppsmithUsersCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsAppsmithUsersCreateResponseSuccess = (accountsAppsmithUsersCreateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsAppsmithUsersCreateResponseError = (accountsAppsmithUsersCreateResponse400 | accountsAppsmithUsersCreateResponse401 | accountsAppsmithUsersCreateResponse403 | accountsAppsmithUsersCreateResponse404 | accountsAppsmithUsersCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAppsmithUsersCreateResponse = (accountsAppsmithUsersCreateResponseSuccess)
+export type accountsAppsmithUsersCreateResponse = (accountsAppsmithUsersCreateResponseSuccess | accountsAppsmithUsersCreateResponseError)
 
 export const getAccountsAppsmithUsersCreateUrl = (userId: string,) => {
 
@@ -1360,30 +1812,59 @@ export const getAccountsAppsmithUsersCreateUrl = (userId: string,) => {
   return `/accounts/appsmith/users/${userId}/`
 }
 
-export const accountsAppsmithUsersCreate = async (userId: string, options?: RequestInit): Promise<accountsAppsmithUsersCreateResponse> => {
+export const accountsAppsmithUsersCreate = async (userId: string,
+    userCreateApi: UserCreateApi, options?: RequestInit): Promise<accountsAppsmithUsersCreateResponse> => {
 
   return apiMutator<accountsAppsmithUsersCreateResponse>(getAccountsAppsmithUsersCreateUrl(userId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userCreateApi,)
   }
 );}
 
 
 
-export type accountsAppsmithUsersPartialUpdateResponse200 = {
-  data: void
-  status: 200
+export type accountsAppsmithUsersPartialUpdateResponse201 = {
+  data: AccountsJSONResponseApi
+  status: 201
 }
 
-export type accountsAppsmithUsersPartialUpdateResponseSuccess = (accountsAppsmithUsersPartialUpdateResponse200) & {
+export type accountsAppsmithUsersPartialUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAppsmithUsersPartialUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAppsmithUsersPartialUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAppsmithUsersPartialUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAppsmithUsersPartialUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsAppsmithUsersPartialUpdateResponseSuccess = (accountsAppsmithUsersPartialUpdateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsAppsmithUsersPartialUpdateResponseError = (accountsAppsmithUsersPartialUpdateResponse400 | accountsAppsmithUsersPartialUpdateResponse401 | accountsAppsmithUsersPartialUpdateResponse403 | accountsAppsmithUsersPartialUpdateResponse404 | accountsAppsmithUsersPartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAppsmithUsersPartialUpdateResponse = (accountsAppsmithUsersPartialUpdateResponseSuccess)
+export type accountsAppsmithUsersPartialUpdateResponse = (accountsAppsmithUsersPartialUpdateResponseSuccess | accountsAppsmithUsersPartialUpdateResponseError)
 
 export const getAccountsAppsmithUsersPartialUpdateUrl = (userId: string,) => {
 
@@ -1393,30 +1874,59 @@ export const getAccountsAppsmithUsersPartialUpdateUrl = (userId: string,) => {
   return `/accounts/appsmith/users/${userId}/`
 }
 
-export const accountsAppsmithUsersPartialUpdate = async (userId: string, options?: RequestInit): Promise<accountsAppsmithUsersPartialUpdateResponse> => {
+export const accountsAppsmithUsersPartialUpdate = async (userId: string,
+    passwordValidationApi: PasswordValidationApi, options?: RequestInit): Promise<accountsAppsmithUsersPartialUpdateResponse> => {
 
   return apiMutator<accountsAppsmithUsersPartialUpdateResponse>(getAccountsAppsmithUsersPartialUpdateUrl(userId),
   {
     ...options,
-    method: 'PATCH'
-
-
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordValidationApi,)
   }
 );}
 
 
 
-export type accountsAppsmithUsersLoginCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsAppsmithUsersLoginCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accountsAppsmithUsersLoginCreateResponseSuccess = (accountsAppsmithUsersLoginCreateResponse201) & {
+export type accountsAppsmithUsersLoginCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAppsmithUsersLoginCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAppsmithUsersLoginCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAppsmithUsersLoginCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAppsmithUsersLoginCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsAppsmithUsersLoginCreateResponseSuccess = (accountsAppsmithUsersLoginCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAppsmithUsersLoginCreateResponseError = (accountsAppsmithUsersLoginCreateResponse400 | accountsAppsmithUsersLoginCreateResponse401 | accountsAppsmithUsersLoginCreateResponse403 | accountsAppsmithUsersLoginCreateResponse404 | accountsAppsmithUsersLoginCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAppsmithUsersLoginCreateResponse = (accountsAppsmithUsersLoginCreateResponseSuccess)
+export type accountsAppsmithUsersLoginCreateResponse = (accountsAppsmithUsersLoginCreateResponseSuccess | accountsAppsmithUsersLoginCreateResponseError)
 
 export const getAccountsAppsmithUsersLoginCreateUrl = () => {
 
@@ -1426,30 +1936,58 @@ export const getAccountsAppsmithUsersLoginCreateUrl = () => {
   return `/accounts/appsmith/users/login`
 }
 
-export const accountsAppsmithUsersLoginCreate = async ( options?: RequestInit): Promise<accountsAppsmithUsersLoginCreateResponse> => {
+export const accountsAppsmithUsersLoginCreate = async (sOSLoginApi: SOSLoginApi, options?: RequestInit): Promise<accountsAppsmithUsersLoginCreateResponse> => {
 
   return apiMutator<accountsAppsmithUsersLoginCreateResponse>(getAccountsAppsmithUsersLoginCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      sOSLoginApi,)
   }
 );}
 
 
 
 export type accountsAppsmithUsersReadResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsAppsmithUsersReadResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAppsmithUsersReadResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAppsmithUsersReadResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAppsmithUsersReadResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAppsmithUsersReadResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsAppsmithUsersReadResponseSuccess = (accountsAppsmithUsersReadResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAppsmithUsersReadResponseError = (accountsAppsmithUsersReadResponse400 | accountsAppsmithUsersReadResponse401 | accountsAppsmithUsersReadResponse403 | accountsAppsmithUsersReadResponse404 | accountsAppsmithUsersReadResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAppsmithUsersReadResponse = (accountsAppsmithUsersReadResponseSuccess)
+export type accountsAppsmithUsersReadResponse = (accountsAppsmithUsersReadResponseSuccess | accountsAppsmithUsersReadResponseError)
 
 export const getAccountsAppsmithUsersReadUrl = (userId: string,) => {
 
@@ -1472,17 +2010,44 @@ export const accountsAppsmithUsersRead = async (userId: string, options?: Reques
 
 
 
-export type accountsAwsMarketplaceLaunchSoftwareCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess = (accountsAwsMarketplaceLaunchSoftwareCreateResponse201) & {
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess = (accountsAwsMarketplaceLaunchSoftwareCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponseError = (accountsAwsMarketplaceLaunchSoftwareCreateResponse400 | accountsAwsMarketplaceLaunchSoftwareCreateResponse401 | accountsAwsMarketplaceLaunchSoftwareCreateResponse403 | accountsAwsMarketplaceLaunchSoftwareCreateResponse404 | accountsAwsMarketplaceLaunchSoftwareCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAwsMarketplaceLaunchSoftwareCreateResponse = (accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess)
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse = (accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess | accountsAwsMarketplaceLaunchSoftwareCreateResponseError)
 
 export const getAccountsAwsMarketplaceLaunchSoftwareCreateUrl = () => {
 
@@ -1497,30 +2062,58 @@ export const getAccountsAwsMarketplaceLaunchSoftwareCreateUrl = () => {
 and redirects appropriately.
  * @summary Handle "Launch Software" action from AWS Marketplace
  */
-export const accountsAwsMarketplaceLaunchSoftwareCreate = async ( options?: RequestInit): Promise<accountsAwsMarketplaceLaunchSoftwareCreateResponse> => {
+export const accountsAwsMarketplaceLaunchSoftwareCreate = async (aWSMarketplaceLaunchRequestApi: AWSMarketplaceLaunchRequestApi, options?: RequestInit): Promise<accountsAwsMarketplaceLaunchSoftwareCreateResponse> => {
 
   return apiMutator<accountsAwsMarketplaceLaunchSoftwareCreateResponse>(getAccountsAwsMarketplaceLaunchSoftwareCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aWSMarketplaceLaunchRequestApi,)
   }
 );}
 
 
 
-export type accountsAwsMarketplaceSignupCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsAwsMarketplaceSignupCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsAwsMarketplaceSignupCreateResponseSuccess = (accountsAwsMarketplaceSignupCreateResponse201) & {
+export type accountsAwsMarketplaceSignupCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAwsMarketplaceSignupCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAwsMarketplaceSignupCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAwsMarketplaceSignupCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAwsMarketplaceSignupCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsAwsMarketplaceSignupCreateResponseSuccess = (accountsAwsMarketplaceSignupCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsAwsMarketplaceSignupCreateResponseError = (accountsAwsMarketplaceSignupCreateResponse400 | accountsAwsMarketplaceSignupCreateResponse401 | accountsAwsMarketplaceSignupCreateResponse403 | accountsAwsMarketplaceSignupCreateResponse404 | accountsAwsMarketplaceSignupCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAwsMarketplaceSignupCreateResponse = (accountsAwsMarketplaceSignupCreateResponseSuccess)
+export type accountsAwsMarketplaceSignupCreateResponse = (accountsAwsMarketplaceSignupCreateResponseSuccess | accountsAwsMarketplaceSignupCreateResponseError)
 
 export const getAccountsAwsMarketplaceSignupCreateUrl = () => {
 
@@ -1535,14 +2128,15 @@ export const getAccountsAwsMarketplaceSignupCreateUrl = () => {
 for an AWS Marketplace customer.
  * @summary Complete AWS Marketplace customer signup
  */
-export const accountsAwsMarketplaceSignupCreate = async ( options?: RequestInit): Promise<accountsAwsMarketplaceSignupCreateResponse> => {
+export const accountsAwsMarketplaceSignupCreate = async (aWSMarketplaceSignupRequestApi: AWSMarketplaceSignupRequestApi, options?: RequestInit): Promise<accountsAwsMarketplaceSignupCreateResponse> => {
 
   return apiMutator<accountsAwsMarketplaceSignupCreateResponse>(getAccountsAwsMarketplaceSignupCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aWSMarketplaceSignupRequestApi,)
   }
 );}
 
@@ -1553,12 +2147,44 @@ export type accountsAwsMarketplaceVerifyTokenCreateResponse201 = {
   status: 201
 }
 
+export type accountsAwsMarketplaceVerifyTokenCreateResponse302 = {
+  data: void
+  status: 302
+}
+
+export type accountsAwsMarketplaceVerifyTokenCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsAwsMarketplaceVerifyTokenCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsAwsMarketplaceVerifyTokenCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsAwsMarketplaceVerifyTokenCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsAwsMarketplaceVerifyTokenCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
 export type accountsAwsMarketplaceVerifyTokenCreateResponseSuccess = (accountsAwsMarketplaceVerifyTokenCreateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsAwsMarketplaceVerifyTokenCreateResponseError = (accountsAwsMarketplaceVerifyTokenCreateResponse302 | accountsAwsMarketplaceVerifyTokenCreateResponse400 | accountsAwsMarketplaceVerifyTokenCreateResponse401 | accountsAwsMarketplaceVerifyTokenCreateResponse403 | accountsAwsMarketplaceVerifyTokenCreateResponse404 | accountsAwsMarketplaceVerifyTokenCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsAwsMarketplaceVerifyTokenCreateResponse = (accountsAwsMarketplaceVerifyTokenCreateResponseSuccess)
+export type accountsAwsMarketplaceVerifyTokenCreateResponse = (accountsAwsMarketplaceVerifyTokenCreateResponseSuccess | accountsAwsMarketplaceVerifyTokenCreateResponseError)
 
 export const getAccountsAwsMarketplaceVerifyTokenCreateUrl = () => {
 
@@ -1572,21 +2198,32 @@ export const getAccountsAwsMarketplaceVerifyTokenCreateUrl = () => {
  * Verify AWS Marketplace token and redirect to appropriate frontend URL
 This endpoint accepts application/x-www-form-urlencoded.
  */
-export const accountsAwsMarketplaceVerifyTokenCreate = async ( options?: RequestInit): Promise<accountsAwsMarketplaceVerifyTokenCreateResponse> => {
+export const accountsAwsMarketplaceVerifyTokenCreate = async (accountsAwsMarketplaceVerifyTokenCreateBody?: AccountsAwsMarketplaceVerifyTokenCreateBody, options?: RequestInit): Promise<accountsAwsMarketplaceVerifyTokenCreateResponse> => {
+    const formUrlEncoded = new URLSearchParams();
+if(accountsAwsMarketplaceVerifyTokenCreateBody?.['x-amzn-marketplace-token'] !== undefined) {
+ formUrlEncoded.append(`x-amzn-marketplace-token`, accountsAwsMarketplaceVerifyTokenCreateBody['x-amzn-marketplace-token']);
+ }
+if(accountsAwsMarketplaceVerifyTokenCreateBody?.['x-amzn-marketplace-product-id'] !== undefined) {
+ formUrlEncoded.append(`x-amzn-marketplace-product-id`, accountsAwsMarketplaceVerifyTokenCreateBody['x-amzn-marketplace-product-id']);
+ }
+if(accountsAwsMarketplaceVerifyTokenCreateBody?.['x-amzn-marketplace-agreement-id'] !== undefined) {
+ formUrlEncoded.append(`x-amzn-marketplace-agreement-id`, accountsAwsMarketplaceVerifyTokenCreateBody['x-amzn-marketplace-agreement-id']);
+ }
 
   return apiMutator<accountsAwsMarketplaceVerifyTokenCreateResponse>(getAccountsAwsMarketplaceVerifyTokenCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...options?.headers },
+    body:
+      formUrlEncoded,
   }
 );}
 
 
 
 export type accountsConfigListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
 }
 
@@ -1624,17 +2261,44 @@ export const accountsConfigList = async ( options?: RequestInit): Promise<accoun
 
 
 
-export type accountsDeleteUsersDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsDeleteUsersDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsDeleteUsersDeleteResponseSuccess = (accountsDeleteUsersDeleteResponse204) & {
+export type accountsDeleteUsersDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsDeleteUsersDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsDeleteUsersDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsDeleteUsersDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsDeleteUsersDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsDeleteUsersDeleteResponseSuccess = (accountsDeleteUsersDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsDeleteUsersDeleteResponseError = (accountsDeleteUsersDeleteResponse400 | accountsDeleteUsersDeleteResponse401 | accountsDeleteUsersDeleteResponse403 | accountsDeleteUsersDeleteResponse404 | accountsDeleteUsersDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsDeleteUsersDeleteResponse = (accountsDeleteUsersDeleteResponseSuccess)
+export type accountsDeleteUsersDeleteResponse = (accountsDeleteUsersDeleteResponseSuccess | accountsDeleteUsersDeleteResponseError)
 
 export const getAccountsDeleteUsersDeleteUrl = () => {
 
@@ -1644,30 +2308,58 @@ export const getAccountsDeleteUsersDeleteUrl = () => {
   return `/accounts/delete-users/`
 }
 
-export const accountsDeleteUsersDelete = async ( options?: RequestInit): Promise<accountsDeleteUsersDeleteResponse> => {
+export const accountsDeleteUsersDelete = async (userIdsRequestApi: UserIdsRequestApi, options?: RequestInit): Promise<accountsDeleteUsersDeleteResponse> => {
 
   return apiMutator<accountsDeleteUsersDeleteResponse>(getAccountsDeleteUsersDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userIdsRequestApi,)
   }
 );}
 
 
 
 export type accountsFirstChecksListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsFirstChecksListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsFirstChecksListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsFirstChecksListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsFirstChecksListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsFirstChecksListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsFirstChecksListResponseSuccess = (accountsFirstChecksListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsFirstChecksListResponseError = (accountsFirstChecksListResponse400 | accountsFirstChecksListResponse401 | accountsFirstChecksListResponse403 | accountsFirstChecksListResponse404 | accountsFirstChecksListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsFirstChecksListResponse = (accountsFirstChecksListResponseSuccess)
+export type accountsFirstChecksListResponse = (accountsFirstChecksListResponseSuccess | accountsFirstChecksListResponseError)
 
 export const getAccountsFirstChecksListUrl = () => {
 
@@ -1691,16 +2383,43 @@ export const accountsFirstChecksList = async ( options?: RequestInit): Promise<a
 
 
 export type accountsGetUserProfileDetailsListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsGetUserProfileDetailsListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsGetUserProfileDetailsListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsGetUserProfileDetailsListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsGetUserProfileDetailsListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsGetUserProfileDetailsListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsGetUserProfileDetailsListResponseSuccess = (accountsGetUserProfileDetailsListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsGetUserProfileDetailsListResponseError = (accountsGetUserProfileDetailsListResponse400 | accountsGetUserProfileDetailsListResponse401 | accountsGetUserProfileDetailsListResponse403 | accountsGetUserProfileDetailsListResponse404 | accountsGetUserProfileDetailsListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsGetUserProfileDetailsListResponse = (accountsGetUserProfileDetailsListResponseSuccess)
+export type accountsGetUserProfileDetailsListResponse = (accountsGetUserProfileDetailsListResponseSuccess | accountsGetUserProfileDetailsListResponseError)
 
 export const getAccountsGetUserProfileDetailsListUrl = () => {
 
@@ -1723,17 +2442,44 @@ export const accountsGetUserProfileDetailsList = async ( options?: RequestInit):
 
 
 
-export type accountsKeyDeleteSecretKeyResponse204 = {
-  data: void
-  status: 204
+export type accountsKeyDeleteSecretKeyResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsKeyDeleteSecretKeyResponseSuccess = (accountsKeyDeleteSecretKeyResponse204) & {
+export type accountsKeyDeleteSecretKeyResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeyDeleteSecretKeyResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeyDeleteSecretKeyResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeyDeleteSecretKeyResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeyDeleteSecretKeyResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsKeyDeleteSecretKeyResponseSuccess = (accountsKeyDeleteSecretKeyResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeyDeleteSecretKeyResponseError = (accountsKeyDeleteSecretKeyResponse400 | accountsKeyDeleteSecretKeyResponse401 | accountsKeyDeleteSecretKeyResponse403 | accountsKeyDeleteSecretKeyResponse404 | accountsKeyDeleteSecretKeyResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeyDeleteSecretKeyResponse = (accountsKeyDeleteSecretKeyResponseSuccess)
+export type accountsKeyDeleteSecretKeyResponse = (accountsKeyDeleteSecretKeyResponseSuccess | accountsKeyDeleteSecretKeyResponseError)
 
 export const getAccountsKeyDeleteSecretKeyUrl = () => {
 
@@ -1743,30 +2489,58 @@ export const getAccountsKeyDeleteSecretKeyUrl = () => {
   return `/accounts/key/delete_secret_key/`
 }
 
-export const accountsKeyDeleteSecretKey = async ( options?: RequestInit): Promise<accountsKeyDeleteSecretKeyResponse> => {
+export const accountsKeyDeleteSecretKey = async (userSecretKeyApi: UserSecretKeyApi, options?: RequestInit): Promise<accountsKeyDeleteSecretKeyResponse> => {
 
   return apiMutator<accountsKeyDeleteSecretKeyResponse>(getAccountsKeyDeleteSecretKeyUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userSecretKeyApi,)
   }
 );}
 
 
 
-export type accountsKeyDisableKeyResponse201 = {
-  data: void
-  status: 201
+export type accountsKeyDisableKeyResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsKeyDisableKeyResponseSuccess = (accountsKeyDisableKeyResponse201) & {
+export type accountsKeyDisableKeyResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeyDisableKeyResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeyDisableKeyResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeyDisableKeyResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeyDisableKeyResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsKeyDisableKeyResponseSuccess = (accountsKeyDisableKeyResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeyDisableKeyResponseError = (accountsKeyDisableKeyResponse400 | accountsKeyDisableKeyResponse401 | accountsKeyDisableKeyResponse403 | accountsKeyDisableKeyResponse404 | accountsKeyDisableKeyResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeyDisableKeyResponse = (accountsKeyDisableKeyResponseSuccess)
+export type accountsKeyDisableKeyResponse = (accountsKeyDisableKeyResponseSuccess | accountsKeyDisableKeyResponseError)
 
 export const getAccountsKeyDisableKeyUrl = () => {
 
@@ -1776,30 +2550,58 @@ export const getAccountsKeyDisableKeyUrl = () => {
   return `/accounts/key/disable_key/`
 }
 
-export const accountsKeyDisableKey = async ( options?: RequestInit): Promise<accountsKeyDisableKeyResponse> => {
+export const accountsKeyDisableKey = async (userSecretKeyApi: UserSecretKeyApi, options?: RequestInit): Promise<accountsKeyDisableKeyResponse> => {
 
   return apiMutator<accountsKeyDisableKeyResponse>(getAccountsKeyDisableKeyUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userSecretKeyApi,)
   }
 );}
 
 
 
-export type accountsKeyEnableKeyResponse201 = {
-  data: void
-  status: 201
+export type accountsKeyEnableKeyResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsKeyEnableKeyResponseSuccess = (accountsKeyEnableKeyResponse201) & {
+export type accountsKeyEnableKeyResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeyEnableKeyResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeyEnableKeyResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeyEnableKeyResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeyEnableKeyResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsKeyEnableKeyResponseSuccess = (accountsKeyEnableKeyResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeyEnableKeyResponseError = (accountsKeyEnableKeyResponse400 | accountsKeyEnableKeyResponse401 | accountsKeyEnableKeyResponse403 | accountsKeyEnableKeyResponse404 | accountsKeyEnableKeyResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeyEnableKeyResponse = (accountsKeyEnableKeyResponseSuccess)
+export type accountsKeyEnableKeyResponse = (accountsKeyEnableKeyResponseSuccess | accountsKeyEnableKeyResponseError)
 
 export const getAccountsKeyEnableKeyUrl = () => {
 
@@ -1809,30 +2611,58 @@ export const getAccountsKeyEnableKeyUrl = () => {
   return `/accounts/key/enable_key/`
 }
 
-export const accountsKeyEnableKey = async ( options?: RequestInit): Promise<accountsKeyEnableKeyResponse> => {
+export const accountsKeyEnableKey = async (userSecretKeyApi: UserSecretKeyApi, options?: RequestInit): Promise<accountsKeyEnableKeyResponse> => {
 
   return apiMutator<accountsKeyEnableKeyResponse>(getAccountsKeyEnableKeyUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userSecretKeyApi,)
   }
 );}
 
 
 
-export type accountsKeyGenerateSecretKeyResponse201 = {
-  data: void
-  status: 201
+export type accountsKeyGenerateSecretKeyResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsKeyGenerateSecretKeyResponseSuccess = (accountsKeyGenerateSecretKeyResponse201) & {
+export type accountsKeyGenerateSecretKeyResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeyGenerateSecretKeyResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeyGenerateSecretKeyResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeyGenerateSecretKeyResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeyGenerateSecretKeyResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsKeyGenerateSecretKeyResponseSuccess = (accountsKeyGenerateSecretKeyResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeyGenerateSecretKeyResponseError = (accountsKeyGenerateSecretKeyResponse400 | accountsKeyGenerateSecretKeyResponse401 | accountsKeyGenerateSecretKeyResponse403 | accountsKeyGenerateSecretKeyResponse404 | accountsKeyGenerateSecretKeyResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeyGenerateSecretKeyResponse = (accountsKeyGenerateSecretKeyResponseSuccess)
+export type accountsKeyGenerateSecretKeyResponse = (accountsKeyGenerateSecretKeyResponseSuccess | accountsKeyGenerateSecretKeyResponseError)
 
 export const getAccountsKeyGenerateSecretKeyUrl = () => {
 
@@ -1842,30 +2672,58 @@ export const getAccountsKeyGenerateSecretKeyUrl = () => {
   return `/accounts/key/generate_secret_key/`
 }
 
-export const accountsKeyGenerateSecretKey = async ( options?: RequestInit): Promise<accountsKeyGenerateSecretKeyResponse> => {
+export const accountsKeyGenerateSecretKey = async (createSecretKeyApi: CreateSecretKeyApi, options?: RequestInit): Promise<accountsKeyGenerateSecretKeyResponse> => {
 
   return apiMutator<accountsKeyGenerateSecretKeyResponse>(getAccountsKeyGenerateSecretKeyUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createSecretKeyApi,)
   }
 );}
 
 
 
 export type accountsKeyGetSecretKeysResponse200 = {
-  data: void
+  data: AccountsPaginatedResponseApi
   status: 200
+}
+
+export type accountsKeyGetSecretKeysResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeyGetSecretKeysResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeyGetSecretKeysResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeyGetSecretKeysResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeyGetSecretKeysResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsKeyGetSecretKeysResponseSuccess = (accountsKeyGetSecretKeysResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeyGetSecretKeysResponseError = (accountsKeyGetSecretKeysResponse400 | accountsKeyGetSecretKeysResponse401 | accountsKeyGetSecretKeysResponse403 | accountsKeyGetSecretKeysResponse404 | accountsKeyGetSecretKeysResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeyGetSecretKeysResponse = (accountsKeyGetSecretKeysResponseSuccess)
+export type accountsKeyGetSecretKeysResponse = (accountsKeyGetSecretKeysResponseSuccess | accountsKeyGetSecretKeysResponseError)
 
 export const getAccountsKeyGetSecretKeysUrl = () => {
 
@@ -1889,16 +2747,43 @@ export const accountsKeyGetSecretKeys = async ( options?: RequestInit): Promise<
 
 
 export type accountsKeysListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsKeysListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsKeysListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsKeysListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsKeysListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsKeysListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsKeysListResponseSuccess = (accountsKeysListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsKeysListResponseError = (accountsKeysListResponse400 | accountsKeysListResponse401 | accountsKeysListResponse403 | accountsKeysListResponse404 | accountsKeysListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsKeysListResponse = (accountsKeysListResponseSuccess)
+export type accountsKeysListResponse = (accountsKeysListResponseSuccess | accountsKeysListResponseError)
 
 export const getAccountsKeysListUrl = () => {
 
@@ -1921,17 +2806,44 @@ export const accountsKeysList = async ( options?: RequestInit): Promise<accounts
 
 
 
-export type accountsLogoutCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsLogoutCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsLogoutCreateResponseSuccess = (accountsLogoutCreateResponse201) & {
+export type accountsLogoutCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsLogoutCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsLogoutCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsLogoutCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsLogoutCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsLogoutCreateResponseSuccess = (accountsLogoutCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsLogoutCreateResponseError = (accountsLogoutCreateResponse400 | accountsLogoutCreateResponse401 | accountsLogoutCreateResponse403 | accountsLogoutCreateResponse404 | accountsLogoutCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsLogoutCreateResponse = (accountsLogoutCreateResponseSuccess)
+export type accountsLogoutCreateResponse = (accountsLogoutCreateResponseSuccess | accountsLogoutCreateResponseError)
 
 export const getAccountsLogoutCreateUrl = () => {
 
@@ -1941,30 +2853,58 @@ export const getAccountsLogoutCreateUrl = () => {
   return `/accounts/logout/`
 }
 
-export const accountsLogoutCreate = async ( options?: RequestInit): Promise<accountsLogoutCreateResponse> => {
+export const accountsLogoutCreate = async (accountsJSONRequestApi: AccountsJSONRequestApi, options?: RequestInit): Promise<accountsLogoutCreateResponse> => {
 
   return apiMutator<accountsLogoutCreateResponse>(getAccountsLogoutCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsJSONRequestApi,)
   }
 );}
 
 
 
-export type accountsMeTimezoneCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsMeTimezoneCreateResponse200 = {
+  data: TimezoneResponseApi
+  status: 200
 }
 
-export type accountsMeTimezoneCreateResponseSuccess = (accountsMeTimezoneCreateResponse201) & {
+export type accountsMeTimezoneCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsMeTimezoneCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsMeTimezoneCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsMeTimezoneCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsMeTimezoneCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsMeTimezoneCreateResponseSuccess = (accountsMeTimezoneCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsMeTimezoneCreateResponseError = (accountsMeTimezoneCreateResponse400 | accountsMeTimezoneCreateResponse401 | accountsMeTimezoneCreateResponse403 | accountsMeTimezoneCreateResponse404 | accountsMeTimezoneCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsMeTimezoneCreateResponse = (accountsMeTimezoneCreateResponseSuccess)
+export type accountsMeTimezoneCreateResponse = (accountsMeTimezoneCreateResponseSuccess | accountsMeTimezoneCreateResponseError)
 
 export const getAccountsMeTimezoneCreateUrl = () => {
 
@@ -1977,30 +2917,58 @@ export const getAccountsMeTimezoneCreateUrl = () => {
 /**
  * Capture the browser's IANA timezone for the authenticated user.
  */
-export const accountsMeTimezoneCreate = async ( options?: RequestInit): Promise<accountsMeTimezoneCreateResponse> => {
+export const accountsMeTimezoneCreate = async (timezoneRequestApi: TimezoneRequestApi, options?: RequestInit): Promise<accountsMeTimezoneCreateResponse> => {
 
   return apiMutator<accountsMeTimezoneCreateResponse>(getAccountsMeTimezoneCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      timezoneRequestApi,)
   }
 );}
 
 
 
 export type accountsNotificationsSnoozeListResponse200 = {
-  data: void
+  data: string
   status: 200
+}
+
+export type accountsNotificationsSnoozeListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsNotificationsSnoozeListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsNotificationsSnoozeListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsNotificationsSnoozeListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsNotificationsSnoozeListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsNotificationsSnoozeListResponseSuccess = (accountsNotificationsSnoozeListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsNotificationsSnoozeListResponseError = (accountsNotificationsSnoozeListResponse400 | accountsNotificationsSnoozeListResponse401 | accountsNotificationsSnoozeListResponse403 | accountsNotificationsSnoozeListResponse404 | accountsNotificationsSnoozeListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsNotificationsSnoozeListResponse = (accountsNotificationsSnoozeListResponseSuccess)
+export type accountsNotificationsSnoozeListResponse = (accountsNotificationsSnoozeListResponseSuccess | accountsNotificationsSnoozeListResponseError)
 
 export const getAccountsNotificationsSnoozeListUrl = () => {
 
@@ -2027,16 +2995,43 @@ export const accountsNotificationsSnoozeList = async ( options?: RequestInit): P
 
 
 export type accountsNotificationsUnsubscribeListResponse200 = {
-  data: void
+  data: string
   status: 200
+}
+
+export type accountsNotificationsUnsubscribeListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsNotificationsUnsubscribeListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsNotificationsUnsubscribeListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsNotificationsUnsubscribeListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsNotificationsUnsubscribeListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsNotificationsUnsubscribeListResponseSuccess = (accountsNotificationsUnsubscribeListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsNotificationsUnsubscribeListResponseError = (accountsNotificationsUnsubscribeListResponse400 | accountsNotificationsUnsubscribeListResponse401 | accountsNotificationsUnsubscribeListResponse403 | accountsNotificationsUnsubscribeListResponse404 | accountsNotificationsUnsubscribeListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsNotificationsUnsubscribeListResponse = (accountsNotificationsUnsubscribeListResponseSuccess)
+export type accountsNotificationsUnsubscribeListResponse = (accountsNotificationsUnsubscribeListResponseSuccess | accountsNotificationsUnsubscribeListResponseError)
 
 export const getAccountsNotificationsUnsubscribeListUrl = () => {
 
@@ -2063,16 +3058,43 @@ export const accountsNotificationsUnsubscribeList = async ( options?: RequestIni
 
 
 export type accountsOnboardingListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOnboardingListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOnboardingListResponseSuccess = (accountsOnboardingListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOnboardingListResponseError = (accountsOnboardingListResponse400 | accountsOnboardingListResponse401 | accountsOnboardingListResponse403 | accountsOnboardingListResponse404 | accountsOnboardingListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOnboardingListResponse = (accountsOnboardingListResponseSuccess)
+export type accountsOnboardingListResponse = (accountsOnboardingListResponseSuccess | accountsOnboardingListResponseError)
 
 export const getAccountsOnboardingListUrl = () => {
 
@@ -2098,17 +3120,44 @@ export const accountsOnboardingList = async ( options?: RequestInit): Promise<ac
 
 
 
-export type accountsOnboardingCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOnboardingCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOnboardingCreateResponseSuccess = (accountsOnboardingCreateResponse201) & {
+export type accountsOnboardingCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingCreateResponseSuccess = (accountsOnboardingCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOnboardingCreateResponseError = (accountsOnboardingCreateResponse400 | accountsOnboardingCreateResponse401 | accountsOnboardingCreateResponse403 | accountsOnboardingCreateResponse404 | accountsOnboardingCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOnboardingCreateResponse = (accountsOnboardingCreateResponseSuccess)
+export type accountsOnboardingCreateResponse = (accountsOnboardingCreateResponseSuccess | accountsOnboardingCreateResponseError)
 
 export const getAccountsOnboardingCreateUrl = () => {
 
@@ -2121,30 +3170,58 @@ export const getAccountsOnboardingCreateUrl = () => {
 /**
  * Handle user onboarding data (role and goals)
  */
-export const accountsOnboardingCreate = async ( options?: RequestInit): Promise<accountsOnboardingCreateResponse> => {
+export const accountsOnboardingCreate = async (userOnboardingApi: UserOnboardingApi, options?: RequestInit): Promise<accountsOnboardingCreateResponse> => {
 
   return apiMutator<accountsOnboardingCreateResponse>(getAccountsOnboardingCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userOnboardingApi,)
   }
 );}
 
 
 
 export type accountsOrganization2faPolicyListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganization2faPolicyListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganization2faPolicyListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganization2faPolicyListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganization2faPolicyListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganization2faPolicyListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganization2faPolicyListResponseSuccess = (accountsOrganization2faPolicyListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganization2faPolicyListResponseError = (accountsOrganization2faPolicyListResponse400 | accountsOrganization2faPolicyListResponse401 | accountsOrganization2faPolicyListResponse403 | accountsOrganization2faPolicyListResponse404 | accountsOrganization2faPolicyListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganization2faPolicyListResponse = (accountsOrganization2faPolicyListResponseSuccess)
+export type accountsOrganization2faPolicyListResponse = (accountsOrganization2faPolicyListResponseSuccess | accountsOrganization2faPolicyListResponseError)
 
 export const getAccountsOrganization2faPolicyListUrl = () => {
 
@@ -2174,16 +3251,43 @@ export const accountsOrganization2faPolicyList = async ( options?: RequestInit):
 
 
 export type accountsOrganization2faPolicyUpdateResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganization2faPolicyUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganization2faPolicyUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganization2faPolicyUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganization2faPolicyUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganization2faPolicyUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganization2faPolicyUpdateResponseSuccess = (accountsOrganization2faPolicyUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganization2faPolicyUpdateResponseError = (accountsOrganization2faPolicyUpdateResponse400 | accountsOrganization2faPolicyUpdateResponse401 | accountsOrganization2faPolicyUpdateResponse403 | accountsOrganization2faPolicyUpdateResponse404 | accountsOrganization2faPolicyUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganization2faPolicyUpdateResponse = (accountsOrganization2faPolicyUpdateResponseSuccess)
+export type accountsOrganization2faPolicyUpdateResponse = (accountsOrganization2faPolicyUpdateResponseSuccess | accountsOrganization2faPolicyUpdateResponseError)
 
 export const getAccountsOrganization2faPolicyUpdateUrl = () => {
 
@@ -2199,30 +3303,58 @@ PUT is admin-gated inline (Level.ADMIN+) rather than via a permission
 class so that a single view can serve both roles without splitting.
  * @summary GET/PUT /accounts/organization/2fa-policy/ - Org 2FA policy.
  */
-export const accountsOrganization2faPolicyUpdate = async ( options?: RequestInit): Promise<accountsOrganization2faPolicyUpdateResponse> => {
+export const accountsOrganization2faPolicyUpdate = async (orgTwoFactorPolicyApi: OrgTwoFactorPolicyApi, options?: RequestInit): Promise<accountsOrganization2faPolicyUpdateResponse> => {
 
   return apiMutator<accountsOrganization2faPolicyUpdateResponse>(getAccountsOrganization2faPolicyUpdateUrl(),
   {
     ...options,
-    method: 'PUT'
-
-
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      orgTwoFactorPolicyApi,)
   }
 );}
 
 
 
-export type accountsOrganizationInviteCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationInviteCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationInviteCreateResponseSuccess = (accountsOrganizationInviteCreateResponse201) & {
+export type accountsOrganizationInviteCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationInviteCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationInviteCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationInviteCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationInviteCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationInviteCreateResponseSuccess = (accountsOrganizationInviteCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationInviteCreateResponseError = (accountsOrganizationInviteCreateResponse400 | accountsOrganizationInviteCreateResponse401 | accountsOrganizationInviteCreateResponse403 | accountsOrganizationInviteCreateResponse404 | accountsOrganizationInviteCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationInviteCreateResponse = (accountsOrganizationInviteCreateResponseSuccess)
+export type accountsOrganizationInviteCreateResponse = (accountsOrganizationInviteCreateResponseSuccess | accountsOrganizationInviteCreateResponseError)
 
 export const getAccountsOrganizationInviteCreateUrl = () => {
 
@@ -2237,30 +3369,58 @@ export const getAccountsOrganizationInviteCreateUrl = () => {
 Also dual-writes to legacy User/membership records for backward compat.
  * @summary POST /accounts/organization/invite/
  */
-export const accountsOrganizationInviteCreate = async ( options?: RequestInit): Promise<accountsOrganizationInviteCreateResponse> => {
+export const accountsOrganizationInviteCreate = async (inviteCreateApi: InviteCreateApi, options?: RequestInit): Promise<accountsOrganizationInviteCreateResponse> => {
 
   return apiMutator<accountsOrganizationInviteCreateResponse>(getAccountsOrganizationInviteCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      inviteCreateApi,)
   }
 );}
 
 
 
-export type accountsOrganizationInviteCancelDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsOrganizationInviteCancelDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationInviteCancelDeleteResponseSuccess = (accountsOrganizationInviteCancelDeleteResponse204) & {
+export type accountsOrganizationInviteCancelDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationInviteCancelDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationInviteCancelDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationInviteCancelDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationInviteCancelDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationInviteCancelDeleteResponseSuccess = (accountsOrganizationInviteCancelDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationInviteCancelDeleteResponseError = (accountsOrganizationInviteCancelDeleteResponse400 | accountsOrganizationInviteCancelDeleteResponse401 | accountsOrganizationInviteCancelDeleteResponse403 | accountsOrganizationInviteCancelDeleteResponse404 | accountsOrganizationInviteCancelDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationInviteCancelDeleteResponse = (accountsOrganizationInviteCancelDeleteResponseSuccess)
+export type accountsOrganizationInviteCancelDeleteResponse = (accountsOrganizationInviteCancelDeleteResponseSuccess | accountsOrganizationInviteCancelDeleteResponseError)
 
 export const getAccountsOrganizationInviteCancelDeleteUrl = () => {
 
@@ -2274,30 +3434,58 @@ export const getAccountsOrganizationInviteCancelDeleteUrl = () => {
  * DELETE /accounts/organization/invite/cancel/
 Hard deletes the invite record.
  */
-export const accountsOrganizationInviteCancelDelete = async ( options?: RequestInit): Promise<accountsOrganizationInviteCancelDeleteResponse> => {
+export const accountsOrganizationInviteCancelDelete = async (inviteCancelApi: InviteCancelApi, options?: RequestInit): Promise<accountsOrganizationInviteCancelDeleteResponse> => {
 
   return apiMutator<accountsOrganizationInviteCancelDeleteResponse>(getAccountsOrganizationInviteCancelDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      inviteCancelApi,)
   }
 );}
 
 
 
-export type accountsOrganizationInviteResendCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationInviteResendCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationInviteResendCreateResponseSuccess = (accountsOrganizationInviteResendCreateResponse201) & {
+export type accountsOrganizationInviteResendCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationInviteResendCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationInviteResendCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationInviteResendCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationInviteResendCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationInviteResendCreateResponseSuccess = (accountsOrganizationInviteResendCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationInviteResendCreateResponseError = (accountsOrganizationInviteResendCreateResponse400 | accountsOrganizationInviteResendCreateResponse401 | accountsOrganizationInviteResendCreateResponse403 | accountsOrganizationInviteResendCreateResponse404 | accountsOrganizationInviteResendCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationInviteResendCreateResponse = (accountsOrganizationInviteResendCreateResponseSuccess)
+export type accountsOrganizationInviteResendCreateResponse = (accountsOrganizationInviteResendCreateResponseSuccess | accountsOrganizationInviteResendCreateResponseError)
 
 export const getAccountsOrganizationInviteResendCreateUrl = () => {
 
@@ -2311,37 +3499,72 @@ export const getAccountsOrganizationInviteResendCreateUrl = () => {
  * POST /accounts/organization/invite/resend/
 Resets expiration and resends the invite email.
  */
-export const accountsOrganizationInviteResendCreate = async ( options?: RequestInit): Promise<accountsOrganizationInviteResendCreateResponse> => {
+export const accountsOrganizationInviteResendCreate = async (inviteResendApi: InviteResendApi, options?: RequestInit): Promise<accountsOrganizationInviteResendCreateResponse> => {
 
   return apiMutator<accountsOrganizationInviteResendCreateResponse>(getAccountsOrganizationInviteResendCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      inviteResendApi,)
   }
 );}
 
 
 
 export type accountsOrganizationMembersListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganizationMembersListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationMembersListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationMembersListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationMembersListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationMembersListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationMembersListResponseSuccess = (accountsOrganizationMembersListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationMembersListResponseError = (accountsOrganizationMembersListResponse400 | accountsOrganizationMembersListResponse401 | accountsOrganizationMembersListResponse403 | accountsOrganizationMembersListResponse404 | accountsOrganizationMembersListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationMembersListResponse = (accountsOrganizationMembersListResponseSuccess)
+export type accountsOrganizationMembersListResponse = (accountsOrganizationMembersListResponseSuccess | accountsOrganizationMembersListResponseError)
 
-export const getAccountsOrganizationMembersListUrl = () => {
+export const getAccountsOrganizationMembersListUrl = (params?: AccountsOrganizationMembersListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/accounts/organization/members/`
+  return stringifiedParams.length > 0 ? `/accounts/organization/members/?${stringifiedParams}` : `/accounts/organization/members/`
 }
 
 /**
@@ -2349,9 +3572,9 @@ export const getAccountsOrganizationMembersListUrl = () => {
 Status is derived at query time (Active / Pending / Expired).
  * @summary GET /accounts/organization/members/
  */
-export const accountsOrganizationMembersList = async ( options?: RequestInit): Promise<accountsOrganizationMembersListResponse> => {
+export const accountsOrganizationMembersList = async (params?: AccountsOrganizationMembersListParams, options?: RequestInit): Promise<accountsOrganizationMembersListResponse> => {
 
-  return apiMutator<accountsOrganizationMembersListResponse>(getAccountsOrganizationMembersListUrl(),
+  return apiMutator<accountsOrganizationMembersListResponse>(getAccountsOrganizationMembersListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -2362,17 +3585,44 @@ export const accountsOrganizationMembersList = async ( options?: RequestInit): P
 
 
 
-export type accountsOrganizationMembersReactivateCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationMembersReactivateCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationMembersReactivateCreateResponseSuccess = (accountsOrganizationMembersReactivateCreateResponse201) & {
+export type accountsOrganizationMembersReactivateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationMembersReactivateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationMembersReactivateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationMembersReactivateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationMembersReactivateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationMembersReactivateCreateResponseSuccess = (accountsOrganizationMembersReactivateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationMembersReactivateCreateResponseError = (accountsOrganizationMembersReactivateCreateResponse400 | accountsOrganizationMembersReactivateCreateResponse401 | accountsOrganizationMembersReactivateCreateResponse403 | accountsOrganizationMembersReactivateCreateResponse404 | accountsOrganizationMembersReactivateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationMembersReactivateCreateResponse = (accountsOrganizationMembersReactivateCreateResponseSuccess)
+export type accountsOrganizationMembersReactivateCreateResponse = (accountsOrganizationMembersReactivateCreateResponseSuccess | accountsOrganizationMembersReactivateCreateResponseError)
 
 export const getAccountsOrganizationMembersReactivateCreateUrl = () => {
 
@@ -2388,30 +3638,58 @@ memberships that were soft-deactivated during removal.  If no prior
 workspace memberships exist, the user is added to the default workspace.
  * @summary POST /accounts/organization/members/reactivate/
  */
-export const accountsOrganizationMembersReactivateCreate = async ( options?: RequestInit): Promise<accountsOrganizationMembersReactivateCreateResponse> => {
+export const accountsOrganizationMembersReactivateCreate = async (memberRemoveApi: MemberRemoveApi, options?: RequestInit): Promise<accountsOrganizationMembersReactivateCreateResponse> => {
 
   return apiMutator<accountsOrganizationMembersReactivateCreateResponse>(getAccountsOrganizationMembersReactivateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      memberRemoveApi,)
   }
 );}
 
 
 
-export type accountsOrganizationMembersRemoveDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsOrganizationMembersRemoveDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationMembersRemoveDeleteResponseSuccess = (accountsOrganizationMembersRemoveDeleteResponse204) & {
+export type accountsOrganizationMembersRemoveDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationMembersRemoveDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationMembersRemoveDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationMembersRemoveDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationMembersRemoveDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationMembersRemoveDeleteResponseSuccess = (accountsOrganizationMembersRemoveDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationMembersRemoveDeleteResponseError = (accountsOrganizationMembersRemoveDeleteResponse400 | accountsOrganizationMembersRemoveDeleteResponse401 | accountsOrganizationMembersRemoveDeleteResponse403 | accountsOrganizationMembersRemoveDeleteResponse404 | accountsOrganizationMembersRemoveDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationMembersRemoveDeleteResponse = (accountsOrganizationMembersRemoveDeleteResponseSuccess)
+export type accountsOrganizationMembersRemoveDeleteResponse = (accountsOrganizationMembersRemoveDeleteResponseSuccess | accountsOrganizationMembersRemoveDeleteResponseError)
 
 export const getAccountsOrganizationMembersRemoveDeleteUrl = () => {
 
@@ -2426,30 +3704,58 @@ export const getAccountsOrganizationMembersRemoveDeleteUrl = () => {
 memberships.  Signals handle Redis clear + audit log.
  * @summary DELETE /accounts/organization/members/remove/
  */
-export const accountsOrganizationMembersRemoveDelete = async ( options?: RequestInit): Promise<accountsOrganizationMembersRemoveDeleteResponse> => {
+export const accountsOrganizationMembersRemoveDelete = async (memberRemoveApi: MemberRemoveApi, options?: RequestInit): Promise<accountsOrganizationMembersRemoveDeleteResponse> => {
 
   return apiMutator<accountsOrganizationMembersRemoveDeleteResponse>(getAccountsOrganizationMembersRemoveDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      memberRemoveApi,)
   }
 );}
 
 
 
-export type accountsOrganizationMembersRoleCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationMembersRoleCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationMembersRoleCreateResponseSuccess = (accountsOrganizationMembersRoleCreateResponse201) & {
+export type accountsOrganizationMembersRoleCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationMembersRoleCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationMembersRoleCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationMembersRoleCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationMembersRoleCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationMembersRoleCreateResponseSuccess = (accountsOrganizationMembersRoleCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationMembersRoleCreateResponseError = (accountsOrganizationMembersRoleCreateResponse400 | accountsOrganizationMembersRoleCreateResponse401 | accountsOrganizationMembersRoleCreateResponse403 | accountsOrganizationMembersRoleCreateResponse404 | accountsOrganizationMembersRoleCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationMembersRoleCreateResponse = (accountsOrganizationMembersRoleCreateResponseSuccess)
+export type accountsOrganizationMembersRoleCreateResponse = (accountsOrganizationMembersRoleCreateResponseSuccess | accountsOrganizationMembersRoleCreateResponseError)
 
 export const getAccountsOrganizationMembersRoleCreateUrl = () => {
 
@@ -2463,30 +3769,58 @@ export const getAccountsOrganizationMembersRoleCreateUrl = () => {
  * Update a member's org level and/or workspace level.
  * @summary POST /accounts/organization/members/role/
  */
-export const accountsOrganizationMembersRoleCreate = async ( options?: RequestInit): Promise<accountsOrganizationMembersRoleCreateResponse> => {
+export const accountsOrganizationMembersRoleCreate = async (memberRoleUpdateApi: MemberRoleUpdateApi, options?: RequestInit): Promise<accountsOrganizationMembersRoleCreateResponse> => {
 
   return apiMutator<accountsOrganizationMembersRoleCreateResponse>(getAccountsOrganizationMembersRoleCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      memberRoleUpdateApi,)
   }
 );}
 
 
 
 export type accountsOrganizationsListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganizationsListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationsListResponseSuccess = (accountsOrganizationsListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsListResponseError = (accountsOrganizationsListResponse400 | accountsOrganizationsListResponse401 | accountsOrganizationsListResponse403 | accountsOrganizationsListResponse404 | accountsOrganizationsListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsListResponse = (accountsOrganizationsListResponseSuccess)
+export type accountsOrganizationsListResponse = (accountsOrganizationsListResponseSuccess | accountsOrganizationsListResponseError)
 
 export const getAccountsOrganizationsListUrl = () => {
 
@@ -2512,17 +3846,44 @@ export const accountsOrganizationsList = async ( options?: RequestInit): Promise
 
 
 
-export type accountsOrganizationsCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationsCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationsCreateResponseSuccess = (accountsOrganizationsCreateResponse201) & {
+export type accountsOrganizationsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationsCreateResponseSuccess = (accountsOrganizationsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsCreateResponseError = (accountsOrganizationsCreateResponse400 | accountsOrganizationsCreateResponse401 | accountsOrganizationsCreateResponse403 | accountsOrganizationsCreateResponse404 | accountsOrganizationsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsCreateResponse = (accountsOrganizationsCreateResponseSuccess)
+export type accountsOrganizationsCreateResponse = (accountsOrganizationsCreateResponseSuccess | accountsOrganizationsCreateResponseError)
 
 export const getAccountsOrganizationsCreateUrl = () => {
 
@@ -2535,30 +3896,58 @@ export const getAccountsOrganizationsCreateUrl = () => {
 /**
  * Select an organization for the current session.
  */
-export const accountsOrganizationsCreate = async ( options?: RequestInit): Promise<accountsOrganizationsCreateResponse> => {
+export const accountsOrganizationsCreate = async (organizationSwitchRequestApi: OrganizationSwitchRequestApi, options?: RequestInit): Promise<accountsOrganizationsCreateResponse> => {
 
   return apiMutator<accountsOrganizationsCreateResponse>(getAccountsOrganizationsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      organizationSwitchRequestApi,)
   }
 );}
 
 
 
 export type accountsOrganizationsCreateCreateResponse201 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 201
+}
+
+export type accountsOrganizationsCreateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsCreateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsCreateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsCreateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsCreateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationsCreateCreateResponseSuccess = (accountsOrganizationsCreateCreateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsCreateCreateResponseError = (accountsOrganizationsCreateCreateResponse400 | accountsOrganizationsCreateCreateResponse401 | accountsOrganizationsCreateCreateResponse403 | accountsOrganizationsCreateCreateResponse404 | accountsOrganizationsCreateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsCreateCreateResponse = (accountsOrganizationsCreateCreateResponseSuccess)
+export type accountsOrganizationsCreateCreateResponse = (accountsOrganizationsCreateCreateResponseSuccess | accountsOrganizationsCreateCreateResponseError)
 
 export const getAccountsOrganizationsCreateCreateUrl = () => {
 
@@ -2573,30 +3962,58 @@ export const getAccountsOrganizationsCreateCreateUrl = () => {
 Only accessible to authenticated users with no current organization.
  * @summary POST /accounts/organizations/create/
  */
-export const accountsOrganizationsCreateCreate = async ( options?: RequestInit): Promise<accountsOrganizationsCreateCreateResponse> => {
+export const accountsOrganizationsCreateCreate = async (organizationNameRequestApi: OrganizationNameRequestApi, options?: RequestInit): Promise<accountsOrganizationsCreateCreateResponse> => {
 
   return apiMutator<accountsOrganizationsCreateCreateResponse>(getAccountsOrganizationsCreateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      organizationNameRequestApi,)
   }
 );}
 
 
 
 export type accountsOrganizationsCurrentListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganizationsCurrentListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsCurrentListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsCurrentListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsCurrentListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsCurrentListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationsCurrentListResponseSuccess = (accountsOrganizationsCurrentListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsCurrentListResponseError = (accountsOrganizationsCurrentListResponse400 | accountsOrganizationsCurrentListResponse401 | accountsOrganizationsCurrentListResponse403 | accountsOrganizationsCurrentListResponse404 | accountsOrganizationsCurrentListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsCurrentListResponse = (accountsOrganizationsCurrentListResponseSuccess)
+export type accountsOrganizationsCurrentListResponse = (accountsOrganizationsCurrentListResponseSuccess | accountsOrganizationsCurrentListResponseError)
 
 export const getAccountsOrganizationsCurrentListUrl = () => {
 
@@ -2623,16 +4040,43 @@ export const accountsOrganizationsCurrentList = async ( options?: RequestInit): 
 
 
 export type accountsOrganizationsNewCreateResponse201 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 201
+}
+
+export type accountsOrganizationsNewCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsNewCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsNewCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsNewCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsNewCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationsNewCreateResponseSuccess = (accountsOrganizationsNewCreateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsNewCreateResponseError = (accountsOrganizationsNewCreateResponse400 | accountsOrganizationsNewCreateResponse401 | accountsOrganizationsNewCreateResponse403 | accountsOrganizationsNewCreateResponse404 | accountsOrganizationsNewCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsNewCreateResponse = (accountsOrganizationsNewCreateResponseSuccess)
+export type accountsOrganizationsNewCreateResponse = (accountsOrganizationsNewCreateResponseSuccess | accountsOrganizationsNewCreateResponseError)
 
 export const getAccountsOrganizationsNewCreateUrl = () => {
 
@@ -2650,30 +4094,58 @@ The user becomes Owner of the new org via OrganizationMembership.
 Does NOT change user.organization FK (primary org stays the same).
  * @summary POST /accounts/organizations/new/
  */
-export const accountsOrganizationsNewCreate = async ( options?: RequestInit): Promise<accountsOrganizationsNewCreateResponse> => {
+export const accountsOrganizationsNewCreate = async (organizationCreateRequestApi: OrganizationCreateRequestApi, options?: RequestInit): Promise<accountsOrganizationsNewCreateResponse> => {
 
   return apiMutator<accountsOrganizationsNewCreateResponse>(getAccountsOrganizationsNewCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      organizationCreateRequestApi,)
   }
 );}
 
 
 
-export type accountsOrganizationsSwitchCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsOrganizationsSwitchCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsOrganizationsSwitchCreateResponseSuccess = (accountsOrganizationsSwitchCreateResponse201) & {
+export type accountsOrganizationsSwitchCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsSwitchCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsSwitchCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsSwitchCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsSwitchCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOrganizationsSwitchCreateResponseSuccess = (accountsOrganizationsSwitchCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsSwitchCreateResponseError = (accountsOrganizationsSwitchCreateResponse400 | accountsOrganizationsSwitchCreateResponse401 | accountsOrganizationsSwitchCreateResponse403 | accountsOrganizationsSwitchCreateResponse404 | accountsOrganizationsSwitchCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsSwitchCreateResponse = (accountsOrganizationsSwitchCreateResponseSuccess)
+export type accountsOrganizationsSwitchCreateResponse = (accountsOrganizationsSwitchCreateResponseSuccess | accountsOrganizationsSwitchCreateResponseError)
 
 export const getAccountsOrganizationsSwitchCreateUrl = () => {
 
@@ -2688,30 +4160,58 @@ export const getAccountsOrganizationsSwitchCreateUrl = () => {
 or its default workspace, so the frontend can update both contexts.
  * @summary Switch to a different organization.
  */
-export const accountsOrganizationsSwitchCreate = async ( options?: RequestInit): Promise<accountsOrganizationsSwitchCreateResponse> => {
+export const accountsOrganizationsSwitchCreate = async (organizationSwitchRequestApi: OrganizationSwitchRequestApi, options?: RequestInit): Promise<accountsOrganizationsSwitchCreateResponse> => {
 
   return apiMutator<accountsOrganizationsSwitchCreateResponse>(getAccountsOrganizationsSwitchCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      organizationSwitchRequestApi,)
   }
 );}
 
 
 
 export type accountsOrganizationsUpdatePartialUpdateResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsOrganizationsUpdatePartialUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOrganizationsUpdatePartialUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOrganizationsUpdatePartialUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOrganizationsUpdatePartialUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOrganizationsUpdatePartialUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsOrganizationsUpdatePartialUpdateResponseSuccess = (accountsOrganizationsUpdatePartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsOrganizationsUpdatePartialUpdateResponseError = (accountsOrganizationsUpdatePartialUpdateResponse400 | accountsOrganizationsUpdatePartialUpdateResponse401 | accountsOrganizationsUpdatePartialUpdateResponse403 | accountsOrganizationsUpdatePartialUpdateResponse404 | accountsOrganizationsUpdatePartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsOrganizationsUpdatePartialUpdateResponse = (accountsOrganizationsUpdatePartialUpdateResponseSuccess)
+export type accountsOrganizationsUpdatePartialUpdateResponse = (accountsOrganizationsUpdatePartialUpdateResponseSuccess | accountsOrganizationsUpdatePartialUpdateResponseError)
 
 export const getAccountsOrganizationsUpdatePartialUpdateUrl = () => {
 
@@ -2726,30 +4226,58 @@ export const getAccountsOrganizationsUpdatePartialUpdateUrl = () => {
 Only accessible to Owner or Admin of the organization.
  * @summary PATCH /accounts/organizations/update/
  */
-export const accountsOrganizationsUpdatePartialUpdate = async ( options?: RequestInit): Promise<accountsOrganizationsUpdatePartialUpdateResponse> => {
+export const accountsOrganizationsUpdatePartialUpdate = async (organizationUpdateRequestApi: OrganizationUpdateRequestApi, options?: RequestInit): Promise<accountsOrganizationsUpdatePartialUpdateResponse> => {
 
   return apiMutator<accountsOrganizationsUpdatePartialUpdateResponse>(getAccountsOrganizationsUpdatePartialUpdateUrl(),
   {
     ...options,
-    method: 'PATCH'
-
-
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      organizationUpdateRequestApi,)
   }
 );}
 
 
 
-export type accountsPasskeyAuthenticateOptionsCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsPasskeyAuthenticateOptionsCreateResponse200 = {
+  data: PasskeyOptionsResponseApi
+  status: 200
 }
 
-export type accountsPasskeyAuthenticateOptionsCreateResponseSuccess = (accountsPasskeyAuthenticateOptionsCreateResponse201) & {
+export type accountsPasskeyAuthenticateOptionsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeyAuthenticateOptionsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeyAuthenticateOptionsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeyAuthenticateOptionsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeyAuthenticateOptionsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsPasskeyAuthenticateOptionsCreateResponseSuccess = (accountsPasskeyAuthenticateOptionsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasskeyAuthenticateOptionsCreateResponseError = (accountsPasskeyAuthenticateOptionsCreateResponse400 | accountsPasskeyAuthenticateOptionsCreateResponse401 | accountsPasskeyAuthenticateOptionsCreateResponse403 | accountsPasskeyAuthenticateOptionsCreateResponse404 | accountsPasskeyAuthenticateOptionsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeyAuthenticateOptionsCreateResponse = (accountsPasskeyAuthenticateOptionsCreateResponseSuccess)
+export type accountsPasskeyAuthenticateOptionsCreateResponse = (accountsPasskeyAuthenticateOptionsCreateResponseSuccess | accountsPasskeyAuthenticateOptionsCreateResponseError)
 
 export const getAccountsPasskeyAuthenticateOptionsCreateUrl = () => {
 
@@ -2762,30 +4290,58 @@ export const getAccountsPasskeyAuthenticateOptionsCreateUrl = () => {
 /**
  * POST /accounts/passkey/authenticate/options/ - Passwordless auth options.
  */
-export const accountsPasskeyAuthenticateOptionsCreate = async ( options?: RequestInit): Promise<accountsPasskeyAuthenticateOptionsCreateResponse> => {
+export const accountsPasskeyAuthenticateOptionsCreate = async (accountsEmptyRequestApi: AccountsEmptyRequestApi, options?: RequestInit): Promise<accountsPasskeyAuthenticateOptionsCreateResponse> => {
 
   return apiMutator<accountsPasskeyAuthenticateOptionsCreateResponse>(getAccountsPasskeyAuthenticateOptionsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsEmptyRequestApi,)
   }
 );}
 
 
 
-export type accountsPasskeyAuthenticateVerifyCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsPasskeyAuthenticateVerifyCreateResponse200 = {
+  data: AccountsTokenPairResponseApi
+  status: 200
 }
 
-export type accountsPasskeyAuthenticateVerifyCreateResponseSuccess = (accountsPasskeyAuthenticateVerifyCreateResponse201) & {
+export type accountsPasskeyAuthenticateVerifyCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeyAuthenticateVerifyCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeyAuthenticateVerifyCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeyAuthenticateVerifyCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeyAuthenticateVerifyCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsPasskeyAuthenticateVerifyCreateResponseSuccess = (accountsPasskeyAuthenticateVerifyCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasskeyAuthenticateVerifyCreateResponseError = (accountsPasskeyAuthenticateVerifyCreateResponse400 | accountsPasskeyAuthenticateVerifyCreateResponse401 | accountsPasskeyAuthenticateVerifyCreateResponse403 | accountsPasskeyAuthenticateVerifyCreateResponse404 | accountsPasskeyAuthenticateVerifyCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeyAuthenticateVerifyCreateResponse = (accountsPasskeyAuthenticateVerifyCreateResponseSuccess)
+export type accountsPasskeyAuthenticateVerifyCreateResponse = (accountsPasskeyAuthenticateVerifyCreateResponseSuccess | accountsPasskeyAuthenticateVerifyCreateResponseError)
 
 export const getAccountsPasskeyAuthenticateVerifyCreateUrl = () => {
 
@@ -2798,30 +4354,58 @@ export const getAccountsPasskeyAuthenticateVerifyCreateUrl = () => {
 /**
  * POST /accounts/passkey/authenticate/verify/ - Passwordless auth verify.
  */
-export const accountsPasskeyAuthenticateVerifyCreate = async ( options?: RequestInit): Promise<accountsPasskeyAuthenticateVerifyCreateResponse> => {
+export const accountsPasskeyAuthenticateVerifyCreate = async (passkeyCredentialRequestApi: PasskeyCredentialRequestApi, options?: RequestInit): Promise<accountsPasskeyAuthenticateVerifyCreateResponse> => {
 
   return apiMutator<accountsPasskeyAuthenticateVerifyCreateResponse>(getAccountsPasskeyAuthenticateVerifyCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passkeyCredentialRequestApi,)
   }
 );}
 
 
 
-export type accountsPasskeyRegisterOptionsCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsPasskeyRegisterOptionsCreateResponse200 = {
+  data: PasskeyOptionsResponseApi
+  status: 200
 }
 
-export type accountsPasskeyRegisterOptionsCreateResponseSuccess = (accountsPasskeyRegisterOptionsCreateResponse201) & {
+export type accountsPasskeyRegisterOptionsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeyRegisterOptionsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeyRegisterOptionsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeyRegisterOptionsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeyRegisterOptionsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsPasskeyRegisterOptionsCreateResponseSuccess = (accountsPasskeyRegisterOptionsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasskeyRegisterOptionsCreateResponseError = (accountsPasskeyRegisterOptionsCreateResponse400 | accountsPasskeyRegisterOptionsCreateResponse401 | accountsPasskeyRegisterOptionsCreateResponse403 | accountsPasskeyRegisterOptionsCreateResponse404 | accountsPasskeyRegisterOptionsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeyRegisterOptionsCreateResponse = (accountsPasskeyRegisterOptionsCreateResponseSuccess)
+export type accountsPasskeyRegisterOptionsCreateResponse = (accountsPasskeyRegisterOptionsCreateResponseSuccess | accountsPasskeyRegisterOptionsCreateResponseError)
 
 export const getAccountsPasskeyRegisterOptionsCreateUrl = () => {
 
@@ -2834,30 +4418,58 @@ export const getAccountsPasskeyRegisterOptionsCreateUrl = () => {
 /**
  * POST /accounts/passkey/register/options/ - Get registration options.
  */
-export const accountsPasskeyRegisterOptionsCreate = async ( options?: RequestInit): Promise<accountsPasskeyRegisterOptionsCreateResponse> => {
+export const accountsPasskeyRegisterOptionsCreate = async (accountsEmptyRequestApi: AccountsEmptyRequestApi, options?: RequestInit): Promise<accountsPasskeyRegisterOptionsCreateResponse> => {
 
   return apiMutator<accountsPasskeyRegisterOptionsCreateResponse>(getAccountsPasskeyRegisterOptionsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsEmptyRequestApi,)
   }
 );}
 
 
 
 export type accountsPasskeyRegisterVerifyCreateResponse201 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 201
+}
+
+export type accountsPasskeyRegisterVerifyCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeyRegisterVerifyCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeyRegisterVerifyCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeyRegisterVerifyCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeyRegisterVerifyCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsPasskeyRegisterVerifyCreateResponseSuccess = (accountsPasskeyRegisterVerifyCreateResponse201) & {
   headers: Headers;
 };
-;
+export type accountsPasskeyRegisterVerifyCreateResponseError = (accountsPasskeyRegisterVerifyCreateResponse400 | accountsPasskeyRegisterVerifyCreateResponse401 | accountsPasskeyRegisterVerifyCreateResponse403 | accountsPasskeyRegisterVerifyCreateResponse404 | accountsPasskeyRegisterVerifyCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeyRegisterVerifyCreateResponse = (accountsPasskeyRegisterVerifyCreateResponseSuccess)
+export type accountsPasskeyRegisterVerifyCreateResponse = (accountsPasskeyRegisterVerifyCreateResponseSuccess | accountsPasskeyRegisterVerifyCreateResponseError)
 
 export const getAccountsPasskeyRegisterVerifyCreateUrl = () => {
 
@@ -2870,30 +4482,58 @@ export const getAccountsPasskeyRegisterVerifyCreateUrl = () => {
 /**
  * POST /accounts/passkey/register/verify/ - Verify registration.
  */
-export const accountsPasskeyRegisterVerifyCreate = async ( options?: RequestInit): Promise<accountsPasskeyRegisterVerifyCreateResponse> => {
+export const accountsPasskeyRegisterVerifyCreate = async (passkeyRegisterVerifyApi: PasskeyRegisterVerifyApi, options?: RequestInit): Promise<accountsPasskeyRegisterVerifyCreateResponse> => {
 
   return apiMutator<accountsPasskeyRegisterVerifyCreateResponse>(getAccountsPasskeyRegisterVerifyCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passkeyRegisterVerifyApi,)
   }
 );}
 
 
 
 export type accountsPasskeysListResponse200 = {
-  data: void
+  data: WebAuthnCredentialApi[]
   status: 200
+}
+
+export type accountsPasskeysListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeysListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeysListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeysListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeysListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsPasskeysListResponseSuccess = (accountsPasskeysListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasskeysListResponseError = (accountsPasskeysListResponse400 | accountsPasskeysListResponse401 | accountsPasskeysListResponse403 | accountsPasskeysListResponse404 | accountsPasskeysListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeysListResponse = (accountsPasskeysListResponseSuccess)
+export type accountsPasskeysListResponse = (accountsPasskeysListResponseSuccess | accountsPasskeysListResponseError)
 
 export const getAccountsPasskeysListUrl = () => {
 
@@ -2920,16 +4560,43 @@ export const accountsPasskeysList = async ( options?: RequestInit): Promise<acco
 
 
 export type accountsPasskeysPartialUpdateResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsPasskeysPartialUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasskeysPartialUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasskeysPartialUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasskeysPartialUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasskeysPartialUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsPasskeysPartialUpdateResponseSuccess = (accountsPasskeysPartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasskeysPartialUpdateResponseError = (accountsPasskeysPartialUpdateResponse400 | accountsPasskeysPartialUpdateResponse401 | accountsPasskeysPartialUpdateResponse403 | accountsPasskeysPartialUpdateResponse404 | accountsPasskeysPartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasskeysPartialUpdateResponse = (accountsPasskeysPartialUpdateResponseSuccess)
+export type accountsPasskeysPartialUpdateResponse = (accountsPasskeysPartialUpdateResponseSuccess | accountsPasskeysPartialUpdateResponseError)
 
 export const getAccountsPasskeysPartialUpdateUrl = (id: string,) => {
 
@@ -2942,14 +4609,16 @@ export const getAccountsPasskeysPartialUpdateUrl = (id: string,) => {
 /**
  * PATCH/DELETE /accounts/passkeys/<uuid:pk>/ - Rename or delete.
  */
-export const accountsPasskeysPartialUpdate = async (id: string, options?: RequestInit): Promise<accountsPasskeysPartialUpdateResponse> => {
+export const accountsPasskeysPartialUpdate = async (id: string,
+    passkeyRenameApi: PasskeyRenameApi, options?: RequestInit): Promise<accountsPasskeysPartialUpdateResponse> => {
 
   return apiMutator<accountsPasskeysPartialUpdateResponse>(getAccountsPasskeysPartialUpdateUrl(id),
   {
     ...options,
-    method: 'PATCH'
-
-
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passkeyRenameApi,)
   }
 );}
 
@@ -2991,17 +4660,44 @@ export const accountsPasskeysDelete = async (id: string, options?: RequestInit):
 
 
 
-export type accountsPasswordResetConfirmCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsPasswordResetConfirmCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsPasswordResetConfirmCreateResponseSuccess = (accountsPasswordResetConfirmCreateResponse201) & {
+export type accountsPasswordResetConfirmCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasswordResetConfirmCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasswordResetConfirmCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasswordResetConfirmCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasswordResetConfirmCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsPasswordResetConfirmCreateResponseSuccess = (accountsPasswordResetConfirmCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasswordResetConfirmCreateResponseError = (accountsPasswordResetConfirmCreateResponse400 | accountsPasswordResetConfirmCreateResponse401 | accountsPasswordResetConfirmCreateResponse403 | accountsPasswordResetConfirmCreateResponse404 | accountsPasswordResetConfirmCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasswordResetConfirmCreateResponse = (accountsPasswordResetConfirmCreateResponseSuccess)
+export type accountsPasswordResetConfirmCreateResponse = (accountsPasswordResetConfirmCreateResponseSuccess | accountsPasswordResetConfirmCreateResponseError)
 
 export const getAccountsPasswordResetConfirmCreateUrl = (uidb64: string,
     token: string,) => {
@@ -3013,30 +4709,59 @@ export const getAccountsPasswordResetConfirmCreateUrl = (uidb64: string,
 }
 
 export const accountsPasswordResetConfirmCreate = async (uidb64: string,
-    token: string, options?: RequestInit): Promise<accountsPasswordResetConfirmCreateResponse> => {
+    token: string,
+    passwordResetConfirmRequestApi: PasswordResetConfirmRequestApi, options?: RequestInit): Promise<accountsPasswordResetConfirmCreateResponse> => {
 
   return apiMutator<accountsPasswordResetConfirmCreateResponse>(getAccountsPasswordResetConfirmCreateUrl(uidb64,token),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordResetConfirmRequestApi,)
   }
 );}
 
 
 
-export type accountsPasswordResetInitiateCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsPasswordResetInitiateCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsPasswordResetInitiateCreateResponseSuccess = (accountsPasswordResetInitiateCreateResponse201) & {
+export type accountsPasswordResetInitiateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsPasswordResetInitiateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsPasswordResetInitiateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsPasswordResetInitiateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsPasswordResetInitiateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsPasswordResetInitiateCreateResponseSuccess = (accountsPasswordResetInitiateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsPasswordResetInitiateCreateResponseError = (accountsPasswordResetInitiateCreateResponse400 | accountsPasswordResetInitiateCreateResponse401 | accountsPasswordResetInitiateCreateResponse403 | accountsPasswordResetInitiateCreateResponse404 | accountsPasswordResetInitiateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsPasswordResetInitiateCreateResponse = (accountsPasswordResetInitiateCreateResponseSuccess)
+export type accountsPasswordResetInitiateCreateResponse = (accountsPasswordResetInitiateCreateResponseSuccess | accountsPasswordResetInitiateCreateResponseError)
 
 export const getAccountsPasswordResetInitiateCreateUrl = () => {
 
@@ -3046,30 +4771,58 @@ export const getAccountsPasswordResetInitiateCreateUrl = () => {
   return `/accounts/password-reset-initiate/`
 }
 
-export const accountsPasswordResetInitiateCreate = async ( options?: RequestInit): Promise<accountsPasswordResetInitiateCreateResponse> => {
+export const accountsPasswordResetInitiateCreate = async (passwordResetInitiateRequestApi: PasswordResetInitiateRequestApi, options?: RequestInit): Promise<accountsPasswordResetInitiateCreateResponse> => {
 
   return apiMutator<accountsPasswordResetInitiateCreateResponse>(getAccountsPasswordResetInitiateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordResetInitiateRequestApi,)
   }
 );}
 
 
 
-export type accountsRedisKeyCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsRedisKeyCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsRedisKeyCreateResponseSuccess = (accountsRedisKeyCreateResponse201) & {
+export type accountsRedisKeyCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsRedisKeyCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsRedisKeyCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsRedisKeyCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsRedisKeyCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsRedisKeyCreateResponseSuccess = (accountsRedisKeyCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsRedisKeyCreateResponseError = (accountsRedisKeyCreateResponse400 | accountsRedisKeyCreateResponse401 | accountsRedisKeyCreateResponse403 | accountsRedisKeyCreateResponse404 | accountsRedisKeyCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsRedisKeyCreateResponse = (accountsRedisKeyCreateResponseSuccess)
+export type accountsRedisKeyCreateResponse = (accountsRedisKeyCreateResponseSuccess | accountsRedisKeyCreateResponseError)
 
 export const getAccountsRedisKeyCreateUrl = () => {
 
@@ -3079,30 +4832,58 @@ export const getAccountsRedisKeyCreateUrl = () => {
   return `/accounts/redis-key/`
 }
 
-export const accountsRedisKeyCreate = async ( options?: RequestInit): Promise<accountsRedisKeyCreateResponse> => {
+export const accountsRedisKeyCreate = async (redisKeyRequestApi: RedisKeyRequestApi, options?: RequestInit): Promise<accountsRedisKeyCreateResponse> => {
 
   return apiMutator<accountsRedisKeyCreateResponse>(getAccountsRedisKeyCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      redisKeyRequestApi,)
   }
 );}
 
 
 
-export type accountsRedisKeyDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsRedisKeyDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsRedisKeyDeleteResponseSuccess = (accountsRedisKeyDeleteResponse204) & {
+export type accountsRedisKeyDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsRedisKeyDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsRedisKeyDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsRedisKeyDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsRedisKeyDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsRedisKeyDeleteResponseSuccess = (accountsRedisKeyDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsRedisKeyDeleteResponseError = (accountsRedisKeyDeleteResponse400 | accountsRedisKeyDeleteResponse401 | accountsRedisKeyDeleteResponse403 | accountsRedisKeyDeleteResponse404 | accountsRedisKeyDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsRedisKeyDeleteResponse = (accountsRedisKeyDeleteResponseSuccess)
+export type accountsRedisKeyDeleteResponse = (accountsRedisKeyDeleteResponseSuccess | accountsRedisKeyDeleteResponseError)
 
 export const getAccountsRedisKeyDeleteUrl = () => {
 
@@ -3112,30 +4893,58 @@ export const getAccountsRedisKeyDeleteUrl = () => {
   return `/accounts/redis-key/`
 }
 
-export const accountsRedisKeyDelete = async ( options?: RequestInit): Promise<accountsRedisKeyDeleteResponse> => {
+export const accountsRedisKeyDelete = async (redisKeyRequestApi: RedisKeyRequestApi, options?: RequestInit): Promise<accountsRedisKeyDeleteResponse> => {
 
   return apiMutator<accountsRedisKeyDeleteResponse>(getAccountsRedisKeyDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      redisKeyRequestApi,)
   }
 );}
 
 
 
-export type accountsResendInvitationEmailsCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsResendInvitationEmailsCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsResendInvitationEmailsCreateResponseSuccess = (accountsResendInvitationEmailsCreateResponse201) & {
+export type accountsResendInvitationEmailsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsResendInvitationEmailsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsResendInvitationEmailsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsResendInvitationEmailsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsResendInvitationEmailsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsResendInvitationEmailsCreateResponseSuccess = (accountsResendInvitationEmailsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsResendInvitationEmailsCreateResponseError = (accountsResendInvitationEmailsCreateResponse400 | accountsResendInvitationEmailsCreateResponse401 | accountsResendInvitationEmailsCreateResponse403 | accountsResendInvitationEmailsCreateResponse404 | accountsResendInvitationEmailsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsResendInvitationEmailsCreateResponse = (accountsResendInvitationEmailsCreateResponseSuccess)
+export type accountsResendInvitationEmailsCreateResponse = (accountsResendInvitationEmailsCreateResponseSuccess | accountsResendInvitationEmailsCreateResponseError)
 
 export const getAccountsResendInvitationEmailsCreateUrl = () => {
 
@@ -3145,30 +4954,58 @@ export const getAccountsResendInvitationEmailsCreateUrl = () => {
   return `/accounts/resend-invitation-emails/`
 }
 
-export const accountsResendInvitationEmailsCreate = async ( options?: RequestInit): Promise<accountsResendInvitationEmailsCreateResponse> => {
+export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: UserIdsRequestApi, options?: RequestInit): Promise<accountsResendInvitationEmailsCreateResponse> => {
 
   return apiMutator<accountsResendInvitationEmailsCreateResponse>(getAccountsResendInvitationEmailsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userIdsRequestApi,)
   }
 );}
 
 
 
-export type accountsSignupCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsSignupCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsSignupCreateResponseSuccess = (accountsSignupCreateResponse201) & {
+export type accountsSignupCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsSignupCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsSignupCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsSignupCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsSignupCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsSignupCreateResponseSuccess = (accountsSignupCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsSignupCreateResponseError = (accountsSignupCreateResponse400 | accountsSignupCreateResponse401 | accountsSignupCreateResponse403 | accountsSignupCreateResponse404 | accountsSignupCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsSignupCreateResponse = (accountsSignupCreateResponseSuccess)
+export type accountsSignupCreateResponse = (accountsSignupCreateResponseSuccess | accountsSignupCreateResponseError)
 
 export const getAccountsSignupCreateUrl = () => {
 
@@ -3178,30 +5015,58 @@ export const getAccountsSignupCreateUrl = () => {
   return `/accounts/signup/`
 }
 
-export const accountsSignupCreate = async ( options?: RequestInit): Promise<accountsSignupCreateResponse> => {
+export const accountsSignupCreate = async (accountsJSONRequestApi: AccountsJSONRequestApi, options?: RequestInit): Promise<accountsSignupCreateResponse> => {
 
   return apiMutator<accountsSignupCreateResponse>(getAccountsSignupCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsJSONRequestApi,)
   }
 );}
 
 
 
 export type accountsTeamUsersListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsTeamUsersListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsTeamUsersListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsTeamUsersListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsTeamUsersListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsTeamUsersListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsTeamUsersListResponseSuccess = (accountsTeamUsersListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsTeamUsersListResponseError = (accountsTeamUsersListResponse400 | accountsTeamUsersListResponse401 | accountsTeamUsersListResponse403 | accountsTeamUsersListResponse404 | accountsTeamUsersListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsTeamUsersListResponse = (accountsTeamUsersListResponseSuccess)
+export type accountsTeamUsersListResponse = (accountsTeamUsersListResponseSuccess | accountsTeamUsersListResponseError)
 
 export const getAccountsTeamUsersListUrl = () => {
 
@@ -3224,17 +5089,44 @@ export const accountsTeamUsersList = async ( options?: RequestInit): Promise<acc
 
 
 
-export type accountsTeamUsersCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsTeamUsersCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsTeamUsersCreateResponseSuccess = (accountsTeamUsersCreateResponse201) & {
+export type accountsTeamUsersCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsTeamUsersCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsTeamUsersCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsTeamUsersCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsTeamUsersCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsTeamUsersCreateResponseSuccess = (accountsTeamUsersCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsTeamUsersCreateResponseError = (accountsTeamUsersCreateResponse400 | accountsTeamUsersCreateResponse401 | accountsTeamUsersCreateResponse403 | accountsTeamUsersCreateResponse404 | accountsTeamUsersCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsTeamUsersCreateResponse = (accountsTeamUsersCreateResponseSuccess)
+export type accountsTeamUsersCreateResponse = (accountsTeamUsersCreateResponseSuccess | accountsTeamUsersCreateResponseError)
 
 export const getAccountsTeamUsersCreateUrl = (memberId: string,) => {
 
@@ -3244,14 +5136,16 @@ export const getAccountsTeamUsersCreateUrl = (memberId: string,) => {
   return `/accounts/team/users/${memberId}/`
 }
 
-export const accountsTeamUsersCreate = async (memberId: string, options?: RequestInit): Promise<accountsTeamUsersCreateResponse> => {
+export const accountsTeamUsersCreate = async (memberId: string,
+    createMemberApi: CreateMemberApi, options?: RequestInit): Promise<accountsTeamUsersCreateResponse> => {
 
   return apiMutator<accountsTeamUsersCreateResponse>(getAccountsTeamUsersCreateUrl(memberId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createMemberApi,)
   }
 );}
 
@@ -3291,16 +5185,43 @@ export const accountsTeamUsersDelete = async (memberId: string, options?: Reques
 
 
 export type accountsTeamUsersReadResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsTeamUsersReadResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsTeamUsersReadResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsTeamUsersReadResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsTeamUsersReadResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsTeamUsersReadResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsTeamUsersReadResponseSuccess = (accountsTeamUsersReadResponse200) & {
   headers: Headers;
 };
-;
+export type accountsTeamUsersReadResponseError = (accountsTeamUsersReadResponse400 | accountsTeamUsersReadResponse401 | accountsTeamUsersReadResponse403 | accountsTeamUsersReadResponse404 | accountsTeamUsersReadResponse500) & {
+  headers: Headers;
+};
 
-export type accountsTeamUsersReadResponse = (accountsTeamUsersReadResponseSuccess)
+export type accountsTeamUsersReadResponse = (accountsTeamUsersReadResponseSuccess | accountsTeamUsersReadResponseError)
 
 export const getAccountsTeamUsersReadUrl = (memberId: string,) => {
 
@@ -3357,17 +5278,44 @@ export const accountsTokenCreate = async (tokenObtainPairApi: TokenObtainPairApi
 
 
 
-export type accountsTokenRefreshCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsTokenRefreshCreateResponse200 = {
+  data: AccountsAccessTokenResponseApi
+  status: 200
 }
 
-export type accountsTokenRefreshCreateResponseSuccess = (accountsTokenRefreshCreateResponse201) & {
+export type accountsTokenRefreshCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsTokenRefreshCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsTokenRefreshCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsTokenRefreshCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsTokenRefreshCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsTokenRefreshCreateResponseSuccess = (accountsTokenRefreshCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsTokenRefreshCreateResponseError = (accountsTokenRefreshCreateResponse400 | accountsTokenRefreshCreateResponse401 | accountsTokenRefreshCreateResponse403 | accountsTokenRefreshCreateResponse404 | accountsTokenRefreshCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsTokenRefreshCreateResponse = (accountsTokenRefreshCreateResponseSuccess)
+export type accountsTokenRefreshCreateResponse = (accountsTokenRefreshCreateResponseSuccess | accountsTokenRefreshCreateResponseError)
 
 export const getAccountsTokenRefreshCreateUrl = () => {
 
@@ -3377,30 +5325,58 @@ export const getAccountsTokenRefreshCreateUrl = () => {
   return `/accounts/token/refresh/`
 }
 
-export const accountsTokenRefreshCreate = async ( options?: RequestInit): Promise<accountsTokenRefreshCreateResponse> => {
+export const accountsTokenRefreshCreate = async (tokenRefreshRequestApi: TokenRefreshRequestApi, options?: RequestInit): Promise<accountsTokenRefreshCreateResponse> => {
 
   return apiMutator<accountsTokenRefreshCreateResponse>(getAccountsTokenRefreshCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      tokenRefreshRequestApi,)
   }
 );}
 
 
 
-export type accountsUpdateUserFullNameCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUpdateUserFullNameCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUpdateUserFullNameCreateResponseSuccess = (accountsUpdateUserFullNameCreateResponse201) & {
+export type accountsUpdateUserFullNameCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUpdateUserFullNameCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUpdateUserFullNameCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUpdateUserFullNameCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUpdateUserFullNameCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUpdateUserFullNameCreateResponseSuccess = (accountsUpdateUserFullNameCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUpdateUserFullNameCreateResponseError = (accountsUpdateUserFullNameCreateResponse400 | accountsUpdateUserFullNameCreateResponse401 | accountsUpdateUserFullNameCreateResponse403 | accountsUpdateUserFullNameCreateResponse404 | accountsUpdateUserFullNameCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUpdateUserFullNameCreateResponse = (accountsUpdateUserFullNameCreateResponseSuccess)
+export type accountsUpdateUserFullNameCreateResponse = (accountsUpdateUserFullNameCreateResponseSuccess | accountsUpdateUserFullNameCreateResponseError)
 
 export const getAccountsUpdateUserFullNameCreateUrl = () => {
 
@@ -3410,30 +5386,58 @@ export const getAccountsUpdateUserFullNameCreateUrl = () => {
   return `/accounts/update-user-full-name/`
 }
 
-export const accountsUpdateUserFullNameCreate = async ( options?: RequestInit): Promise<accountsUpdateUserFullNameCreateResponse> => {
+export const accountsUpdateUserFullNameCreate = async (userFullNameUpdateRequestApi: UserFullNameUpdateRequestApi, options?: RequestInit): Promise<accountsUpdateUserFullNameCreateResponse> => {
 
   return apiMutator<accountsUpdateUserFullNameCreateResponse>(getAccountsUpdateUserFullNameCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userFullNameUpdateRequestApi,)
   }
 );}
 
 
 
-export type accountsUpdateUserCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUpdateUserCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUpdateUserCreateResponseSuccess = (accountsUpdateUserCreateResponse201) & {
+export type accountsUpdateUserCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUpdateUserCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUpdateUserCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUpdateUserCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUpdateUserCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUpdateUserCreateResponseSuccess = (accountsUpdateUserCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUpdateUserCreateResponseError = (accountsUpdateUserCreateResponse400 | accountsUpdateUserCreateResponse401 | accountsUpdateUserCreateResponse403 | accountsUpdateUserCreateResponse404 | accountsUpdateUserCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUpdateUserCreateResponse = (accountsUpdateUserCreateResponseSuccess)
+export type accountsUpdateUserCreateResponse = (accountsUpdateUserCreateResponseSuccess | accountsUpdateUserCreateResponseError)
 
 export const getAccountsUpdateUserCreateUrl = () => {
 
@@ -3443,30 +5447,58 @@ export const getAccountsUpdateUserCreateUrl = () => {
   return `/accounts/update-user/`
 }
 
-export const accountsUpdateUserCreate = async ( options?: RequestInit): Promise<accountsUpdateUserCreateResponse> => {
+export const accountsUpdateUserCreate = async (updateUserApi: UpdateUserApi, options?: RequestInit): Promise<accountsUpdateUserCreateResponse> => {
 
   return apiMutator<accountsUpdateUserCreateResponse>(getAccountsUpdateUserCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateUserApi,)
   }
 );}
 
 
 
 export type accountsUserInfoListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsUserInfoListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserInfoListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserInfoListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserInfoListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserInfoListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsUserInfoListResponseSuccess = (accountsUserInfoListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserInfoListResponseError = (accountsUserInfoListResponse400 | accountsUserInfoListResponse401 | accountsUserInfoListResponse403 | accountsUserInfoListResponse404 | accountsUserInfoListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserInfoListResponse = (accountsUserInfoListResponseSuccess)
+export type accountsUserInfoListResponse = (accountsUserInfoListResponseSuccess | accountsUserInfoListResponseError)
 
 export const getAccountsUserInfoListUrl = () => {
 
@@ -3489,17 +5521,44 @@ export const accountsUserInfoList = async ( options?: RequestInit): Promise<acco
 
 
 
-export type accountsUserDeactivateCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUserDeactivateCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUserDeactivateCreateResponseSuccess = (accountsUserDeactivateCreateResponse201) & {
+export type accountsUserDeactivateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserDeactivateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserDeactivateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserDeactivateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserDeactivateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUserDeactivateCreateResponseSuccess = (accountsUserDeactivateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserDeactivateCreateResponseError = (accountsUserDeactivateCreateResponse400 | accountsUserDeactivateCreateResponse401 | accountsUserDeactivateCreateResponse403 | accountsUserDeactivateCreateResponse404 | accountsUserDeactivateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserDeactivateCreateResponse = (accountsUserDeactivateCreateResponseSuccess)
+export type accountsUserDeactivateCreateResponse = (accountsUserDeactivateCreateResponseSuccess | accountsUserDeactivateCreateResponseError)
 
 export const getAccountsUserDeactivateCreateUrl = () => {
 
@@ -3512,30 +5571,58 @@ export const getAccountsUserDeactivateCreateUrl = () => {
 /**
  * Deactivate user by marking is_active as False
  */
-export const accountsUserDeactivateCreate = async ( options?: RequestInit): Promise<accountsUserDeactivateCreateResponse> => {
+export const accountsUserDeactivateCreate = async (deactivateUserApi: DeactivateUserApi, options?: RequestInit): Promise<accountsUserDeactivateCreateResponse> => {
 
   return apiMutator<accountsUserDeactivateCreateResponse>(getAccountsUserDeactivateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deactivateUserApi,)
   }
 );}
 
 
 
-export type accountsUserDeleteCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUserDeleteCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUserDeleteCreateResponseSuccess = (accountsUserDeleteCreateResponse201) & {
+export type accountsUserDeleteCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserDeleteCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserDeleteCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserDeleteCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserDeleteCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUserDeleteCreateResponseSuccess = (accountsUserDeleteCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserDeleteCreateResponseError = (accountsUserDeleteCreateResponse400 | accountsUserDeleteCreateResponse401 | accountsUserDeleteCreateResponse403 | accountsUserDeleteCreateResponse404 | accountsUserDeleteCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserDeleteCreateResponse = (accountsUserDeleteCreateResponseSuccess)
+export type accountsUserDeleteCreateResponse = (accountsUserDeleteCreateResponseSuccess | accountsUserDeleteCreateResponseError)
 
 export const getAccountsUserDeleteCreateUrl = () => {
 
@@ -3548,45 +5635,80 @@ export const getAccountsUserDeleteCreateUrl = () => {
 /**
  * Delete user or remove invite at organization or workspace level
  */
-export const accountsUserDeleteCreate = async ( options?: RequestInit): Promise<accountsUserDeleteCreateResponse> => {
+export const accountsUserDeleteCreate = async (deleteUserApi: DeleteUserApi, options?: RequestInit): Promise<accountsUserDeleteCreateResponse> => {
 
   return apiMutator<accountsUserDeleteCreateResponse>(getAccountsUserDeleteCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deleteUserApi,)
   }
 );}
 
 
 
 export type accountsUserListListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsUserListListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserListListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserListListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserListListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserListListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsUserListListResponseSuccess = (accountsUserListListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserListListResponseError = (accountsUserListListResponse400 | accountsUserListListResponse401 | accountsUserListListResponse403 | accountsUserListListResponse404 | accountsUserListListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserListListResponse = (accountsUserListListResponseSuccess)
+export type accountsUserListListResponse = (accountsUserListListResponseSuccess | accountsUserListListResponseError)
 
-export const getAccountsUserListListUrl = () => {
+export const getAccountsUserListListUrl = (params?: AccountsUserListListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/accounts/user/list/`
+  return stringifiedParams.length > 0 ? `/accounts/user/list/?${stringifiedParams}` : `/accounts/user/list/`
 }
 
 /**
  * Get paginated list of users with filtering at workspace level
  */
-export const accountsUserListList = async ( options?: RequestInit): Promise<accountsUserListListResponse> => {
+export const accountsUserListList = async (params?: AccountsUserListListParams, options?: RequestInit): Promise<accountsUserListListResponse> => {
 
-  return apiMutator<accountsUserListListResponse>(getAccountsUserListListUrl(),
+  return apiMutator<accountsUserListListResponse>(getAccountsUserListListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -3597,17 +5719,44 @@ export const accountsUserListList = async ( options?: RequestInit): Promise<acco
 
 
 
-export type accountsUserResendInviteCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUserResendInviteCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUserResendInviteCreateResponseSuccess = (accountsUserResendInviteCreateResponse201) & {
+export type accountsUserResendInviteCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserResendInviteCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserResendInviteCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserResendInviteCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserResendInviteCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUserResendInviteCreateResponseSuccess = (accountsUserResendInviteCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserResendInviteCreateResponseError = (accountsUserResendInviteCreateResponse400 | accountsUserResendInviteCreateResponse401 | accountsUserResendInviteCreateResponse403 | accountsUserResendInviteCreateResponse404 | accountsUserResendInviteCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserResendInviteCreateResponse = (accountsUserResendInviteCreateResponseSuccess)
+export type accountsUserResendInviteCreateResponse = (accountsUserResendInviteCreateResponseSuccess | accountsUserResendInviteCreateResponseError)
 
 export const getAccountsUserResendInviteCreateUrl = () => {
 
@@ -3620,30 +5769,58 @@ export const getAccountsUserResendInviteCreateUrl = () => {
 /**
  * Resend invitation email with workspace context
  */
-export const accountsUserResendInviteCreate = async ( options?: RequestInit): Promise<accountsUserResendInviteCreateResponse> => {
+export const accountsUserResendInviteCreate = async (resendInviteApi: ResendInviteApi, options?: RequestInit): Promise<accountsUserResendInviteCreateResponse> => {
 
   return apiMutator<accountsUserResendInviteCreateResponse>(getAccountsUserResendInviteCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      resendInviteApi,)
   }
 );}
 
 
 
-export type accountsUserRoleUpdateCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsUserRoleUpdateCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsUserRoleUpdateCreateResponseSuccess = (accountsUserRoleUpdateCreateResponse201) & {
+export type accountsUserRoleUpdateCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsUserRoleUpdateCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsUserRoleUpdateCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsUserRoleUpdateCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsUserRoleUpdateCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsUserRoleUpdateCreateResponseSuccess = (accountsUserRoleUpdateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsUserRoleUpdateCreateResponseError = (accountsUserRoleUpdateCreateResponse400 | accountsUserRoleUpdateCreateResponse401 | accountsUserRoleUpdateCreateResponse403 | accountsUserRoleUpdateCreateResponse404 | accountsUserRoleUpdateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsUserRoleUpdateCreateResponse = (accountsUserRoleUpdateCreateResponseSuccess)
+export type accountsUserRoleUpdateCreateResponse = (accountsUserRoleUpdateCreateResponseSuccess | accountsUserRoleUpdateCreateResponseError)
 
 export const getAccountsUserRoleUpdateCreateUrl = () => {
 
@@ -3656,30 +5833,58 @@ export const getAccountsUserRoleUpdateCreateUrl = () => {
 /**
  * Update user role at organization or workspace level
  */
-export const accountsUserRoleUpdateCreate = async ( options?: RequestInit): Promise<accountsUserRoleUpdateCreateResponse> => {
+export const accountsUserRoleUpdateCreate = async (userRoleUpdateApi: UserRoleUpdateApi, options?: RequestInit): Promise<accountsUserRoleUpdateCreateResponse> => {
 
   return apiMutator<accountsUserRoleUpdateCreateResponse>(getAccountsUserRoleUpdateCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userRoleUpdateApi,)
   }
 );}
 
 
 
-export type accountsWorkspaceInviteCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsWorkspaceInviteCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspaceInviteCreateResponseSuccess = (accountsWorkspaceInviteCreateResponse201) & {
+export type accountsWorkspaceInviteCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceInviteCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceInviteCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceInviteCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceInviteCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspaceInviteCreateResponseSuccess = (accountsWorkspaceInviteCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceInviteCreateResponseError = (accountsWorkspaceInviteCreateResponse400 | accountsWorkspaceInviteCreateResponse401 | accountsWorkspaceInviteCreateResponse403 | accountsWorkspaceInviteCreateResponse404 | accountsWorkspaceInviteCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceInviteCreateResponse = (accountsWorkspaceInviteCreateResponseSuccess)
+export type accountsWorkspaceInviteCreateResponse = (accountsWorkspaceInviteCreateResponseSuccess | accountsWorkspaceInviteCreateResponseError)
 
 export const getAccountsWorkspaceInviteCreateUrl = () => {
 
@@ -3692,45 +5897,80 @@ export const getAccountsWorkspaceInviteCreateUrl = () => {
 /**
  * Invite users to workspaces
  */
-export const accountsWorkspaceInviteCreate = async ( options?: RequestInit): Promise<accountsWorkspaceInviteCreateResponse> => {
+export const accountsWorkspaceInviteCreate = async (workspaceInviteApi: WorkspaceInviteApi, options?: RequestInit): Promise<accountsWorkspaceInviteCreateResponse> => {
 
   return apiMutator<accountsWorkspaceInviteCreateResponse>(getAccountsWorkspaceInviteCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceInviteApi,)
   }
 );}
 
 
 
 export type accountsWorkspaceListListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspaceListListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceListListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceListListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceListListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceListListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspaceListListResponseSuccess = (accountsWorkspaceListListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceListListResponseError = (accountsWorkspaceListListResponse400 | accountsWorkspaceListListResponse401 | accountsWorkspaceListListResponse403 | accountsWorkspaceListListResponse404 | accountsWorkspaceListListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceListListResponse = (accountsWorkspaceListListResponseSuccess)
+export type accountsWorkspaceListListResponse = (accountsWorkspaceListListResponseSuccess | accountsWorkspaceListListResponseError)
 
-export const getAccountsWorkspaceListListUrl = () => {
+export const getAccountsWorkspaceListListUrl = (params?: AccountsWorkspaceListListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/accounts/workspace/list/`
+  return stringifiedParams.length > 0 ? `/accounts/workspace/list/?${stringifiedParams}` : `/accounts/workspace/list/`
 }
 
 /**
  * Get paginated list of workspaces
  */
-export const accountsWorkspaceListList = async ( options?: RequestInit): Promise<accountsWorkspaceListListResponse> => {
+export const accountsWorkspaceListList = async (params?: AccountsWorkspaceListListParams, options?: RequestInit): Promise<accountsWorkspaceListListResponse> => {
 
-  return apiMutator<accountsWorkspaceListListResponse>(getAccountsWorkspaceListListUrl(),
+  return apiMutator<accountsWorkspaceListListResponse>(getAccountsWorkspaceListListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -3741,17 +5981,44 @@ export const accountsWorkspaceListList = async ( options?: RequestInit): Promise
 
 
 
-export type accountsWorkspaceSwitchCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsWorkspaceSwitchCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspaceSwitchCreateResponseSuccess = (accountsWorkspaceSwitchCreateResponse201) & {
+export type accountsWorkspaceSwitchCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceSwitchCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceSwitchCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceSwitchCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceSwitchCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspaceSwitchCreateResponseSuccess = (accountsWorkspaceSwitchCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceSwitchCreateResponseError = (accountsWorkspaceSwitchCreateResponse400 | accountsWorkspaceSwitchCreateResponse401 | accountsWorkspaceSwitchCreateResponse403 | accountsWorkspaceSwitchCreateResponse404 | accountsWorkspaceSwitchCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceSwitchCreateResponse = (accountsWorkspaceSwitchCreateResponseSuccess)
+export type accountsWorkspaceSwitchCreateResponse = (accountsWorkspaceSwitchCreateResponseSuccess | accountsWorkspaceSwitchCreateResponseError)
 
 export const getAccountsWorkspaceSwitchCreateUrl = () => {
 
@@ -3764,37 +6031,73 @@ export const getAccountsWorkspaceSwitchCreateUrl = () => {
 /**
  * Switch to a different workspace with proper validation
  */
-export const accountsWorkspaceSwitchCreate = async ( options?: RequestInit): Promise<accountsWorkspaceSwitchCreateResponse> => {
+export const accountsWorkspaceSwitchCreate = async (switchWorkspaceApi: SwitchWorkspaceApi, options?: RequestInit): Promise<accountsWorkspaceSwitchCreateResponse> => {
 
   return apiMutator<accountsWorkspaceSwitchCreateResponse>(getAccountsWorkspaceSwitchCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      switchWorkspaceApi,)
   }
 );}
 
 
 
 export type accountsWorkspaceMembersListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspaceMembersListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceMembersListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceMembersListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceMembersListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceMembersListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspaceMembersListResponseSuccess = (accountsWorkspaceMembersListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceMembersListResponseError = (accountsWorkspaceMembersListResponse400 | accountsWorkspaceMembersListResponse401 | accountsWorkspaceMembersListResponse403 | accountsWorkspaceMembersListResponse404 | accountsWorkspaceMembersListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceMembersListResponse = (accountsWorkspaceMembersListResponseSuccess)
+export type accountsWorkspaceMembersListResponse = (accountsWorkspaceMembersListResponseSuccess | accountsWorkspaceMembersListResponseError)
 
-export const getAccountsWorkspaceMembersListUrl = (workspaceId: string,) => {
+export const getAccountsWorkspaceMembersListUrl = (workspaceId: string,
+    params?: AccountsWorkspaceMembersListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/accounts/workspace/${workspaceId}/members/`
+  return stringifiedParams.length > 0 ? `/accounts/workspace/${workspaceId}/members/?${stringifiedParams}` : `/accounts/workspace/${workspaceId}/members/`
 }
 
 /**
@@ -3802,9 +6105,10 @@ export const getAccountsWorkspaceMembersListUrl = (workspaceId: string,) => {
 Org Admin+ users who auto-access are included with derived WS Admin role.
  * @summary GET /accounts/workspace/<workspace_id>/members/
  */
-export const accountsWorkspaceMembersList = async (workspaceId: string, options?: RequestInit): Promise<accountsWorkspaceMembersListResponse> => {
+export const accountsWorkspaceMembersList = async (workspaceId: string,
+    params?: AccountsWorkspaceMembersListParams, options?: RequestInit): Promise<accountsWorkspaceMembersListResponse> => {
 
-  return apiMutator<accountsWorkspaceMembersListResponse>(getAccountsWorkspaceMembersListUrl(workspaceId),
+  return apiMutator<accountsWorkspaceMembersListResponse>(getAccountsWorkspaceMembersListUrl(workspaceId,params),
   {
     ...options,
     method: 'GET'
@@ -3815,17 +6119,44 @@ export const accountsWorkspaceMembersList = async (workspaceId: string, options?
 
 
 
-export type accountsWorkspaceMembersRemoveDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsWorkspaceMembersRemoveDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspaceMembersRemoveDeleteResponseSuccess = (accountsWorkspaceMembersRemoveDeleteResponse204) & {
+export type accountsWorkspaceMembersRemoveDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceMembersRemoveDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceMembersRemoveDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceMembersRemoveDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceMembersRemoveDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspaceMembersRemoveDeleteResponseSuccess = (accountsWorkspaceMembersRemoveDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceMembersRemoveDeleteResponseError = (accountsWorkspaceMembersRemoveDeleteResponse400 | accountsWorkspaceMembersRemoveDeleteResponse401 | accountsWorkspaceMembersRemoveDeleteResponse403 | accountsWorkspaceMembersRemoveDeleteResponse404 | accountsWorkspaceMembersRemoveDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceMembersRemoveDeleteResponse = (accountsWorkspaceMembersRemoveDeleteResponseSuccess)
+export type accountsWorkspaceMembersRemoveDeleteResponse = (accountsWorkspaceMembersRemoveDeleteResponseSuccess | accountsWorkspaceMembersRemoveDeleteResponseError)
 
 export const getAccountsWorkspaceMembersRemoveDeleteUrl = (workspaceId: string,) => {
 
@@ -3839,30 +6170,59 @@ export const getAccountsWorkspaceMembersRemoveDeleteUrl = (workspaceId: string,)
  * Remove a member from a workspace only (keeps org membership).
  * @summary DELETE /accounts/workspace/<workspace_id>/members/remove/
  */
-export const accountsWorkspaceMembersRemoveDelete = async (workspaceId: string, options?: RequestInit): Promise<accountsWorkspaceMembersRemoveDeleteResponse> => {
+export const accountsWorkspaceMembersRemoveDelete = async (workspaceId: string,
+    workspaceMemberRemoveApi: WorkspaceMemberRemoveApi, options?: RequestInit): Promise<accountsWorkspaceMembersRemoveDeleteResponse> => {
 
   return apiMutator<accountsWorkspaceMembersRemoveDeleteResponse>(getAccountsWorkspaceMembersRemoveDeleteUrl(workspaceId),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceMemberRemoveApi,)
   }
 );}
 
 
 
-export type accountsWorkspaceMembersRoleCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsWorkspaceMembersRoleCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspaceMembersRoleCreateResponseSuccess = (accountsWorkspaceMembersRoleCreateResponse201) & {
+export type accountsWorkspaceMembersRoleCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspaceMembersRoleCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspaceMembersRoleCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspaceMembersRoleCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspaceMembersRoleCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspaceMembersRoleCreateResponseSuccess = (accountsWorkspaceMembersRoleCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspaceMembersRoleCreateResponseError = (accountsWorkspaceMembersRoleCreateResponse400 | accountsWorkspaceMembersRoleCreateResponse401 | accountsWorkspaceMembersRoleCreateResponse403 | accountsWorkspaceMembersRoleCreateResponse404 | accountsWorkspaceMembersRoleCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspaceMembersRoleCreateResponse = (accountsWorkspaceMembersRoleCreateResponseSuccess)
+export type accountsWorkspaceMembersRoleCreateResponse = (accountsWorkspaceMembersRoleCreateResponseSuccess | accountsWorkspaceMembersRoleCreateResponseError)
 
 export const getAccountsWorkspaceMembersRoleCreateUrl = (workspaceId: string,) => {
 
@@ -3876,30 +6236,59 @@ export const getAccountsWorkspaceMembersRoleCreateUrl = (workspaceId: string,) =
  * Update a member's workspace role.
  * @summary POST /accounts/workspace/<workspace_id>/members/role/
  */
-export const accountsWorkspaceMembersRoleCreate = async (workspaceId: string, options?: RequestInit): Promise<accountsWorkspaceMembersRoleCreateResponse> => {
+export const accountsWorkspaceMembersRoleCreate = async (workspaceId: string,
+    workspaceMemberRoleUpdateApi: WorkspaceMemberRoleUpdateApi, options?: RequestInit): Promise<accountsWorkspaceMembersRoleCreateResponse> => {
 
   return apiMutator<accountsWorkspaceMembersRoleCreateResponse>(getAccountsWorkspaceMembersRoleCreateUrl(workspaceId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceMemberRoleUpdateApi,)
   }
 );}
 
 
 
 export type accountsWorkspacesListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspacesListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspacesListResponseSuccess = (accountsWorkspacesListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesListResponseError = (accountsWorkspacesListResponse400 | accountsWorkspacesListResponse401 | accountsWorkspacesListResponse403 | accountsWorkspacesListResponse404 | accountsWorkspacesListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesListResponse = (accountsWorkspacesListResponseSuccess)
+export type accountsWorkspacesListResponse = (accountsWorkspacesListResponseSuccess | accountsWorkspacesListResponseError)
 
 export const getAccountsWorkspacesListUrl = () => {
 
@@ -3925,17 +6314,44 @@ export const accountsWorkspacesList = async ( options?: RequestInit): Promise<ac
 
 
 
-export type accountsWorkspacesCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsWorkspacesCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspacesCreateResponseSuccess = (accountsWorkspacesCreateResponse201) & {
+export type accountsWorkspacesCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspacesCreateResponseSuccess = (accountsWorkspacesCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesCreateResponseError = (accountsWorkspacesCreateResponse400 | accountsWorkspacesCreateResponse401 | accountsWorkspacesCreateResponse403 | accountsWorkspacesCreateResponse404 | accountsWorkspacesCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesCreateResponse = (accountsWorkspacesCreateResponseSuccess)
+export type accountsWorkspacesCreateResponse = (accountsWorkspacesCreateResponseSuccess | accountsWorkspacesCreateResponseError)
 
 export const getAccountsWorkspacesCreateUrl = (workspaceId: string,) => {
 
@@ -3948,30 +6364,59 @@ export const getAccountsWorkspacesCreateUrl = (workspaceId: string,) => {
 /**
  * Create a new workspace
  */
-export const accountsWorkspacesCreate = async (workspaceId: string, options?: RequestInit): Promise<accountsWorkspacesCreateResponse> => {
+export const accountsWorkspacesCreate = async (workspaceId: string,
+    workspaceCreateRequestApi: WorkspaceCreateRequestApi, options?: RequestInit): Promise<accountsWorkspacesCreateResponse> => {
 
   return apiMutator<accountsWorkspacesCreateResponse>(getAccountsWorkspacesCreateUrl(workspaceId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceCreateRequestApi,)
   }
 );}
 
 
 
 export type accountsWorkspacesUpdateResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspacesUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspacesUpdateResponseSuccess = (accountsWorkspacesUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesUpdateResponseError = (accountsWorkspacesUpdateResponse400 | accountsWorkspacesUpdateResponse401 | accountsWorkspacesUpdateResponse403 | accountsWorkspacesUpdateResponse404 | accountsWorkspacesUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesUpdateResponse = (accountsWorkspacesUpdateResponseSuccess)
+export type accountsWorkspacesUpdateResponse = (accountsWorkspacesUpdateResponseSuccess | accountsWorkspacesUpdateResponseError)
 
 export const getAccountsWorkspacesUpdateUrl = (workspaceId: string,) => {
 
@@ -3984,30 +6429,59 @@ export const getAccountsWorkspacesUpdateUrl = (workspaceId: string,) => {
 /**
  * Update workspace details
  */
-export const accountsWorkspacesUpdate = async (workspaceId: string, options?: RequestInit): Promise<accountsWorkspacesUpdateResponse> => {
+export const accountsWorkspacesUpdate = async (workspaceId: string,
+    workspaceUpdateRequestApi: WorkspaceUpdateRequestApi, options?: RequestInit): Promise<accountsWorkspacesUpdateResponse> => {
 
   return apiMutator<accountsWorkspacesUpdateResponse>(getAccountsWorkspacesUpdateUrl(workspaceId),
   {
     ...options,
-    method: 'PUT'
-
-
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceUpdateRequestApi,)
   }
 );}
 
 
 
-export type accountsWorkspacesDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsWorkspacesDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspacesDeleteResponseSuccess = (accountsWorkspacesDeleteResponse204) & {
+export type accountsWorkspacesDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspacesDeleteResponseSuccess = (accountsWorkspacesDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesDeleteResponseError = (accountsWorkspacesDeleteResponse400 | accountsWorkspacesDeleteResponse401 | accountsWorkspacesDeleteResponse403 | accountsWorkspacesDeleteResponse404 | accountsWorkspacesDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesDeleteResponse = (accountsWorkspacesDeleteResponseSuccess)
+export type accountsWorkspacesDeleteResponse = (accountsWorkspacesDeleteResponseSuccess | accountsWorkspacesDeleteResponseError)
 
 export const getAccountsWorkspacesDeleteUrl = (workspaceId: string,) => {
 
@@ -4034,16 +6508,43 @@ export const accountsWorkspacesDelete = async (workspaceId: string, options?: Re
 
 
 export type accountsWorkspacesReadResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspacesReadResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesReadResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesReadResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesReadResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesReadResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspacesReadResponseSuccess = (accountsWorkspacesReadResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesReadResponseError = (accountsWorkspacesReadResponse400 | accountsWorkspacesReadResponse401 | accountsWorkspacesReadResponse403 | accountsWorkspacesReadResponse404 | accountsWorkspacesReadResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesReadResponse = (accountsWorkspacesReadResponseSuccess)
+export type accountsWorkspacesReadResponse = (accountsWorkspacesReadResponseSuccess | accountsWorkspacesReadResponseError)
 
 export const getAccountsWorkspacesReadUrl = (workspaceId: string,) => {
 
@@ -4070,16 +6571,43 @@ export const accountsWorkspacesRead = async (workspaceId: string, options?: Requ
 
 
 export type accountsWorkspacesMembersListResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspacesMembersListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesMembersListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesMembersListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesMembersListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesMembersListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspacesMembersListResponseSuccess = (accountsWorkspacesMembersListResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesMembersListResponseError = (accountsWorkspacesMembersListResponse400 | accountsWorkspacesMembersListResponse401 | accountsWorkspacesMembersListResponse403 | accountsWorkspacesMembersListResponse404 | accountsWorkspacesMembersListResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesMembersListResponse = (accountsWorkspacesMembersListResponseSuccess)
+export type accountsWorkspacesMembersListResponse = (accountsWorkspacesMembersListResponseSuccess | accountsWorkspacesMembersListResponseError)
 
 export const getAccountsWorkspacesMembersListUrl = (workspaceId: string,) => {
 
@@ -4105,17 +6633,44 @@ export const accountsWorkspacesMembersList = async (workspaceId: string, options
 
 
 
-export type accountsWorkspacesMembersCreateResponse201 = {
-  data: void
-  status: 201
+export type accountsWorkspacesMembersCreateResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspacesMembersCreateResponseSuccess = (accountsWorkspacesMembersCreateResponse201) & {
+export type accountsWorkspacesMembersCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesMembersCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesMembersCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesMembersCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesMembersCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspacesMembersCreateResponseSuccess = (accountsWorkspacesMembersCreateResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesMembersCreateResponseError = (accountsWorkspacesMembersCreateResponse400 | accountsWorkspacesMembersCreateResponse401 | accountsWorkspacesMembersCreateResponse403 | accountsWorkspacesMembersCreateResponse404 | accountsWorkspacesMembersCreateResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesMembersCreateResponse = (accountsWorkspacesMembersCreateResponseSuccess)
+export type accountsWorkspacesMembersCreateResponse = (accountsWorkspacesMembersCreateResponseSuccess | accountsWorkspacesMembersCreateResponseError)
 
 export const getAccountsWorkspacesMembersCreateUrl = (workspaceId: string,
     memberId: string,) => {
@@ -4130,30 +6685,59 @@ export const getAccountsWorkspacesMembersCreateUrl = (workspaceId: string,
  * Add users to workspace
  */
 export const accountsWorkspacesMembersCreate = async (workspaceId: string,
-    memberId: string, options?: RequestInit): Promise<accountsWorkspacesMembersCreateResponse> => {
+    memberId: string,
+    workspaceMembersRequestApi: WorkspaceMembersRequestApi, options?: RequestInit): Promise<accountsWorkspacesMembersCreateResponse> => {
 
   return apiMutator<accountsWorkspacesMembersCreateResponse>(getAccountsWorkspacesMembersCreateUrl(workspaceId,memberId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workspaceMembersRequestApi,)
   }
 );}
 
 
 
-export type accountsWorkspacesMembersDeleteResponse204 = {
-  data: void
-  status: 204
+export type accountsWorkspacesMembersDeleteResponse200 = {
+  data: AccountsJSONResponseApi
+  status: 200
 }
 
-export type accountsWorkspacesMembersDeleteResponseSuccess = (accountsWorkspacesMembersDeleteResponse204) & {
+export type accountsWorkspacesMembersDeleteResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesMembersDeleteResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesMembersDeleteResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesMembersDeleteResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesMembersDeleteResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsWorkspacesMembersDeleteResponseSuccess = (accountsWorkspacesMembersDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesMembersDeleteResponseError = (accountsWorkspacesMembersDeleteResponse400 | accountsWorkspacesMembersDeleteResponse401 | accountsWorkspacesMembersDeleteResponse403 | accountsWorkspacesMembersDeleteResponse404 | accountsWorkspacesMembersDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesMembersDeleteResponse = (accountsWorkspacesMembersDeleteResponseSuccess)
+export type accountsWorkspacesMembersDeleteResponse = (accountsWorkspacesMembersDeleteResponseSuccess | accountsWorkspacesMembersDeleteResponseError)
 
 export const getAccountsWorkspacesMembersDeleteUrl = (workspaceId: string,
     memberId: string,) => {
@@ -4182,16 +6766,43 @@ export const accountsWorkspacesMembersDelete = async (workspaceId: string,
 
 
 export type accountsWorkspacesMembersReadResponse200 = {
-  data: void
+  data: AccountsJSONResponseApi
   status: 200
+}
+
+export type accountsWorkspacesMembersReadResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsWorkspacesMembersReadResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsWorkspacesMembersReadResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsWorkspacesMembersReadResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsWorkspacesMembersReadResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
 }
 
 export type accountsWorkspacesMembersReadResponseSuccess = (accountsWorkspacesMembersReadResponse200) & {
   headers: Headers;
 };
-;
+export type accountsWorkspacesMembersReadResponseError = (accountsWorkspacesMembersReadResponse400 | accountsWorkspacesMembersReadResponse401 | accountsWorkspacesMembersReadResponse403 | accountsWorkspacesMembersReadResponse404 | accountsWorkspacesMembersReadResponse500) & {
+  headers: Headers;
+};
 
-export type accountsWorkspacesMembersReadResponse = (accountsWorkspacesMembersReadResponseSuccess)
+export type accountsWorkspacesMembersReadResponse = (accountsWorkspacesMembersReadResponseSuccess | accountsWorkspacesMembersReadResponseError)
 
 export const getAccountsWorkspacesMembersReadUrl = (workspaceId: string,
     memberId: string,) => {

@@ -2,14 +2,13 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.authentication import (
-    decrypt_message,
     generate_encrypted_message,
-    get_client_ip,
 )
 from accounts.models import OrgApiKey
 from accounts.models.auth_token import (
@@ -19,6 +18,11 @@ from accounts.models.auth_token import (
 )
 from accounts.models.organization import Organization
 from accounts.models.user import User
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+)
 from accounts.serializers.user import (
     PasswordValidationSerializer,
     SOSLoginSerializer,
@@ -35,6 +39,9 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 class UserApiView(APIView):
     permission_classes = [APIKeyPermission]
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(
         self,
         request,
@@ -55,6 +62,10 @@ class UserApiView(APIView):
 
         return paginator.get_paginated_response(list(result_page))
 
+    @swagger_auto_schema(
+        request_body=UserCreateSerializer,
+        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = UserCreateSerializer(data=request.data)
         if serializer.is_valid():
@@ -96,6 +107,10 @@ class UserApiView(APIView):
             return Response(serializer.validated_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @swagger_auto_schema(
+        request_body=PasswordValidationSerializer,
+        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def patch(self, request, user_id):
         serializer = PasswordValidationSerializer(data=request.data)
         if serializer.is_valid():
@@ -122,6 +137,13 @@ class SOSLoginView(APIView):
     permission_classes = [APIKeyPermission]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=SOSLoginSerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         try:
             serializer = SOSLoginSerializer(data=request.data)

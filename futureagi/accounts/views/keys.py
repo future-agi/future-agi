@@ -2,6 +2,7 @@ import traceback
 from math import ceil
 
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,6 +10,11 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
 from accounts.models import OrgApiKey
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    AccountsPaginatedResponseSerializer,
+)
 from accounts.serializers.org_api_key import (
     CreateSecretKeySerializer,
     OrgApiKeySerializer,
@@ -28,6 +34,9 @@ from tfc.utils.general_methods import GeneralMethods
 class GetKeysView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         user_organization = (
             getattr(request, "organization", None) or self.request.user.organization
@@ -74,6 +83,9 @@ class SecretKeyAPIViewSet(ViewSet):
         "type": "type",
     }
 
+    @swagger_auto_schema(
+        responses={200: AccountsPaginatedResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"])
     def get_secret_keys(self, request, *args, **kwargs):
         user_organization = (
@@ -157,6 +169,10 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_KEYS"))
 
+    @swagger_auto_schema(
+        request_body=UserSecretKeySerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["POST"])
     def enable_key(self, request, *args, **kwargs):
         try:
@@ -188,6 +204,10 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_ENABLED"))
 
+    @swagger_auto_schema(
+        request_body=UserSecretKeySerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["POST"])
     def disable_key(self, request, *args, **kwargs):
         try:
@@ -219,6 +239,10 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_DISABLED"))
 
+    @swagger_auto_schema(
+        request_body=CreateSecretKeySerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["POST"])
     def generate_secret_key(self, request, *args, **kwargs):
         try:
@@ -257,6 +281,10 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("UNABLE_TO_GENERATE_KEY"))
 
+    @swagger_auto_schema(
+        request_body=UserSecretKeySerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["DELETE"])
     def delete_secret_key(self, request, *args, **kwargs):
         try:

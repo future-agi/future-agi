@@ -4,7 +4,6 @@ import traceback
 from datetime import datetime
 
 import structlog
-from django.conf import settings as django_settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
@@ -24,6 +23,7 @@ from django.db.models.functions import Coalesce, Greatest
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -31,21 +31,24 @@ from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+)
 from accounts.serializers.user import CreateMemberSerializer, UserSerializer
 from accounts.serializers.workspace import (
     DeactivateUserSerializer,
     DeleteUserSerializer,
     ResendInviteSerializer,
     SwitchWorkspaceSerializer,
+    UserListRequestSerializer,
     UserListSerializer,
     UserRoleUpdateSerializer,
     WorkspaceInviteSerializer,
+    WorkspaceListRequestSerializer,
     WorkspaceListSerializer,
 )
 from accounts.utils import generate_password, resolve_org, resolve_org_role
-from tfc.middleware.workspace_context import get_current_workspace
-
-logger = structlog.get_logger(__name__)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -55,6 +58,7 @@ from analytics.utils import (
 )
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.permissions.utils import can_invite_at_level
 from tfc.settings import settings
 from tfc.settings.settings import ssl
@@ -80,6 +84,8 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 def clear_user_redis_cache(user_id):
@@ -139,6 +145,10 @@ class WorkspaceListAPIView(APIView):
     _gm = GeneralMethods()
     pagination_class = ExtendedPageNumberPagination
 
+    @swagger_auto_schema(
+        query_serializer=WorkspaceListRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def get(self, request):
         """Get paginated list of workspaces"""
         try:
@@ -246,6 +256,10 @@ class WorkspaceInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=WorkspaceInviteSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     @transaction.atomic
     def post(self, request):
         """Invite users to workspaces"""
@@ -386,7 +400,6 @@ class WorkspaceInviteAPIView(APIView):
 
             results = []
             errors = []
-            added_users = []
 
             for email in emails:
                 email = email.lower()
@@ -612,6 +625,10 @@ class UserListAPIView(APIView):
     _gm = GeneralMethods()
     pagination_class = ExtendedPageNumberPagination
 
+    @swagger_auto_schema(
+        query_serializer=UserListRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def get(self, request):
         """Get paginated list of users with filtering at workspace level"""
         try:
@@ -1047,6 +1064,10 @@ class UserRoleUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=UserRoleUpdateSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         """Update user role at organization or workspace level"""
         try:
@@ -1333,6 +1354,10 @@ class ResendInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=ResendInviteSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         """Resend invitation email with workspace context"""
         try:
@@ -1439,6 +1464,10 @@ class DeleteUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=DeleteUserSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         """Delete user or remove invite at organization or workspace level"""
         try:
@@ -1575,6 +1604,10 @@ class DeactivateUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=DeactivateUserSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         """Deactivate user by marking is_active as False"""
         try:
@@ -1692,6 +1725,10 @@ class SwitchWorkspaceAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=SwitchWorkspaceSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         """Switch to a different workspace with proper validation"""
         try:
@@ -1779,6 +1816,9 @@ class ManageTeamView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         user = request.user
         organization = resolve_org(request)
@@ -1940,6 +1980,10 @@ class ManageTeamView(APIView):
 
         return self._gm.success_response(response)
 
+    @swagger_auto_schema(
+        request_body=CreateMemberSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             user = request.user

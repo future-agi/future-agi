@@ -10,6 +10,7 @@ import json
 import structlog
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -17,6 +18,10 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+)
 from accounts.serializers.rbac import (
     InviteCancelSerializer,
     InviteCreateSerializer,
@@ -35,7 +40,6 @@ from accounts.utils import (
     send_invite_email,
 )
 from tfc.constants.levels import Level
-from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.rbac import (
     CanManageTargetUser,
     IsOrganizationAdmin,
@@ -87,6 +91,10 @@ class InviteCreateAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
+    @swagger_auto_schema(
+        request_body=InviteCreateSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         serializer = InviteCreateSerializer(data=request.data)
@@ -359,6 +367,10 @@ class InviteResendAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
+    @swagger_auto_schema(
+        request_body=InviteResendSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         serializer = InviteResendSerializer(data=request.data)
@@ -419,6 +431,10 @@ class InviteCancelAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
+    @swagger_auto_schema(
+        request_body=InviteCancelSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def delete(self, request):
         gm = GeneralMethods()
         serializer = InviteCancelSerializer(data=request.data)
@@ -493,6 +509,10 @@ class MemberListAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdmin]
 
+    @swagger_auto_schema(
+        query_serializer=MemberListRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def get(self, request):
         gm = GeneralMethods()
 
@@ -821,6 +841,10 @@ class MemberRoleUpdateAPIView(APIView):
         CanManageTargetUser,
     ]
 
+    @swagger_auto_schema(
+        request_body=MemberRoleUpdateSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         serializer = MemberRoleUpdateSerializer(data=request.data)
@@ -1022,6 +1046,10 @@ class MemberRemoveAPIView(APIView):
         CanManageTargetUser,
     ]
 
+    @swagger_auto_schema(
+        request_body=MemberRemoveSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def delete(self, request):
         gm = GeneralMethods()
         serializer = MemberRemoveSerializer(data=request.data)
@@ -1130,6 +1158,10 @@ class MemberReactivateAPIView(APIView):
         CanManageTargetUser,
     ]
 
+    @swagger_auto_schema(
+        request_body=MemberRemoveSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request):
         gm = GeneralMethods()
         serializer = MemberRemoveSerializer(data=request.data)
@@ -1244,6 +1276,10 @@ class WorkspaceMemberListAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        query_serializer=WorkspaceMemberListRequestSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def get(self, request, workspace_id):
         gm = GeneralMethods()
         organization = resolve_org(request)
@@ -1490,6 +1526,10 @@ class WorkspaceMemberRoleUpdateAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=WorkspaceMemberRoleUpdateSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def post(self, request, workspace_id):
         gm = GeneralMethods()
         organization = resolve_org(request)
@@ -1590,6 +1630,10 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=WorkspaceMemberRemoveSerializer,
+        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    )
     def delete(self, request, workspace_id):
         gm = GeneralMethods()
         organization = resolve_org(request)

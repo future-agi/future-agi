@@ -6,11 +6,570 @@
  * Future AGI Management API - management contracts
  * OpenAPI spec version: v1
  */
+export type AccountsJSONResponseApiStatus = { [key: string]: unknown };
+
+export type AccountsJSONResponseApiResult = { [key: string]: unknown };
+
+export type AccountsJSONResponseApiData = { [key: string]: unknown };
+
+export type AccountsJSONResponseApiDetail = { [key: string]: unknown };
+
+export type AccountsJSONResponseApiMessage = { [key: string]: unknown };
+
+export type AccountsJSONResponseApiError = { [key: string]: unknown };
+
+export interface AccountsJSONResponseApi {
+  status?: AccountsJSONResponseApiStatus;
+  result?: AccountsJSONResponseApiResult;
+  data?: AccountsJSONResponseApiData;
+  detail?: AccountsJSONResponseApiDetail;
+  message?: AccountsJSONResponseApiMessage;
+  error?: AccountsJSONResponseApiError;
+}
+
+export type AccountsErrorResponseApiResult = { [key: string]: unknown };
+
+export type AccountsErrorResponseApiMessage = { [key: string]: unknown };
+
+export type AccountsErrorResponseApiError = { [key: string]: unknown };
+
+export type AccountsErrorResponseApiDetail = { [key: string]: unknown };
+
+export interface AccountsErrorResponseApi {
+  status?: boolean;
+  result?: AccountsErrorResponseApiResult;
+  message?: AccountsErrorResponseApiMessage;
+  error?: AccountsErrorResponseApiError;
+  detail?: AccountsErrorResponseApiDetail;
+}
+
+export interface RecoveryCodesRegenerateApi {
+  /**
+     * @minLength 6
+     * @maxLength 10
+     */
+  code?: string;
+  /** @minLength 1 */
+  password?: string;
+}
+
+export type TwoFactorStatusApiMethods = {[key: string]: string};
+
+export interface TwoFactorStatusApi {
+  two_factor_enabled: boolean;
+  methods: TwoFactorStatusApiMethods;
+  recovery_codes_remaining: number;
+}
+
+export interface TOTPDisableApi {
+  /**
+     * @minLength 6
+     * @maxLength 10
+     */
+  code: string;
+}
+
+export interface TOTPConfirmApi {
+  /**
+     * @minLength 6
+     * @maxLength 6
+     */
+  code: string;
+}
+
+export interface AccountsEmptyRequestApi { [key: string]: unknown }
+
+export type TwoFactorPasskeyVerifyRequestApiCredential = { [key: string]: unknown };
+
+export interface TwoFactorPasskeyVerifyRequestApi {
+  challenge_token: string;
+  credential: TwoFactorPasskeyVerifyRequestApiCredential;
+  session_id?: string;
+}
+
+export interface AccountsTokenPairResponseApi {
+  /** @minLength 1 */
+  access?: string;
+  /** @minLength 1 */
+  refresh?: string;
+  requires_two_factor?: boolean;
+  challenge_token?: string;
+  methods?: string[];
+  requires_org_setup?: boolean;
+  /** @minLength 1 */
+  message?: string;
+  new_org?: boolean;
+}
+
+export interface TwoFactorChallengeTokenApi {
+  challenge_token: string;
+}
+
+export interface PasskeyOptionsResponseApi { [key: string]: unknown }
+
+export interface TwoFactorVerifyApi {
+  challenge_token: string;
+  /**
+     * @minLength 6
+     * @maxLength 10
+     */
+  code: string;
+}
+
+export interface AcceptInvitationRequestApi {
+  /** @minLength 1 */
+  new_password: string;
+  /** @minLength 1 */
+  repeat_password: string;
+}
+
+export interface UserCreateApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  email: string;
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  password: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  organization_name: string;
+  send_credential: boolean;
+}
+
+export interface PasswordValidationApi {
+  /**
+     * @minLength 8
+     * @maxLength 128
+     */
+  password: string;
+}
+
+export interface SOSLoginApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  email: string;
+}
+
+export interface AWSMarketplaceLaunchRequestApi {
+  /** @minLength 1 */
+  x_amzn_marketplace_token: string;
+}
+
+export interface AWSMarketplaceSignupRequestApi {
+  /** @minLength 1 */
+  onboarding_token: string;
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  full_name: string;
+}
+
+export interface UserIdsRequestApi {
+  user_ids: string[];
+}
+
+export interface UserSecretKeyApi {
+  key_id: string;
+}
+
+export interface CreateSecretKeyApi {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  key_name: string;
+}
+
+export type AccountsPaginatedResponseApiResult = { [key: string]: unknown };
+
+export type AccountsPaginatedResponseApiMetadata = { [key: string]: unknown };
+
+export type AccountsPaginatedResponseApiTable = { [key: string]: unknown };
+
+export interface AccountsPaginatedResponseApi {
+  status?: boolean;
+  result?: AccountsPaginatedResponseApiResult;
+  metadata?: AccountsPaginatedResponseApiMetadata;
+  table?: AccountsPaginatedResponseApiTable;
+}
+
+export interface AccountsJSONRequestApi { [key: string]: unknown }
+
+export interface TimezoneRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  timezone: string;
+}
+
+export interface TimezoneResponseApi {
+  /** @minLength 1 */
+  timezone: string;
+}
+
+export interface UserOnboardingApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  role: string;
+  goals: string[];
+}
+
+export interface OrgTwoFactorPolicyApi {
+  require_2fa: boolean;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  require_2fa_grace_period_days?: number;
+}
+
+/**
+ * Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).
+ */
+export type InviteCreateApiOrgLevel = typeof InviteCreateApiOrgLevel[keyof typeof InviteCreateApiOrgLevel];
+
+
+export const InviteCreateApiOrgLevel = {
+  NUMBER_15: 15,
+  NUMBER_8: 8,
+  NUMBER_3: 3,
+  NUMBER_1: 1,
+} as const;
+
+export type InviteCreateApiWorkspaceAccessItem = {[key: string]: string};
+
+export interface InviteCreateApi {
+  /**
+     * @minItems 1
+     * @maxItems 50
+     */
+  emails: string[];
+  /** Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1). */
+  org_level: InviteCreateApiOrgLevel;
+  /** List of {"workspace_id": "<uuid>", "level": <int>}. */
+  workspace_access?: InviteCreateApiWorkspaceAccessItem[];
+}
+
+export interface InviteCancelApi {
+  invite_id: string;
+}
+
+export type InviteResendApiOrgLevel = typeof InviteResendApiOrgLevel[keyof typeof InviteResendApiOrgLevel];
+
+
+export const InviteResendApiOrgLevel = {
+  NUMBER_15: 15,
+  NUMBER_8: 8,
+  NUMBER_3: 3,
+  NUMBER_1: 1,
+} as const;
+
+export interface InviteResendApi {
+  invite_id: string;
+  org_level?: InviteResendApiOrgLevel;
+}
+
+export interface MemberRemoveApi {
+  user_id: string;
+}
+
+export type MemberRoleUpdateApiOrgLevel = typeof MemberRoleUpdateApiOrgLevel[keyof typeof MemberRoleUpdateApiOrgLevel];
+
+
+export const MemberRoleUpdateApiOrgLevel = {
+  NUMBER_15: 15,
+  NUMBER_8: 8,
+  NUMBER_3: 3,
+  NUMBER_1: 1,
+} as const;
+
+export type MemberRoleUpdateApiWsLevel = typeof MemberRoleUpdateApiWsLevel[keyof typeof MemberRoleUpdateApiWsLevel];
+
+
+export const MemberRoleUpdateApiWsLevel = {
+  NUMBER_8: 8,
+  NUMBER_3: 3,
+  NUMBER_1: 1,
+} as const;
+
+export type MemberRoleUpdateApiWorkspaceAccessItem = {[key: string]: string};
+
+export interface MemberRoleUpdateApi {
+  user_id: string;
+  org_level?: MemberRoleUpdateApiOrgLevel;
+  ws_level?: MemberRoleUpdateApiWsLevel;
+  /** Required when updating ws_level. */
+  workspace_id?: string;
+  /** List of {workspace_id, level} for explicit workspace grants on demotion. */
+  workspace_access?: MemberRoleUpdateApiWorkspaceAccessItem[];
+}
+
+export interface OrganizationSwitchRequestApi {
+  organization_id: string;
+}
+
+export interface OrganizationNameRequestApi {
+  organization_name?: string;
+}
+
+export interface OrganizationCreateRequestApi {
+  /** @minLength 1 */
+  name: string;
+  display_name?: string;
+}
+
+export interface OrganizationUpdateRequestApi {
+  name?: string;
+  display_name?: string;
+}
+
+export type PasskeyCredentialRequestApiCredential = { [key: string]: unknown };
+
+export interface PasskeyCredentialRequestApi {
+  credential: PasskeyCredentialRequestApiCredential;
+  /** @maxLength 255 */
+  name?: string;
+}
+
+export type PasskeyRegisterVerifyApiCredential = { [key: string]: unknown };
+
+export interface PasskeyRegisterVerifyApi {
+  credential: PasskeyRegisterVerifyApiCredential;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name?: string;
+}
+
+export interface WebAuthnCredentialApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  created_at: string;
+  last_used_at: string;
+}
+
+export interface PasskeyRenameApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+}
+
+export interface PasswordResetConfirmRequestApi {
+  /** @minLength 1 */
+  new_password: string;
+  /** @minLength 1 */
+  repeat_password: string;
+}
+
+export interface PasswordResetInitiateRequestApi {
+  /** @minLength 1 */
+  email: string;
+}
+
+export type RedisKeyRequestApiValue = { [key: string]: unknown };
+
+export interface RedisKeyRequestApi {
+  /** @minLength 1 */
+  access_token_id: string;
+  /** @minLength 1 */
+  key: string;
+  value?: RedisKeyRequestApiValue;
+  /** @minimum 1 */
+  expiry?: number;
+}
+
+export type CreateMemberApiRole = typeof CreateMemberApiRole[keyof typeof CreateMemberApiRole];
+
+
+export const CreateMemberApiRole = {
+  Owner: 'Owner',
+  Admin: 'Admin',
+  Member: 'Member',
+  Viewer: 'Viewer',
+  workspace_admin: 'workspace_admin',
+  workspace_member: 'workspace_member',
+  workspace_viewer: 'workspace_viewer',
+} as const;
+
+export type CreateMemberApiOrganizationRole = typeof CreateMemberApiOrganizationRole[keyof typeof CreateMemberApiOrganizationRole];
+
+
+export const CreateMemberApiOrganizationRole = {
+  Owner: 'Owner',
+  Admin: 'Admin',
+  Member: 'Member',
+  Viewer: 'Viewer',
+} as const;
+
+export interface CreateMemberApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  email: string;
+  role?: CreateMemberApiRole;
+  organization_role?: CreateMemberApiOrganizationRole;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+}
+
 export interface TokenObtainPairApi {
   /** @minLength 1 */
   email: string;
   /** @minLength 1 */
   password: string;
+}
+
+export interface TokenRefreshRequestApi {
+  /** @minLength 1 */
+  refresh: string;
+  recaptcha_response?: string;
+  localhost_bypass?: boolean;
+}
+
+export interface AccountsAccessTokenResponseApi {
+  /** @minLength 1 */
+  access: string;
+}
+
+export interface UserFullNameUpdateRequestApi {
+  full_name?: string;
+  name?: string;
+}
+
+export type UpdateUserApiOrganizationRole = typeof UpdateUserApiOrganizationRole[keyof typeof UpdateUserApiOrganizationRole];
+
+
+export const UpdateUserApiOrganizationRole = {
+  Owner: 'Owner',
+  Admin: 'Admin',
+  Member: 'Member',
+  Viewer: 'Viewer',
+  workspace_admin: 'workspace_admin',
+  workspace_member: 'workspace_member',
+  workspace_viewer: 'workspace_viewer',
+} as const;
+
+export interface UpdateUserApi {
+  user_id: string;
+  /** @minLength 1 */
+  email?: string;
+  /** @minLength 1 */
+  name?: string;
+  organization_role?: UpdateUserApiOrganizationRole;
+}
+
+export interface DeactivateUserApi {
+  user_id: string;
+}
+
+export interface DeleteUserApi {
+  user_id: string;
+}
+
+export interface ResendInviteApi {
+  user_id: string;
+}
+
+export type UserRoleUpdateApiNewRole = typeof UserRoleUpdateApiNewRole[keyof typeof UserRoleUpdateApiNewRole];
+
+
+export const UserRoleUpdateApiNewRole = {
+  Owner: 'Owner',
+  Admin: 'Admin',
+  Member: 'Member',
+  Viewer: 'Viewer',
+  workspace_admin: 'workspace_admin',
+  workspace_member: 'workspace_member',
+  workspace_viewer: 'workspace_viewer',
+} as const;
+
+export interface UserRoleUpdateApi {
+  user_id: string;
+  new_role: UserRoleUpdateApiNewRole;
+  workspace_id?: string;
+}
+
+export type WorkspaceInviteApiRole = typeof WorkspaceInviteApiRole[keyof typeof WorkspaceInviteApiRole];
+
+
+export const WorkspaceInviteApiRole = {
+  workspace_member: 'workspace_member',
+  workspace_admin: 'workspace_admin',
+  workspace_viewer: 'workspace_viewer',
+  Member: 'Member',
+  Viewer: 'Viewer',
+  Owner: 'Owner',
+  Admin: 'Admin',
+} as const;
+
+export interface WorkspaceInviteApi {
+  /** @minItems 1 */
+  emails: string[];
+  role?: WorkspaceInviteApiRole;
+  select_all?: boolean;
+  workspace_ids?: string[];
+}
+
+export interface SwitchWorkspaceApi {
+  new_workspace_id: string;
+}
+
+export interface WorkspaceMemberRemoveApi {
+  user_id: string;
+}
+
+export type WorkspaceMemberRoleUpdateApiWsLevel = typeof WorkspaceMemberRoleUpdateApiWsLevel[keyof typeof WorkspaceMemberRoleUpdateApiWsLevel];
+
+
+export const WorkspaceMemberRoleUpdateApiWsLevel = {
+  NUMBER_8: 8,
+  NUMBER_3: 3,
+  NUMBER_1: 1,
+} as const;
+
+export interface WorkspaceMemberRoleUpdateApi {
+  user_id: string;
+  ws_level: WorkspaceMemberRoleUpdateApiWsLevel;
+}
+
+export interface WorkspaceCreateRequestApi {
+  /** @minLength 1 */
+  name: string;
+  display_name?: string;
+  description?: string;
+  emails?: string[];
+  role?: string;
+}
+
+export interface WorkspaceUpdateRequestApi {
+  name?: string;
+  display_name?: string;
+  description?: string;
+}
+
+export type WorkspaceMembersRequestApiUsersItem = {[key: string]: string};
+
+export interface WorkspaceMembersRequestApi {
+  users: WorkspaceMembersRequestApiUsersItem[];
 }
 
 export type NodeExecutionDataApiPayload = { [key: string]: unknown };
@@ -11346,6 +11905,122 @@ export interface UpgradeToPaygConfirmRequestApi {
   /** @minLength 1 */
   session_id: string;
 }
+
+export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
+  'x-amzn-marketplace-token': string;
+  'x-amzn-marketplace-product-id'?: string;
+  'x-amzn-marketplace-agreement-id'?: string;
+};
+
+export type AccountsOrganizationMembersListParams = {
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+search?: string;
+filter_status?: AccountsOrganizationMembersListFilterStatusItem[];
+filter_role?: string[];
+/**
+ * @minLength 1
+ */
+sort?: string;
+};
+
+export type AccountsOrganizationMembersListFilterStatusItem = typeof AccountsOrganizationMembersListFilterStatusItem[keyof typeof AccountsOrganizationMembersListFilterStatusItem];
+
+
+export const AccountsOrganizationMembersListFilterStatusItem = {
+  Active: 'Active',
+  Pending: 'Pending',
+  Expired: 'Expired',
+  Deactivated: 'Deactivated',
+} as const;
+
+export type AccountsUserListListParams = {
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+search?: string;
+sort?: string[];
+filter_status?: AccountsUserListListFilterStatusItem[];
+filter_role?: AccountsUserListListFilterRoleItem[];
+};
+
+export type AccountsUserListListFilterStatusItem = typeof AccountsUserListListFilterStatusItem[keyof typeof AccountsUserListListFilterStatusItem];
+
+
+export const AccountsUserListListFilterStatusItem = {
+  Active: 'Active',
+  Inactive: 'Inactive',
+  Request_Pending: 'Request Pending',
+  Request_Expired: 'Request Expired',
+} as const;
+
+export type AccountsUserListListFilterRoleItem = typeof AccountsUserListListFilterRoleItem[keyof typeof AccountsUserListListFilterRoleItem];
+
+
+export const AccountsUserListListFilterRoleItem = {
+  Owner: 'Owner',
+  Admin: 'Admin',
+  Member: 'Member',
+  Viewer: 'Viewer',
+  workspace_admin: 'workspace_admin',
+  workspace_member: 'workspace_member',
+  workspace_viewer: 'workspace_viewer',
+} as const;
+
+export type AccountsWorkspaceListListParams = {
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+search?: string;
+sort?: string[];
+};
+
+export type AccountsWorkspaceMembersListParams = {
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+search?: string;
+filter_status?: AccountsWorkspaceMembersListFilterStatusItem[];
+filter_role?: string[];
+/**
+ * @minLength 1
+ */
+sort?: string;
+};
+
+export type AccountsWorkspaceMembersListFilterStatusItem = typeof AccountsWorkspaceMembersListFilterStatusItem[keyof typeof AccountsWorkspaceMembersListFilterStatusItem];
+
+
+export const AccountsWorkspaceMembersListFilterStatusItem = {
+  Active: 'Active',
+  Pending: 'Pending',
+  Expired: 'Expired',
+} as const;
 
 export type AgentPlaygroundGraphsListParams = {
 /**

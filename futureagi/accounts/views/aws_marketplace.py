@@ -3,6 +3,8 @@ import urllib.parse
 import structlog
 from django.conf import settings
 from django.http import HttpResponseRedirect
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser
 
@@ -10,6 +12,12 @@ from accounts.aws_marketplace_utils import (
     onboard_aws_customer,
     process_aws_launch_software,
     process_aws_onboarding,
+)
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsJSONResponseSerializer,
+    AWSMarketplaceLaunchRequestSerializer,
+    AWSMarketplaceSignupRequestSerializer,
 )
 from accounts.services.aws_marketplace import AWSMarketplaceService
 from tfc.utils.general_methods import GeneralMethods
@@ -24,7 +32,36 @@ APP_URL = (
     else settings.BASE_URL.replace("http://", "https://")
 )
 
+AWS_MARKETPLACE_TOKEN_FORM_PARAMS = [
+    openapi.Parameter(
+        "x-amzn-marketplace-token",
+        openapi.IN_FORM,
+        type=openapi.TYPE_STRING,
+        required=True,
+    ),
+    openapi.Parameter(
+        "x-amzn-marketplace-product-id",
+        openapi.IN_FORM,
+        type=openapi.TYPE_STRING,
+        required=False,
+    ),
+    openapi.Parameter(
+        "x-amzn-marketplace-agreement-id",
+        openapi.IN_FORM,
+        type=openapi.TYPE_STRING,
+        required=False,
+    ),
+]
 
+
+@swagger_auto_schema(
+    method="post",
+    manual_parameters=AWS_MARKETPLACE_TOKEN_FORM_PARAMS,
+    responses={
+        302: "Redirects to the Future AGI frontend.",
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["POST"])
 @parser_classes([FormParser])
 def aws_marketplace_verify_token(request):
@@ -94,6 +131,11 @@ def aws_marketplace_verify_token(request):
         return _gm.bad_request(f"Token verification failed: {str(e)}")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=AWSMarketplaceSignupRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def aws_marketplace_signup(request):
     """
@@ -125,6 +167,11 @@ def aws_marketplace_signup(request):
         return _gm.bad_request(f"Signup failed: {str(e)}")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=AWSMarketplaceLaunchRequestSerializer,
+    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
 def aws_marketplace_launch_software(request):
     """

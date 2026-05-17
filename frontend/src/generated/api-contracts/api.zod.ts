@@ -9,6 +9,275 @@
 import * as zod from 'zod';
 
 /**
+ * GET /accounts/2fa/recovery-codes/ - Get remaining count.
+ */
+export const Accounts2faRecoveryCodesListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/recovery-codes/regenerate/ - Generate new codes.
+ */
+export const accounts2faRecoveryCodesRegenerateCreateBodyCodeMin = 6;
+export const accounts2faRecoveryCodesRegenerateCreateBodyCodeMax = 10;
+
+
+
+
+export const Accounts2faRecoveryCodesRegenerateCreateBody = zod.object({
+  "code": zod.string().min(accounts2faRecoveryCodesRegenerateCreateBodyCodeMin).max(accounts2faRecoveryCodesRegenerateCreateBodyCodeMax).optional(),
+  "password": zod.string().min(1).optional()
+})
+
+export const Accounts2faRecoveryCodesRegenerateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * GET /accounts/2fa/status/ - Current 2FA status.
+ */
+export const Accounts2faStatusListResponse = zod.object({
+  "two_factor_enabled": zod.boolean(),
+  "methods": zod.record(zod.string(), zod.string()),
+  "recovery_codes_remaining": zod.number()
+})
+
+
+/**
+ * DELETE /accounts/2fa/totp/ - Disable TOTP.
+ */
+export const accounts2faTotpDeleteBodyCodeMin = 6;
+export const accounts2faTotpDeleteBodyCodeMax = 10;
+
+
+
+export const Accounts2faTotpDeleteBody = zod.object({
+  "code": zod.string().min(accounts2faTotpDeleteBodyCodeMin).max(accounts2faTotpDeleteBodyCodeMax)
+})
+
+export const Accounts2faTotpDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/totp/confirm/ - Confirm TOTP with code.
+ */
+export const accounts2faTotpConfirmCreateBodyCodeMin = 6;
+export const accounts2faTotpConfirmCreateBodyCodeMax = 6;
+
+
+
+export const Accounts2faTotpConfirmCreateBody = zod.object({
+  "code": zod.string().min(accounts2faTotpConfirmCreateBodyCodeMin).max(accounts2faTotpConfirmCreateBodyCodeMax)
+})
+
+export const Accounts2faTotpConfirmCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/totp/setup/ - Begin TOTP setup.
+ */
+export const Accounts2faTotpSetupCreateBody = zod.object({
+
+}).passthrough()
+
+export const Accounts2faTotpSetupCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/verify/passkey/ - Verify passkey as 2FA during login.
+ */
+export const Accounts2faVerifyPasskeyCreateBody = zod.object({
+  "challenge_token": zod.string().uuid(),
+  "credential": zod.object({
+
+}).passthrough(),
+  "session_id": zod.string().optional()
+})
+
+
+
+
+
+
+
+export const Accounts2faVerifyPasskeyCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/verify/passkey/options/ - Get WebAuthn options for passkey as 2FA.
+ */
+export const Accounts2faVerifyPasskeyOptionsCreateBody = zod.object({
+  "challenge_token": zod.string().uuid()
+})
+
+export const Accounts2faVerifyPasskeyOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * POST /accounts/2fa/verify/recovery/ - Verify recovery code during login.
+ */
+export const accounts2faVerifyRecoveryCreateBodyCodeMin = 6;
+export const accounts2faVerifyRecoveryCreateBodyCodeMax = 10;
+
+
+
+export const Accounts2faVerifyRecoveryCreateBody = zod.object({
+  "challenge_token": zod.string().uuid(),
+  "code": zod.string().min(accounts2faVerifyRecoveryCreateBodyCodeMin).max(accounts2faVerifyRecoveryCreateBodyCodeMax)
+})
+
+
+
+
+
+
+
+export const Accounts2faVerifyRecoveryCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+/**
+ * POST /accounts/2fa/verify/totp/ - Verify TOTP during login (Phase 2).
+ */
+export const accounts2faVerifyTotpCreateBodyCodeMin = 6;
+export const accounts2faVerifyTotpCreateBodyCodeMax = 10;
+
+
+
+export const Accounts2faVerifyTotpCreateBody = zod.object({
+  "challenge_token": zod.string().uuid(),
+  "code": zod.string().min(accounts2faVerifyTotpCreateBodyCodeMin).max(accounts2faVerifyTotpCreateBodyCodeMax)
+})
+
+
+
+
+
+
+
+export const Accounts2faVerifyTotpCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+/**
  * GET  — validate the token without consuming it. Returns org info so the
        frontend can render a "Set Password" page.
 POST — set the user's password, activate the account, accept the invite,
@@ -18,6 +287,27 @@ POST — set the user's password, activate the account, accept the invite,
 export const AccountsAcceptInvitationReadParams = zod.object({
   "uidb64": zod.string(),
   "token": zod.string()
+})
+
+export const AccountsAcceptInvitationReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -34,8 +324,51 @@ export const AccountsAcceptInvitationCreateParams = zod.object({
 })
 
 
-export const AccountsAppsmithUsersReadParams = zod.object({
-  "user_id": zod.string()
+
+
+
+export const AccountsAcceptInvitationCreateBody = zod.object({
+  "new_password": zod.string().min(1),
+  "repeat_password": zod.string().min(1)
+})
+
+
+
+
+
+
+
+export const AccountsAcceptInvitationCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+export const AccountsAppsmithUsersListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -43,10 +376,1080 @@ export const AccountsAppsmithUsersCreateParams = zod.object({
   "user_id": zod.string()
 })
 
+export const accountsAppsmithUsersCreateBodyEmailMax = 255;
+
+export const accountsAppsmithUsersCreateBodyPasswordMin = 8;
+export const accountsAppsmithUsersCreateBodyPasswordMax = 128;
+
+export const accountsAppsmithUsersCreateBodyOrganizationNameMax = 255;
+
+
+
+export const AccountsAppsmithUsersCreateBody = zod.object({
+  "email": zod.string().email().min(1).max(accountsAppsmithUsersCreateBodyEmailMax),
+  "password": zod.string().min(accountsAppsmithUsersCreateBodyPasswordMin).max(accountsAppsmithUsersCreateBodyPasswordMax),
+  "organization_name": zod.string().min(1).max(accountsAppsmithUsersCreateBodyOrganizationNameMax),
+  "send_credential": zod.boolean()
+})
+
 
 export const AccountsAppsmithUsersPartialUpdateParams = zod.object({
   "user_id": zod.string()
 })
+
+export const accountsAppsmithUsersPartialUpdateBodyPasswordMin = 8;
+export const accountsAppsmithUsersPartialUpdateBodyPasswordMax = 128;
+
+
+
+export const AccountsAppsmithUsersPartialUpdateBody = zod.object({
+  "password": zod.string().min(accountsAppsmithUsersPartialUpdateBodyPasswordMin).max(accountsAppsmithUsersPartialUpdateBodyPasswordMax)
+})
+
+
+export const accountsAppsmithUsersLoginCreateBodyEmailMax = 255;
+
+
+
+export const AccountsAppsmithUsersLoginCreateBody = zod.object({
+  "email": zod.string().email().min(1).max(accountsAppsmithUsersLoginCreateBodyEmailMax)
+})
+
+
+
+
+
+
+
+export const AccountsAppsmithUsersLoginCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+export const AccountsAppsmithUsersReadParams = zod.object({
+  "user_id": zod.string()
+})
+
+export const AccountsAppsmithUsersReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * This endpoint authenticates an existing AWS Marketplace customer
+and redirects appropriately.
+ * @summary Handle "Launch Software" action from AWS Marketplace
+ */
+
+
+
+export const AccountsAwsMarketplaceLaunchSoftwareCreateBody = zod.object({
+  "x_amzn_marketplace_token": zod.string().min(1)
+})
+
+export const AccountsAwsMarketplaceLaunchSoftwareCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * This endpoint is called after token verification to create a new user account
+for an AWS Marketplace customer.
+ * @summary Complete AWS Marketplace customer signup
+ */
+
+
+
+
+
+export const AccountsAwsMarketplaceSignupCreateBody = zod.object({
+  "onboarding_token": zod.string().min(1),
+  "email": zod.string().email().min(1),
+  "full_name": zod.string().min(1)
+})
+
+export const AccountsAwsMarketplaceSignupCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Self-hosted returns cloud=false with no region info.
+Cloud returns the current region and available regions list.
+ * @summary Public (unauthenticated) endpoint returning platform config.
+Used by the frontend to decide whether to show region UI.
+ */
+export const AccountsConfigListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsDeleteUsersDeleteBody = zod.object({
+  "user_ids": zod.array(zod.string().uuid())
+})
+
+export const AccountsDeleteUsersDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsFirstChecksListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsGetUserProfileDetailsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsKeyDeleteSecretKeyBody = zod.object({
+  "key_id": zod.string().uuid()
+})
+
+export const AccountsKeyDeleteSecretKeyResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsKeyDisableKeyBody = zod.object({
+  "key_id": zod.string().uuid()
+})
+
+export const AccountsKeyDisableKeyResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsKeyEnableKeyBody = zod.object({
+  "key_id": zod.string().uuid()
+})
+
+export const AccountsKeyEnableKeyResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const accountsKeyGenerateSecretKeyBodyKeyNameMax = 100;
+
+
+
+export const AccountsKeyGenerateSecretKeyBody = zod.object({
+  "key_name": zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax)
+})
+
+export const AccountsKeyGenerateSecretKeyResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsKeyGetSecretKeysResponse = zod.object({
+  "status": zod.boolean().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional(),
+  "table": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsKeysListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsLogoutCreateBody = zod.record(zod.string(), zod.unknown())
+
+export const AccountsLogoutCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Capture the browser's IANA timezone for the authenticated user.
+ */
+export const accountsMeTimezoneCreateBodyTimezoneMax = 64;
+
+
+
+export const AccountsMeTimezoneCreateBody = zod.object({
+  "timezone": zod.string().min(1).max(accountsMeTimezoneCreateBodyTimezoneMax)
+})
+
+
+
+
+export const AccountsMeTimezoneCreateResponse = zod.object({
+  "timezone": zod.string().min(1)
+})
+
+
+/**
+ * Snooze the realtime track for N days (default 7). Daily still fires.
+ */
+export const AccountsNotificationsSnoozeListResponse = zod.string()
+
+
+/**
+ * One-click unsubscribe from both digest tracks. Token is HMAC-signed.
+ */
+export const AccountsNotificationsUnsubscribeListResponse = zod.string()
+
+
+/**
+ * Handle user onboarding data (role and goals)
+ */
+export const AccountsOnboardingListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Handle user onboarding data (role and goals)
+ */
+export const accountsOnboardingCreateBodyRoleMax = 255;
+
+export const accountsOnboardingCreateBodyGoalsItemMax = 255;
+
+
+
+export const AccountsOnboardingCreateBody = zod.object({
+  "role": zod.string().min(1).max(accountsOnboardingCreateBodyRoleMax),
+  "goals": zod.array(zod.string().min(1).max(accountsOnboardingCreateBodyGoalsItemMax))
+})
+
+export const AccountsOnboardingCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * GET is available to all authenticated members (read policy).
+PUT is admin-gated inline (Level.ADMIN+) rather than via a permission
+class so that a single view can serve both roles without splitting.
+ * @summary GET/PUT /accounts/organization/2fa-policy/ - Org 2FA policy.
+ */
+export const AccountsOrganization2faPolicyListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * GET is available to all authenticated members (read policy).
+PUT is admin-gated inline (Level.ADMIN+) rather than via a permission
+class so that a single view can serve both roles without splitting.
+ * @summary GET/PUT /accounts/organization/2fa-policy/ - Org 2FA policy.
+ */
+export const accountsOrganization2faPolicyUpdateBodyRequire2faGracePeriodDaysMax = 30;
+
+
+
+export const AccountsOrganization2faPolicyUpdateBody = zod.object({
+  "require_2fa": zod.boolean(),
+  "require_2fa_grace_period_days": zod.number().min(1).max(accountsOrganization2faPolicyUpdateBodyRequire2faGracePeriodDaysMax).optional()
+})
+
+export const AccountsOrganization2faPolicyUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Create invites for one or more email addresses.
+Also dual-writes to legacy User/membership records for backward compat.
+ * @summary POST /accounts/organization/invite/
+ */
+
+export const accountsOrganizationInviteCreateBodyEmailsMax = 50;
+
+export const accountsOrganizationInviteCreateBodyWorkspaceAccessDefault = [];
+
+export const AccountsOrganizationInviteCreateBody = zod.object({
+  "emails": zod.array(zod.string().email().min(1)).min(1).max(accountsOrganizationInviteCreateBodyEmailsMax),
+  "org_level": zod.union([zod.literal(15),zod.literal(8),zod.literal(3),zod.literal(1)]).describe('Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).'),
+  "workspace_access": zod.array(zod.record(zod.string(), zod.string())).default(accountsOrganizationInviteCreateBodyWorkspaceAccessDefault).describe('List of {\"workspace_id\": \"<uuid>\", \"level\": <int>}.')
+})
+
+export const AccountsOrganizationInviteCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * DELETE /accounts/organization/invite/cancel/
+Hard deletes the invite record.
+ */
+export const AccountsOrganizationInviteCancelDeleteBody = zod.object({
+  "invite_id": zod.string().uuid()
+})
+
+export const AccountsOrganizationInviteCancelDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/organization/invite/resend/
+Resets expiration and resends the invite email.
+ */
+export const AccountsOrganizationInviteResendCreateBody = zod.object({
+  "invite_id": zod.string().uuid(),
+  "org_level": zod.union([zod.literal(15),zod.literal(8),zod.literal(3),zod.literal(1)]).optional()
+})
+
+export const AccountsOrganizationInviteResendCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Returns UNION of active members + pending/expired invites.
+Status is derived at query time (Active / Pending / Expired).
+ * @summary GET /accounts/organization/members/
+ */
+export const accountsOrganizationMembersListQueryPageDefault = 1;
+
+export const accountsOrganizationMembersListQueryLimitDefault = 20;
+export const accountsOrganizationMembersListQueryLimitMax = 100;
+
+export const accountsOrganizationMembersListQuerySearchDefault = ``;
+export const accountsOrganizationMembersListQueryFilterStatusDefault = [];
+export const accountsOrganizationMembersListQueryFilterRoleDefault = [];
+export const accountsOrganizationMembersListQuerySortDefault = `-created_at`;
+
+
+
+export const AccountsOrganizationMembersListQueryParams = zod.object({
+  "page": zod.number().min(1).default(accountsOrganizationMembersListQueryPageDefault),
+  "limit": zod.number().min(1).max(accountsOrganizationMembersListQueryLimitMax).default(accountsOrganizationMembersListQueryLimitDefault),
+  "search": zod.string().default(accountsOrganizationMembersListQuerySearchDefault),
+  "filter_status": zod.array(zod.enum(['Active', 'Pending', 'Expired', 'Deactivated'])).default(accountsOrganizationMembersListQueryFilterStatusDefault),
+  "filter_role": zod.array(zod.string().min(1)).default(accountsOrganizationMembersListQueryFilterRoleDefault),
+  "sort": zod.string().min(1).default(accountsOrganizationMembersListQuerySortDefault)
+})
+
+export const AccountsOrganizationMembersListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Re-activates a deactivated org membership and restores workspace
+memberships that were soft-deactivated during removal.  If no prior
+workspace memberships exist, the user is added to the default workspace.
+ * @summary POST /accounts/organization/members/reactivate/
+ */
+export const AccountsOrganizationMembersReactivateCreateBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsOrganizationMembersReactivateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Soft-deactivates OrganizationMembership and cascades to workspace
+memberships.  Signals handle Redis clear + audit log.
+ * @summary DELETE /accounts/organization/members/remove/
+ */
+export const AccountsOrganizationMembersRemoveDeleteBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsOrganizationMembersRemoveDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Update a member's org level and/or workspace level.
+ * @summary POST /accounts/organization/members/role/
+ */
+export const accountsOrganizationMembersRoleCreateBodyWorkspaceAccessDefault = [];
+
+export const AccountsOrganizationMembersRoleCreateBody = zod.object({
+  "user_id": zod.string().uuid(),
+  "org_level": zod.union([zod.literal(15),zod.literal(8),zod.literal(3),zod.literal(1)]).optional(),
+  "ws_level": zod.union([zod.literal(8),zod.literal(3),zod.literal(1)]).optional(),
+  "workspace_id": zod.string().uuid().optional().describe('Required when updating ws_level.'),
+  "workspace_access": zod.array(zod.record(zod.string(), zod.string())).default(accountsOrganizationMembersRoleCreateBodyWorkspaceAccessDefault).describe('List of {workspace_id, level} for explicit workspace grants on demotion.')
+})
+
+export const AccountsOrganizationMembersRoleCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Get all organizations the user has access to.
+ */
+export const AccountsOrganizationsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Select an organization for the current session.
+ */
+export const AccountsOrganizationsCreateBody = zod.object({
+  "organization_id": zod.string().uuid()
+})
+
+export const AccountsOrganizationsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * For users who were removed from their org and want to start fresh.
+Only accessible to authenticated users with no current organization.
+ * @summary POST /accounts/organizations/create/
+ */
+export const AccountsOrganizationsCreateCreateBody = zod.object({
+  "organization_name": zod.string().optional()
+})
+
+
+/**
+ * Get the currently selected organization for the user.
+ */
+export const AccountsOrganizationsCurrentListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Create a new organization for an already-authenticated user.
+Unlike OrganizationCreateAPIView (which is for org-less users),
+this allows any user to create additional organizations.
+The user becomes Owner of the new org via OrganizationMembership.
+Does NOT change user.organization FK (primary org stays the same).
+ * @summary POST /accounts/organizations/new/
+ */
+
+
+
+export const AccountsOrganizationsNewCreateBody = zod.object({
+  "name": zod.string().min(1),
+  "display_name": zod.string().optional()
+})
+
+
+/**
+ * Returns the target org's last-used workspace (from orgWorkspaceMap)
+or its default workspace, so the frontend can update both contexts.
+ * @summary Switch to a different organization.
+ */
+export const AccountsOrganizationsSwitchCreateBody = zod.object({
+  "organization_id": zod.string().uuid()
+})
+
+export const AccountsOrganizationsSwitchCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Update the current organization's name/display_name.
+Only accessible to Owner or Admin of the organization.
+ * @summary PATCH /accounts/organizations/update/
+ */
+export const AccountsOrganizationsUpdatePartialUpdateBody = zod.object({
+  "name": zod.string().optional(),
+  "display_name": zod.string().optional()
+})
+
+export const AccountsOrganizationsUpdatePartialUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * POST /accounts/passkey/authenticate/options/ - Passwordless auth options.
+ */
+export const AccountsPasskeyAuthenticateOptionsCreateBody = zod.object({
+
+}).passthrough()
+
+export const AccountsPasskeyAuthenticateOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * POST /accounts/passkey/authenticate/verify/ - Passwordless auth verify.
+ */
+export const accountsPasskeyAuthenticateVerifyCreateBodyNameMax = 255;
+
+
+
+export const AccountsPasskeyAuthenticateVerifyCreateBody = zod.object({
+  "credential": zod.object({
+
+}).passthrough(),
+  "name": zod.string().max(accountsPasskeyAuthenticateVerifyCreateBodyNameMax).optional()
+})
+
+
+
+
+
+
+
+export const AccountsPasskeyAuthenticateVerifyCreateResponse = zod.object({
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "requires_two_factor": zod.boolean().optional(),
+  "challenge_token": zod.string().uuid().optional(),
+  "methods": zod.array(zod.string().min(1)).optional(),
+  "requires_org_setup": zod.boolean().optional(),
+  "message": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
+})
+
+
+/**
+ * POST /accounts/passkey/register/options/ - Get registration options.
+ */
+export const AccountsPasskeyRegisterOptionsCreateBody = zod.object({
+
+}).passthrough()
+
+export const AccountsPasskeyRegisterOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * POST /accounts/passkey/register/verify/ - Verify registration.
+ */
+export const accountsPasskeyRegisterVerifyCreateBodyNameDefault = ``;
+export const accountsPasskeyRegisterVerifyCreateBodyNameMax = 255;
+
+
+
+export const AccountsPasskeyRegisterVerifyCreateBody = zod.object({
+  "credential": zod.object({
+
+}).passthrough(),
+  "name": zod.string().min(1).max(accountsPasskeyRegisterVerifyCreateBodyNameMax).default(accountsPasskeyRegisterVerifyCreateBodyNameDefault)
+})
+
+
+/**
+ * GET /accounts/passkeys/ - List user's passkeys.
+ */
+
+
+
+export const AccountsPasskeysListResponseItem = zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "created_at": zod.string().datetime({"offset":true}),
+  "last_used_at": zod.string().datetime({"offset":true})
+})
+export const AccountsPasskeysListResponse = zod.array(AccountsPasskeysListResponseItem)
 
 
 /**
@@ -54,6 +1457,35 @@ export const AccountsAppsmithUsersPartialUpdateParams = zod.object({
  */
 export const AccountsPasskeysPartialUpdateParams = zod.object({
   "id": zod.string()
+})
+
+export const accountsPasskeysPartialUpdateBodyNameMax = 255;
+
+
+
+export const AccountsPasskeysPartialUpdateBody = zod.object({
+  "name": zod.string().min(1).max(accountsPasskeysPartialUpdateBodyNameMax)
+})
+
+export const AccountsPasskeysPartialUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -71,13 +1503,271 @@ export const AccountsPasswordResetConfirmCreateParams = zod.object({
 })
 
 
-export const AccountsTeamUsersReadParams = zod.object({
-  "member_id": zod.string()
+
+
+
+export const AccountsPasswordResetConfirmCreateBody = zod.object({
+  "new_password": zod.string().min(1),
+  "repeat_password": zod.string().min(1)
+})
+
+export const AccountsPasswordResetConfirmCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+
+
+export const AccountsPasswordResetInitiateCreateBody = zod.object({
+  "email": zod.string().email().min(1)
+})
+
+export const AccountsPasswordResetInitiateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+
+
+
+
+export const AccountsRedisKeyCreateBody = zod.object({
+  "access_token_id": zod.string().min(1),
+  "key": zod.string().min(1),
+  "value": zod.object({
+
+}).passthrough().optional(),
+  "expiry": zod.number().min(1).optional()
+})
+
+export const AccountsRedisKeyCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+
+
+
+
+export const AccountsRedisKeyDeleteBody = zod.object({
+  "access_token_id": zod.string().min(1),
+  "key": zod.string().min(1),
+  "value": zod.object({
+
+}).passthrough().optional(),
+  "expiry": zod.number().min(1).optional()
+})
+
+export const AccountsRedisKeyDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsResendInvitationEmailsCreateBody = zod.object({
+  "user_ids": zod.array(zod.string().uuid())
+})
+
+export const AccountsResendInvitationEmailsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsSignupCreateBody = zod.record(zod.string(), zod.unknown())
+
+export const AccountsSignupCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsTeamUsersListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
 export const AccountsTeamUsersCreateParams = zod.object({
   "member_id": zod.string()
+})
+
+export const accountsTeamUsersCreateBodyEmailMax = 255;
+
+export const accountsTeamUsersCreateBodyNameMax = 255;
+
+
+
+export const AccountsTeamUsersCreateBody = zod.object({
+  "email": zod.string().email().min(1).max(accountsTeamUsersCreateBodyEmailMax),
+  "role": zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer']).optional(),
+  "organization_role": zod.enum(['Owner', 'Admin', 'Member', 'Viewer']).optional(),
+  "name": zod.string().min(1).max(accountsTeamUsersCreateBodyNameMax)
+})
+
+export const AccountsTeamUsersCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsTeamUsersReadParams = zod.object({
+  "member_id": zod.string()
+})
+
+export const AccountsTeamUsersReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -96,6 +1786,373 @@ export const AccountsTokenCreateBody = zod.object({
 })
 
 
+
+export const accountsTokenRefreshCreateBodyLocalhostBypassDefault = false;
+
+export const AccountsTokenRefreshCreateBody = zod.object({
+  "refresh": zod.string().min(1),
+  "recaptcha_response": zod.string().optional(),
+  "localhost_bypass": zod.boolean().default(accountsTokenRefreshCreateBodyLocalhostBypassDefault)
+})
+
+
+
+
+export const AccountsTokenRefreshCreateResponse = zod.object({
+  "access": zod.string().min(1)
+})
+
+
+export const AccountsUpdateUserFullNameCreateBody = zod.object({
+  "full_name": zod.string().optional(),
+  "name": zod.string().optional()
+})
+
+export const AccountsUpdateUserFullNameCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+
+
+
+export const AccountsUpdateUserCreateBody = zod.object({
+  "user_id": zod.string().uuid(),
+  "email": zod.string().email().min(1).optional(),
+  "name": zod.string().min(1).optional(),
+  "organization_role": zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer']).optional()
+})
+
+export const AccountsUpdateUserCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const AccountsUserInfoListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Deactivate user by marking is_active as False
+ */
+export const AccountsUserDeactivateCreateBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsUserDeactivateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Delete user or remove invite at organization or workspace level
+ */
+export const AccountsUserDeleteCreateBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsUserDeleteCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Get paginated list of users with filtering at workspace level
+ */
+export const accountsUserListListQueryPageDefault = 1;
+
+export const accountsUserListListQueryLimitDefault = 10;
+export const accountsUserListListQueryLimitMax = 100;
+
+export const accountsUserListListQuerySearchDefault = ``;
+export const accountsUserListListQuerySortDefault = [];
+export const accountsUserListListQueryFilterStatusDefault = [];
+export const accountsUserListListQueryFilterRoleDefault = [];
+
+export const AccountsUserListListQueryParams = zod.object({
+  "page": zod.number().min(1).default(accountsUserListListQueryPageDefault),
+  "limit": zod.number().min(1).max(accountsUserListListQueryLimitMax).default(accountsUserListListQueryLimitDefault),
+  "search": zod.string().default(accountsUserListListQuerySearchDefault),
+  "sort": zod.array(zod.string().min(1)).default(accountsUserListListQuerySortDefault),
+  "filter_status": zod.array(zod.enum(['Active', 'Inactive', 'Request Pending', 'Request Expired'])).default(accountsUserListListQueryFilterStatusDefault),
+  "filter_role": zod.array(zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer'])).default(accountsUserListListQueryFilterRoleDefault)
+})
+
+export const AccountsUserListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Resend invitation email with workspace context
+ */
+export const AccountsUserResendInviteCreateBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsUserResendInviteCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Update user role at organization or workspace level
+ */
+export const AccountsUserRoleUpdateCreateBody = zod.object({
+  "user_id": zod.string().uuid(),
+  "new_role": zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer']),
+  "workspace_id": zod.string().uuid().optional()
+})
+
+export const AccountsUserRoleUpdateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Invite users to workspaces
+ */
+
+
+export const accountsWorkspaceInviteCreateBodyRoleDefault = `workspace_member`;
+export const accountsWorkspaceInviteCreateBodySelectAllDefault = false;
+
+export const AccountsWorkspaceInviteCreateBody = zod.object({
+  "emails": zod.array(zod.string().email().min(1)).min(1),
+  "role": zod.enum(['workspace_member', 'workspace_admin', 'workspace_viewer', 'Member', 'Viewer', 'Owner', 'Admin']).default(accountsWorkspaceInviteCreateBodyRoleDefault),
+  "select_all": zod.boolean().default(accountsWorkspaceInviteCreateBodySelectAllDefault),
+  "workspace_ids": zod.array(zod.string().uuid()).optional()
+})
+
+export const AccountsWorkspaceInviteCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Get paginated list of workspaces
+ */
+export const accountsWorkspaceListListQueryPageDefault = 1;
+
+export const accountsWorkspaceListListQueryLimitDefault = 10;
+export const accountsWorkspaceListListQueryLimitMax = 100;
+
+export const accountsWorkspaceListListQuerySearchDefault = ``;
+export const accountsWorkspaceListListQuerySortDefault = [];
+
+export const AccountsWorkspaceListListQueryParams = zod.object({
+  "page": zod.number().min(1).default(accountsWorkspaceListListQueryPageDefault),
+  "limit": zod.number().min(1).max(accountsWorkspaceListListQueryLimitMax).default(accountsWorkspaceListListQueryLimitDefault),
+  "search": zod.string().default(accountsWorkspaceListListQuerySearchDefault),
+  "sort": zod.array(zod.string().min(1)).default(accountsWorkspaceListListQuerySortDefault)
+})
+
+export const AccountsWorkspaceListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Switch to a different workspace with proper validation
+ */
+export const AccountsWorkspaceSwitchCreateBody = zod.object({
+  "new_workspace_id": zod.string().uuid()
+})
+
+export const AccountsWorkspaceSwitchCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
 /**
  * Returns members of a specific workspace.
 Org Admin+ users who auto-access are included with derived WS Admin role.
@@ -103,6 +2160,48 @@ Org Admin+ users who auto-access are included with derived WS Admin role.
  */
 export const AccountsWorkspaceMembersListParams = zod.object({
   "workspace_id": zod.string()
+})
+
+export const accountsWorkspaceMembersListQueryPageDefault = 1;
+
+export const accountsWorkspaceMembersListQueryLimitDefault = 20;
+export const accountsWorkspaceMembersListQueryLimitMax = 100;
+
+export const accountsWorkspaceMembersListQuerySearchDefault = ``;
+export const accountsWorkspaceMembersListQueryFilterStatusDefault = [];
+export const accountsWorkspaceMembersListQueryFilterRoleDefault = [];
+export const accountsWorkspaceMembersListQuerySortDefault = `-created_at`;
+
+
+
+export const AccountsWorkspaceMembersListQueryParams = zod.object({
+  "page": zod.number().min(1).default(accountsWorkspaceMembersListQueryPageDefault),
+  "limit": zod.number().min(1).max(accountsWorkspaceMembersListQueryLimitMax).default(accountsWorkspaceMembersListQueryLimitDefault),
+  "search": zod.string().default(accountsWorkspaceMembersListQuerySearchDefault),
+  "filter_status": zod.array(zod.enum(['Active', 'Pending', 'Expired'])).default(accountsWorkspaceMembersListQueryFilterStatusDefault),
+  "filter_role": zod.array(zod.string().min(1)).default(accountsWorkspaceMembersListQueryFilterRoleDefault),
+  "sort": zod.string().min(1).default(accountsWorkspaceMembersListQuerySortDefault)
+})
+
+export const AccountsWorkspaceMembersListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -114,6 +2213,31 @@ export const AccountsWorkspaceMembersRemoveDeleteParams = zod.object({
   "workspace_id": zod.string()
 })
 
+export const AccountsWorkspaceMembersRemoveDeleteBody = zod.object({
+  "user_id": zod.string().uuid()
+})
+
+export const AccountsWorkspaceMembersRemoveDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Update a member's workspace role.
@@ -123,12 +2247,55 @@ export const AccountsWorkspaceMembersRoleCreateParams = zod.object({
   "workspace_id": zod.string()
 })
 
+export const AccountsWorkspaceMembersRoleCreateBody = zod.object({
+  "user_id": zod.string().uuid(),
+  "ws_level": zod.union([zod.literal(8),zod.literal(3),zod.literal(1)])
+})
+
+export const AccountsWorkspaceMembersRoleCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Get workspaces for the current organization
  */
-export const AccountsWorkspacesReadParams = zod.object({
-  "workspace_id": zod.string()
+export const AccountsWorkspacesListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -140,11 +2307,71 @@ export const AccountsWorkspacesCreateParams = zod.object({
 })
 
 
+
+export const accountsWorkspacesCreateBodyEmailsDefault = [];
+
+export const AccountsWorkspacesCreateBody = zod.object({
+  "name": zod.string().min(1),
+  "display_name": zod.string().optional(),
+  "description": zod.string().optional(),
+  "emails": zod.array(zod.string().email().min(1)).default(accountsWorkspacesCreateBodyEmailsDefault),
+  "role": zod.string().optional()
+})
+
+export const AccountsWorkspacesCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
 /**
  * Update workspace details
  */
 export const AccountsWorkspacesUpdateParams = zod.object({
   "workspace_id": zod.string()
+})
+
+export const AccountsWorkspacesUpdateBody = zod.object({
+  "name": zod.string().optional(),
+  "display_name": zod.string().optional(),
+  "description": zod.string().optional()
+})
+
+export const AccountsWorkspacesUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -155,12 +2382,83 @@ export const AccountsWorkspacesDeleteParams = zod.object({
   "workspace_id": zod.string()
 })
 
+export const AccountsWorkspacesDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
+ * Get workspaces for the current organization
+ */
+export const AccountsWorkspacesReadParams = zod.object({
+  "workspace_id": zod.string()
+})
+
+export const AccountsWorkspacesReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Get members of a specific workspace
  */
 export const AccountsWorkspacesMembersListParams = zod.object({
   "workspace_id": zod.string()
+})
+
+export const AccountsWorkspacesMembersListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -172,6 +2470,31 @@ export const AccountsWorkspacesMembersCreateParams = zod.object({
   "member_id": zod.string()
 })
 
+export const AccountsWorkspacesMembersCreateBody = zod.object({
+  "users": zod.array(zod.record(zod.string(), zod.string()))
+})
+
+export const AccountsWorkspacesMembersCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Remove user from workspace
@@ -181,6 +2504,27 @@ export const AccountsWorkspacesMembersDeleteParams = zod.object({
   "member_id": zod.string()
 })
 
+export const AccountsWorkspacesMembersDeleteResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Get members of a specific workspace
@@ -188,6 +2532,27 @@ export const AccountsWorkspacesMembersDeleteParams = zod.object({
 export const AccountsWorkspacesMembersReadParams = zod.object({
   "workspace_id": zod.string(),
   "member_id": zod.string()
+})
+
+export const AccountsWorkspacesMembersReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional()
 })
 
 

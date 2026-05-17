@@ -12,15 +12,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_2fa_recovery-codes_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/recovery-codes/regenerate/": {
       "post": {
         "operationId": "accounts_2fa_recovery-codes_regenerate_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/RecoveryCodesRegenerate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/status/": {
@@ -28,63 +68,229 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_2fa_status_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/TwoFactorStatus"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/totp/": {
       "delete": {
         "operationId": "accounts_2fa_totp_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TOTPDisable"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/totp/confirm/": {
       "post": {
         "operationId": "accounts_2fa_totp_confirm_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TOTPConfirm"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/totp/setup/": {
       "post": {
         "operationId": "accounts_2fa_totp_setup_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsEmptyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/verify/passkey/": {
       "post": {
         "operationId": "accounts_2fa_verify_passkey_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TwoFactorPasskeyVerifyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/verify/passkey/options/": {
       "post": {
         "operationId": "accounts_2fa_verify_passkey_options_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TwoFactorChallengeToken"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/PasskeyOptionsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/verify/recovery/": {
       "post": {
         "operationId": "accounts_2fa_verify_recovery_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TwoFactorVerify"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/2fa/verify/totp/": {
       "post": {
         "operationId": "accounts_2fa_verify_totp_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TwoFactorVerify"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/accept-invitation/{uidb64}/{token}/": {
@@ -92,13 +298,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_accept-invitation_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_accept-invitation_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AcceptInvitationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/appsmith/users/": {
@@ -106,27 +352,109 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_appsmith_users_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_appsmith_users_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserCreate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "patch": {
         "operationId": "accounts_appsmith_users_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasswordValidation"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/appsmith/users/login": {
       "post": {
         "operationId": "accounts_appsmith_users_login_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/SOSLogin"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/appsmith/users/{user_id}/": {
@@ -134,35 +462,138 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_appsmith_users_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_appsmith_users_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserCreate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "patch": {
         "operationId": "accounts_appsmith_users_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasswordValidation"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/aws-marketplace/launch-software/": {
       "post": {
         "operationId": "accounts_aws-marketplace_launch-software_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AWSMarketplaceLaunchRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/aws-marketplace/signup/": {
       "post": {
         "operationId": "accounts_aws-marketplace_signup_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AWSMarketplaceSignupRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/aws-marketplace/verify-token/": {
@@ -170,7 +601,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_aws-marketplace_verify-token_create",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/config/": {
@@ -178,15 +625,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_config_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          }
+        }
       }
     },
     "/accounts/delete-users/": {
       "delete": {
         "operationId": "accounts_delete-users_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserIdsRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/first-checks/": {
@@ -194,7 +666,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_first-checks_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/get-user-profile-details/": {
@@ -202,39 +693,142 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_get-user-profile-details_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/key/delete_secret_key/": {
       "delete": {
         "operationId": "accounts_key_delete_secret_key",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserSecretKey"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/key/disable_key/": {
       "post": {
         "operationId": "accounts_key_disable_key",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserSecretKey"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/key/enable_key/": {
       "post": {
         "operationId": "accounts_key_enable_key",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserSecretKey"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/key/generate_secret_key/": {
       "post": {
         "operationId": "accounts_key_generate_secret_key",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/CreateSecretKey"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/key/get_secret_keys/": {
@@ -242,7 +836,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_key_get_secret_keys",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsPaginatedResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/keys/": {
@@ -250,23 +863,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_keys_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/logout/": {
       "post": {
         "operationId": "accounts_logout_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsJSONRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/me/timezone/": {
       "post": {
         "operationId": "accounts_me_timezone_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TimezoneRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/TimezoneResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/notifications/snooze/": {
@@ -274,7 +948,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_notifications_snooze_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "type": "string"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/notifications/unsubscribe/": {
@@ -282,7 +975,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_notifications_unsubscribe_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "type": "string"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/onboarding/": {
@@ -290,13 +1002,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_onboarding_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_onboarding_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserOnboarding"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/2fa-policy/": {
@@ -304,69 +1056,314 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_organization_2fa-policy_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "put": {
         "operationId": "accounts_organization_2fa-policy_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrgTwoFactorPolicy"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/invite/": {
       "post": {
         "operationId": "accounts_organization_invite_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/InviteCreate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/invite/cancel/": {
       "delete": {
         "operationId": "accounts_organization_invite_cancel_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/InviteCancel"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/invite/resend/": {
       "post": {
         "operationId": "accounts_organization_invite_resend_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/InviteResend"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/members/": {
       "get": {
         "operationId": "accounts_organization_members_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "filter_status": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Active",
+                  "Pending",
+                  "Expired",
+                  "Deactivated"
+                ]
+              },
+              "default": []
+            }
+          },
+          "filter_role": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          },
+          "sort": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "default": "-created_at"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/members/reactivate/": {
       "post": {
         "operationId": "accounts_organization_members_reactivate_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/MemberRemove"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/members/remove/": {
       "delete": {
         "operationId": "accounts_organization_members_remove_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/MemberRemove"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organization/members/role/": {
       "post": {
         "operationId": "accounts_organization_members_role_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/MemberRoleUpdate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/": {
@@ -374,21 +1371,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_organizations_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_organizations_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrganizationSwitchRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/create/": {
       "post": {
         "operationId": "accounts_organizations_create_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrganizationNameRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/current/": {
@@ -396,63 +1454,229 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_organizations_current_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/new/": {
       "post": {
         "operationId": "accounts_organizations_new_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrganizationCreateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/switch/": {
       "post": {
         "operationId": "accounts_organizations_switch_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrganizationSwitchRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/organizations/update/": {
       "patch": {
         "operationId": "accounts_organizations_update_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OrganizationUpdateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkey/authenticate/options/": {
       "post": {
         "operationId": "accounts_passkey_authenticate_options_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsEmptyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/PasskeyOptionsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkey/authenticate/verify/": {
       "post": {
         "operationId": "accounts_passkey_authenticate_verify_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasskeyCredentialRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkey/register/options/": {
       "post": {
         "operationId": "accounts_passkey_register_options_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsEmptyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/PasskeyOptionsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkey/register/verify/": {
       "post": {
         "operationId": "accounts_passkey_register_verify_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasskeyRegisterVerify"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkeys/": {
@@ -460,15 +1684,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_passkeys_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/WebAuthnCredential"
+            }
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/passkeys/{id}/": {
       "patch": {
         "operationId": "accounts_passkeys_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasskeyRename"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_passkeys_delete",
@@ -480,47 +1747,173 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/accounts/password-reset-confirm/{uidb64}/{token}/": {
       "post": {
         "operationId": "accounts_password-reset-confirm_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasswordResetConfirmRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/password-reset-initiate/": {
       "post": {
         "operationId": "accounts_password-reset-initiate_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/PasswordResetInitiateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/redis-key/": {
       "post": {
         "operationId": "accounts_redis-key_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/RedisKeyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_redis-key_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/RedisKeyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/resend-invitation-emails/": {
       "post": {
         "operationId": "accounts_resend-invitation-emails_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserIdsRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/signup/": {
       "post": {
         "operationId": "accounts_signup_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsJSONRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/team/users/": {
@@ -528,13 +1921,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_team_users_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_team_users_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/CreateMember"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_team_users_delete",
@@ -548,13 +1981,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_team_users_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_team_users_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/CreateMember"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_team_users_delete",
@@ -580,25 +2053,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/accounts/token/refresh/": {
       "post": {
         "operationId": "accounts_token_refresh_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TokenRefreshRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsAccessTokenResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/update-user-full-name/": {
       "post": {
         "operationId": "accounts_update-user-full-name_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserFullNameUpdateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/update-user/": {
       "post": {
         "operationId": "accounts_update-user_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UpdateUser"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user-info/": {
@@ -606,95 +2142,505 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_user-info_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user/deactivate/": {
       "post": {
         "operationId": "accounts_user_deactivate_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/DeactivateUser"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user/delete/": {
       "post": {
         "operationId": "accounts_user_delete_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/DeleteUser"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user/list/": {
       "get": {
         "operationId": "accounts_user_list_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "sort": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          },
+          "filter_status": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Active",
+                  "Inactive",
+                  "Request Pending",
+                  "Request Expired"
+                ]
+              },
+              "default": []
+            }
+          },
+          "filter_role": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Owner",
+                  "Admin",
+                  "Member",
+                  "Viewer",
+                  "workspace_admin",
+                  "workspace_member",
+                  "workspace_viewer"
+                ]
+              },
+              "default": []
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user/resend-invite/": {
       "post": {
         "operationId": "accounts_user_resend-invite_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/ResendInvite"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/user/role/update/": {
       "post": {
         "operationId": "accounts_user_role_update_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UserRoleUpdate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/invite/": {
       "post": {
         "operationId": "accounts_workspace_invite_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceInvite"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/list/": {
       "get": {
         "operationId": "accounts_workspace_list_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "sort": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/switch/": {
       "post": {
         "operationId": "accounts_workspace_switch_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/SwitchWorkspace"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/{workspace_id}/members/": {
       "get": {
         "operationId": "accounts_workspace_members_list",
         "requestBody": null,
-        "queryParameters": {},
-        "responses": {}
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "filter_status": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Active",
+                  "Pending",
+                  "Expired"
+                ]
+              },
+              "default": []
+            }
+          },
+          "filter_role": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          },
+          "sort": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "default": "-created_at"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/{workspace_id}/members/remove/": {
       "delete": {
         "operationId": "accounts_workspace_members_remove_delete",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceMemberRemove"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspace/{workspace_id}/members/role/": {
       "post": {
         "operationId": "accounts_workspace_members_role_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceMemberRoleUpdate"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspaces/": {
@@ -702,25 +2648,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_workspaces_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_workspaces_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceCreateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "put": {
         "operationId": "accounts_workspaces_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceUpdateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_workspaces_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspaces/{workspace_id}/": {
@@ -728,25 +2754,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_workspaces_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_workspaces_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceCreateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "put": {
         "operationId": "accounts_workspaces_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceUpdateRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_workspaces_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspaces/{workspace_id}/members/": {
@@ -754,19 +2860,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_workspaces_members_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_workspaces_members_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceMembersRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_workspaces_members_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/accounts/workspaces/{workspace_id}/members/{member_id}/": {
@@ -774,19 +2939,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "accounts_workspaces_members_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "accounts_workspaces_members_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/WorkspaceMembersRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "accounts_workspaces_members_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/AccountsJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          }
+        }
       }
     },
     "/agent-playground/executions/{execution_id}/nodes/{node_execution_id}/": {
@@ -25127,6 +27351,217 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "AWSMarketplaceLaunchRequest": {
+      "required": [
+        "x_amzn_marketplace_token"
+      ],
+      "type": "object",
+      "properties": {
+        "x_amzn_marketplace_token": {
+          "title": "X amzn marketplace token",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AWSMarketplaceSignupRequest": {
+      "required": [
+        "onboarding_token",
+        "email",
+        "full_name"
+      ],
+      "type": "object",
+      "properties": {
+        "onboarding_token": {
+          "title": "Onboarding token",
+          "type": "string",
+          "minLength": 1
+        },
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "minLength": 1
+        },
+        "full_name": {
+          "title": "Full name",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AcceptInvitationRequest": {
+      "required": [
+        "new_password",
+        "repeat_password"
+      ],
+      "type": "object",
+      "properties": {
+        "new_password": {
+          "title": "New password",
+          "type": "string",
+          "minLength": 1
+        },
+        "repeat_password": {
+          "title": "Repeat password",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AccountsAccessTokenResponse": {
+      "required": [
+        "access"
+      ],
+      "type": "object",
+      "properties": {
+        "access": {
+          "title": "Access",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AccountsEmptyRequest": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountsErrorResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "object",
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "object",
+          "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "AccountsJSONRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    "AccountsJSONResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "object"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "x-nullable": true
+        },
+        "data": {
+          "title": "Data",
+          "type": "object",
+          "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "object",
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "object",
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "AccountsPaginatedResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "x-nullable": true
+        },
+        "table": {
+          "title": "Table",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "AccountsTokenPairResponse": {
+      "type": "object",
+      "properties": {
+        "access": {
+          "title": "Access",
+          "type": "string",
+          "minLength": 1
+        },
+        "refresh": {
+          "title": "Refresh",
+          "type": "string",
+          "minLength": 1
+        },
+        "requires_two_factor": {
+          "title": "Requires two factor",
+          "type": "boolean"
+        },
+        "challenge_token": {
+          "title": "Challenge token",
+          "type": "string",
+          "format": "uuid"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requires_org_setup": {
+          "title": "Requires org setup",
+          "type": "boolean"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "new_org": {
+          "title": "New org",
+          "type": "boolean"
+        }
+      }
+    },
     "AddEvalConfigsRequest": {
       "required": [
         "evaluations_config"
@@ -30636,6 +33071,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "CreateMember": {
+      "required": [
+        "email",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "enum": [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer"
+          ],
+          "x-nullable": true
+        },
+        "organization_role": {
+          "title": "Organization role",
+          "type": "string",
+          "enum": [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer"
+          ],
+          "x-nullable": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        }
+      }
+    },
     "CreateNode": {
       "required": [
         "id",
@@ -30964,6 +33446,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "x-nullable": true
+        }
+      }
+    },
+    "CreateSecretKey": {
+      "required": [
+        "key_name"
+      ],
+      "type": "object",
+      "properties": {
+        "key_name": {
+          "title": "Key name",
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1
         }
       }
     },
@@ -31683,6 +34179,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DeactivateUser": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
     "DeepAnalysisApiResponse": {
       "required": [
         "result"
@@ -31743,6 +34252,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Message",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "DeleteUser": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -34184,6 +36706,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "InviteCancel": {
+      "required": [
+        "invite_id"
+      ],
+      "type": "object",
+      "properties": {
+        "invite_id": {
+          "title": "Invite id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "InviteCreate": {
+      "required": [
+        "emails",
+        "org_level"
+      ],
+      "type": "object",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          },
+          "maxItems": 50,
+          "minItems": 1
+        },
+        "org_level": {
+          "title": "Org level",
+          "description": "Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).",
+          "type": "integer",
+          "enum": [
+            15,
+            8,
+            3,
+            1
+          ]
+        },
+        "workspace_access": {
+          "description": "List of {\"workspace_id\": \"<uuid>\", \"level\": <int>}.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          },
+          "default": []
+        }
+      }
+    },
+    "InviteResend": {
+      "required": [
+        "invite_id"
+      ],
+      "type": "object",
+      "properties": {
+        "invite_id": {
+          "title": "Invite id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "org_level": {
+          "title": "Org level",
+          "type": "integer",
+          "enum": [
+            15,
+            8,
+            3,
+            1
+          ],
+          "x-nullable": true
+        }
+      }
+    },
     "KnowledgeBase": {
       "required": [
         "name",
@@ -35187,6 +37788,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "MemberRemove": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "MemberRoleUpdate": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "org_level": {
+          "title": "Org level",
+          "type": "integer",
+          "enum": [
+            15,
+            8,
+            3,
+            1
+          ],
+          "x-nullable": true
+        },
+        "ws_level": {
+          "title": "Ws level",
+          "type": "integer",
+          "enum": [
+            8,
+            3,
+            1
+          ],
+          "x-nullable": true
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "description": "Required when updating ws_level.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "workspace_access": {
+          "description": "List of {workspace_id, level} for explicit workspace grants on demotion.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          },
+          "default": []
+        }
+      }
+    },
     "MessageFeedback": {
       "required": [
         "feedback"
@@ -36133,6 +38800,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OrgTwoFactorPolicy": {
+      "required": [
+        "require_2fa"
+      ],
+      "type": "object",
+      "properties": {
+        "require_2fa": {
+          "title": "Require 2fa",
+          "type": "boolean"
+        },
+        "require_2fa_grace_period_days": {
+          "title": "Require 2fa grace period days",
+          "type": "integer",
+          "maximum": 30,
+          "minimum": 1
+        }
+      }
+    },
     "OrganizationBillingDetailResponse": {
       "required": [
         "status",
@@ -36185,6 +38870,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OrganizationCreateRequest": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string"
+        }
+      }
+    },
     "OrganizationListResponse": {
       "required": [
         "status",
@@ -36201,6 +38903,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/UsageOrganization"
           }
+        }
+      }
+    },
+    "OrganizationNameRequest": {
+      "type": "object",
+      "properties": {
+        "organization_name": {
+          "title": "Organization name",
+          "type": "string"
         }
       }
     },
@@ -36239,6 +38950,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OrganizationSwitchRequest": {
+      "required": [
+        "organization_id"
+      ],
+      "type": "object",
+      "properties": {
+        "organization_id": {
+          "title": "Organization id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "OrganizationUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string"
+        }
+      }
+    },
     "OverviewApiResponse": {
       "required": [
         "result"
@@ -36271,6 +39008,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/PIIEntity"
           }
+        }
+      }
+    },
+    "PasskeyCredentialRequest": {
+      "required": [
+        "credential"
+      ],
+      "type": "object",
+      "properties": {
+        "credential": {
+          "title": "Credential",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255
+        }
+      }
+    },
+    "PasskeyOptionsResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    "PasskeyRegisterVerify": {
+      "required": [
+        "credential"
+      ],
+      "type": "object",
+      "properties": {
+        "credential": {
+          "title": "Credential",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "default": "",
+          "maxLength": 255,
+          "minLength": 1
+        }
+      }
+    },
+    "PasskeyRename": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        }
+      }
+    },
+    "PasswordResetConfirmRequest": {
+      "required": [
+        "new_password",
+        "repeat_password"
+      ],
+      "type": "object",
+      "properties": {
+        "new_password": {
+          "title": "New password",
+          "type": "string",
+          "minLength": 1
+        },
+        "repeat_password": {
+          "title": "Repeat password",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "PasswordResetInitiateRequest": {
+      "required": [
+        "email"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "minLength": 1
+        }
+      }
+    },
+    "PasswordValidation": {
+      "required": [
+        "password"
+      ],
+      "type": "object",
+      "properties": {
+        "password": {
+          "title": "Password",
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 8
         }
       }
     },
@@ -38682,6 +41521,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "RecoveryCodesRegenerate": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 6
+        },
+        "password": {
+          "title": "Password",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "RedisKeyRequest": {
+      "required": [
+        "access_token_id",
+        "key"
+      ],
+      "type": "object",
+      "properties": {
+        "access_token_id": {
+          "title": "Access token id",
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "title": "Value",
+          "type": "object"
+        },
+        "expiry": {
+          "title": "Expiry",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "ReplaySession": {
       "required": [
         "project",
@@ -38839,6 +41722,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failure_count": {
           "title": "Failure count",
           "type": "integer"
+        }
+      }
+    },
+    "ResendInvite": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -39840,6 +42736,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/SDKStandaloneEvalV2Result"
+        }
+      }
+    },
+    "SOSLogin": {
+      "required": [
+        "email"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "maxLength": 255,
+          "minLength": 1
         }
       }
     },
@@ -41639,6 +44550,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SwitchWorkspace": {
+      "required": [
+        "new_workspace_id"
+      ],
+      "type": "object",
+      "properties": {
+        "new_workspace_id": {
+          "title": "New workspace id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
     "SyncLog": {
       "type": "object",
       "properties": {
@@ -41729,6 +44653,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "format": "date-time",
           "readOnly": true,
           "x-nullable": true
+        }
+      }
+    },
+    "TOTPConfirm": {
+      "required": [
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "maxLength": 6,
+          "minLength": 6
+        }
+      }
+    },
+    "TOTPDisable": {
+      "required": [
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 6
         }
       }
     },
@@ -42383,6 +45335,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TimezoneRequest": {
+      "required": [
+        "timezone"
+      ],
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "title": "Timezone",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        }
+      }
+    },
+    "TimezoneResponse": {
+      "required": [
+        "timezone"
+      ],
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "title": "Timezone",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "TokenObtainPair": {
       "required": [
         "email",
@@ -42399,6 +45378,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Password",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "TokenRefreshRequest": {
+      "required": [
+        "refresh"
+      ],
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "title": "Refresh",
+          "type": "string",
+          "minLength": 1
+        },
+        "recaptcha_response": {
+          "title": "Recaptcha response",
+          "type": "string"
+        },
+        "localhost_bypass": {
+          "title": "Localhost bypass",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -42763,6 +45764,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TwoFactorChallengeToken": {
+      "required": [
+        "challenge_token"
+      ],
+      "type": "object",
+      "properties": {
+        "challenge_token": {
+          "title": "Challenge token",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "TwoFactorPasskeyVerifyRequest": {
+      "required": [
+        "challenge_token",
+        "credential"
+      ],
+      "type": "object",
+      "properties": {
+        "challenge_token": {
+          "title": "Challenge token",
+          "type": "string",
+          "format": "uuid"
+        },
+        "credential": {
+          "title": "Credential",
+          "type": "object"
+        },
+        "session_id": {
+          "title": "Session id",
+          "type": "string"
+        }
+      }
+    },
+    "TwoFactorStatus": {
+      "required": [
+        "two_factor_enabled",
+        "methods",
+        "recovery_codes_remaining"
+      ],
+      "type": "object",
+      "properties": {
+        "two_factor_enabled": {
+          "title": "Two factor enabled",
+          "type": "boolean"
+        },
+        "methods": {
+          "title": "Methods",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "recovery_codes_remaining": {
+          "title": "Recovery codes remaining",
+          "type": "integer",
+          "x-nullable": true
+        }
+      }
+    },
+    "TwoFactorVerify": {
+      "required": [
+        "challenge_token",
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "challenge_token": {
+          "title": "Challenge token",
+          "type": "string",
+          "format": "uuid"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "maxLength": 10,
+          "minLength": 6
+        }
+      }
+    },
     "UpdateNode": {
       "type": "object",
       "properties": {
@@ -42910,6 +45993,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           }
+        }
+      }
+    },
+    "UpdateUser": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "organization_role": {
+          "title": "Organization role",
+          "type": "string",
+          "enum": [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer"
+          ]
         }
       }
     },
@@ -43681,6 +46801,91 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "UserCreate": {
+      "required": [
+        "email",
+        "password",
+        "organization_name",
+        "send_credential"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "password": {
+          "title": "Password",
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 8
+        },
+        "organization_name": {
+          "title": "Organization name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "send_credential": {
+          "title": "Send credential",
+          "type": "boolean"
+        }
+      }
+    },
+    "UserFullNameUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "full_name": {
+          "title": "Full name",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      }
+    },
+    "UserIdsRequest": {
+      "required": [
+        "user_ids"
+      ],
+      "type": "object",
+      "properties": {
+        "user_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "UserOnboarding": {
+      "required": [
+        "role",
+        "goals"
+      ],
+      "type": "object",
+      "properties": {
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          }
+        }
+      }
+    },
     "UserResponseSchema": {
       "required": [
         "name"
@@ -43723,6 +46928,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "yaml"
           ],
           "x-nullable": true
+        }
+      }
+    },
+    "UserRoleUpdate": {
+      "required": [
+        "user_id",
+        "new_role"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "new_role": {
+          "title": "New role",
+          "type": "string",
+          "enum": [
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer"
+          ]
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
+    "UserSecretKey": {
+      "required": [
+        "key_id"
+      ],
+      "type": "object",
+      "properties": {
+        "key_id": {
+          "title": "Key id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -43834,6 +47085,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "WebAuthnCredential": {
+      "required": [
+        "id",
+        "name",
+        "created_at",
+        "last_used_at"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_used_at": {
+          "title": "Last used at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        }
+      }
+    },
     "WebhookIngestResponse": {
       "required": [
         "status",
@@ -43892,6 +47175,154 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Result",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "WorkspaceCreateRequest": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "emails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        }
+      }
+    },
+    "WorkspaceInvite": {
+      "required": [
+        "emails"
+      ],
+      "type": "object",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "enum": [
+            "workspace_member",
+            "workspace_admin",
+            "workspace_viewer",
+            "Member",
+            "Viewer",
+            "Owner",
+            "Admin"
+          ],
+          "default": "workspace_member"
+        },
+        "select_all": {
+          "title": "Select all",
+          "type": "boolean",
+          "default": false
+        },
+        "workspace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "WorkspaceMemberRemove": {
+      "required": [
+        "user_id"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "WorkspaceMemberRoleUpdate": {
+      "required": [
+        "user_id",
+        "ws_level"
+      ],
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "ws_level": {
+          "title": "Ws level",
+          "type": "integer",
+          "enum": [
+            8,
+            3,
+            1
+          ]
+        }
+      }
+    },
+    "WorkspaceMembersRequest": {
+      "required": [
+        "users"
+      ],
+      "type": "object",
+      "properties": {
+        "users": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          }
+        }
+      }
+    },
+    "WorkspaceUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
         }
       }
     },
