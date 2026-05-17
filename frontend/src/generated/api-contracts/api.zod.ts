@@ -16747,10 +16747,82 @@ export const ModelHubOptimizeDatasetKbReadParams = zod.object({
   "optim_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetKbReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubOptimizeDatasetKnowledgeBaseCreateBody = zod.object({
+  "name": zod.string().optional(),
+  "knowledge_base_metrics": zod.object({
+
+}).passthrough().optional(),
+  "knowledge_base_filters": zod.object({
+
+}).passthrough().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetKnowledgeBaseCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetReadParams = zod.object({
   "model_id": zod.string(),
   "optimization_id": zod.string()
+})
+
+export const ModelHubOptimizeDatasetReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16758,14 +16830,107 @@ export const ModelHubOptimizeDatasetCreateParams = zod.object({
   "model_id": zod.string()
 })
 
+export const modelHubOptimizeDatasetCreateBodyMetricsDefault = [];
+
+export const ModelHubOptimizeDatasetCreateBody = zod.object({
+  "name": zod.string().optional(),
+  "start_date": zod.string().optional(),
+  "end_date": zod.string().optional(),
+  "model": zod.string().uuid().optional(),
+  "optimize_type": zod.string().optional(),
+  "environment": zod.string().optional(),
+  "version": zod.string().optional(),
+  "metrics": zod.array(zod.string().uuid()).default(modelHubOptimizeDatasetCreateBodyMetricsDefault),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetColumnConfigListParams = zod.object({
   "model_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetColumnConfigListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetColumnConfigCreateParams = zod.object({
   "model_id": zod.string()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16774,10 +16939,67 @@ export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadParams 
   "optimization_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateParams = zod.object({
   "model_id": zod.string(),
   "optimization_id": zod.string()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16786,10 +17008,67 @@ export const ModelHubOptimizeDatasetColumnConfigRightAnswersReadParams = zod.obj
   "optimization_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetColumnConfigRightAnswersReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetColumnConfigRightAnswersCreateParams = zod.object({
   "model_id": zod.string(),
   "optimization_id": zod.string()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigRightAnswersCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16798,16 +17077,130 @@ export const ModelHubOptimizeDatasetPromptTemplateExploreCreateParams = zod.obje
   "optimization_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetPromptTemplateExploreCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetPromptTemplateExploreCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetPromptTemplateResultCreateParams = zod.object({
   "model_id": zod.string(),
   "optimization_id": zod.string()
 })
 
+export const ModelHubOptimizeDatasetPromptTemplateResultCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetPromptTemplateResultCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubOptimizeDatasetRightAnswersCreateParams = zod.object({
   "model_id": zod.string(),
   "optimization_id": zod.string()
+})
+
+export const ModelHubOptimizeDatasetRightAnswersCreateBody = zod.object({
+  "filters": zod.object({
+
+}).passthrough().optional(),
+  "order": zod.object({
+
+}).passthrough().optional(),
+  "page_number": zod.number().optional(),
+  "page_size": zod.number().optional(),
+  "columns": zod.object({
+
+}).passthrough().optional(),
+  "prompt_template": zod.string().optional(),
+  "prompt": zod.string().optional(),
+  "variables": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubOptimizeDatasetRightAnswersCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 

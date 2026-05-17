@@ -467,6 +467,9 @@ import type {
   ObservationSpanApi,
   OptimizationDatasetGetApi,
   OptimizationDetailApi,
+  OptimizeDatasetKnowledgeBaseRequestApi,
+  OptimizeDatasetMutationRequestApi,
+  OptimizeDatasetOperationRequestApi,
   OrgConfigBulkResponseApi,
   OrgTwoFactorPolicyApi,
   OrganizationBillingDetailResponseApi,
@@ -30945,16 +30948,43 @@ export const modelHubOptimizeDatasetList = async (params?: ModelHubOptimizeDatas
 
 
 export type modelHubOptimizeDatasetKbReadResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimizeDatasetKbReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetKbReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetKbReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetKbReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetKbReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimizeDatasetKbReadResponseSuccess = (modelHubOptimizeDatasetKbReadResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetKbReadResponseError = (modelHubOptimizeDatasetKbReadResponse400 | modelHubOptimizeDatasetKbReadResponse403 | modelHubOptimizeDatasetKbReadResponse404 | modelHubOptimizeDatasetKbReadResponse409 | modelHubOptimizeDatasetKbReadResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetKbReadResponse = (modelHubOptimizeDatasetKbReadResponseSuccess)
+export type modelHubOptimizeDatasetKbReadResponse = (modelHubOptimizeDatasetKbReadResponseSuccess | modelHubOptimizeDatasetKbReadResponseError)
 
 export const getModelHubOptimizeDatasetKbReadUrl = (optimId: string,) => {
 
@@ -30977,17 +31007,44 @@ export const modelHubOptimizeDatasetKbRead = async (optimId: string, options?: R
 
 
 
-export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseSuccess = (modelHubOptimizeDatasetKnowledgeBaseCreateResponse201) & {
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseSuccess = (modelHubOptimizeDatasetKnowledgeBaseCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseError = (modelHubOptimizeDatasetKnowledgeBaseCreateResponse400 | modelHubOptimizeDatasetKnowledgeBaseCreateResponse403 | modelHubOptimizeDatasetKnowledgeBaseCreateResponse404 | modelHubOptimizeDatasetKnowledgeBaseCreateResponse409 | modelHubOptimizeDatasetKnowledgeBaseCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse = (modelHubOptimizeDatasetKnowledgeBaseCreateResponseSuccess)
+export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse = (modelHubOptimizeDatasetKnowledgeBaseCreateResponseSuccess | modelHubOptimizeDatasetKnowledgeBaseCreateResponseError)
 
 export const getModelHubOptimizeDatasetKnowledgeBaseCreateUrl = () => {
 
@@ -30997,30 +31054,58 @@ export const getModelHubOptimizeDatasetKnowledgeBaseCreateUrl = () => {
   return `/model-hub/optimize-dataset/knowledge-base/`
 }
 
-export const modelHubOptimizeDatasetKnowledgeBaseCreate = async ( options?: RequestInit): Promise<modelHubOptimizeDatasetKnowledgeBaseCreateResponse> => {
+export const modelHubOptimizeDatasetKnowledgeBaseCreate = async (optimizeDatasetKnowledgeBaseRequestApi: OptimizeDatasetKnowledgeBaseRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetKnowledgeBaseCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetKnowledgeBaseCreateResponse>(getModelHubOptimizeDatasetKnowledgeBaseCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetKnowledgeBaseRequestApi,)
   }
 );}
 
 
 
 export type modelHubOptimizeDatasetReadResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimizeDatasetReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimizeDatasetReadResponseSuccess = (modelHubOptimizeDatasetReadResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetReadResponseError = (modelHubOptimizeDatasetReadResponse400 | modelHubOptimizeDatasetReadResponse403 | modelHubOptimizeDatasetReadResponse404 | modelHubOptimizeDatasetReadResponse409 | modelHubOptimizeDatasetReadResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetReadResponse = (modelHubOptimizeDatasetReadResponseSuccess)
+export type modelHubOptimizeDatasetReadResponse = (modelHubOptimizeDatasetReadResponseSuccess | modelHubOptimizeDatasetReadResponseError)
 
 export const getModelHubOptimizeDatasetReadUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31045,17 +31130,44 @@ export const modelHubOptimizeDatasetRead = async (modelId: string,
 
 
 
-export type modelHubOptimizeDatasetCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetCreateResponseSuccess = (modelHubOptimizeDatasetCreateResponse201) & {
+export type modelHubOptimizeDatasetCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetCreateResponseSuccess = (modelHubOptimizeDatasetCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetCreateResponseError = (modelHubOptimizeDatasetCreateResponse400 | modelHubOptimizeDatasetCreateResponse403 | modelHubOptimizeDatasetCreateResponse404 | modelHubOptimizeDatasetCreateResponse409 | modelHubOptimizeDatasetCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetCreateResponse = (modelHubOptimizeDatasetCreateResponseSuccess)
+export type modelHubOptimizeDatasetCreateResponse = (modelHubOptimizeDatasetCreateResponseSuccess | modelHubOptimizeDatasetCreateResponseError)
 
 export const getModelHubOptimizeDatasetCreateUrl = (modelId: string,) => {
 
@@ -31065,30 +31177,59 @@ export const getModelHubOptimizeDatasetCreateUrl = (modelId: string,) => {
   return `/model-hub/optimize-dataset/${modelId}/`
 }
 
-export const modelHubOptimizeDatasetCreate = async (modelId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetCreateResponse> => {
+export const modelHubOptimizeDatasetCreate = async (modelId: string,
+    optimizeDatasetMutationRequestApi: OptimizeDatasetMutationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetCreateResponse>(getModelHubOptimizeDatasetCreateUrl(modelId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetMutationRequestApi,)
   }
 );}
 
 
 
 export type modelHubOptimizeDatasetColumnConfigListResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimizeDatasetColumnConfigListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimizeDatasetColumnConfigListResponseSuccess = (modelHubOptimizeDatasetColumnConfigListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigListResponseError = (modelHubOptimizeDatasetColumnConfigListResponse400 | modelHubOptimizeDatasetColumnConfigListResponse403 | modelHubOptimizeDatasetColumnConfigListResponse404 | modelHubOptimizeDatasetColumnConfigListResponse409 | modelHubOptimizeDatasetColumnConfigListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigListResponse = (modelHubOptimizeDatasetColumnConfigListResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigListResponse = (modelHubOptimizeDatasetColumnConfigListResponseSuccess | modelHubOptimizeDatasetColumnConfigListResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigListUrl = (modelId: string,) => {
 
@@ -31111,17 +31252,44 @@ export const modelHubOptimizeDatasetColumnConfigList = async (modelId: string, o
 
 
 
-export type modelHubOptimizeDatasetColumnConfigCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetColumnConfigCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetColumnConfigCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigCreateResponse201) & {
+export type modelHubOptimizeDatasetColumnConfigCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetColumnConfigCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigCreateResponseError = (modelHubOptimizeDatasetColumnConfigCreateResponse400 | modelHubOptimizeDatasetColumnConfigCreateResponse403 | modelHubOptimizeDatasetColumnConfigCreateResponse404 | modelHubOptimizeDatasetColumnConfigCreateResponse409 | modelHubOptimizeDatasetColumnConfigCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigCreateResponse = (modelHubOptimizeDatasetColumnConfigCreateResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigCreateResponse = (modelHubOptimizeDatasetColumnConfigCreateResponseSuccess | modelHubOptimizeDatasetColumnConfigCreateResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigCreateUrl = (modelId: string,) => {
 
@@ -31131,30 +31299,59 @@ export const getModelHubOptimizeDatasetColumnConfigCreateUrl = (modelId: string,
   return `/model-hub/optimize-dataset/${modelId}/column-config/`
 }
 
-export const modelHubOptimizeDatasetColumnConfigCreate = async (modelId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigCreateResponse> => {
+export const modelHubOptimizeDatasetColumnConfigCreate = async (modelId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetColumnConfigCreateResponse>(getModelHubOptimizeDatasetColumnConfigCreateUrl(modelId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 
 
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseSuccess = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseError = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse400 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse403 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse404 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse409 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseSuccess | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31179,17 +31376,44 @@ export const modelHubOptimizeDatasetColumnConfigPromptTemplateExploreRead = asyn
 
 
 
-export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse201) & {
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseError = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse400 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse403 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse404 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse409 | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse = (modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseSuccess | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31201,30 +31425,59 @@ export const getModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateUr
 }
 
 export const modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreate = async (modelId: string,
-    optimizationId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse> => {
+    optimizationId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse>(getModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateUrl(modelId,optimizationId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 
 
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseSuccess = (modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseError = (modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse400 | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse403 | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse404 | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse409 | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse = (modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse = (modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseSuccess | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigRightAnswersReadUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31249,17 +31502,44 @@ export const modelHubOptimizeDatasetColumnConfigRightAnswersRead = async (modelI
 
 
 
-export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse201) & {
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseSuccess = (modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseError = (modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse400 | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse403 | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse404 | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse409 | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse = (modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseSuccess)
+export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse = (modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseSuccess | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseError)
 
 export const getModelHubOptimizeDatasetColumnConfigRightAnswersCreateUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31271,30 +31551,59 @@ export const getModelHubOptimizeDatasetColumnConfigRightAnswersCreateUrl = (mode
 }
 
 export const modelHubOptimizeDatasetColumnConfigRightAnswersCreate = async (modelId: string,
-    optimizationId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse> => {
+    optimizationId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse>(getModelHubOptimizeDatasetColumnConfigRightAnswersCreateUrl(modelId,optimizationId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 
 
 
-export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseSuccess = (modelHubOptimizeDatasetPromptTemplateExploreCreateResponse201) & {
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseSuccess = (modelHubOptimizeDatasetPromptTemplateExploreCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseError = (modelHubOptimizeDatasetPromptTemplateExploreCreateResponse400 | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse403 | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse404 | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse409 | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse = (modelHubOptimizeDatasetPromptTemplateExploreCreateResponseSuccess)
+export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse = (modelHubOptimizeDatasetPromptTemplateExploreCreateResponseSuccess | modelHubOptimizeDatasetPromptTemplateExploreCreateResponseError)
 
 export const getModelHubOptimizeDatasetPromptTemplateExploreCreateUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31306,30 +31615,59 @@ export const getModelHubOptimizeDatasetPromptTemplateExploreCreateUrl = (modelId
 }
 
 export const modelHubOptimizeDatasetPromptTemplateExploreCreate = async (modelId: string,
-    optimizationId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetPromptTemplateExploreCreateResponse> => {
+    optimizationId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetPromptTemplateExploreCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetPromptTemplateExploreCreateResponse>(getModelHubOptimizeDatasetPromptTemplateExploreCreateUrl(modelId,optimizationId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 
 
 
-export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseSuccess = (modelHubOptimizeDatasetPromptTemplateResultCreateResponse201) & {
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseSuccess = (modelHubOptimizeDatasetPromptTemplateResultCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseError = (modelHubOptimizeDatasetPromptTemplateResultCreateResponse400 | modelHubOptimizeDatasetPromptTemplateResultCreateResponse403 | modelHubOptimizeDatasetPromptTemplateResultCreateResponse404 | modelHubOptimizeDatasetPromptTemplateResultCreateResponse409 | modelHubOptimizeDatasetPromptTemplateResultCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse = (modelHubOptimizeDatasetPromptTemplateResultCreateResponseSuccess)
+export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse = (modelHubOptimizeDatasetPromptTemplateResultCreateResponseSuccess | modelHubOptimizeDatasetPromptTemplateResultCreateResponseError)
 
 export const getModelHubOptimizeDatasetPromptTemplateResultCreateUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31341,30 +31679,59 @@ export const getModelHubOptimizeDatasetPromptTemplateResultCreateUrl = (modelId:
 }
 
 export const modelHubOptimizeDatasetPromptTemplateResultCreate = async (modelId: string,
-    optimizationId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetPromptTemplateResultCreateResponse> => {
+    optimizationId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetPromptTemplateResultCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetPromptTemplateResultCreateResponse>(getModelHubOptimizeDatasetPromptTemplateResultCreateUrl(modelId,optimizationId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 
 
 
-export type modelHubOptimizeDatasetRightAnswersCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubOptimizeDatasetRightAnswersCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubOptimizeDatasetRightAnswersCreateResponseSuccess = (modelHubOptimizeDatasetRightAnswersCreateResponse201) & {
+export type modelHubOptimizeDatasetRightAnswersCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubOptimizeDatasetRightAnswersCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubOptimizeDatasetRightAnswersCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubOptimizeDatasetRightAnswersCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubOptimizeDatasetRightAnswersCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubOptimizeDatasetRightAnswersCreateResponseSuccess = (modelHubOptimizeDatasetRightAnswersCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubOptimizeDatasetRightAnswersCreateResponseError = (modelHubOptimizeDatasetRightAnswersCreateResponse400 | modelHubOptimizeDatasetRightAnswersCreateResponse403 | modelHubOptimizeDatasetRightAnswersCreateResponse404 | modelHubOptimizeDatasetRightAnswersCreateResponse409 | modelHubOptimizeDatasetRightAnswersCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubOptimizeDatasetRightAnswersCreateResponse = (modelHubOptimizeDatasetRightAnswersCreateResponseSuccess)
+export type modelHubOptimizeDatasetRightAnswersCreateResponse = (modelHubOptimizeDatasetRightAnswersCreateResponseSuccess | modelHubOptimizeDatasetRightAnswersCreateResponseError)
 
 export const getModelHubOptimizeDatasetRightAnswersCreateUrl = (modelId: string,
     optimizationId: string,) => {
@@ -31376,14 +31743,16 @@ export const getModelHubOptimizeDatasetRightAnswersCreateUrl = (modelId: string,
 }
 
 export const modelHubOptimizeDatasetRightAnswersCreate = async (modelId: string,
-    optimizationId: string, options?: RequestInit): Promise<modelHubOptimizeDatasetRightAnswersCreateResponse> => {
+    optimizationId: string,
+    optimizeDatasetOperationRequestApi: OptimizeDatasetOperationRequestApi, options?: RequestInit): Promise<modelHubOptimizeDatasetRightAnswersCreateResponse> => {
 
   return apiMutator<modelHubOptimizeDatasetRightAnswersCreateResponse>(getModelHubOptimizeDatasetRightAnswersCreateUrl(modelId,optimizationId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      optimizeDatasetOperationRequestApi,)
   }
 );}
 

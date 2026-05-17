@@ -13174,15 +13174,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_kb_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/knowledge-base/": {
       "post": {
         "operationId": "model-hub_optimize-dataset_knowledge-base_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetKnowledgeBaseRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/": {
@@ -13190,13 +13230,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubPaginatedResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_optimize-dataset_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetMutationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/column-config/": {
@@ -13204,13 +13284,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_column-config_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_optimize-dataset_column-config_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/": {
@@ -13218,13 +13338,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_column-config_prompt-template-explore_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_optimize-dataset_column-config_prompt-template-explore_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/": {
@@ -13232,37 +13392,140 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_column-config_right-answers_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_optimize-dataset_column-config_right-answers_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/": {
       "post": {
         "operationId": "model-hub_optimize-dataset_prompt-template-explore_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/": {
       "post": {
         "operationId": "model-hub_optimize-dataset_prompt-template-result_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/": {
       "post": {
         "operationId": "model-hub_optimize-dataset_right-answers_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/OptimizeDatasetOperationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/optimize-dataset/{model_id}/{optimization_id}/": {
@@ -13270,7 +13533,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_optimize-dataset_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/organizations/{organization_id}/users/": {
@@ -39817,6 +40099,118 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "failed",
             "cancelled"
           ]
+        }
+      }
+    },
+    "OptimizeDatasetKnowledgeBaseRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "knowledge_base_metrics": {
+          "title": "Knowledge base metrics",
+          "type": "object"
+        },
+        "knowledge_base_filters": {
+          "title": "Knowledge base filters",
+          "type": "object"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "variables": {
+          "title": "Variables",
+          "type": "object"
+        }
+      }
+    },
+    "OptimizeDatasetMutationRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "start_date": {
+          "title": "Start date",
+          "type": "string"
+        },
+        "end_date": {
+          "title": "End date",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string",
+          "format": "uuid"
+        },
+        "optimize_type": {
+          "title": "Optimize type",
+          "type": "string"
+        },
+        "environment": {
+          "title": "Environment",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "variables": {
+          "title": "Variables",
+          "type": "object"
+        }
+      }
+    },
+    "OptimizeDatasetOperationRequest": {
+      "type": "object",
+      "properties": {
+        "filters": {
+          "title": "Filters",
+          "type": "object"
+        },
+        "order": {
+          "title": "Order",
+          "type": "object"
+        },
+        "page_number": {
+          "title": "Page number",
+          "type": "integer"
+        },
+        "page_size": {
+          "title": "Page size",
+          "type": "integer"
+        },
+        "columns": {
+          "title": "Columns",
+          "type": "object"
+        },
+        "prompt_template": {
+          "title": "Prompt template",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "variables": {
+          "title": "Variables",
+          "type": "object"
         }
       }
     },

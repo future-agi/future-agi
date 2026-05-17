@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 133,
-    "operations_without_response_schema": 216
+    "mutation_endpoints_without_body_schema": 125,
+    "operations_without_response_schema": 202
   },
   "by_group": {
     "accounts": {
@@ -70,8 +70,8 @@
     "model-hub": {
       "paths": 365,
       "operations": 478,
-      "mutation_endpoints_without_body_schema": 133,
-      "operations_without_response_schema": 216
+      "mutation_endpoints_without_body_schema": 125,
+      "operations_without_response_schema": 202
     },
     "saml2_auth": {
       "paths": 12,
@@ -1115,78 +1115,6 @@
       "method": "PUT",
       "path": "/model-hub/optimisation/update/{id}/",
       "operation_id": "model-hub_optimisation_update_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/knowledge-base/",
-      "operation_id": "model-hub_optimize-dataset_knowledge-base_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/",
-      "operation_id": "model-hub_optimize-dataset_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/",
-      "operation_id": "model-hub_optimize-dataset_column-config_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_prompt-template-explore_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_right-answers_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_prompt-template-explore_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_prompt-template-result_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_right-answers_create",
       "tags": [
         "model-hub"
       ]
@@ -2926,132 +2854,6 @@
       "method": "PUT",
       "path": "/model-hub/optimisation/update/{id}/",
       "operation_id": "model-hub_optimisation_update_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/kb/{optim_id}/",
-      "operation_id": "model-hub_optimize-dataset_kb_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/knowledge-base/",
-      "operation_id": "model-hub_optimize-dataset_knowledge-base_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/{model_id}/",
-      "operation_id": "model-hub_optimize-dataset_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/",
-      "operation_id": "model-hub_optimize-dataset_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/",
-      "operation_id": "model-hub_optimize-dataset_column-config_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/",
-      "operation_id": "model-hub_optimize-dataset_column-config_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_prompt-template-explore_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_prompt-template-explore_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_right-answers_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_column-config_right-answers_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_prompt-template-explore_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_prompt-template-result_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_right-answers_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/optimize-dataset/{model_id}/{optimization_id}/",
-      "operation_id": "model-hub_optimize-dataset_read",
       "tags": [
         "model-hub"
       ]

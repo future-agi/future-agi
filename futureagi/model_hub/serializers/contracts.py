@@ -164,3 +164,39 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
     )
     page_number = serializers.IntegerField(required=False, default=0)
     page_size = serializers.IntegerField(required=False, default=10)
+
+
+class OptimizeDatasetMutationRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+    start_date = serializers.CharField(required=False, allow_blank=True)
+    end_date = serializers.CharField(required=False, allow_blank=True)
+    model = serializers.UUIDField(required=False)
+    optimize_type = serializers.CharField(required=False, allow_blank=True)
+    environment = serializers.CharField(required=False, allow_blank=True)
+    version = serializers.CharField(required=False, allow_blank=True)
+    metrics = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    variables = serializers.JSONField(required=False)
+
+
+class OptimizeDatasetKnowledgeBaseRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+    knowledge_base_metrics = serializers.JSONField(required=False)
+    knowledge_base_filters = serializers.JSONField(required=False)
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    variables = serializers.JSONField(required=False)
+
+
+class OptimizeDatasetOperationRequestSerializer(serializers.Serializer):
+    filters = serializers.JSONField(required=False)
+    order = serializers.JSONField(required=False)
+    page_number = serializers.IntegerField(required=False)
+    page_size = serializers.IntegerField(required=False)
+    columns = serializers.JSONField(required=False)
+    prompt_template = serializers.CharField(required=False, allow_blank=True)
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    variables = serializers.JSONField(required=False)

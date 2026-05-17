@@ -5163,6 +5163,54 @@ export interface OptimizeDatasetKbApi {
   status?: OptimizeDatasetKbApiStatus;
 }
 
+export type OptimizeDatasetKnowledgeBaseRequestApiKnowledgeBaseMetrics = { [key: string]: unknown };
+
+export type OptimizeDatasetKnowledgeBaseRequestApiKnowledgeBaseFilters = { [key: string]: unknown };
+
+export type OptimizeDatasetKnowledgeBaseRequestApiVariables = { [key: string]: unknown };
+
+export interface OptimizeDatasetKnowledgeBaseRequestApi {
+  name?: string;
+  knowledge_base_metrics?: OptimizeDatasetKnowledgeBaseRequestApiKnowledgeBaseMetrics;
+  knowledge_base_filters?: OptimizeDatasetKnowledgeBaseRequestApiKnowledgeBaseFilters;
+  prompt?: string;
+  variables?: OptimizeDatasetKnowledgeBaseRequestApiVariables;
+}
+
+export type OptimizeDatasetMutationRequestApiVariables = { [key: string]: unknown };
+
+export interface OptimizeDatasetMutationRequestApi {
+  name?: string;
+  start_date?: string;
+  end_date?: string;
+  model?: string;
+  optimize_type?: string;
+  environment?: string;
+  version?: string;
+  metrics?: string[];
+  prompt?: string;
+  variables?: OptimizeDatasetMutationRequestApiVariables;
+}
+
+export type OptimizeDatasetOperationRequestApiFilters = { [key: string]: unknown };
+
+export type OptimizeDatasetOperationRequestApiOrder = { [key: string]: unknown };
+
+export type OptimizeDatasetOperationRequestApiColumns = { [key: string]: unknown };
+
+export type OptimizeDatasetOperationRequestApiVariables = { [key: string]: unknown };
+
+export interface OptimizeDatasetOperationRequestApi {
+  filters?: OptimizeDatasetOperationRequestApiFilters;
+  order?: OptimizeDatasetOperationRequestApiOrder;
+  page_number?: number;
+  page_size?: number;
+  columns?: OptimizeDatasetOperationRequestApiColumns;
+  prompt_template?: string;
+  prompt?: string;
+  variables?: OptimizeDatasetOperationRequestApiVariables;
+}
+
 export type DevelopAnnotationsUserApiOrganizationRole = typeof DevelopAnnotationsUserApiOrganizationRole[keyof typeof DevelopAnnotationsUserApiOrganizationRole];
 
 

@@ -72,6 +72,16 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/knowledge-base/files/",
         "/model-hub/knowledge-base/get/",
         "/model-hub/knowledge-base/list/",
+        "/model-hub/optimize-dataset/kb/{optim_id}/",
+        "/model-hub/optimize-dataset/knowledge-base/",
+        "/model-hub/optimize-dataset/{model_id}/",
+        "/model-hub/optimize-dataset/{model_id}/column-config/",
+        "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
+        "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
+        "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
+        "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
+        "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
+        "/model-hub/optimize-dataset/{model_id}/{optimization_id}/",
     }
 
     body_gaps = {
@@ -120,6 +130,35 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/knowledge-base/files/"): (
             "LegacyKnowledgeBaseFilesRequest"
         ),
+        ("POST", "/model-hub/optimize-dataset/knowledge-base/"): (
+            "OptimizeDatasetKnowledgeBaseRequest"
+        ),
+        ("POST", "/model-hub/optimize-dataset/{model_id}/"): (
+            "OptimizeDatasetMutationRequest"
+        ),
+        ("POST", "/model-hub/optimize-dataset/{model_id}/column-config/"): (
+            "OptimizeDatasetOperationRequest"
+        ),
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
+        ): "OptimizeDatasetOperationRequest",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
+        ): "OptimizeDatasetOperationRequest",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
+        ): "OptimizeDatasetOperationRequest",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
+        ): "OptimizeDatasetOperationRequest",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
+        ): "OptimizeDatasetOperationRequest",
     }
 
     for (method, path), definition_name in expected.items():
@@ -167,6 +206,55 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/knowledge-base/files/"): "ModelHubJSONResponse",
         ("GET", "/model-hub/knowledge-base/get/"): "ModelHubJSONResponse",
         ("GET", "/model-hub/knowledge-base/list/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/optimize-dataset/kb/{optim_id}/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("POST", "/model-hub/optimize-dataset/knowledge-base/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("GET", "/model-hub/optimize-dataset/{model_id}/"): (
+            "ModelHubPaginatedResponse"
+        ),
+        ("POST", "/model-hub/optimize-dataset/{model_id}/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("GET", "/model-hub/optimize-dataset/{model_id}/column-config/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("POST", "/model-hub/optimize-dataset/{model_id}/column-config/"): (
+            "ModelHubJSONResponse"
+        ),
+        (
+            "GET",
+            "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "GET",
+            "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
+        ): "ModelHubJSONResponse",
+        ("GET", "/model-hub/optimize-dataset/{model_id}/{optimization_id}/"): (
+            "ModelHubJSONResponse"
+        ),
     }
 
     for (method, path), definition_name in expected.items():

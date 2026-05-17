@@ -4,6 +4,7 @@ import time
 
 import structlog
 from django.db.models import Case, Prefetch, When
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import CreateAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +23,14 @@ from model_hub.models.column_config import ColumnConfig
 from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.serializers.column_config import ColumnConfigSerializer
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+    ModelHubPaginatedResponseSerializer,
+    OptimizeDatasetKnowledgeBaseRequestSerializer,
+    OptimizeDatasetMutationRequestSerializer,
+    OptimizeDatasetOperationRequestSerializer,
+)
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
@@ -38,14 +47,17 @@ from tfc.temporal import temporal_activity
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
-from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
 class OptimizedDatasetView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubPaginatedResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, model_id, *args, **kwarg):
         try:
             # sort_by = request.query_params.get("sort_by")
@@ -85,6 +97,10 @@ class OptimizedDatasetView(APIView):
                 status=500,
             )
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetMutationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             data = request.data
@@ -212,6 +228,9 @@ class OptimizedDatasetView(APIView):
 class OptimizeDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, model_id, optimization_id):
         AIModel.objects.filter(id=model_id)
 
@@ -431,6 +450,10 @@ class RightAnswerResultsView(APIView):
 
         return result
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, model_id, optimization_id):
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
@@ -686,6 +709,10 @@ class TemplateResultsView(APIView):
 
         return query
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, model_id, optimization_id, *args, **kwarg):
         try:
             optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
@@ -909,6 +936,10 @@ class TemplateExploreView(APIView):
 
         return result
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, model_id, optimization_id):
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
@@ -1059,6 +1090,9 @@ class TemplateExploreView(APIView):
 class OptimizeDatasetColumnConfig(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, model_id):
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1080,6 +1114,10 @@ class OptimizeDatasetColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, model_id):
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1129,6 +1167,9 @@ class OptimizeDatasetRightColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(
         self,
         request,
@@ -1166,6 +1207,10 @@ class OptimizeDatasetRightColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(
         self,
         request,
@@ -1221,6 +1266,9 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(
         self,
         request,
@@ -1260,6 +1308,10 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetOperationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(
         self,
         request,
@@ -1287,6 +1339,13 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
 class OptimizedDatasetKbView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=OptimizeDatasetKnowledgeBaseRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
+    def post(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         try:
@@ -1364,6 +1423,9 @@ class OptimizeDatasetList(ListAPIView):
     serializer_class = OptimizeDatasetKbSerializer
     queryset = OptimizeDataset.objects.all()
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def list(self, request, *args, **kwargs):
         try:
             # Fetch all OptimizeDataset instances
@@ -1382,6 +1444,9 @@ class OptimizeDatasetGet(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, optim_id, *args, **kwargs):
         try:
             logger.exception(optim_id)
