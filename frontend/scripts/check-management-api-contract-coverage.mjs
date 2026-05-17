@@ -17,7 +17,7 @@ const swaggerPath = path.join(
 const MIN_ENDPOINTS = 960;
 const MAX_MUTATIONS_WITHOUT_BODY_SCHEMA = 0;
 const MAX_OPERATIONS_WITHOUT_RESPONSE_SCHEMA = 0;
-const MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS = 339;
+const MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS = 325;
 const MIN_GROUP_PATHS = {
   accounts: 75,
   agentcc: 100,
@@ -119,11 +119,12 @@ function isUnshapedObject(schema) {
   if (!schema) return false;
   const resolved = dereference(schema);
   if (resolved.type !== "object") return false;
-  return (
-    !resolved.properties ||
-    Object.keys(resolved.properties).length === 0 ||
-    Boolean(resolved.additionalProperties)
-  );
+  if (resolved.additionalProperties) {
+    return resolved.additionalProperties === true
+      ? true
+      : isUnshapedObject(resolved.additionalProperties);
+  }
+  return !resolved.properties || Object.keys(resolved.properties).length === 0;
 }
 
 function broadSuccessResponseReason(schema) {

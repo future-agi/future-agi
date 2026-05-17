@@ -271,6 +271,7 @@ import type {
   DatasetCellDataRequestApi,
   DatasetColumnDetailResponseApi,
   DatasetEvalStatsResponseApi,
+  DatasetJsonSchemaResponseApi,
   DatasetMultipleStaticColumnsRequestApi,
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
@@ -23520,7 +23521,7 @@ export const modelHubDatasetEvalStatsList = async (datasetId: string, options?: 
 
 
 export type modelHubDatasetJsonSchemaListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetJsonSchemaResponseApi
   status: 200
 }
 

@@ -129,14 +129,15 @@ from model_hub.serializers.contracts import (
     ComparePreviewRunEvalRequestSerializer,
     CompareStartEvalsRequestSerializer,
     DatasetAddColumnsRequestSerializer,
-    DatasetColumnDetailResponseSerializer,
     DatasetAddEmptyColumnsRequestSerializer,
     DatasetAddEmptyRowsRequestSerializer,
     DatasetAddRowsRequestSerializer,
-    DatasetRowDataRequestSerializer,
     DatasetBehaviorRequestSerializer,
     DatasetCellDataRequestSerializer,
+    DatasetColumnDetailResponseSerializer,
+    DatasetJsonSchemaResponseSerializer,
     DatasetMultipleStaticColumnsRequestSerializer,
+    DatasetRowDataRequestSerializer,
     DatasetSdkRowsRequestSerializer,
     DatasetStaticColumnRequestSerializer,
     DatasetUpdateCellValueRequestSerializer,
@@ -15269,7 +15270,7 @@ class GetJsonColumnSchemaView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetJsonSchemaResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:

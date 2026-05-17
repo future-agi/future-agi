@@ -10834,7 +10834,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetJsonSchemaResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -40613,6 +40613,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetJsonSchemaResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/JsonColumnSchemaEntry"
+          }
+        }
+      }
+    },
     "DatasetMultipleStaticColumnsRequest": {
       "required": [
         "columns"
@@ -60058,6 +60078,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "is_numeric_eval_percentage": {
           "title": "Is numeric eval percentage",
           "type": "boolean"
+        }
+      }
+    },
+    "JsonColumnSchemaEntry": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "sample": {
+          "title": "Sample",
+          "type": "object",
+          "x-nullable": true
+        },
+        "max_array_count": {
+          "title": "Max array count",
+          "type": "integer"
+        },
+        "max_images_count": {
+          "title": "Max images count",
+          "type": "integer"
         }
       }
     },

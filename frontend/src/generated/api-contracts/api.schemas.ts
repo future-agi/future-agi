@@ -5450,6 +5450,24 @@ export interface DatasetEvalStatsResponseApi {
   result: DatasetEvalStatsItemApi[];
 }
 
+export type JsonColumnSchemaEntryApiSample = { [key: string]: unknown };
+
+export interface JsonColumnSchemaEntryApi {
+  /** @minLength 1 */
+  name: string;
+  keys?: string[];
+  sample?: JsonColumnSchemaEntryApiSample;
+  max_array_count?: number;
+  max_images_count?: number;
+}
+
+export type DatasetJsonSchemaResponseApiResult = {[key: string]: JsonColumnSchemaEntryApi};
+
+export interface DatasetJsonSchemaResponseApi {
+  status: boolean;
+  result: DatasetJsonSchemaResponseApiResult;
+}
+
 export interface DatasetRunPromptStatsPromptApi {
   id: string;
   /** @minLength 1 */

@@ -5,7 +5,7 @@
     "operations": 1336,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
-    "broad_success_response_schemas": 339
+    "broad_success_response_schemas": 325
   },
   "by_group": {
     "accounts": {
@@ -27,7 +27,7 @@
       "operations": 149,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 12
+      "broad_success_response_schemas": 10
     },
     "ai-tools": {
       "paths": 1,
@@ -83,7 +83,7 @@
       "operations": 473,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 209
+      "broad_success_response_schemas": 207
     },
     "saml2_auth": {
       "paths": 12,
@@ -118,7 +118,7 @@
       "operations": 122,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 16
+      "broad_success_response_schemas": 6
     },
     "v1": {
       "paths": 2,
@@ -1164,30 +1164,6 @@
       "reason": "AgentccJSONResultResponse.result is an unshaped object"
     },
     {
-      "group": "agentcc",
-      "method": "GET",
-      "path": "/agentcc/org-configs/bulk/",
-      "operation_id": "agentcc_org-configs_bulk_list",
-      "tags": [
-        "agentcc"
-      ],
-      "status_code": "200",
-      "schema": "OrgConfigBulkResponse",
-      "reason": "OrgConfigBulkResponse.result is an unshaped object"
-    },
-    {
-      "group": "agentcc",
-      "method": "GET",
-      "path": "/agentcc/spend-summary/",
-      "operation_id": "agentcc_spend-summary_list",
-      "tags": [
-        "agentcc"
-      ],
-      "status_code": "200",
-      "schema": "SpendSummaryResponse",
-      "reason": "SpendSummaryResponse.result is an unshaped object"
-    },
-    {
       "group": "api",
       "method": "POST",
       "path": "/api/public/otel/v1/traces",
@@ -1216,18 +1192,6 @@
       "method": "POST",
       "path": "/model-hub/create_custom_evals/",
       "operation_id": "model-hub_create_custom_evals_create",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/dataset/{dataset_id}/json-schema/",
-      "operation_id": "model-hub_dataset_json-schema_list",
       "tags": [
         "model-hub"
       ],
@@ -3673,18 +3637,6 @@
     },
     {
       "group": "model-hub",
-      "method": "DELETE",
-      "path": "/model-hub/scores/{id}/",
-      "operation_id": "model-hub_scores_delete",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ScoreDeleteResponse",
-      "reason": "ScoreDeleteResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
       "method": "POST",
       "path": "/model-hub/test-evaluation/",
       "operation_id": "model-hub_test-evaluation_create",
@@ -4010,78 +3962,6 @@
     {
       "group": "usage",
       "method": "GET",
-      "path": "/usage/admin/custom-plan/",
-      "operation_id": "usage_admin_custom-plan_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminCustomPlanResponse",
-      "reason": "AdminCustomPlanResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "POST",
-      "path": "/usage/admin/custom-plan/",
-      "operation_id": "usage_admin_custom-plan_create",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminCustomPlanResponse",
-      "reason": "AdminCustomPlanResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "PUT",
-      "path": "/usage/admin/custom-plan/",
-      "operation_id": "usage_admin_custom-plan_update",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminCustomPlanResponse",
-      "reason": "AdminCustomPlanResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "GET",
-      "path": "/usage/admin/entitlements/",
-      "operation_id": "usage_admin_entitlements_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminEntitlementsResponse",
-      "reason": "AdminEntitlementsResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "DELETE",
-      "path": "/usage/admin/entitlements/",
-      "operation_id": "usage_admin_entitlements_delete",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminEntitlementsResponse",
-      "reason": "AdminEntitlementsResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "DELETE",
-      "path": "/usage/admin/pricing/",
-      "operation_id": "usage_admin_pricing_delete",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "AdminEntitlementsResponse",
-      "reason": "AdminEntitlementsResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "GET",
       "path": "/usage/get-last-four-digits/",
       "operation_id": "usage_get-last-four-digits_list",
       "tags": [
@@ -4090,18 +3970,6 @@
       "status_code": "200",
       "schema": "UsageJSONResponse",
       "reason": "UsageJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "GET",
-      "path": "/usage/get_latest_prices/",
-      "operation_id": "usage_get_latest_prices_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "PricingCalculationResponse",
-      "reason": "PricingCalculationResponse.result is an unshaped object"
     },
     {
       "group": "usage",
@@ -4141,18 +4009,6 @@
     },
     {
       "group": "usage",
-      "method": "GET",
-      "path": "/usage/usage-summary/",
-      "operation_id": "usage_usage-summary_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "UsageSummaryResponse",
-      "reason": "UsageSummaryResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
       "method": "POST",
       "path": "/usage/v2/stripe-webhook/",
       "operation_id": "usage_v2_stripe-webhook_create",
@@ -4174,30 +4030,6 @@
       "status_code": "200",
       "schema": "StripeWebhookResponse",
       "reason": "StripeWebhookResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "GET",
-      "path": "/usage/workspace-eval-summary/",
-      "operation_id": "usage_workspace-eval-summary_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "UsageSummaryResponse",
-      "reason": "UsageSummaryResponse.result is an unshaped object"
-    },
-    {
-      "group": "usage",
-      "method": "GET",
-      "path": "/usage/workspace-usage-summary/",
-      "operation_id": "usage_workspace-usage-summary_list",
-      "tags": [
-        "usage"
-      ],
-      "status_code": "200",
-      "schema": "UsageSummaryResponse",
-      "reason": "UsageSummaryResponse.result is an unshaped object"
     }
   ]
 }

@@ -663,7 +663,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "DatasetEvalStatsResponse"
         ),
         ("GET", "/model-hub/dataset/{dataset_id}/json-schema/"): (
-            "ModelHubJSONResponse"
+            "DatasetJsonSchemaResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/add-api-column/"): (
             "ModelHubJSONResponse"

@@ -635,6 +635,22 @@ class DatasetEvalStatsResponseSerializer(serializers.Serializer):
     result = DatasetEvalStatsItemSerializer(many=True)
 
 
+class JsonColumnSchemaEntrySerializer(serializers.Serializer):
+    name = serializers.CharField()
+    keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+    sample = serializers.JSONField(required=False, allow_null=True)
+    max_array_count = serializers.IntegerField(required=False)
+    max_images_count = serializers.IntegerField(required=False)
+
+
+class DatasetJsonSchemaResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = serializers.DictField(child=JsonColumnSchemaEntrySerializer())
+
+
 class PreviewDatasetOperationRequestSerializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=False)
     json_key = serializers.CharField(required=False, allow_blank=True)

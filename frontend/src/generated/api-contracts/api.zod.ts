@@ -15445,23 +15445,21 @@ export const ModelHubDatasetJsonSchemaListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+
+
+
+
 export const ModelHubDatasetJsonSchemaListResponse = zod.object({
-  "status": zod.object({
+  "status": zod.boolean(),
+  "result": zod.record(zod.string(), zod.object({
+  "name": zod.string().min(1),
+  "keys": zod.array(zod.string().min(1)).optional(),
+  "sample": zod.object({
 
 }).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "max_array_count": zod.number().optional(),
+  "max_images_count": zod.number().optional()
+}))
 })
 
 

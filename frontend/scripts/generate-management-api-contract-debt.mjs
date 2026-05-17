@@ -134,11 +134,12 @@ function isUnshapedObject(schema) {
   if (!schema) return false;
   const resolved = dereference(schema);
   if (resolved.type !== "object") return false;
-  return (
-    !resolved.properties ||
-    Object.keys(resolved.properties).length === 0 ||
-    Boolean(resolved.additionalProperties)
-  );
+  if (resolved.additionalProperties) {
+    return resolved.additionalProperties === true
+      ? true
+      : isUnshapedObject(resolved.additionalProperties);
+  }
+  return !resolved.properties || Object.keys(resolved.properties).length === 0;
 }
 
 function broadSuccessResponseReason(schema) {
