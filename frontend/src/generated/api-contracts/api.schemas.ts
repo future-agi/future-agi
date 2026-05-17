@@ -4413,6 +4413,8 @@ export interface ModelHubPaginatedResponseApi {
   results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
+export interface ModelHubEmptyRequestApi { [key: string]: unknown }
+
 export type RerunOperationRequestApiConfig = { [key: string]: unknown };
 
 export interface RerunOperationRequestApi {
@@ -5500,8 +5502,6 @@ export interface EvalTemplateVersionCreateRequestApi {
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;
 }
 
-export interface ModelHubEmptyRequestApi { [key: string]: unknown }
-
 export type EvalUserTemplateApiConfig = { [key: string]: unknown };
 
 export interface EvalUserTemplateApi {
@@ -5691,6 +5691,38 @@ export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown 
 export interface ColumnValuesRequestApi {
   dataset_id: string;
   column_placeholders: ColumnValuesRequestApiColumnPlaceholders;
+}
+
+export type UpdateColumnConfigApiColumnConfigItem = {[key: string]: string};
+
+export interface UpdateColumnConfigApi {
+  eval_id: string;
+  column_config?: UpdateColumnConfigApiColumnConfigItem[];
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  source?: string;
+}
+
+export type EvalMetricRequestApiFiltersItem = { [key: string]: unknown };
+
+export interface EvalMetricRequestApi {
+  eval_template_id: string;
+  filters?: EvalMetricRequestApiFiltersItem[];
+}
+
+export interface EvalTemplateNamesRequestApi {
+  search_text?: string;
+}
+
+export type LegacyEvalTemplatesRequestApiSortItem = { [key: string]: unknown };
+
+export interface LegacyEvalTemplatesRequestApi {
+  page_size?: number;
+  current_page_index?: number;
+  search_text?: string;
+  sort?: LegacyEvalTemplatesRequestApiSortItem[];
 }
 
 export type GroundTruthMappingRequestApiVariableMapping = { [key: string]: unknown };

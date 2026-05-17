@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1323,
-    "mutation_endpoints_without_body_schema": 69,
-    "operations_without_response_schema": 117
+    "mutation_endpoints_without_body_schema": 64,
+    "operations_without_response_schema": 107
   },
   "by_group": {
     "accounts": {
@@ -70,8 +70,8 @@
     "model-hub": {
       "paths": 365,
       "operations": 475,
-      "mutation_endpoints_without_body_schema": 69,
-      "operations_without_response_schema": 117
+      "mutation_endpoints_without_body_schema": 64,
+      "operations_without_response_schema": 107
     },
     "saml2_auth": {
       "paths": 12,
@@ -111,15 +111,6 @@
     }
   },
   "mutation_endpoints_without_body_schema": [
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/cells/{cell_id}/run-error-localizer/",
-      "operation_id": "model-hub_cells_run-error-localizer_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
     {
       "group": "model-hub",
       "method": "POST",
@@ -695,63 +686,9 @@
       "tags": [
         "model-hub"
       ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PATCH",
-      "path": "/model-hub/get-eval-logs",
-      "operation_id": "model-hub_get-eval-logs_partial_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-metrics",
-      "operation_id": "model-hub_get-eval-metrics_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-template-names",
-      "operation_id": "model-hub_get-eval-template-names_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-templates",
-      "operation_id": "model-hub_get-eval-templates_create",
-      "tags": [
-        "model-hub"
-      ]
     }
   ],
   "operations_without_response_schema": [
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/cells/{cell_id}/run-error-localizer/",
-      "operation_id": "model-hub_cells_run-error-localizer_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/cells/{cell_id}/run-error-localizer/",
-      "operation_id": "model-hub_cells_run-error-localizer_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
     {
       "group": "model-hub",
       "method": "GET",
@@ -1711,78 +1648,6 @@
       "method": "GET",
       "path": "/model-hub/experiments/{experiment_id}/{row_id}/",
       "operation_id": "model-hub_experiments_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/get-eval-config",
-      "operation_id": "model-hub_get-eval-config_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/get-eval-logs",
-      "operation_id": "model-hub_get-eval-logs_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PATCH",
-      "path": "/model-hub/get-eval-logs",
-      "operation_id": "model-hub_get-eval-logs_partial_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/get-eval-logs-details",
-      "operation_id": "model-hub_get-eval-logs-details_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/get-eval-metrics",
-      "operation_id": "model-hub_get-eval-metrics_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-metrics",
-      "operation_id": "model-hub_get-eval-metrics_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-template-names",
-      "operation_id": "model-hub_get-eval-template-names_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/get-eval-templates",
-      "operation_id": "model-hub_get-eval-templates_create",
       "tags": [
         "model-hub"
       ]

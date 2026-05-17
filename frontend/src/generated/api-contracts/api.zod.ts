@@ -14136,6 +14136,25 @@ export const ModelHubCellsRunErrorLocalizerListParams = zod.object({
   "cell_id": zod.string()
 })
 
+export const ModelHubCellsRunErrorLocalizerListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Use case: in the dataset detail drawer, the user opens an eval cell
@@ -14162,6 +14181,29 @@ POST /model-hub/cells/{cell_id}/run-error-localizer/
  */
 export const ModelHubCellsRunErrorLocalizerCreateParams = zod.object({
   "cell_id": zod.string()
+})
+
+export const ModelHubCellsRunErrorLocalizerCreateBody = zod.object({
+
+}).passthrough()
+
+export const ModelHubCellsRunErrorLocalizerCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -17858,6 +17900,205 @@ export const ModelHubGetColumnValuesCreateBody = zod.object({
 })
 
 export const ModelHubGetColumnValuesCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubGetEvalConfigListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubGetEvalLogsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubGetEvalLogsPartialUpdateBodySourceMax = 50;
+
+
+
+export const ModelHubGetEvalLogsPartialUpdateBody = zod.object({
+  "eval_id": zod.string().uuid(),
+  "column_config": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "source": zod.string().min(1).max(modelHubGetEvalLogsPartialUpdateBodySourceMax).optional()
+})
+
+export const ModelHubGetEvalLogsPartialUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubGetEvalMetricsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubGetEvalMetricsCreateBodyFiltersDefault = [];
+
+export const ModelHubGetEvalMetricsCreateBody = zod.object({
+  "eval_template_id": zod.string().uuid(),
+  "filters": zod.array(zod.object({
+
+}).passthrough()).default(modelHubGetEvalMetricsCreateBodyFiltersDefault)
+})
+
+export const ModelHubGetEvalMetricsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubGetEvalTemplateNamesCreateBodySearchTextDefault = ``;
+
+export const ModelHubGetEvalTemplateNamesCreateBody = zod.object({
+  "search_text": zod.string().default(modelHubGetEvalTemplateNamesCreateBodySearchTextDefault)
+})
+
+export const ModelHubGetEvalTemplateNamesCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubGetEvalTemplatesCreateBodyPageSizeDefault = 10;
+export const modelHubGetEvalTemplatesCreateBodyCurrentPageIndexDefault = 0;
+export const modelHubGetEvalTemplatesCreateBodySearchTextDefault = ``;
+export const modelHubGetEvalTemplatesCreateBodySortDefault = [];
+
+export const ModelHubGetEvalTemplatesCreateBody = zod.object({
+  "page_size": zod.number().default(modelHubGetEvalTemplatesCreateBodyPageSizeDefault),
+  "current_page_index": zod.number().default(modelHubGetEvalTemplatesCreateBodyCurrentPageIndexDefault),
+  "search_text": zod.string().default(modelHubGetEvalTemplatesCreateBodySearchTextDefault),
+  "sort": zod.array(zod.object({
+
+}).passthrough()).default(modelHubGetEvalTemplatesCreateBodySortDefault)
+})
+
+export const ModelHubGetEvalTemplatesCreateResponse = zod.object({
   "status": zod.object({
 
 }).passthrough().optional(),

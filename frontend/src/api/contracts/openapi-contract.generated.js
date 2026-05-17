@@ -9952,13 +9952,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_cells_run-error-localizer_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_cells_run-error-localizer_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/ModelHubEmptyRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/column-config/{column_id}/": {
@@ -13497,7 +13537,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_get-eval-config_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/get-eval-logs": {
@@ -13505,13 +13564,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_get-eval-logs_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "patch": {
         "operationId": "model-hub_get-eval-logs_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/UpdateColumnConfig"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "model-hub_get-eval-logs_delete",
@@ -13525,7 +13624,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_get-eval-logs-details_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/get-eval-metrics": {
@@ -13533,29 +13651,111 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_get-eval-metrics_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_get-eval-metrics_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/EvalMetricRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/get-eval-template-names": {
       "post": {
         "operationId": "model-hub_get-eval-template-names_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/EvalTemplateNamesRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/get-eval-templates": {
       "post": {
         "operationId": "model-hub_get-eval-templates_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyEvalTemplatesRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/ground-truth/{ground_truth_id}/": {
@@ -38237,6 +38437,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalMetricRequest": {
+      "required": [
+        "eval_template_id"
+      ],
+      "type": "object",
+      "properties": {
+        "eval_template_id": {
+          "title": "Eval template id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        }
+      }
+    },
     "EvalPlayGround": {
       "required": [
         "template_id"
@@ -38836,6 +39056,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           }
+        }
+      }
+    },
+    "EvalTemplateNamesRequest": {
+      "type": "object",
+      "properties": {
+        "search_text": {
+          "title": "Search text",
+          "type": "string",
+          "default": ""
         }
       }
     },
@@ -41295,6 +41525,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "meta": {
           "$ref": "#/definitions/LangfuseTracesMeta"
+        }
+      }
+    },
+    "LegacyEvalTemplatesRequest": {
+      "type": "object",
+      "properties": {
+        "page_size": {
+          "title": "Page size",
+          "type": "integer",
+          "default": 10
+        },
+        "current_page_index": {
+          "title": "Current page index",
+          "type": "integer",
+          "default": 0
+        },
+        "search_text": {
+          "title": "Search text",
+          "type": "string",
+          "default": ""
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
         }
       }
     },
@@ -51019,6 +51276,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 10,
           "minLength": 6
+        }
+      }
+    },
+    "UpdateColumnConfig": {
+      "required": [
+        "eval_id"
+      ],
+      "type": "object",
+      "properties": {
+        "eval_id": {
+          "title": "Eval id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "column_config": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          }
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "maxLength": 50,
+          "minLength": 1
         }
       }
     },

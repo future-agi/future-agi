@@ -6738,6 +6738,9 @@ class GetEvalConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             eval_id = request.query_params.get(

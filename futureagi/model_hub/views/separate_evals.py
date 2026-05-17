@@ -47,11 +47,14 @@ from model_hub.serializers.contracts import (
     EvalTemplateListChartsRequestSerializer,
     EvalTemplateUpdateV2RequestSerializer,
     EvalTemplateVersionCreateRequestSerializer,
+    EvalMetricRequestSerializer,
+    EvalTemplateNamesRequestSerializer,
     GroundTruthConfigRequestSerializer,
     GroundTruthMappingRequestSerializer,
     GroundTruthRoleMappingRequestSerializer,
     GroundTruthSearchRequestSerializer,
     GroundTruthUploadRequestSerializer,
+    LegacyEvalTemplatesRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
     ModelHubEmptyRequestSerializer,
     ModelHubJSONResponseSerializer,
@@ -307,6 +310,9 @@ class GetAPICallLogDetailsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             eval_template_id = request.query_params.get(
@@ -454,6 +460,9 @@ class GetAPICallLogView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             log_id = request.query_params.get("log_id", None)
@@ -569,6 +578,10 @@ class GetAPICallLogView(APIView):
             logger.exception("Error fetching log row")
             return self._gm.bad_request(get_error_message("LOG_ROW_FETCHING_FAILED"))
 
+    @swagger_auto_schema(
+        request_body=UpdateColumnConfigSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def patch(self, request, *args, **kwargs):
         try:
             serializer = UpdateColumnConfigSerializer(data=request.data)
@@ -652,6 +665,10 @@ class CellErrorLocalizerView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ModelHubEmptyRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, cell_id=None, *args, **kwargs):
         try:
             from model_hub.models.develop_dataset import Cell
@@ -814,6 +831,9 @@ class CellErrorLocalizerView(APIView):
             logger.exception(f"Error in CellErrorLocalizerView: {str(e)}")
             return self._gm.bad_request(f"Failed to start error localization: {str(e)}")
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, cell_id=None, *args, **kwargs):
         """
         Poll endpoint — returns the current state of the localizer task
@@ -916,6 +936,9 @@ class EvalMetricView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             eval_template_id = request.query_params.get("eval_template_id", None)
@@ -945,6 +968,10 @@ class EvalMetricView(APIView):
             logger.exception(f"Error in EvalMetricView.get: {str(e)}")
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        request_body=EvalMetricRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             eval_template_id = request.data.get("eval_template_id", None)
@@ -974,6 +1001,10 @@ class GetEvalTemplateNameView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=EvalTemplateNamesRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             logs = APICallLog.objects.filter(
@@ -1143,6 +1174,10 @@ class GetEvalTemplates(APIView):
 
         return template_data
 
+    @swagger_auto_schema(
+        request_body=LegacyEvalTemplatesRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             page_size = request.data.get("page_size", 10)

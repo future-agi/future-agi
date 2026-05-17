@@ -64,6 +64,7 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/api/models_list/",
         "/model-hub/columns/{column_id}/operation-config/",
         "/model-hub/columns/{column_id}/rerun-operation/",
+        "/model-hub/cells/{cell_id}/run-error-localizer/",
         "/model-hub/custom-models/",
         "/model-hub/custom-models/list/",
         "/model-hub/custom-models/{id}/",
@@ -119,6 +120,12 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/experiments/v2/{experiment_id}/feedback/get-template/",
         "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/",
         "/model-hub/get-column-values/",
+        "/model-hub/get-eval-config",
+        "/model-hub/get-eval-logs",
+        "/model-hub/get-eval-logs-details",
+        "/model-hub/get-eval-metrics",
+        "/model-hub/get-eval-template-names",
+        "/model-hub/get-eval-templates",
         "/model-hub/ground-truth/{ground_truth_id}/",
         "/model-hub/ground-truth/{ground_truth_id}/data/",
         "/model-hub/ground-truth/{ground_truth_id}/embed/",
@@ -189,6 +196,9 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/ai-eval-writer/"): "AIEvalWriterRequest",
         ("POST", "/model-hub/columns/{column_id}/rerun-operation/"): (
             "RerunOperationRequest"
+        ),
+        ("POST", "/model-hub/cells/{cell_id}/run-error-localizer/"): (
+            "ModelHubEmptyRequest"
         ),
         ("POST", "/model-hub/custom-models/{id}/"): (
             "CustomAIModelUpdateRequest"
@@ -286,6 +296,12 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/eval-template/create/"): "EvalTemplate",
         ("POST", "/model-hub/eval-user-template/create/"): "EvalUserTemplate",
         ("POST", "/model-hub/get-column-values/"): "ColumnValuesRequest",
+        ("PATCH", "/model-hub/get-eval-logs"): "UpdateColumnConfig",
+        ("POST", "/model-hub/get-eval-metrics"): "EvalMetricRequest",
+        ("POST", "/model-hub/get-eval-template-names"): (
+            "EvalTemplateNamesRequest"
+        ),
+        ("POST", "/model-hub/get-eval-templates"): "LegacyEvalTemplatesRequest",
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "ModelHubEmptyRequest"
         ),
@@ -387,6 +403,12 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "ModelHubJSONResponse"
         ),
         ("POST", "/model-hub/columns/{column_id}/rerun-operation/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("GET", "/model-hub/cells/{cell_id}/run-error-localizer/"): (
+            "ModelHubJSONResponse"
+        ),
+        ("POST", "/model-hub/cells/{cell_id}/run-error-localizer/"): (
             "ModelHubJSONResponse"
         ),
         ("GET", "/model-hub/custom-models/"): "ModelHubPaginatedResponse",
@@ -523,6 +545,14 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/",
         ): "ModelHubJSONResponse",
         ("POST", "/model-hub/get-column-values/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/get-eval-config"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/get-eval-logs"): "ModelHubJSONResponse",
+        ("PATCH", "/model-hub/get-eval-logs"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/get-eval-logs-details"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/get-eval-metrics"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/get-eval-metrics"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/get-eval-template-names"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/get-eval-templates"): "ModelHubJSONResponse",
         ("DELETE", "/model-hub/ground-truth/{ground_truth_id}/"): (
             "ModelHubJSONResponse"
         ),

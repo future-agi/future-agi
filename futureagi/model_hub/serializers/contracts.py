@@ -689,3 +689,27 @@ class GroundTruthConfigRequestSerializer(serializers.Serializer):
 class GroundTruthSearchRequestSerializer(serializers.Serializer):
     query = serializers.CharField()
     max_results = serializers.IntegerField(required=False, min_value=1, max_value=20)
+
+
+class EvalMetricRequestSerializer(serializers.Serializer):
+    eval_template_id = serializers.UUIDField()
+    filters = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
+
+
+class EvalTemplateNamesRequestSerializer(serializers.Serializer):
+    search_text = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
+    page_size = serializers.IntegerField(required=False, default=10)
+    current_page_index = serializers.IntegerField(required=False, default=0)
+    search_text = serializers.CharField(required=False, allow_blank=True, default="")
+    sort = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
