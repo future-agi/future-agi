@@ -13696,9 +13696,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/delete-test-executions/": {
       "post": {
         "operationId": "simulate_run-tests_delete-test-executions_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TestExecutionBulkDelete"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/TestExecutionBulkDeleteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ErrorResponse"
+          }
+        }
       }
     },
     "/simulate/run-tests/{run_test_id}/delete/": {
@@ -13863,9 +13878,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/rerun-test-executions/": {
       "post": {
         "operationId": "simulate_run-tests_rerun-test-executions_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TestExecutionRerun"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/TestExecutionRerunResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ErrorResponse"
+          }
+        }
       }
     },
     "/simulate/run-tests/{run_test_id}/run-new-evals/": {
@@ -34160,6 +34190,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TestExecutionBulkDelete": {
+      "type": "object",
+      "properties": {
+        "test_execution_ids": {
+          "description": "List of specific test execution IDs to delete",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "select_all": {
+          "title": "Select all",
+          "description": "Whether to delete all test executions in the run test",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "TestExecutionBulkDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "deleted_count": {
+          "title": "Deleted count",
+          "type": "integer",
+          "readOnly": true
+        },
+        "deleted_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "readOnly": true
+        }
+      }
+    },
     "TestExecutionColumnOrder": {
       "required": [
         "column_order"
@@ -34295,6 +34374,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true,
           "minLength": 1
+        }
+      }
+    },
+    "TestExecutionRerun": {
+      "required": [
+        "rerun_type"
+      ],
+      "type": "object",
+      "properties": {
+        "rerun_type": {
+          "title": "Rerun type",
+          "description": "Type of rerun: evaluation only or call plus evaluation",
+          "type": "string",
+          "enum": [
+            "eval_only",
+            "call_and_eval"
+          ]
+        },
+        "test_execution_ids": {
+          "description": "List of specific test execution IDs to rerun",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "select_all": {
+          "title": "Select all",
+          "description": "Whether to rerun all test executions in the run test",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "TestExecutionRerunResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "rerun_type": {
+          "title": "Rerun type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "total_test_executions": {
+          "title": "Total test executions",
+          "type": "integer",
+          "readOnly": true
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TestExecutionRerunResult"
+          },
+          "readOnly": true
+        },
+        "overall_success_count": {
+          "title": "Overall success count",
+          "type": "integer",
+          "readOnly": true
+        },
+        "overall_failure_count": {
+          "title": "Overall failure count",
+          "type": "integer",
+          "readOnly": true
         }
       }
     },
@@ -37748,6 +37903,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "visible": {
           "title": "Visible",
           "type": "boolean"
+        }
+      }
+    },
+    "TestExecutionRerunResult": {
+      "type": "object",
+      "properties": {
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "success_count": {
+          "title": "Success count",
+          "type": "integer",
+          "readOnly": true
+        },
+        "failure_count": {
+          "title": "Failure count",
+          "type": "integer",
+          "readOnly": true
+        },
+        "successful_reruns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "readOnly": true
+        },
+        "failed_reruns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          },
+          "readOnly": true
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "boolean",
+          "readOnly": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
         }
       }
     },

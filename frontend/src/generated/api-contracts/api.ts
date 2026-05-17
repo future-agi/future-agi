@@ -431,9 +431,13 @@ import type {
   SyncLogApi,
   TTSVoiceApi,
   TestExecutionApi,
+  TestExecutionBulkDeleteApi,
+  TestExecutionBulkDeleteResponseApi,
   TestExecutionColumnOrderApi,
   TestExecutionColumnOrderResponseApi,
   TestExecutionItemResponseApi,
+  TestExecutionRerunApi,
+  TestExecutionRerunResponseApi,
   TokenObtainPairApi,
   ToolsApi,
   TraceApi,
@@ -35860,17 +35864,34 @@ export const simulateRunTestsComponentsPartialUpdate = async (runTestId: string,
 
 
 
-export type simulateRunTestsDeleteTestExecutionsCreateResponse201 = {
-  data: void
-  status: 201
+export type simulateRunTestsDeleteTestExecutionsCreateResponse200 = {
+  data: TestExecutionBulkDeleteResponseApi
+  status: 200
 }
 
-export type simulateRunTestsDeleteTestExecutionsCreateResponseSuccess = (simulateRunTestsDeleteTestExecutionsCreateResponse201) & {
+export type simulateRunTestsDeleteTestExecutionsCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type simulateRunTestsDeleteTestExecutionsCreateResponse404 = {
+  data: ErrorResponseApi
+  status: 404
+}
+
+export type simulateRunTestsDeleteTestExecutionsCreateResponse500 = {
+  data: ErrorResponseApi
+  status: 500
+}
+
+export type simulateRunTestsDeleteTestExecutionsCreateResponseSuccess = (simulateRunTestsDeleteTestExecutionsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateRunTestsDeleteTestExecutionsCreateResponseError = (simulateRunTestsDeleteTestExecutionsCreateResponse400 | simulateRunTestsDeleteTestExecutionsCreateResponse404 | simulateRunTestsDeleteTestExecutionsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateRunTestsDeleteTestExecutionsCreateResponse = (simulateRunTestsDeleteTestExecutionsCreateResponseSuccess)
+export type simulateRunTestsDeleteTestExecutionsCreateResponse = (simulateRunTestsDeleteTestExecutionsCreateResponseSuccess | simulateRunTestsDeleteTestExecutionsCreateResponseError)
 
 export const getSimulateRunTestsDeleteTestExecutionsCreateUrl = (runTestId: string,) => {
 
@@ -35883,14 +35904,16 @@ export const getSimulateRunTestsDeleteTestExecutionsCreateUrl = (runTestId: stri
 /**
  * Delete multiple test executions within a run test.
  */
-export const simulateRunTestsDeleteTestExecutionsCreate = async (runTestId: string, options?: RequestInit): Promise<simulateRunTestsDeleteTestExecutionsCreateResponse> => {
+export const simulateRunTestsDeleteTestExecutionsCreate = async (runTestId: string,
+    testExecutionBulkDeleteApi: TestExecutionBulkDeleteApi, options?: RequestInit): Promise<simulateRunTestsDeleteTestExecutionsCreateResponse> => {
 
   return apiMutator<simulateRunTestsDeleteTestExecutionsCreateResponse>(getSimulateRunTestsDeleteTestExecutionsCreateUrl(runTestId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      testExecutionBulkDeleteApi,)
   }
 );}
 
@@ -36339,17 +36362,34 @@ export const simulateRunTestsExecutionsList = async (runTestId: string, options?
 
 
 
-export type simulateRunTestsRerunTestExecutionsCreateResponse201 = {
-  data: void
-  status: 201
+export type simulateRunTestsRerunTestExecutionsCreateResponse200 = {
+  data: TestExecutionRerunResponseApi
+  status: 200
 }
 
-export type simulateRunTestsRerunTestExecutionsCreateResponseSuccess = (simulateRunTestsRerunTestExecutionsCreateResponse201) & {
+export type simulateRunTestsRerunTestExecutionsCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type simulateRunTestsRerunTestExecutionsCreateResponse404 = {
+  data: ErrorResponseApi
+  status: 404
+}
+
+export type simulateRunTestsRerunTestExecutionsCreateResponse500 = {
+  data: ErrorResponseApi
+  status: 500
+}
+
+export type simulateRunTestsRerunTestExecutionsCreateResponseSuccess = (simulateRunTestsRerunTestExecutionsCreateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateRunTestsRerunTestExecutionsCreateResponseError = (simulateRunTestsRerunTestExecutionsCreateResponse400 | simulateRunTestsRerunTestExecutionsCreateResponse404 | simulateRunTestsRerunTestExecutionsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateRunTestsRerunTestExecutionsCreateResponse = (simulateRunTestsRerunTestExecutionsCreateResponseSuccess)
+export type simulateRunTestsRerunTestExecutionsCreateResponse = (simulateRunTestsRerunTestExecutionsCreateResponseSuccess | simulateRunTestsRerunTestExecutionsCreateResponseError)
 
 export const getSimulateRunTestsRerunTestExecutionsCreateUrl = (runTestId: string,) => {
 
@@ -36363,14 +36403,16 @@ export const getSimulateRunTestsRerunTestExecutionsCreateUrl = (runTestId: strin
  * Rerun multiple test executions (either evaluation only or call + evaluation).
 All call executions within each test execution are rerun.
  */
-export const simulateRunTestsRerunTestExecutionsCreate = async (runTestId: string, options?: RequestInit): Promise<simulateRunTestsRerunTestExecutionsCreateResponse> => {
+export const simulateRunTestsRerunTestExecutionsCreate = async (runTestId: string,
+    testExecutionRerunApi: TestExecutionRerunApi, options?: RequestInit): Promise<simulateRunTestsRerunTestExecutionsCreateResponse> => {
 
   return apiMutator<simulateRunTestsRerunTestExecutionsCreateResponse>(getSimulateRunTestsRerunTestExecutionsCreateUrl(runTestId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      testExecutionRerunApi,)
   }
 );}
 

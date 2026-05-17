@@ -1410,6 +1410,41 @@ class TestExecutionBulkDeleteSerializer(serializers.Serializer):
         return data
 
 
+class TestExecutionBulkDeleteResponseSerializer(serializers.Serializer):
+    """Response serializer for bulk deleting test executions from a run test."""
+
+    message = serializers.CharField(read_only=True)
+    run_test_id = serializers.UUIDField(read_only=True)
+    deleted_count = serializers.IntegerField(read_only=True)
+    deleted_ids = serializers.ListField(child=serializers.UUIDField(), read_only=True)
+
+
+class TestExecutionRerunResultSerializer(serializers.Serializer):
+    """Per-test-execution result in the bulk rerun response."""
+
+    test_execution_id = serializers.UUIDField(read_only=True)
+    success_count = serializers.IntegerField(read_only=True)
+    failure_count = serializers.IntegerField(read_only=True)
+    successful_reruns = serializers.ListField(
+        child=serializers.UUIDField(), read_only=True
+    )
+    failed_reruns = serializers.ListField(child=serializers.DictField(), read_only=True)
+    skipped = serializers.BooleanField(required=False, read_only=True)
+    reason = serializers.CharField(required=False, read_only=True)
+
+
+class TestExecutionRerunResponseSerializer(serializers.Serializer):
+    """Response serializer for bulk rerun of test executions."""
+
+    message = serializers.CharField(read_only=True)
+    run_test_id = serializers.UUIDField(read_only=True)
+    rerun_type = serializers.CharField(read_only=True)
+    total_test_executions = serializers.IntegerField(read_only=True)
+    results = TestExecutionRerunResultSerializer(many=True, read_only=True)
+    overall_success_count = serializers.IntegerField(read_only=True)
+    overall_failure_count = serializers.IntegerField(read_only=True)
+
+
 # Migrated to simulate/serializers/requests/run_test_evals.py
 # Re-exported here for backward compatibility.
 from simulate.serializers.requests.run_test_evals import (  # noqa: E402

@@ -137,9 +137,11 @@ from simulate.serializers.test_execution import (
     PerformanceSummarySerializer,
     TestExecutionAnalyticsSerializer,
     TestExecutionBulkDeleteSerializer,
+    TestExecutionBulkDeleteResponseSerializer,
     TestExecutionColumnOrderSerializer,
     TestExecutionColumnOrderResponseSerializer,
     TestExecutionRerunSerializer,
+    TestExecutionRerunResponseSerializer,
     TestExecutionSerializer,
 )
 
@@ -3726,6 +3728,15 @@ class TestExecutionBulkDeleteView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TestExecutionBulkDeleteSerializer,
+        responses={
+            200: TestExecutionBulkDeleteResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id):
         """
         Delete multiple test executions within a run test.
@@ -6535,6 +6546,15 @@ class TestExecutionRerunView(APIView):
 
         return successful_reruns, failed_reruns
 
+    @swagger_auto_schema(
+        request_body=TestExecutionRerunSerializer,
+        responses={
+            200: TestExecutionRerunResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def post(self, request, run_test_id):
         """
         Rerun multiple test executions (either evaluation only or call + evaluation).

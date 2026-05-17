@@ -26541,10 +26541,40 @@
             "post": {
                 "operationId": "simulate_run-tests_delete-test-executions_create",
                 "description": "Delete multiple test executions within a run test.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionBulkDelete"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionBulkDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -26940,10 +26970,40 @@
             "post": {
                 "operationId": "simulate_run-tests_rerun-test-executions_create",
                 "description": "Rerun multiple test executions (either evaluation only or call + evaluation).\nAll call executions within each test execution are rerun.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionRerun"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionRerunResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -50901,6 +50961,68 @@
                 }
             }
         },
+        "TestExecutionBulkDelete": {
+            "type": "object",
+            "properties": {
+                "test_execution_ids": {
+                    "description": "List of specific test execution IDs to delete",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                },
+                "select_all": {
+                    "title": "Select all",
+                    "description": "Whether to delete all test executions in the run test",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "TestExecutionBulkDeleteResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "deleted_count": {
+                    "title": "Deleted count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "deleted_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "ErrorResponse": {
+            "required": [
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "EvalConfigDefinition": {
             "required": [
                 "template_id"
@@ -51389,6 +51511,133 @@
                     "type": "string",
                     "readOnly": true,
                     "minLength": 1
+                }
+            }
+        },
+        "TestExecutionRerun": {
+            "required": [
+                "rerun_type"
+            ],
+            "type": "object",
+            "properties": {
+                "rerun_type": {
+                    "title": "Rerun type",
+                    "description": "Type of rerun: evaluation only or call plus evaluation",
+                    "type": "string",
+                    "enum": [
+                        "eval_only",
+                        "call_and_eval"
+                    ]
+                },
+                "test_execution_ids": {
+                    "description": "List of specific test execution IDs to rerun",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                },
+                "select_all": {
+                    "title": "Select all",
+                    "description": "Whether to rerun all test executions in the run test",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "TestExecutionRerunResult": {
+            "type": "object",
+            "properties": {
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "success_count": {
+                    "title": "Success count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "failure_count": {
+                    "title": "Failure count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "successful_reruns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "readOnly": true
+                },
+                "failed_reruns": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    },
+                    "readOnly": true
+                },
+                "skipped": {
+                    "title": "Skipped",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                }
+            }
+        },
+        "TestExecutionRerunResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "rerun_type": {
+                    "title": "Rerun type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "total_test_executions": {
+                    "title": "Total test executions",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TestExecutionRerunResult"
+                    },
+                    "readOnly": true
+                },
+                "overall_success_count": {
+                    "title": "Overall success count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "overall_failure_count": {
+                    "title": "Overall failure count",
+                    "type": "integer",
+                    "readOnly": true
                 }
             }
         },
@@ -52450,19 +52699,6 @@
                 "type": "array",
                 "items": {
                     "type": "string"
-                }
-            }
-        },
-        "ErrorResponse": {
-            "required": [
-                "error"
-            ],
-            "type": "object",
-            "properties": {
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "minLength": 1
                 }
             }
         },

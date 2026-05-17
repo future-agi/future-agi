@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 318,
-    "operations_without_response_schema": 551
+    "mutation_endpoints_without_body_schema": 316,
+    "operations_without_response_schema": 549
   },
   "by_group": {
     "accounts": {
@@ -88,8 +88,8 @@
     "simulate": {
       "paths": 105,
       "operations": 125,
-      "mutation_endpoints_without_body_schema": 10,
-      "operations_without_response_schema": 28
+      "mutation_endpoints_without_body_schema": 8,
+      "operations_without_response_schema": 26
     },
     "tracer": {
       "paths": 159,
@@ -2438,24 +2438,6 @@
       "method": "PATCH",
       "path": "/simulate/run-tests/{run_test_id}/components/",
       "operation_id": "simulate_run-tests_components_partial_update",
-      "tags": [
-        "simulate"
-      ]
-    },
-    {
-      "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/run-tests/{run_test_id}/delete-test-executions/",
-      "operation_id": "simulate_run-tests_delete-test-executions_create",
-      "tags": [
-        "simulate"
-      ]
-    },
-    {
-      "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/run-tests/{run_test_id}/rerun-test-executions/",
-      "operation_id": "simulate_run-tests_rerun-test-executions_create",
       "tags": [
         "simulate"
       ]
@@ -7063,27 +7045,9 @@
     },
     {
       "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/run-tests/{run_test_id}/delete-test-executions/",
-      "operation_id": "simulate_run-tests_delete-test-executions_create",
-      "tags": [
-        "simulate"
-      ]
-    },
-    {
-      "group": "simulate",
       "method": "GET",
       "path": "/simulate/run-tests/{run_test_id}/eval-configs/{eval_config_id}/get-structure/",
       "operation_id": "simulate_run-tests_eval-configs_get-structure_list",
-      "tags": [
-        "simulate"
-      ]
-    },
-    {
-      "group": "simulate",
-      "method": "POST",
-      "path": "/simulate/run-tests/{run_test_id}/rerun-test-executions/",
-      "operation_id": "simulate_run-tests_rerun-test-executions_create",
       "tags": [
         "simulate"
       ]

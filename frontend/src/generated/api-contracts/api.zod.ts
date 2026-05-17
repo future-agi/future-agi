@@ -18358,6 +18358,23 @@ export const SimulateRunTestsDeleteTestExecutionsCreateParams = zod.object({
   "run_test_id": zod.string()
 })
 
+export const simulateRunTestsDeleteTestExecutionsCreateBodySelectAllDefault = false;
+
+export const SimulateRunTestsDeleteTestExecutionsCreateBody = zod.object({
+  "test_execution_ids": zod.array(zod.string().uuid()).optional().describe('List of specific test execution IDs to delete'),
+  "select_all": zod.boolean().default(simulateRunTestsDeleteTestExecutionsCreateBodySelectAllDefault).describe('Whether to delete all test executions in the run test')
+})
+
+
+
+
+export const SimulateRunTestsDeleteTestExecutionsCreateResponse = zod.object({
+  "message": zod.string().min(1).optional(),
+  "run_test_id": zod.string().uuid().optional(),
+  "deleted_count": zod.number().optional(),
+  "deleted_ids": zod.array(zod.string().uuid()).optional()
+})
+
 
 /**
  * Delete a specific run test
@@ -18557,6 +18574,37 @@ All call executions within each test execution are rerun.
  */
 export const SimulateRunTestsRerunTestExecutionsCreateParams = zod.object({
   "run_test_id": zod.string()
+})
+
+export const simulateRunTestsRerunTestExecutionsCreateBodySelectAllDefault = false;
+
+export const SimulateRunTestsRerunTestExecutionsCreateBody = zod.object({
+  "rerun_type": zod.enum(['eval_only', 'call_and_eval']).describe('Type of rerun: evaluation only or call plus evaluation'),
+  "test_execution_ids": zod.array(zod.string().uuid()).optional().describe('List of specific test execution IDs to rerun'),
+  "select_all": zod.boolean().default(simulateRunTestsRerunTestExecutionsCreateBodySelectAllDefault).describe('Whether to rerun all test executions in the run test')
+})
+
+
+
+
+
+
+export const SimulateRunTestsRerunTestExecutionsCreateResponse = zod.object({
+  "message": zod.string().min(1).optional(),
+  "run_test_id": zod.string().uuid().optional(),
+  "rerun_type": zod.string().min(1).optional(),
+  "total_test_executions": zod.number().optional(),
+  "results": zod.array(zod.object({
+  "test_execution_id": zod.string().uuid().optional(),
+  "success_count": zod.number().optional(),
+  "failure_count": zod.number().optional(),
+  "successful_reruns": zod.array(zod.string().uuid()).optional(),
+  "failed_reruns": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "skipped": zod.boolean().optional(),
+  "reason": zod.string().min(1).optional()
+})).optional(),
+  "overall_success_count": zod.number().optional(),
+  "overall_failure_count": zod.number().optional()
 })
 
 

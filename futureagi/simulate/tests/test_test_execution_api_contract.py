@@ -59,6 +59,12 @@ def test_test_execution_mutations_have_body_contracts():
             "POST",
             "/simulate/test-executions/{test_execution_id}/optimiser-analysis/refresh/",
         ): "EmptyRequest",
+        ("POST", "/simulate/run-tests/{run_test_id}/delete-test-executions/"): (
+            "TestExecutionBulkDelete"
+        ),
+        ("POST", "/simulate/run-tests/{run_test_id}/rerun-test-executions/"): (
+            "TestExecutionRerun"
+        ),
     }
 
     for (method, path), definition_name in expected.items():
@@ -84,6 +90,12 @@ def test_test_execution_endpoints_have_response_contracts():
             "POST",
             "/simulate/test-executions/{test_execution_id}/optimiser-analysis/refresh/",
         ): "ApiSuccessResponse",
+        ("POST", "/simulate/run-tests/{run_test_id}/delete-test-executions/"): (
+            "TestExecutionBulkDeleteResponse"
+        ),
+        ("POST", "/simulate/run-tests/{run_test_id}/rerun-test-executions/"): (
+            "TestExecutionRerunResponse"
+        ),
     }
 
     for (method, path), definition_name in expected.items():
@@ -97,6 +109,8 @@ def test_test_execution_contract_debt_stays_burned_down():
         "/simulate/test-executions/{test_execution_id}/eval-explanation-summary/refresh/",
         "/simulate/test-executions/{test_execution_id}/optimiser-analysis/",
         "/simulate/test-executions/{test_execution_id}/optimiser-analysis/refresh/",
+        "/simulate/run-tests/{run_test_id}/delete-test-executions/",
+        "/simulate/run-tests/{run_test_id}/rerun-test-executions/",
     }
     report = _debt_report()
 

@@ -5506,6 +5506,26 @@ export interface RunTestMessageResponseApi {
   readonly message?: string;
 }
 
+export interface TestExecutionBulkDeleteApi {
+  /** List of specific test execution IDs to delete */
+  test_execution_ids?: string[];
+  /** Whether to delete all test executions in the run test */
+  select_all?: boolean;
+}
+
+export interface TestExecutionBulkDeleteResponseApi {
+  /** @minLength 1 */
+  readonly message?: string;
+  readonly run_test_id?: string;
+  readonly deleted_count?: number;
+  readonly deleted_ids?: readonly string[];
+}
+
+export interface ErrorResponseApi {
+  /** @minLength 1 */
+  error: string;
+}
+
 /**
  * Template-specific configuration parameters.
  */
@@ -5714,6 +5734,51 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+}
+
+/**
+ * Type of rerun: evaluation only or call plus evaluation
+ */
+export type TestExecutionRerunApiRerunType = typeof TestExecutionRerunApiRerunType[keyof typeof TestExecutionRerunApiRerunType];
+
+
+export const TestExecutionRerunApiRerunType = {
+  eval_only: 'eval_only',
+  call_and_eval: 'call_and_eval',
+} as const;
+
+export interface TestExecutionRerunApi {
+  /** Type of rerun: evaluation only or call plus evaluation */
+  rerun_type: TestExecutionRerunApiRerunType;
+  /** List of specific test execution IDs to rerun */
+  test_execution_ids?: string[];
+  /** Whether to rerun all test executions in the run test */
+  select_all?: boolean;
+}
+
+export type TestExecutionRerunResultApiFailedRerunsItem = {[key: string]: string};
+
+export interface TestExecutionRerunResultApi {
+  readonly test_execution_id?: string;
+  readonly success_count?: number;
+  readonly failure_count?: number;
+  readonly successful_reruns?: readonly string[];
+  readonly failed_reruns?: readonly TestExecutionRerunResultApiFailedRerunsItem[];
+  readonly skipped?: boolean;
+  /** @minLength 1 */
+  readonly reason?: string;
+}
+
+export interface TestExecutionRerunResponseApi {
+  /** @minLength 1 */
+  readonly message?: string;
+  readonly run_test_id?: string;
+  /** @minLength 1 */
+  readonly rerun_type?: string;
+  readonly total_test_executions?: number;
+  readonly results?: readonly TestExecutionRerunResultApi[];
+  readonly overall_success_count?: number;
+  readonly overall_failure_count?: number;
 }
 
 export interface RunNewEvalsOnTestExecutionApi {
@@ -6206,11 +6271,6 @@ export interface SimulatorAgentListResponseApi {
 }
 
 export interface SimulatorAgentValidationErrorResponseApi {[key: string]: string[]}
-
-export interface ErrorResponseApi {
-  /** @minLength 1 */
-  error: string;
-}
 
 export interface CancelTestExecutionResponseApi {
   success: boolean;
