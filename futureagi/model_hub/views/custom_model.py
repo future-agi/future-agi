@@ -19,11 +19,14 @@ from model_hub.serializers.contracts import (
     CustomAIModelBaselineRequestSerializer,
     CustomAIModelCreateRequestSerializer,
     CustomAIModelCreateResponseSerializer,
+    CustomAIModelDeleteRequestSerializer,
     CustomAIModelDefaultMetricRequestSerializer,
+    CustomAIModelEditResponseSerializer,
     CustomAIModelEditRequestSerializer,
     CustomAIModelUpdateRequestSerializer,
-    ModelHubJSONResponseSerializer,
     ModelHubPaginatedResponseSerializer,
+    ModelHubStatusMessageResponseSerializer,
+    ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.custom_models import (
     CustomAIModelSerializer,
@@ -318,7 +321,10 @@ class UpdateMetricCustomAIModelView(APIView):
 
     @swagger_auto_schema(
         request_body=CustomAIModelDefaultMetricRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStatusMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, id, *args, **kwargs):
         """Update default metric of the model given model id in request and information of metric in the body"""
@@ -354,7 +360,10 @@ class UpdateBaselineDatasetCustomAIModelView(APIView):
 
     @swagger_auto_schema(
         request_body=CustomAIModelBaselineRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStatusMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
@@ -418,6 +427,13 @@ class DeleteCustomAIModelView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=CustomAIModelDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
     def delete(self, request, *args, **kwargs):
         ai_model_ids = request.data.get("ids", [])
         user_organization = get_request_organization(request)
@@ -442,7 +458,7 @@ class EditCustomModel(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: CustomAIModelEditResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         model_id = request.query_params.get("id", None)
@@ -480,7 +496,10 @@ class EditCustomModel(APIView):
 
     @swagger_auto_schema(
         request_body=CustomAIModelEditRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def patch(self, request, *args, **kwargs):
         model_id = request.data.get("id", None)

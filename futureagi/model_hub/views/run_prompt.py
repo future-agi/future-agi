@@ -46,10 +46,15 @@ from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import RunPrompter, UserResponseSchema
 from model_hub.queries.tts_voices import get_custom_voices
 from model_hub.serializers.contracts import (
+    DatasetRunPromptStatsResponseSerializer,
+    LiteLLMModelVoicesResponseSerializer,
     MODEL_HUB_ERROR_RESPONSES,
+    ModelParametersResponseSerializer,
     ModelHubJSONResponseSerializer,
     ModelHubPaginatedResponseSerializer,
+    RunPromptColumnConfigResponseSerializer,
     RunPromptForRowsRequestSerializer,
+    RunPromptOptionsResponseSerializer,
 )
 from model_hub.serializers.run_prompt import (
     AddRunPromptSerializer,
@@ -1931,7 +1936,10 @@ class RetrieveRunPromptColumnConfigView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: RunPromptColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request):
         try:
@@ -2083,7 +2091,7 @@ class RetrieveRunPromptOptionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: RunPromptOptionsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -2176,7 +2184,7 @@ class DatasetRunPromptStatsView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetRunPromptStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, dataset_id):
         try:
@@ -2370,7 +2378,10 @@ class LiteLLMModelVoicesView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: LiteLLMModelVoicesResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -2460,7 +2471,7 @@ class ModelParametersView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: ModelParametersResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:

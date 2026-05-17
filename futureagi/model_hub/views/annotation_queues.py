@@ -55,6 +55,7 @@ from model_hub.serializers.annotation_queues import (
     AnnotationQueueListQuerySerializer,
     AnnotationQueueSerializer,
     AssignItemsSerializer,
+    AutomationRuleEvaluateResponseSerializer,
     AutomationRuleEvaluateAcceptedResponseSerializer,
     AutomationRuleSerializer,
     BulkRemoveItemsSerializer,
@@ -70,10 +71,14 @@ from model_hub.serializers.annotation_queues import (
     QueueDefaultRequestSerializer,
     QueueDefaultResponseSerializer,
     QueueDiscussionResponseSerializer,
+    QueueAgreementResponseSerializer,
+    QueueAnalyticsResponseSerializer,
     QueueExportAnnotationsResponseSerializer,
+    QueueExportFieldsResponseSerializer,
     QueueExportQuerySerializer,
     QueueExportToDatasetRequestSerializer,
     QueueExportToDatasetResponseSerializer,
+    QueueForSourceResponseSerializer,
     QueueForSourceQuerySerializer,
     QueueHardDeleteRequestSerializer,
     QueueHardDeleteResponseSerializer,
@@ -86,7 +91,6 @@ from model_hub.serializers.annotation_queues import (
     QueueItemReviewCommentSerializer,
     QueueItemReviewThreadSerializer,
     QueueItemSerializer,
-    QueueJsonResponseSerializer,
     QueueLabelRequestSerializer,
     QueueNavigationResponseSerializer,
     QueueNextItemResponseSerializer,
@@ -3156,7 +3160,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         return self._gm.success_response(result)
 
-    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
+    @swagger_auto_schema(
+        responses={200: QueueAnalyticsResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="analytics")
     def analytics(self, request, pk=None):
         """Queue analytics: throughput, annotator performance, label distribution."""
@@ -3247,7 +3253,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
-    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
+    @swagger_auto_schema(
+        responses={200: QueueExportFieldsResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="export-fields")
     def export_fields(self, request, pk=None):
         """Return source/label/attribute fields available for dataset export."""
@@ -3504,7 +3512,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             }
         )
 
-    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
+    @swagger_auto_schema(
+        responses={200: QueueAgreementResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="agreement")
     def agreement(self, request, pk=None):
         """Calculate inter-annotator agreement metrics."""
@@ -3775,7 +3785,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @swagger_auto_schema(
         query_serializer=QueueForSourceQuerySerializer,
-        responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES},
+        responses={200: QueueForSourceResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=False, methods=["get"], url_path="for-source")
     def for_source(self, request):
@@ -6578,7 +6588,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
-            200: QueueJsonResponseSerializer,
+            200: AutomationRuleEvaluateResponseSerializer,
             202: AutomationRuleEvaluateAcceptedResponseSerializer,
             **ERROR_RESPONSES,
         },
@@ -6744,7 +6754,9 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             status=status.HTTP_202_ACCEPTED,
         )
 
-    @swagger_auto_schema(responses={200: QueueJsonResponseSerializer, **ERROR_RESPONSES})
+    @swagger_auto_schema(
+        responses={200: AutomationRuleEvaluateResponseSerializer, **ERROR_RESPONSES}
+    )
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, queue_id=None, pk=None):
         """Preview how many items match a rule (dry run)."""

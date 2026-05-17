@@ -731,6 +731,153 @@ class QueueJsonResponseSerializer(serializers.Serializer):
     result = serializers.JSONField()
 
 
+class QueueAnalyticsThroughputDailySerializer(serializers.Serializer):
+    date = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class QueueAnalyticsThroughputSerializer(serializers.Serializer):
+    daily = QueueAnalyticsThroughputDailySerializer(many=True)
+    total_completed = serializers.IntegerField()
+    avg_per_day = serializers.FloatField()
+
+
+class QueueAnalyticsAnnotatorPerformanceSerializer(serializers.Serializer):
+    user_id = serializers.CharField(allow_null=True, required=False)
+    name = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    completed = serializers.IntegerField()
+    last_active = serializers.DateTimeField(allow_null=True, required=False)
+
+
+class QueueAnalyticsResultSerializer(serializers.Serializer):
+    throughput = QueueAnalyticsThroughputSerializer()
+    annotator_performance = QueueAnalyticsAnnotatorPerformanceSerializer(many=True)
+    label_distribution = serializers.DictField(child=serializers.JSONField())
+    status_breakdown = serializers.DictField(child=serializers.IntegerField())
+    total = serializers.IntegerField()
+
+
+class QueueAnalyticsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueAnalyticsResultSerializer()
+
+
+class QueueExportFieldSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    column = serializers.CharField()
+    data_type = serializers.CharField()
+    group = serializers.CharField()
+    default = serializers.BooleanField()
+    path = serializers.CharField(required=False, allow_blank=True)
+    source_type = serializers.CharField(required=False, allow_blank=True)
+    kind = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.UUIDField(required=False)
+    slot = serializers.IntegerField(required=False)
+    eval_key = serializers.CharField(required=False, allow_blank=True)
+    expand_fields = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+
+
+class QueueExportDefaultMappingSerializer(serializers.Serializer):
+    field = serializers.CharField()
+    column = serializers.CharField()
+    enabled = serializers.BooleanField()
+
+
+class QueueExportFieldsResultSerializer(serializers.Serializer):
+    fields = QueueExportFieldSerializer(many=True)
+    default_mapping = QueueExportDefaultMappingSerializer(many=True)
+
+
+class QueueExportFieldsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueExportFieldsResultSerializer()
+
+
+class QueueAgreementLabelSerializer(serializers.Serializer):
+    label_name = serializers.CharField(allow_blank=True, allow_null=True)
+    label_type = serializers.CharField(allow_blank=True, allow_null=True)
+    agreement_pct = serializers.FloatField(allow_null=True)
+    cohens_kappa = serializers.FloatField(allow_null=True)
+    disagreement_count = serializers.IntegerField()
+    disagreement_items = serializers.ListField(child=serializers.CharField())
+
+
+class QueueAgreementAnnotatorPairSerializer(serializers.Serializer):
+    annotator_1_id = serializers.CharField()
+    annotator_2_id = serializers.CharField()
+    agreement_pct = serializers.FloatField()
+    total_comparisons = serializers.IntegerField()
+
+
+class QueueAgreementResultSerializer(serializers.Serializer):
+    overall_agreement = serializers.FloatField(allow_null=True)
+    labels = serializers.DictField(child=QueueAgreementLabelSerializer())
+    annotator_pairs = QueueAgreementAnnotatorPairSerializer(many=True)
+
+
+class QueueAgreementResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueAgreementResultSerializer()
+
+
+class QueueForSourceQueueSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    instructions = serializers.CharField(allow_blank=True)
+    is_default = serializers.BooleanField()
+
+
+class QueueForSourceItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    status = serializers.CharField()
+    source_type = serializers.CharField()
+    source_id = serializers.CharField(allow_null=True)
+
+
+class QueueForSourceLabelSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    settings = serializers.JSONField()
+    description = serializers.CharField(allow_blank=True, required=False)
+    allow_notes = serializers.BooleanField()
+    required = serializers.BooleanField()
+    order = serializers.IntegerField()
+
+
+class QueueForSourceEntrySerializer(serializers.Serializer):
+    queue = QueueForSourceQueueSerializer()
+    item = QueueForSourceItemSerializer(allow_null=True)
+    labels = QueueForSourceLabelSerializer(many=True)
+    existing_scores = serializers.DictField(child=serializers.JSONField())
+    existing_notes = serializers.CharField(allow_blank=True)
+    existing_label_notes = serializers.DictField(child=serializers.CharField())
+    span_notes = serializers.ListField(child=serializers.JSONField())
+    span_notes_source_id = serializers.CharField(allow_null=True, required=False)
+
+
+class QueueForSourceResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueForSourceEntrySerializer(many=True)
+
+
+class AutomationRuleEvaluateResultSerializer(serializers.Serializer):
+    matched = serializers.IntegerField()
+    added = serializers.IntegerField()
+    duplicates = serializers.IntegerField()
+    truncated = serializers.BooleanField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True)
+
+
+class AutomationRuleEvaluateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AutomationRuleEvaluateResultSerializer()
+
+
 class QueueExportToDatasetResultSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField()
     dataset_name = serializers.CharField()
@@ -798,9 +945,13 @@ class QueueAddLabelResponseSerializer(serializers.Serializer):
     result = QueueAddLabelResultSerializer()
 
 
+class QueueRemoveLabelResultSerializer(serializers.Serializer):
+    removed = serializers.BooleanField()
+
+
 class QueueRemoveLabelResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.BooleanField())
+    result = QueueRemoveLabelResultSerializer()
 
 
 class QueueAddItemsResultSerializer(serializers.Serializer):
@@ -816,14 +967,22 @@ class QueueAddItemsResponseSerializer(serializers.Serializer):
     result = QueueAddItemsResultSerializer()
 
 
+class QueueBulkRemoveItemsResultSerializer(serializers.Serializer):
+    removed = serializers.IntegerField()
+
+
 class QueueBulkRemoveItemsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.IntegerField())
+    result = QueueBulkRemoveItemsResultSerializer()
+
+
+class QueueSubmitAnnotationsResultSerializer(serializers.Serializer):
+    submitted = serializers.IntegerField()
 
 
 class QueueSubmitAnnotationsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.IntegerField())
+    result = QueueSubmitAnnotationsResultSerializer()
 
 
 class QueueNavigationResultSerializer(serializers.Serializer):
@@ -846,19 +1005,42 @@ class QueueNextItemResponseSerializer(serializers.Serializer):
     result = QueueNextItemResultSerializer()
 
 
+class QueueAnnotateDetailResultSerializer(serializers.Serializer):
+    item = serializers.JSONField()
+    queue = serializers.JSONField()
+    labels = serializers.ListField(child=serializers.JSONField())
+    annotations = serializers.ListField(child=serializers.JSONField())
+    review_comments = serializers.ListField(child=serializers.JSONField())
+    review_threads = serializers.ListField(child=serializers.JSONField())
+    existing_notes = serializers.CharField(allow_blank=True)
+    span_notes = serializers.ListField(child=serializers.JSONField())
+    span_notes_source_id = serializers.CharField(allow_null=True, required=False)
+    progress = serializers.JSONField()
+    next_item_id = serializers.CharField(allow_null=True, required=False)
+    prev_item_id = serializers.CharField(allow_null=True, required=False)
+
+
 class QueueAnnotateDetailResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.JSONField()
+    result = QueueAnnotateDetailResultSerializer()
+
+
+class QueueAssignItemsResultSerializer(serializers.Serializer):
+    assigned = serializers.IntegerField()
 
 
 class QueueAssignItemsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.IntegerField())
+    result = QueueAssignItemsResultSerializer()
+
+
+class QueueReleaseReservationResultSerializer(serializers.Serializer):
+    released = serializers.BooleanField()
 
 
 class QueueReleaseReservationResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.BooleanField())
+    result = QueueReleaseReservationResultSerializer()
 
 
 class QueueItemAnnotationsResponseSerializer(serializers.Serializer):
@@ -866,9 +1048,16 @@ class QueueItemAnnotationsResponseSerializer(serializers.Serializer):
     result = ScoreSerializer(many=True)
 
 
+class QueueDiscussionResultSerializer(serializers.Serializer):
+    review_comments = serializers.ListField(child=serializers.JSONField())
+    review_threads = serializers.ListField(child=serializers.JSONField())
+    comment = serializers.JSONField(required=False)
+    thread = serializers.JSONField(required=False)
+
+
 class QueueDiscussionResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.JSONField()
+    result = QueueDiscussionResultSerializer()
 
 
 class QueueReviewItemResultSerializer(serializers.Serializer):
@@ -884,9 +1073,13 @@ class QueueReviewItemResponseSerializer(serializers.Serializer):
     result = QueueReviewItemResultSerializer()
 
 
+class QueueImportAnnotationsResultSerializer(serializers.Serializer):
+    imported = serializers.IntegerField()
+
+
 class QueueImportAnnotationsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
-    result = serializers.DictField(child=serializers.IntegerField())
+    result = QueueImportAnnotationsResultSerializer()
 
 
 class AutomationRuleEvaluateAcceptedResponseSerializer(serializers.Serializer):

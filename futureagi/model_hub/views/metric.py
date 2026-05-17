@@ -25,8 +25,8 @@ from model_hub.serializers.contracts import (
     CustomMetricTestRequestSerializer,
     CustomMetricTestResponseSerializer,
     MetricTagOptionSerializer,
-    ModelHubJSONResponseSerializer,
     ModelHubPaginatedResponseSerializer,
+    ModelHubStatusResponseSerializer,
 )
 from model_hub.serializers.metric import MetricSerializer
 from model_hub.utils.utils import check_valid_metrics, get_evaluation_type
@@ -143,7 +143,7 @@ class CreateMetricApiView(APIView):
 
     @swagger_auto_schema(
         request_body=CustomMetricMutationRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         user_organization = get_request_organization(self.request)
@@ -219,7 +219,7 @@ class EditMetricApiView(APIView):
 
     @swagger_auto_schema(
         request_body=CustomMetricMutationRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         data = request.data

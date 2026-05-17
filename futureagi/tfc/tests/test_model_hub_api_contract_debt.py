@@ -69,8 +69,10 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/custom-models/list/",
         "/model-hub/custom-models/{id}/",
         "/model-hub/custom_models/create/",
+        "/model-hub/custom_models/delete/",
         "/model-hub/custom_models/edit/",
         "/model-hub/custom_models/update-baseline/{id}/",
+        "/model-hub/custom_models/update-metric/{id}/",
         "/model-hub/custom-metric/all/{model_id}/",
         "/model-hub/custom-metric/create/",
         "/model-hub/custom-metric/tag-options/{metric_id}/",
@@ -104,6 +106,8 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/develops/create-dataset-from-huggingface/",
         "/model-hub/develops/dataset-creation-progress/{dataset_id}/",
         "/model-hub/develops/get-huggingface-dataset-config/",
+        "/model-hub/develops/retrieve_run_prompt_column_config/",
+        "/model-hub/develops/retrieve_run_prompt_options/",
         "/model-hub/develops/{dataset_id}/add_rows_from_huggingface/",
         "/model-hub/develops/{dataset_id}/extract-json-column/",
         "/model-hub/create_custom_evals/",
@@ -229,9 +233,15 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/custom_models/create/"): (
             "CustomAIModelCreateRequest"
         ),
+        ("DELETE", "/model-hub/custom_models/delete/"): (
+            "CustomAIModelDeleteRequest"
+        ),
         ("PATCH", "/model-hub/custom_models/edit/"): "CustomAIModelEditRequest",
         ("POST", "/model-hub/custom_models/update-baseline/{id}/"): (
             "CustomAIModelBaselineRequest"
+        ),
+        ("POST", "/model-hub/custom_models/update-metric/{id}/"): (
+            "CustomAIModelDefaultMetricRequest"
         ),
         ("POST", "/model-hub/custom-metric/create/"): (
             "CustomMetricMutationRequest"
@@ -602,8 +612,8 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
 def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts():
     expected = {
         ("POST", "/model-hub/ai-eval-writer/"): "AIEvalWriterResponse",
-        ("GET", "/model-hub/api/model_parameters/"): "ModelHubJSONResponse",
-        ("GET", "/model-hub/api/model_voices/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/api/model_parameters/"): "ModelParametersResponse",
+        ("GET", "/model-hub/api/model_voices/"): "LiteLLMModelVoicesResponse",
         ("GET", "/model-hub/api/models_list/"): "ModelHubPaginatedResponse",
         ("GET", "/model-hub/columns/{column_id}/operation-config/"): (
             "ModelHubJSONResponse"
@@ -624,20 +634,26 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/custom_models/create/"): (
             "CustomAIModelCreateResponse"
         ),
-        ("GET", "/model-hub/custom_models/edit/"): "ModelHubJSONResponse",
-        ("PATCH", "/model-hub/custom_models/edit/"): "ModelHubJSONResponse",
+        ("DELETE", "/model-hub/custom_models/delete/"): (
+            "ModelHubStringResultResponse"
+        ),
+        ("GET", "/model-hub/custom_models/edit/"): "CustomAIModelEditResponse",
+        ("PATCH", "/model-hub/custom_models/edit/"): "ModelHubStringResultResponse",
         ("POST", "/model-hub/custom_models/update-baseline/{id}/"): (
-            "ModelHubJSONResponse"
+            "ModelHubStatusMessageResponse"
+        ),
+        ("POST", "/model-hub/custom_models/update-metric/{id}/"): (
+            "ModelHubStatusMessageResponse"
         ),
         ("GET", "/model-hub/custom-metric/all/{model_id}/"): (
             "CustomMetricListResponse"
         ),
-        ("POST", "/model-hub/custom-metric/create/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/custom-metric/create/"): "ModelHubStatusResponse",
         ("GET", "/model-hub/custom-metric/tag-options/{metric_id}/"): (
             "MetricTagOption[]"
         ),
         ("POST", "/model-hub/custom-metric/test/"): "CustomMetricTestResponse",
-        ("POST", "/model-hub/custom-metric/update/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/custom-metric/update/"): "ModelHubStatusResponse",
         ("GET", "/model-hub/custom-metric/{model_id}/"): "ModelHubPaginatedResponse",
         ("GET", "/model-hub/column-config/{column_id}/"): "ModelHubJSONResponse",
         ("GET", "/model-hub/dataset/columns/{dataset_id}/"): (
@@ -711,7 +727,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "ModelHubJSONResponse"
         ),
         ("GET", "/model-hub/dataset/{dataset_id}/run-prompt-stats/"): (
-            "ModelHubJSONResponse"
+            "DatasetRunPromptStatsResponse"
         ),
         ("POST", "/model-hub/develops/create-dataset-from-huggingface/"): (
             "ModelHubJSONResponse"
@@ -721,6 +737,12 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("POST", "/model-hub/develops/get-huggingface-dataset-config/"): (
             "ModelHubJSONResponse"
+        ),
+        ("GET", "/model-hub/develops/retrieve_run_prompt_column_config/"): (
+            "RunPromptColumnConfigResponse"
+        ),
+        ("GET", "/model-hub/develops/retrieve_run_prompt_options/"): (
+            "RunPromptOptionsResponse"
         ),
         ("POST", "/model-hub/develops/{dataset_id}/add_rows_from_huggingface/"): (
             "ModelHubJSONResponse"

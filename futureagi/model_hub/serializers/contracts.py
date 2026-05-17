@@ -39,6 +39,20 @@ MODEL_HUB_ERROR_RESPONSES = {
 }
 
 
+class ModelHubStatusResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+
+
+class ModelHubStatusMessageResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField()
+
+
+class ModelHubStringResultResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = serializers.CharField()
+
+
 class AIEvalWriterRequestSerializer(serializers.Serializer):
     description = serializers.CharField()
     output_format = serializers.ChoiceField(
@@ -102,6 +116,28 @@ class CustomAIModelCreateResponseSerializer(serializers.Serializer):
     data = CustomAIModelCreateResponseDataSerializer()
 
 
+class CustomAIModelDeleteRequestSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class CustomAIModelEditResultSerializer(serializers.Serializer):
+    model_name = serializers.CharField()
+    input_token_cost = serializers.FloatField(required=False, allow_null=True)
+    output_token_cost = serializers.FloatField(required=False, allow_null=True)
+    model_provider = serializers.CharField()
+    key = serializers.JSONField(required=False)
+    config_json = serializers.JSONField(required=False)
+
+
+class CustomAIModelEditResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = CustomAIModelEditResultSerializer()
+
+
 class CustomMetricMutationRequestSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
     model_id = serializers.UUIDField(required=False)
@@ -134,6 +170,137 @@ class CustomMetricListResponseSerializer(serializers.Serializer):
 class MetricTagOptionSerializer(serializers.Serializer):
     label = serializers.CharField()
     value = serializers.CharField()
+
+
+class ModelParameterSliderSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    min = serializers.FloatField(required=False, allow_null=True)
+    max = serializers.FloatField(required=False, allow_null=True)
+    step = serializers.FloatField(required=False, allow_null=True)
+    default = serializers.JSONField(required=False, allow_null=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class ModelParameterChoiceSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    options = serializers.ListField(child=serializers.JSONField())
+    default = serializers.JSONField(required=False, allow_null=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class ModelParameterBooleanSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    default = serializers.BooleanField(required=False)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class ModelParameterTextInputSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    default = serializers.JSONField(required=False, allow_null=True)
+    placeholder = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class ModelParameterResponseFormatSerializer(serializers.Serializer):
+    value = serializers.CharField()
+
+
+class ModelParameterReasoningSerializer(serializers.Serializer):
+    dropdowns = ModelParameterChoiceSerializer(many=True, required=False)
+    sliders = ModelParameterSliderSerializer(many=True, required=False)
+
+
+class ModelParametersResultSerializer(serializers.Serializer):
+    sliders = ModelParameterSliderSerializer(many=True, required=False)
+    dropdowns = ModelParameterChoiceSerializer(many=True, required=False)
+    booleans = ModelParameterBooleanSerializer(many=True, required=False)
+    boolean = ModelParameterBooleanSerializer(many=True, required=False)
+    checkboxes = ModelParameterBooleanSerializer(many=True, required=False)
+    text_inputs = ModelParameterTextInputSerializer(many=True, required=False)
+    responseFormat = ModelParameterResponseFormatSerializer(many=True, required=False)
+    reasoning = ModelParameterReasoningSerializer(required=False)
+
+
+class ModelParametersResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ModelParametersResultSerializer()
+
+
+class LiteLLMVoiceOptionSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+
+
+class LiteLLMModelVoicesResultSerializer(serializers.Serializer):
+    model_name = serializers.CharField()
+    provider = serializers.CharField(allow_blank=True)
+    custom_voice_supported = serializers.BooleanField()
+    supported_voices = LiteLLMVoiceOptionSerializer(many=True)
+    supported_formats = serializers.ListField(child=serializers.CharField())
+    default_voice = serializers.CharField(required=False, allow_null=True)
+    default_format = serializers.CharField(required=False, allow_null=True)
+
+
+class LiteLLMModelVoicesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = LiteLLMModelVoicesResultSerializer()
+
+
+class RunPromptColumnConfigResultSerializer(serializers.Serializer):
+    config = serializers.JSONField()
+
+
+class RunPromptColumnConfigResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = RunPromptColumnConfigResultSerializer()
+
+
+class RunPromptToolOptionSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    yaml_config = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    config = serializers.JSONField(required=False)
+    config_type = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    description = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class RunPromptChoiceOptionSerializer(serializers.Serializer):
+    value = serializers.JSONField()
+    label = serializers.CharField()
+
+
+class RunPromptOptionsResultSerializer(serializers.Serializer):
+    models = serializers.ListField(child=serializers.JSONField())
+    tool_config = serializers.JSONField()
+    available_tools = RunPromptToolOptionSerializer(many=True)
+    output_formats = RunPromptChoiceOptionSerializer(many=True)
+    tool_choices = RunPromptChoiceOptionSerializer(many=True)
+
+
+class RunPromptOptionsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = RunPromptOptionsResultSerializer()
+
+
+class DatasetRunPromptStatsPromptSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    input_token = serializers.FloatField()
+    output_token = serializers.FloatField()
+    total_token = serializers.FloatField()
+
+
+class DatasetRunPromptStatsResultSerializer(serializers.Serializer):
+    avg_tokens = serializers.FloatField()
+    avg_cost = serializers.FloatField()
+    avg_time = serializers.FloatField()
+    prompts = DatasetRunPromptStatsPromptSerializer(many=True)
+
+
+class DatasetRunPromptStatsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = DatasetRunPromptStatsResultSerializer()
 
 
 class EmbeddingModelOptionSerializer(serializers.Serializer):

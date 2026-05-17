@@ -180,6 +180,7 @@ import type {
   AutoReloadSettingsResponseApi,
   AutomationRuleApi,
   AutomationRuleEvaluateAcceptedResponseApi,
+  AutomationRuleEvaluateResponseApi,
   BillingPortalResponseApi,
   BulkAnnotationRequestApi,
   BulkAnnotationResponseApi,
@@ -242,7 +243,9 @@ import type {
   CustomAIModelCreateRequestApi,
   CustomAIModelCreateResponseApi,
   CustomAIModelDefaultMetricRequestApi,
+  CustomAIModelDeleteRequestApi,
   CustomAIModelEditRequestApi,
+  CustomAIModelEditResponseApi,
   CustomAIModelUpdateRequestApi,
   CustomEvalConfigApi,
   CustomEvalTemplateCreateApi,
@@ -270,6 +273,7 @@ import type {
   DatasetOptimizationDetailApi,
   DatasetRowDataRequestApi,
   DatasetRowDiffRequestApi,
+  DatasetRunPromptStatsResponseApi,
   DatasetSdkRowsRequestApi,
   DatasetStaticColumnRequestApi,
   DatasetUpdateCellValueRequestApi,
@@ -415,6 +419,7 @@ import type {
   LegacyKnowledgeBaseFilesRequestApi,
   LegacyKnowledgeBaseMutationRequestApi,
   LinearTeamsResponseApi,
+  LiteLLMModelVoicesResponseApi,
   LitellmApi,
   LiveKitCallExecutionUpdateRequestApi,
   LiveKitErrorResponseApi,
@@ -536,10 +541,14 @@ import type {
   ModelHubScoresListParams,
   ModelHubSecretsList200,
   ModelHubSecretsListParams,
+  ModelHubStatusMessageResponseApi,
+  ModelHubStatusResponseApi,
+  ModelHubStringResultResponseApi,
   ModelHubToolsList200,
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
   ModelHubTtsVoicesListParams,
+  ModelParametersResponseApi,
   NodeExecutionDetailResponseApi,
   NodeReadApi,
   NodeTemplateDetailApi,
@@ -614,6 +623,8 @@ import type {
   PromptTemplateApi,
   QueueAddItemsResponseApi,
   QueueAddLabelResponseApi,
+  QueueAgreementResponseApi,
+  QueueAnalyticsResponseApi,
   QueueAnnotateDetailResponseApi,
   QueueAssignItemsResponseApi,
   QueueBulkRemoveItemsResponseApi,
@@ -621,15 +632,16 @@ import type {
   QueueDefaultResponseApi,
   QueueDiscussionResponseApi,
   QueueExportAnnotationsResponseApi,
+  QueueExportFieldsResponseApi,
   QueueExportToDatasetRequestApi,
   QueueExportToDatasetResponseApi,
+  QueueForSourceResponseApi,
   QueueHardDeleteRequestApi,
   QueueHardDeleteResponseApi,
   QueueImportAnnotationsResponseApi,
   QueueItemAnnotationsResponseApi,
   QueueItemApi,
   QueueItemNavigationRequestApi,
-  QueueJsonResponseApi,
   QueueLabelRequestApi,
   QueueNavigationResponseApi,
   QueueNextItemResponseApi,
@@ -659,7 +671,9 @@ import type {
   ReviewItemRequestApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
+  RunPromptColumnConfigResponseApi,
   RunPromptForRowsRequestApi,
+  RunPromptOptionsResponseApi,
   RunTestAnalyticsApi,
   RunTestCallExecutionsResponseApi,
   RunTestChatExecutionResponseApi,
@@ -17588,7 +17602,7 @@ export const modelHubAnnotationQueuesCreate = async (annotationQueueApi: NonRead
 
 
 export type modelHubAnnotationQueuesForSourceResponse200 = {
-  data: QueueJsonResponseApi
+  data: QueueForSourceResponseApi
   status: 200
 }
 
@@ -17951,7 +17965,7 @@ export const modelHubAnnotationQueuesAddLabel = async (id: string,
 
 
 export type modelHubAnnotationQueuesAgreementResponse200 = {
-  data: QueueJsonResponseApi
+  data: QueueAgreementResponseApi
   status: 200
 }
 
@@ -18014,7 +18028,7 @@ export const modelHubAnnotationQueuesAgreement = async (id: string, options?: Re
 
 
 export type modelHubAnnotationQueuesAnalyticsResponse200 = {
-  data: QueueJsonResponseApi
+  data: QueueAnalyticsResponseApi
   status: 200
 }
 
@@ -18077,7 +18091,7 @@ export const modelHubAnnotationQueuesAnalytics = async (id: string, options?: Re
 
 
 export type modelHubAnnotationQueuesExportFieldsResponse200 = {
-  data: QueueJsonResponseApi
+  data: QueueExportFieldsResponseApi
   status: 200
 }
 
@@ -18817,7 +18831,7 @@ export const modelHubAnnotationQueuesAutomationRulesDelete = async (queueId: str
 
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse200 = {
-  data: QueueJsonResponseApi
+  data: AutomationRuleEvaluateResponseApi
   status: 200
 }
 
@@ -18899,7 +18913,7 @@ export const modelHubAnnotationQueuesAutomationRulesEvaluate = async (queueId: s
 
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse200 = {
-  data: QueueJsonResponseApi
+  data: AutomationRuleEvaluateResponseApi
   status: 200
 }
 
@@ -21265,7 +21279,7 @@ export const modelHubApiKeysDelete = async (id: string, options?: RequestInit): 
 
 
 export type modelHubApiModelParametersListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelParametersResponseApi
   status: 200
 }
 
@@ -21325,7 +21339,7 @@ export const modelHubApiModelParametersList = async ( options?: RequestInit): Pr
 
 
 export type modelHubApiModelVoicesListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: LiteLLMModelVoicesResponseApi
   status: 200
 }
 
@@ -21908,7 +21922,7 @@ export const modelHubCustomMetricAllRead = async (modelId: string, options?: Req
 
 
 export type modelHubCustomMetricCreateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStatusResponseApi
   status: 200
 }
 
@@ -22090,7 +22104,7 @@ export const modelHubCustomMetricTestCreate = async (customMetricTestRequestApi:
 
 
 export type modelHubCustomMetricUpdateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStatusResponseApi
   status: 200
 }
 
@@ -22522,17 +22536,44 @@ export const modelHubCustomModelsCreateCreate = async (customAIModelCreateReques
 
 
 
-export type modelHubCustomModelsDeleteDeleteResponse204 = {
-  data: void
-  status: 204
+export type modelHubCustomModelsDeleteDeleteResponse200 = {
+  data: ModelHubStringResultResponseApi
+  status: 200
 }
 
-export type modelHubCustomModelsDeleteDeleteResponseSuccess = (modelHubCustomModelsDeleteDeleteResponse204) & {
+export type modelHubCustomModelsDeleteDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubCustomModelsDeleteDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubCustomModelsDeleteDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubCustomModelsDeleteDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubCustomModelsDeleteDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubCustomModelsDeleteDeleteResponseSuccess = (modelHubCustomModelsDeleteDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubCustomModelsDeleteDeleteResponseError = (modelHubCustomModelsDeleteDeleteResponse400 | modelHubCustomModelsDeleteDeleteResponse403 | modelHubCustomModelsDeleteDeleteResponse404 | modelHubCustomModelsDeleteDeleteResponse409 | modelHubCustomModelsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubCustomModelsDeleteDeleteResponse = (modelHubCustomModelsDeleteDeleteResponseSuccess)
+export type modelHubCustomModelsDeleteDeleteResponse = (modelHubCustomModelsDeleteDeleteResponseSuccess | modelHubCustomModelsDeleteDeleteResponseError)
 
 export const getModelHubCustomModelsDeleteDeleteUrl = () => {
 
@@ -22542,21 +22583,22 @@ export const getModelHubCustomModelsDeleteDeleteUrl = () => {
   return `/model-hub/custom_models/delete/`
 }
 
-export const modelHubCustomModelsDeleteDelete = async ( options?: RequestInit): Promise<modelHubCustomModelsDeleteDeleteResponse> => {
+export const modelHubCustomModelsDeleteDelete = async (customAIModelDeleteRequestApi: CustomAIModelDeleteRequestApi, options?: RequestInit): Promise<modelHubCustomModelsDeleteDeleteResponse> => {
 
   return apiMutator<modelHubCustomModelsDeleteDeleteResponse>(getModelHubCustomModelsDeleteDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      customAIModelDeleteRequestApi,)
   }
 );}
 
 
 
 export type modelHubCustomModelsEditListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CustomAIModelEditResponseApi
   status: 200
 }
 
@@ -22616,7 +22658,7 @@ export const modelHubCustomModelsEditList = async ( options?: RequestInit): Prom
 
 
 export type modelHubCustomModelsEditPartialUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -22677,7 +22719,7 @@ export const modelHubCustomModelsEditPartialUpdate = async (customAIModelEditReq
 
 
 export type modelHubCustomModelsUpdateBaselineCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStatusMessageResponseApi
   status: 200
 }
 
@@ -22739,7 +22781,7 @@ export const modelHubCustomModelsUpdateBaselineCreate = async (id: string,
 
 
 export type modelHubCustomModelsUpdateMetricCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStatusMessageResponseApi
   status: 200
 }
 
@@ -23531,7 +23573,7 @@ export const modelHubDatasetJsonSchemaList = async (datasetId: string, options?:
 
 
 export type modelHubDatasetRunPromptStatsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetRunPromptStatsResponseApi
   status: 200
 }
 
@@ -26573,7 +26615,7 @@ export const modelHubDevelopsProviderStatusList = async ( options?: RequestInit)
 
 
 export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: RunPromptColumnConfigResponseApi
   status: 200
 }
 
@@ -26633,7 +26675,7 @@ export const modelHubDevelopsRetrieveRunPromptColumnConfigList = async ( options
 
 
 export type modelHubDevelopsRetrieveRunPromptOptionsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: RunPromptOptionsResponseApi
   status: 200
 }
 

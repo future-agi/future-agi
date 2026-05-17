@@ -193,6 +193,22 @@ class TestAnnotationApiContract:
                 "get",
             ): "#/definitions/QueueProgressResponse",
             (
+                "/model-hub/annotation-queues/for-source/",
+                "get",
+            ): "#/definitions/QueueForSourceResponse",
+            (
+                "/model-hub/annotation-queues/{id}/analytics/",
+                "get",
+            ): "#/definitions/QueueAnalyticsResponse",
+            (
+                "/model-hub/annotation-queues/{id}/agreement/",
+                "get",
+            ): "#/definitions/QueueAgreementResponse",
+            (
+                "/model-hub/annotation-queues/{id}/export-fields/",
+                "get",
+            ): "#/definitions/QueueExportFieldsResponse",
+            (
                 "/model-hub/annotation-queues/{id}/hard-delete/",
                 "post",
             ): "#/definitions/QueueHardDeleteResponse",
@@ -240,6 +256,14 @@ class TestAnnotationApiContract:
                 "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
                 "post",
             ): "#/definitions/QueueReviewItemResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/evaluate/",
+                "post",
+            ): "#/definitions/AutomationRuleEvaluateResponse",
+            (
+                "/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/preview/",
+                "get",
+            ): "#/definitions/AutomationRuleEvaluateResponse",
             ("/model-hub/scores/", "post"): "#/definitions/ScoreResponse",
             (
                 "/model-hub/scores/bulk/",

@@ -17,6 +17,7 @@ const swaggerPath = path.join(
 const MIN_ENDPOINTS = 960;
 const MAX_MUTATIONS_WITHOUT_BODY_SCHEMA = 0;
 const MAX_OPERATIONS_WITHOUT_RESPONSE_SCHEMA = 0;
+const MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS = 356;
 const MIN_GROUP_PATHS = {
   accounts: 75,
   agentcc: 100,
@@ -29,6 +30,7 @@ const MIN_GROUP_PATHS = {
 const MUTATION_METHODS = new Set(["post", "put", "patch"]);
 const NON_RESPONSE_OPTIONAL_METHODS = new Set(["delete"]);
 const NO_BODY_RESPONSE_STATUS = /^(204|205|304|3\d\d)$/;
+const SUCCESS_RESPONSE_STATUS = /^2\d\d$/;
 const UNSUPPORTED_SWAGGER_2_SCHEMA_KEYS = new Set([
   "anyOf",
   "nullable",
@@ -37,6 +39,7 @@ const UNSUPPORTED_SWAGGER_2_SCHEMA_KEYS = new Set([
 
 const swagger = JSON.parse(fs.readFileSync(swaggerPath, "utf8"));
 const paths = swagger.paths || {};
+const definitions = swagger.definitions || {};
 const pathNames = Object.keys(paths);
 
 const pathGroups = {};
@@ -86,6 +89,84 @@ const operationWithoutResponseSchema = operations.filter(
 
     return !isDocumentedNoBodyOperation;
   },
+);
+
+function responseSchemaEntries(operation) {
+  return Object.entries(operation.responses || {})
+    .filter(
+      ([statusCode, response]) =>
+        SUCCESS_RESPONSE_STATUS.test(statusCode) &&
+        !NO_BODY_RESPONSE_STATUS.test(statusCode) &&
+        response?.schema,
+    )
+    .map(([statusCode, response]) => ({
+      statusCode,
+      schema: response.schema,
+    }));
+}
+
+function refName(schema) {
+  return schema?.$ref?.replace("#/definitions/", "") || null;
+}
+
+function dereference(schema) {
+  const name = refName(schema);
+  if (!name) return schema;
+  return definitions[name] || schema;
+}
+
+function isUnshapedObject(schema) {
+  if (!schema) return false;
+  const resolved = dereference(schema);
+  if (resolved.type !== "object") return false;
+  return (
+    !resolved.properties ||
+    Object.keys(resolved.properties).length === 0 ||
+    Boolean(resolved.additionalProperties)
+  );
+}
+
+function broadSuccessResponseReason(schema) {
+  const schemaName = refName(schema);
+  const resolved = dereference(schema);
+  if (isUnshapedObject(resolved)) {
+    return schemaName
+      ? `${schemaName} is an unshaped object response`
+      : "inline success response is an unshaped object";
+  }
+
+  const result = resolved.properties?.result;
+  if (isUnshapedObject(result)) {
+    return schemaName
+      ? `${schemaName}.result is an unshaped object`
+      : "inline success response result is an unshaped object";
+  }
+
+  const data = resolved.properties?.data;
+  if (isUnshapedObject(data)) {
+    return schemaName
+      ? `${schemaName}.data is an unshaped object`
+      : "inline success response data is an unshaped object";
+  }
+
+  return null;
+}
+
+const broadSuccessResponseSchemas = operations.flatMap(
+  ({ method, pathName, operation }) =>
+    responseSchemaEntries(operation).flatMap(({ statusCode, schema }) => {
+      const reason = broadSuccessResponseReason(schema);
+      if (!reason) return [];
+      return [
+        {
+          method,
+          pathName,
+          statusCode,
+          schema: refName(schema) || "inline",
+          reason,
+        },
+      ];
+    }),
 );
 
 const unsupportedSchemaKeys = [];
@@ -155,6 +236,20 @@ if (
   );
 }
 
+if (broadSuccessResponseSchemas.length > MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS) {
+  failures.push(
+    [
+      `Broad success response schemas increased from ${MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS} to ${broadSuccessResponseSchemas.length}.`,
+      ...broadSuccessResponseSchemas
+        .slice(0, 40)
+        .map(
+          ({ method, pathName, statusCode, schema, reason }) =>
+            `  - ${method.toUpperCase()} ${pathName} -> ${statusCode} ${schema}: ${reason}`,
+        ),
+    ].join("\n"),
+  );
+}
+
 if (unsupportedSchemaKeys.length) {
   failures.push(
     [
@@ -192,5 +287,6 @@ console.log(
     `  operations: ${operations.length}`,
     `  mutation endpoints without request body schemas: ${mutationWithoutBodySchema.length}/${MAX_MUTATIONS_WITHOUT_BODY_SCHEMA}`,
     `  operations without response schemas: ${operationWithoutResponseSchema.length}/${MAX_OPERATIONS_WITHOUT_RESPONSE_SCHEMA}`,
+    `  broad success response schemas: ${broadSuccessResponseSchemas.length}/${MAX_BROAD_SUCCESS_RESPONSE_SCHEMAS}`,
   ].join("\n"),
 );

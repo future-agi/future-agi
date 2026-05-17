@@ -3474,11 +3474,60 @@ export interface AnnotationQueueApi {
   readonly created_at?: string;
 }
 
-export type QueueJsonResponseApiResult = { [key: string]: unknown };
+export interface QueueForSourceQueueApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  instructions: string;
+  is_default: boolean;
+}
 
-export interface QueueJsonResponseApi {
+export interface QueueForSourceItemApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  source_type: string;
+  /** @minLength 1 */
+  source_id: string;
+}
+
+export type QueueForSourceLabelApiSettings = { [key: string]: unknown };
+
+export interface QueueForSourceLabelApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  settings: QueueForSourceLabelApiSettings;
+  description?: string;
+  allow_notes: boolean;
+  required: boolean;
+  order: number;
+}
+
+export type QueueForSourceEntryApiExistingScores = {[key: string]: { [key: string]: unknown }};
+
+export type QueueForSourceEntryApiExistingLabelNotes = {[key: string]: string};
+
+export type QueueForSourceEntryApiSpanNotesItem = { [key: string]: unknown };
+
+export interface QueueForSourceEntryApi {
+  queue: QueueForSourceQueueApi;
+  item: QueueForSourceItemApi;
+  labels: QueueForSourceLabelApi[];
+  existing_scores: QueueForSourceEntryApiExistingScores;
+  existing_notes: string;
+  existing_label_notes: QueueForSourceEntryApiExistingLabelNotes;
+  span_notes: QueueForSourceEntryApiSpanNotesItem[];
+  /** @minLength 1 */
+  span_notes_source_id?: string;
+}
+
+export interface QueueForSourceResponseApi {
   status?: boolean;
-  result: QueueJsonResponseApiResult;
+  result: QueueForSourceEntryApi[];
 }
 
 export interface QueueDefaultRequestApi {
@@ -3565,6 +3614,113 @@ export interface QueueAddLabelResultApi {
 export interface QueueAddLabelResponseApi {
   status?: boolean;
   result: QueueAddLabelResultApi;
+}
+
+export interface QueueAgreementLabelApi {
+  label_name: string;
+  label_type: string;
+  agreement_pct: number;
+  cohens_kappa: number;
+  disagreement_count: number;
+  disagreement_items: string[];
+}
+
+export interface QueueAgreementAnnotatorPairApi {
+  /** @minLength 1 */
+  annotator_1_id: string;
+  /** @minLength 1 */
+  annotator_2_id: string;
+  agreement_pct: number;
+  total_comparisons: number;
+}
+
+export type QueueAgreementResultApiLabels = {[key: string]: QueueAgreementLabelApi};
+
+export interface QueueAgreementResultApi {
+  overall_agreement: number;
+  labels: QueueAgreementResultApiLabels;
+  annotator_pairs: QueueAgreementAnnotatorPairApi[];
+}
+
+export interface QueueAgreementResponseApi {
+  status?: boolean;
+  result: QueueAgreementResultApi;
+}
+
+export interface QueueAnalyticsThroughputDailyApi {
+  /** @minLength 1 */
+  date: string;
+  count: number;
+}
+
+export interface QueueAnalyticsThroughputApi {
+  daily: QueueAnalyticsThroughputDailyApi[];
+  total_completed: number;
+  avg_per_day: number;
+}
+
+export interface QueueAnalyticsAnnotatorPerformanceApi {
+  /** @minLength 1 */
+  user_id?: string;
+  name?: string;
+  completed: number;
+  last_active?: string;
+}
+
+export type QueueAnalyticsResultApiLabelDistribution = {[key: string]: { [key: string]: unknown }};
+
+export type QueueAnalyticsResultApiStatusBreakdown = {[key: string]: number};
+
+export interface QueueAnalyticsResultApi {
+  throughput: QueueAnalyticsThroughputApi;
+  annotator_performance: QueueAnalyticsAnnotatorPerformanceApi[];
+  label_distribution: QueueAnalyticsResultApiLabelDistribution;
+  status_breakdown: QueueAnalyticsResultApiStatusBreakdown;
+  total: number;
+}
+
+export interface QueueAnalyticsResponseApi {
+  status?: boolean;
+  result: QueueAnalyticsResultApi;
+}
+
+export interface QueueExportFieldApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  column: string;
+  /** @minLength 1 */
+  data_type: string;
+  /** @minLength 1 */
+  group: string;
+  default: boolean;
+  path?: string;
+  source_type?: string;
+  kind?: string;
+  label_id?: string;
+  slot?: number;
+  eval_key?: string;
+  expand_fields?: string[];
+}
+
+export interface QueueExportDefaultMappingApi {
+  /** @minLength 1 */
+  field: string;
+  /** @minLength 1 */
+  column: string;
+  enabled: boolean;
+}
+
+export interface QueueExportFieldsResultApi {
+  fields: QueueExportFieldApi[];
+  default_mapping: QueueExportDefaultMappingApi[];
+}
+
+export interface QueueExportFieldsResponseApi {
+  status?: boolean;
+  result: QueueExportFieldsResultApi;
 }
 
 export interface QueueExportColumnMappingApi {
@@ -3657,11 +3813,13 @@ export interface QueueProgressResponseApi {
   result: QueueProgressResultApi;
 }
 
-export type QueueRemoveLabelResponseApiResult = {[key: string]: boolean};
+export interface QueueRemoveLabelResultApi {
+  removed: boolean;
+}
 
 export interface QueueRemoveLabelResponseApi {
   status?: boolean;
-  result: QueueRemoveLabelResponseApiResult;
+  result: QueueRemoveLabelResultApi;
 }
 
 export interface EmptyRequestApi { [key: string]: unknown }
@@ -3729,6 +3887,19 @@ export interface AutomationRuleApi {
   readonly last_triggered_at?: string;
   readonly trigger_count?: number;
   readonly created_at?: string;
+}
+
+export interface AutomationRuleEvaluateResultApi {
+  matched: number;
+  added: number;
+  duplicates: number;
+  truncated?: boolean;
+  error?: string;
+}
+
+export interface AutomationRuleEvaluateResponseApi {
+  status?: boolean;
+  result: AutomationRuleEvaluateResultApi;
 }
 
 export interface AutomationRuleEvaluateAcceptedResponseApi {
@@ -3901,11 +4072,13 @@ export interface AssignItemsApi {
   action?: AssignItemsApiAction;
 }
 
-export type QueueAssignItemsResponseApiResult = {[key: string]: number};
+export interface QueueAssignItemsResultApi {
+  assigned: number;
+}
 
 export interface QueueAssignItemsResponseApi {
   status?: boolean;
-  result: QueueAssignItemsResponseApiResult;
+  result: QueueAssignItemsResultApi;
 }
 
 export interface BulkRemoveItemsApi {
@@ -3913,11 +4086,13 @@ export interface BulkRemoveItemsApi {
   item_ids: string[];
 }
 
-export type QueueBulkRemoveItemsResponseApiResult = {[key: string]: number};
+export interface QueueBulkRemoveItemsResultApi {
+  removed: number;
+}
 
 export interface QueueBulkRemoveItemsResponseApi {
   status?: boolean;
-  result: QueueBulkRemoveItemsResponseApiResult;
+  result: QueueBulkRemoveItemsResultApi;
 }
 
 export type QueueNextItemResultApiItem = { [key: string]: unknown };
@@ -3931,11 +4106,43 @@ export interface QueueNextItemResponseApi {
   result: QueueNextItemResultApi;
 }
 
-export type QueueAnnotateDetailResponseApiResult = { [key: string]: unknown };
+export type QueueAnnotateDetailResultApiItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiQueue = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiLabelsItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiAnnotationsItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiReviewCommentsItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiReviewThreadsItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiSpanNotesItem = { [key: string]: unknown };
+
+export type QueueAnnotateDetailResultApiProgress = { [key: string]: unknown };
+
+export interface QueueAnnotateDetailResultApi {
+  item: QueueAnnotateDetailResultApiItem;
+  queue: QueueAnnotateDetailResultApiQueue;
+  labels: QueueAnnotateDetailResultApiLabelsItem[];
+  annotations: QueueAnnotateDetailResultApiAnnotationsItem[];
+  review_comments: QueueAnnotateDetailResultApiReviewCommentsItem[];
+  review_threads: QueueAnnotateDetailResultApiReviewThreadsItem[];
+  existing_notes: string;
+  span_notes: QueueAnnotateDetailResultApiSpanNotesItem[];
+  /** @minLength 1 */
+  span_notes_source_id?: string;
+  progress: QueueAnnotateDetailResultApiProgress;
+  /** @minLength 1 */
+  next_item_id?: string;
+  /** @minLength 1 */
+  prev_item_id?: string;
+}
 
 export interface QueueAnnotateDetailResponseApi {
   status?: boolean;
-  result: QueueAnnotateDetailResponseApiResult;
+  result: QueueAnnotateDetailResultApi;
 }
 
 export type ScoreApiSourceType = typeof ScoreApiSourceType[keyof typeof ScoreApiSourceType];
@@ -4008,11 +4215,13 @@ export interface ImportAnnotationsApi {
   annotator_id?: string;
 }
 
-export type QueueImportAnnotationsResponseApiResult = {[key: string]: number};
+export interface QueueImportAnnotationsResultApi {
+  imported: number;
+}
 
 export interface QueueImportAnnotationsResponseApi {
   status?: boolean;
-  result: QueueImportAnnotationsResponseApiResult;
+  result: QueueImportAnnotationsResultApi;
 }
 
 export type SubmitAnnotationsApiAnnotationsItem = {[key: string]: string};
@@ -4024,11 +4233,13 @@ export interface SubmitAnnotationsApi {
   item_notes?: string;
 }
 
-export type QueueSubmitAnnotationsResponseApiResult = {[key: string]: number};
+export interface QueueSubmitAnnotationsResultApi {
+  submitted: number;
+}
 
 export interface QueueSubmitAnnotationsResponseApi {
   status?: boolean;
-  result: QueueSubmitAnnotationsResponseApiResult;
+  result: QueueSubmitAnnotationsResultApi;
 }
 
 export interface QueueItemNavigationRequestApi {
@@ -4050,11 +4261,24 @@ export interface QueueNavigationResponseApi {
   result: QueueNavigationResultApi;
 }
 
-export type QueueDiscussionResponseApiResult = { [key: string]: unknown };
+export type QueueDiscussionResultApiReviewCommentsItem = { [key: string]: unknown };
+
+export type QueueDiscussionResultApiReviewThreadsItem = { [key: string]: unknown };
+
+export type QueueDiscussionResultApiComment = { [key: string]: unknown };
+
+export type QueueDiscussionResultApiThread = { [key: string]: unknown };
+
+export interface QueueDiscussionResultApi {
+  review_comments: QueueDiscussionResultApiReviewCommentsItem[];
+  review_threads: QueueDiscussionResultApiReviewThreadsItem[];
+  comment?: QueueDiscussionResultApiComment;
+  thread?: QueueDiscussionResultApiThread;
+}
 
 export interface QueueDiscussionResponseApi {
   status?: boolean;
-  result: QueueDiscussionResponseApiResult;
+  result: QueueDiscussionResultApi;
 }
 
 export interface DiscussionCommentRequestApi {
@@ -4080,11 +4304,13 @@ export interface DiscussionThreadStatusRequestApi {
   comment?: string;
 }
 
-export type QueueReleaseReservationResponseApiResult = {[key: string]: boolean};
+export interface QueueReleaseReservationResultApi {
+  released: boolean;
+}
 
 export interface QueueReleaseReservationResponseApi {
   status?: boolean;
-  result: QueueReleaseReservationResponseApiResult;
+  result: QueueReleaseReservationResultApi;
 }
 
 export type ReviewItemRequestApiAction = typeof ReviewItemRequestApiAction[keyof typeof ReviewItemRequestApiAction];
@@ -4385,6 +4611,109 @@ export interface ApiKeyApi {
   config_json?: ApiKeyApiConfigJson;
 }
 
+export type ModelParameterSliderApiDefault = { [key: string]: unknown };
+
+export interface ModelParameterSliderApi {
+  /** @minLength 1 */
+  label: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  default?: ModelParameterSliderApiDefault;
+  description?: string;
+}
+
+export type ModelParameterChoiceApiOptionsItem = { [key: string]: unknown };
+
+export type ModelParameterChoiceApiDefault = { [key: string]: unknown };
+
+export interface ModelParameterChoiceApi {
+  /** @minLength 1 */
+  label: string;
+  options: ModelParameterChoiceApiOptionsItem[];
+  default?: ModelParameterChoiceApiDefault;
+  description?: string;
+}
+
+export interface ModelParameterBooleanApi {
+  /** @minLength 1 */
+  label: string;
+  default?: boolean;
+  description?: string;
+}
+
+export type ModelParameterTextInputApiDefault = { [key: string]: unknown };
+
+export interface ModelParameterTextInputApi {
+  /** @minLength 1 */
+  label: string;
+  default?: ModelParameterTextInputApiDefault;
+  placeholder?: string;
+  description?: string;
+}
+
+export interface ModelParameterResponseFormatApi {
+  /** @minLength 1 */
+  value: string;
+}
+
+export interface ModelParameterReasoningApi {
+  dropdowns?: ModelParameterChoiceApi[];
+  sliders?: ModelParameterSliderApi[];
+}
+
+export interface ModelParametersResultApi {
+  sliders?: ModelParameterSliderApi[];
+  dropdowns?: ModelParameterChoiceApi[];
+  booleans?: ModelParameterBooleanApi[];
+  boolean?: ModelParameterBooleanApi[];
+  checkboxes?: ModelParameterBooleanApi[];
+  text_inputs?: ModelParameterTextInputApi[];
+  responseFormat?: ModelParameterResponseFormatApi[];
+  reasoning?: ModelParameterReasoningApi;
+}
+
+export interface ModelParametersResponseApi {
+  status: boolean;
+  result: ModelParametersResultApi;
+}
+
+export interface LiteLLMVoiceOptionApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+}
+
+export interface LiteLLMModelVoicesResultApi {
+  /** @minLength 1 */
+  model_name: string;
+  provider: string;
+  custom_voice_supported: boolean;
+  supported_voices: LiteLLMVoiceOptionApi[];
+  supported_formats: string[];
+  /** @minLength 1 */
+  default_voice?: string;
+  /** @minLength 1 */
+  default_format?: string;
+}
+
+export interface LiteLLMModelVoicesResponseApi {
+  status: boolean;
+  result: LiteLLMModelVoicesResultApi;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = { [key: string]: unknown };
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
+}
+
 export type ModelHubJSONResponseApiStatus = { [key: string]: unknown };
 
 export type ModelHubJSONResponseApiResult = { [key: string]: unknown };
@@ -4402,15 +4731,6 @@ export interface ModelHubJSONResponseApi {
   data?: ModelHubJSONResponseApiData;
   error?: ModelHubJSONResponseApiError;
   detail?: ModelHubJSONResponseApiDetail;
-}
-
-export type ModelHubPaginatedResponseApiResultsItem = { [key: string]: unknown };
-
-export interface ModelHubPaginatedResponseApi {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface ModelHubEmptyRequestApi { [key: string]: unknown }
@@ -4490,6 +4810,11 @@ export interface CustomMetricMutationRequestApi {
   datasets?: CustomMetricMutationRequestApiDatasets;
 }
 
+export interface ModelHubStatusResponseApi {
+  /** @minLength 1 */
+  status: string;
+}
+
 export interface MetricTagOptionApi {
   /** @minLength 1 */
   label: string;
@@ -4562,6 +4887,36 @@ export interface CustomAIModelCreateResponseApi {
   data: CustomAIModelCreateResponseDataApi;
 }
 
+export interface CustomAIModelDeleteRequestApi {
+  ids?: string[];
+}
+
+export interface ModelHubStringResultResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type CustomAIModelEditResultApiKey = { [key: string]: unknown };
+
+export type CustomAIModelEditResultApiConfigJson = { [key: string]: unknown };
+
+export interface CustomAIModelEditResultApi {
+  /** @minLength 1 */
+  model_name: string;
+  input_token_cost?: number;
+  output_token_cost?: number;
+  /** @minLength 1 */
+  model_provider: string;
+  key?: CustomAIModelEditResultApiKey;
+  config_json?: CustomAIModelEditResultApiConfigJson;
+}
+
+export interface CustomAIModelEditResponseApi {
+  status: boolean;
+  result: CustomAIModelEditResultApi;
+}
+
 export type CustomAIModelEditRequestApiConfigJson = { [key: string]: unknown };
 
 export interface CustomAIModelEditRequestApi {
@@ -4576,6 +4931,13 @@ export interface CustomAIModelEditRequestApi {
 export interface CustomAIModelBaselineRequestApi {
   environment?: string;
   model_version?: string;
+}
+
+export interface ModelHubStatusMessageResponseApi {
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  message: string;
 }
 
 export interface CustomAIModelDefaultMetricRequestApi {
@@ -4828,6 +5190,27 @@ export interface AnnotationSummaryResultApi {
 export interface AnnotationSummaryResponseApi {
   status?: boolean;
   result: AnnotationSummaryResultApi;
+}
+
+export interface DatasetRunPromptStatsPromptApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  input_token: number;
+  output_token: number;
+  total_token: number;
+}
+
+export interface DatasetRunPromptStatsResultApi {
+  avg_tokens: number;
+  avg_cost: number;
+  avg_time: number;
+  prompts: DatasetRunPromptStatsPromptApi[];
+}
+
+export interface DatasetRunPromptStatsResponseApi {
+  status: boolean;
+  result: DatasetRunPromptStatsResultApi;
 }
 
 export type CompareEvalsListRequestApiEvalType = typeof CompareEvalsListRequestApiEvalType[keyof typeof CompareEvalsListRequestApiEvalType];
@@ -5222,6 +5605,55 @@ export interface PreviewRunPromptApi {
   first_n_rows?: number;
   /** List of row indices to preview. Must contain at least one integer. */
   row_indices?: number[];
+}
+
+export type RunPromptColumnConfigResultApiConfig = { [key: string]: unknown };
+
+export interface RunPromptColumnConfigResultApi {
+  config: RunPromptColumnConfigResultApiConfig;
+}
+
+export interface RunPromptColumnConfigResponseApi {
+  status: boolean;
+  result: RunPromptColumnConfigResultApi;
+}
+
+export type RunPromptToolOptionApiConfig = { [key: string]: unknown };
+
+export interface RunPromptToolOptionApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  yaml_config?: string;
+  config?: RunPromptToolOptionApiConfig;
+  config_type?: string;
+  description?: string;
+}
+
+export type RunPromptChoiceOptionApiValue = { [key: string]: unknown };
+
+export interface RunPromptChoiceOptionApi {
+  value: RunPromptChoiceOptionApiValue;
+  /** @minLength 1 */
+  label: string;
+}
+
+export type RunPromptOptionsResultApiModelsItem = { [key: string]: unknown };
+
+export type RunPromptOptionsResultApiToolConfig = { [key: string]: unknown };
+
+export interface RunPromptOptionsResultApi {
+  models: RunPromptOptionsResultApiModelsItem[];
+  tool_config: RunPromptOptionsResultApiToolConfig;
+  available_tools: RunPromptToolOptionApi[];
+  output_formats: RunPromptChoiceOptionApi[];
+  tool_choices: RunPromptChoiceOptionApi[];
+}
+
+export interface RunPromptOptionsResponseApi {
+  status: boolean;
+  result: RunPromptOptionsResultApi;
 }
 
 export type DatasetAddColumnsRequestApiNewColumnsDataItem = { [key: string]: unknown };

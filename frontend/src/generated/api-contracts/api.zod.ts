@@ -11397,11 +11397,51 @@ export const ModelHubAnnotationQueuesForSourceQueryParams = zod.object({
 
 export const modelHubAnnotationQueuesForSourceResponseStatusDefault = true;
 
+
+
+
+
+
+
+
+
 export const ModelHubAnnotationQueuesForSourceResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesForSourceResponseStatusDefault),
-  "result": zod.object({
+  "result": zod.array(zod.object({
+  "queue": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "instructions": zod.string(),
+  "is_default": zod.boolean()
+}),
+  "item": zod.object({
+  "id": zod.string().uuid(),
+  "status": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1)
+}),
+  "labels": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "type": zod.string().min(1),
+  "settings": zod.object({
 
-}).passthrough()
+}).passthrough(),
+  "description": zod.string().optional(),
+  "allow_notes": zod.boolean(),
+  "required": zod.boolean(),
+  "order": zod.number()
+})),
+  "existing_scores": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "existing_notes": zod.string(),
+  "existing_label_notes": zod.record(zod.string(), zod.string().min(1)),
+  "span_notes": zod.array(zod.object({
+
+}).passthrough()),
+  "span_notes_source_id": zod.string().min(1).optional()
+}))
 })
 
 
@@ -11806,11 +11846,28 @@ export const ModelHubAnnotationQueuesAgreementParams = zod.object({
 
 export const modelHubAnnotationQueuesAgreementResponseStatusDefault = true;
 
+
+
+
 export const ModelHubAnnotationQueuesAgreementResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesAgreementResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough()
+  "overall_agreement": zod.number(),
+  "labels": zod.record(zod.string(), zod.object({
+  "label_name": zod.string(),
+  "label_type": zod.string(),
+  "agreement_pct": zod.number(),
+  "cohens_kappa": zod.number(),
+  "disagreement_count": zod.number(),
+  "disagreement_items": zod.array(zod.string().min(1))
+})),
+  "annotator_pairs": zod.array(zod.object({
+  "annotator_1_id": zod.string().min(1),
+  "annotator_2_id": zod.string().min(1),
+  "agreement_pct": zod.number(),
+  "total_comparisons": zod.number()
+}))
+})
 })
 
 
@@ -11823,11 +11880,31 @@ export const ModelHubAnnotationQueuesAnalyticsParams = zod.object({
 
 export const modelHubAnnotationQueuesAnalyticsResponseStatusDefault = true;
 
+
+
 export const ModelHubAnnotationQueuesAnalyticsResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesAnalyticsResponseStatusDefault),
   "result": zod.object({
+  "throughput": zod.object({
+  "daily": zod.array(zod.object({
+  "date": zod.string().min(1),
+  "count": zod.number()
+})),
+  "total_completed": zod.number(),
+  "avg_per_day": zod.number()
+}),
+  "annotator_performance": zod.array(zod.object({
+  "user_id": zod.string().min(1).optional(),
+  "name": zod.string().optional(),
+  "completed": zod.number(),
+  "last_active": zod.string().datetime({"offset":true}).optional()
+})),
+  "label_distribution": zod.record(zod.string(), zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "status_breakdown": zod.record(zod.string(), zod.number()),
+  "total": zod.number()
+})
 })
 
 
@@ -11840,11 +11917,38 @@ export const ModelHubAnnotationQueuesExportFieldsParams = zod.object({
 
 export const modelHubAnnotationQueuesExportFieldsResponseStatusDefault = true;
 
+
+
+
+
+
+
+
+
 export const ModelHubAnnotationQueuesExportFieldsResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesExportFieldsResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough()
+  "fields": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "label": zod.string().min(1),
+  "column": zod.string().min(1),
+  "data_type": zod.string().min(1),
+  "group": zod.string().min(1),
+  "default": zod.boolean(),
+  "path": zod.string().optional(),
+  "source_type": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "label_id": zod.string().uuid().optional(),
+  "slot": zod.number().optional(),
+  "eval_key": zod.string().optional(),
+  "expand_fields": zod.array(zod.string().min(1)).optional()
+})),
+  "default_mapping": zod.array(zod.object({
+  "field": zod.string().min(1),
+  "column": zod.string().min(1),
+  "enabled": zod.boolean()
+}))
+})
 })
 
 
@@ -12000,7 +12104,9 @@ export const modelHubAnnotationQueuesRemoveLabelResponseStatusDefault = true;
 
 export const ModelHubAnnotationQueuesRemoveLabelResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesRemoveLabelResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.boolean())
+  "result": zod.object({
+  "removed": zod.boolean()
+})
 })
 
 
@@ -12375,8 +12481,12 @@ export const modelHubAnnotationQueuesAutomationRulesEvaluateResponseStatusDefaul
 export const ModelHubAnnotationQueuesAutomationRulesEvaluateResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesAutomationRulesEvaluateResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough()
+  "matched": zod.number(),
+  "added": zod.number(),
+  "duplicates": zod.number(),
+  "truncated": zod.boolean().optional(),
+  "error": zod.string().optional()
+})
 })
 
 
@@ -12393,8 +12503,12 @@ export const modelHubAnnotationQueuesAutomationRulesPreviewResponseStatusDefault
 export const ModelHubAnnotationQueuesAutomationRulesPreviewResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesAutomationRulesPreviewResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough()
+  "matched": zod.number(),
+  "added": zod.number(),
+  "duplicates": zod.number(),
+  "truncated": zod.boolean().optional(),
+  "error": zod.string().optional()
+})
 })
 
 
@@ -12563,7 +12677,9 @@ export const modelHubAnnotationQueuesItemsAssignItemsResponseStatusDefault = tru
 
 export const ModelHubAnnotationQueuesItemsAssignItemsResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsAssignItemsResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.number())
+  "result": zod.object({
+  "assigned": zod.number()
+})
 })
 
 
@@ -12582,7 +12698,9 @@ export const modelHubAnnotationQueuesItemsBulkRemoveResponseStatusDefault = true
 
 export const ModelHubAnnotationQueuesItemsBulkRemoveResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsBulkRemoveResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.number())
+  "result": zod.object({
+  "removed": zod.number()
+})
 })
 
 
@@ -12850,11 +12968,41 @@ export const ModelHubAnnotationQueuesItemsAnnotateDetailQueryParams = zod.object
 
 export const modelHubAnnotationQueuesItemsAnnotateDetailResponseStatusDefault = true;
 
+
+
+
 export const ModelHubAnnotationQueuesItemsAnnotateDetailResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsAnnotateDetailResponseStatusDefault),
   "result": zod.object({
+  "item": zod.object({
 
-}).passthrough()
+}).passthrough(),
+  "queue": zod.object({
+
+}).passthrough(),
+  "labels": zod.array(zod.object({
+
+}).passthrough()),
+  "annotations": zod.array(zod.object({
+
+}).passthrough()),
+  "review_comments": zod.array(zod.object({
+
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "existing_notes": zod.string(),
+  "span_notes": zod.array(zod.object({
+
+}).passthrough()),
+  "span_notes_source_id": zod.string().min(1).optional(),
+  "progress": zod.object({
+
+}).passthrough(),
+  "next_item_id": zod.string().min(1).optional(),
+  "prev_item_id": zod.string().min(1).optional()
+})
 })
 
 
@@ -12925,7 +13073,9 @@ export const modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseSt
 
 export const ModelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.number())
+  "result": zod.object({
+  "imported": zod.number()
+})
 })
 
 
@@ -12950,7 +13100,9 @@ export const modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseSt
 
 export const ModelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.number())
+  "result": zod.object({
+  "submitted": zod.number()
+})
 })
 
 
@@ -12999,8 +13151,19 @@ export const modelHubAnnotationQueuesItemsDiscussionReadResponseStatusDefault = 
 export const ModelHubAnnotationQueuesItemsDiscussionReadResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionReadResponseStatusDefault),
   "result": zod.object({
+  "review_comments": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -13029,8 +13192,19 @@ export const modelHubAnnotationQueuesItemsDiscussionCreateResponseStatusDefault 
 export const ModelHubAnnotationQueuesItemsDiscussionCreateResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionCreateResponseStatusDefault),
   "result": zod.object({
+  "review_comments": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -13059,8 +13233,19 @@ export const modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentRea
 export const ModelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponseStatusDefault),
   "result": zod.object({
+  "review_comments": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -13079,8 +13264,19 @@ export const modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadRespon
 export const ModelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponseStatusDefault),
   "result": zod.object({
+  "review_comments": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -13099,8 +13295,19 @@ export const modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadRespo
 export const ModelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponseStatusDefault),
   "result": zod.object({
+  "review_comments": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -13120,7 +13327,9 @@ export const modelHubAnnotationQueuesItemsReleaseReservationResponseStatusDefaul
 
 export const ModelHubAnnotationQueuesItemsReleaseReservationResponse = zod.object({
   "status": zod.boolean().default(modelHubAnnotationQueuesItemsReleaseReservationResponseStatusDefault),
-  "result": zod.record(zod.string(), zod.boolean())
+  "result": zod.object({
+  "released": zod.boolean()
+})
 })
 
 
@@ -14073,23 +14282,89 @@ export const ModelHubApiKeysDeleteParams = zod.object({
 })
 
 
+
+
+
+
+
+
+
+
+
+
+
 export const ModelHubApiModelParametersListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "sliders": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "min": zod.number().optional(),
+  "max": zod.number().optional(),
+  "step": zod.number().optional(),
+  "default": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
+  "description": zod.string().optional()
+})).optional(),
+  "dropdowns": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "options": zod.array(zod.object({
+
+}).passthrough()),
+  "default": zod.object({
 
 }).passthrough().optional(),
-  "error": zod.object({
+  "description": zod.string().optional()
+})).optional(),
+  "booleans": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "default": zod.boolean().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "boolean": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "default": zod.boolean().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "checkboxes": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "default": zod.boolean().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "text_inputs": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "default": zod.object({
 
 }).passthrough().optional(),
-  "detail": zod.object({
+  "placeholder": zod.string().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "responseFormat": zod.array(zod.object({
+  "value": zod.string().min(1)
+})).optional(),
+  "reasoning": zod.object({
+  "dropdowns": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "options": zod.array(zod.object({
 
-}).passthrough().optional()
+}).passthrough()),
+  "default": zod.object({
+
+}).passthrough().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "sliders": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "min": zod.number().optional(),
+  "max": zod.number().optional(),
+  "step": zod.number().optional(),
+  "default": zod.object({
+
+}).passthrough().optional(),
+  "description": zod.string().optional()
+})).optional()
+}).optional()
+})
 })
 
 
@@ -14098,23 +14373,30 @@ export const ModelHubApiModelParametersListResponse = zod.object({
 Query params:
     - model: Model name (required)
  */
+
+
+
+
+
+
+
+
+
 export const ModelHubApiModelVoicesListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "model_name": zod.string().min(1),
+  "provider": zod.string(),
+  "custom_voice_supported": zod.boolean(),
+  "supported_voices": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "type": zod.string().min(1)
+})),
+  "supported_formats": zod.array(zod.string().min(1)),
+  "default_voice": zod.string().min(1).optional(),
+  "default_format": zod.string().min(1).optional()
+})
 })
 
 
@@ -14376,23 +14658,11 @@ export const ModelHubCustomMetricCreateCreateBody = zod.object({
 }).passthrough().optional()
 })
 
+
+
+
 export const ModelHubCustomMetricCreateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.string().min(1)
 })
 
 
@@ -14441,23 +14711,11 @@ export const ModelHubCustomMetricUpdateCreateBody = zod.object({
 }).passthrough().optional()
 })
 
+
+
+
 export const ModelHubCustomMetricUpdateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.string().min(1)
 })
 
 
@@ -14586,23 +14844,39 @@ export const ModelHubCustomModelsCreateCreateResponse = zod.object({
 })
 
 
+export const modelHubCustomModelsDeleteDeleteBodyIdsDefault = [];
+
+export const ModelHubCustomModelsDeleteDeleteBody = zod.object({
+  "ids": zod.array(zod.string().uuid()).default(modelHubCustomModelsDeleteDeleteBodyIdsDefault)
+})
+
+
+
+
+export const ModelHubCustomModelsDeleteDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
+})
+
+
+
+
+
+
 export const ModelHubCustomModelsEditListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "model_name": zod.string().min(1),
+  "input_token_cost": zod.number().optional(),
+  "output_token_cost": zod.number().optional(),
+  "model_provider": zod.string().min(1),
+  "key": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
+  "config_json": zod.object({
 
 }).passthrough().optional()
+})
 })
 
 
@@ -14619,23 +14893,12 @@ export const ModelHubCustomModelsEditPartialUpdateBody = zod.object({
   "key": zod.string().optional()
 })
 
+
+
+
 export const ModelHubCustomModelsEditPartialUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -14648,23 +14911,13 @@ export const ModelHubCustomModelsUpdateBaselineCreateBody = zod.object({
   "model_version": zod.string().optional()
 })
 
+
+
+
+
 export const ModelHubCustomModelsUpdateBaselineCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.string().min(1),
+  "message": zod.string().min(1)
 })
 
 
@@ -14679,23 +14932,13 @@ export const ModelHubCustomModelsUpdateMetricCreateBody = zod.object({
   "metric_id": zod.string().uuid()
 })
 
+
+
+
+
 export const ModelHubCustomModelsUpdateMetricCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.string().min(1),
+  "message": zod.string().min(1)
 })
 
 
@@ -15239,23 +15482,23 @@ export const ModelHubDatasetRunPromptStatsListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+
+
+
 export const ModelHubDatasetRunPromptStatsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "avg_tokens": zod.number(),
+  "avg_cost": zod.number(),
+  "avg_time": zod.number(),
+  "prompts": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "input_token": zod.number(),
+  "output_token": zod.number(),
+  "total_token": zod.number()
+}))
+})
 })
 
 
@@ -16810,42 +17053,53 @@ export const ModelHubDevelopsProviderStatusListResponse = zod.object({
 
 
 export const ModelHubDevelopsRetrieveRunPromptColumnConfigListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "config": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough()
+})
 })
 
 
+
+
+
+
+
+
 export const ModelHubDevelopsRetrieveRunPromptOptionsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "models": zod.array(zod.object({
+
+}).passthrough()),
+  "tool_config": zod.object({
+
+}).passthrough(),
+  "available_tools": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "yaml_config": zod.string().optional(),
+  "config": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
+  "config_type": zod.string().optional(),
+  "description": zod.string().optional()
+})),
+  "output_formats": zod.array(zod.object({
+  "value": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
+}).passthrough(),
+  "label": zod.string().min(1)
+})),
+  "tool_choices": zod.array(zod.object({
+  "value": zod.object({
 
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough(),
+  "label": zod.string().min(1)
+}))
+})
 })
 
 
