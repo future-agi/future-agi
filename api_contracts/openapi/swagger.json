@@ -7680,7 +7680,10 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ToolDiscoveryResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -7717,7 +7720,16 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ClickHouseHealthResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ClickHouseHealthResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -7751,10 +7763,25 @@
                 "operationId": "api_public_ingestion_create",
                 "summary": "Langfuse-compatible ``POST /api/public/ingestion`` endpoint.",
                 "description": "Accepts batch events from Langfuse SDK / compatible clients (e.g. Vapi)\nand ingests them as traces, observation spans, and scores.\n\nReturns ``207 Multi-Status`` with per-event success/error reporting,\nmatching the Langfuse ingestion API contract.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LangfuseIngestionRequest"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "207": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LangfuseIngestionResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden"
                     }
                 },
                 "tags": [
@@ -41745,6 +41772,115 @@
                 }
             }
         },
+        "ToolParameter": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "ToolDiscoveryItem": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "category": {
+                    "title": "Category",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ToolParameter"
+                    },
+                    "readOnly": true
+                },
+                "returns": {
+                    "title": "Returns",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            }
+        },
+        "ToolDiscoveryResult": {
+            "type": "object",
+            "properties": {
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ToolDiscoveryItem"
+                    },
+                    "readOnly": true
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer",
+                    "readOnly": true
+                }
+            }
+        },
+        "ToolDiscoveryResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/ToolDiscoveryResult"
+                }
+            }
+        },
         "DeploymentInfoResult": {
             "required": [
                 "mode"
@@ -41778,6 +41914,50 @@
                 }
             }
         },
+        "ClickHouseHealthResponse": {
+            "required": [
+                "status",
+                "clickhouse_connected",
+                "cdc_lag",
+                "routing"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "healthy",
+                        "degraded",
+                        "unhealthy",
+                        "disabled"
+                    ]
+                },
+                "clickhouse_connected": {
+                    "title": "Clickhouse connected",
+                    "type": "boolean"
+                },
+                "cdc_lag": {
+                    "title": "Cdc lag",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number"
+                    }
+                },
+                "routing": {
+                    "title": "Routing",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "LangfuseHealthResponse": {
             "required": [
                 "status",
@@ -41796,6 +41976,109 @@
                     "title": "Version",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "LangfuseIngestionEvent": {
+            "required": [
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string"
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "body": {
+                    "title": "Body",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string"
+                }
+            }
+        },
+        "LangfuseIngestionRequest": {
+            "required": [
+                "batch"
+            ],
+            "type": "object",
+            "properties": {
+                "batch": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LangfuseIngestionEvent"
+                    }
+                }
+            }
+        },
+        "LangfuseIngestionSuccess": {
+            "required": [
+                "id",
+                "status"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "integer"
+                }
+            }
+        },
+        "LangfuseIngestionError": {
+            "required": [
+                "id",
+                "status",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "integer"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "LangfuseIngestionResponse": {
+            "required": [
+                "successes",
+                "errors"
+            ],
+            "type": "object",
+            "properties": {
+                "successes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LangfuseIngestionSuccess"
+                    }
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LangfuseIngestionError"
+                    }
                 }
             }
         },

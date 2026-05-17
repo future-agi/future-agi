@@ -1019,6 +1019,41 @@ export interface AgentccWebhookApi {
   readonly updated_at?: string;
 }
 
+export interface ToolParameterApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly type?: string;
+  readonly description?: string;
+  readonly required?: boolean;
+}
+
+export type ToolDiscoveryItemApiReturns = { [key: string]: unknown };
+
+export type ToolDiscoveryItemApiMetadata = { [key: string]: unknown };
+
+export interface ToolDiscoveryItemApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly category?: string;
+  readonly description?: string;
+  readonly parameters?: readonly ToolParameterApi[];
+  readonly returns?: ToolDiscoveryItemApiReturns;
+  readonly metadata?: ToolDiscoveryItemApiMetadata;
+}
+
+export interface ToolDiscoveryResultApi {
+  readonly tools?: readonly ToolDiscoveryItemApi[];
+  readonly categories?: readonly string[];
+  readonly total?: number;
+}
+
+export interface ToolDiscoveryResponseApi {
+  status?: boolean;
+  result: ToolDiscoveryResultApi;
+}
+
 export type DeploymentInfoResultApiMode = typeof DeploymentInfoResultApiMode[keyof typeof DeploymentInfoResultApiMode];
 
 
@@ -1037,6 +1072,29 @@ export interface DeploymentInfoResponseApi {
   result: DeploymentInfoResultApi;
 }
 
+export type ClickHouseHealthResponseApiStatus = typeof ClickHouseHealthResponseApiStatus[keyof typeof ClickHouseHealthResponseApiStatus];
+
+
+export const ClickHouseHealthResponseApiStatus = {
+  healthy: 'healthy',
+  degraded: 'degraded',
+  unhealthy: 'unhealthy',
+  disabled: 'disabled',
+} as const;
+
+export type ClickHouseHealthResponseApiCdcLag = {[key: string]: number};
+
+export type ClickHouseHealthResponseApiRouting = {[key: string]: { [key: string]: unknown }};
+
+export interface ClickHouseHealthResponseApi {
+  status: ClickHouseHealthResponseApiStatus;
+  clickhouse_connected: boolean;
+  cdc_lag: ClickHouseHealthResponseApiCdcLag;
+  routing: ClickHouseHealthResponseApiRouting;
+  /** @minLength 1 */
+  error?: string;
+}
+
 export type LangfuseHealthResponseApiStatus = typeof LangfuseHealthResponseApiStatus[keyof typeof LangfuseHealthResponseApiStatus];
 
 
@@ -1048,6 +1106,39 @@ export interface LangfuseHealthResponseApi {
   status: LangfuseHealthResponseApiStatus;
   /** @minLength 1 */
   version: string;
+}
+
+export type LangfuseIngestionEventApiBody = { [key: string]: unknown };
+
+export interface LangfuseIngestionEventApi {
+  id?: string;
+  /** @minLength 1 */
+  type: string;
+  body?: LangfuseIngestionEventApiBody;
+  timestamp?: string;
+}
+
+export interface LangfuseIngestionRequestApi {
+  batch: LangfuseIngestionEventApi[];
+}
+
+export interface LangfuseIngestionSuccessApi {
+  /** @minLength 1 */
+  id: string;
+  status: number;
+}
+
+export interface LangfuseIngestionErrorApi {
+  /** @minLength 1 */
+  id: string;
+  status: number;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface LangfuseIngestionResponseApi {
+  successes: LangfuseIngestionSuccessApi[];
+  errors: LangfuseIngestionErrorApi[];
 }
 
 export interface OTLPHTTPTraceResponseApi { [key: string]: unknown }

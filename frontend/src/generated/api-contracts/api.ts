@@ -158,6 +158,7 @@ import type {
   CellUpdateApi,
   ChatSDKCodeResponseApi,
   ChatSendMessageResponseApi,
+  ClickHouseHealthResponseApi,
   CreateLinearIssueApi,
   CreateLinearIssueResponseApi,
   CreateNodeApi,
@@ -230,6 +231,8 @@ import type {
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
   LangfuseHealthResponseApi,
+  LangfuseIngestionRequestApi,
+  LangfuseIngestionResponseApi,
   LangfuseTracesResponseApi,
   LinearTeamsResponseApi,
   LiveKitCallExecutionUpdateRequestApi,
@@ -466,6 +469,7 @@ import type {
   TestExecutionStatusApi,
   TestExecutionTranscriptsResponseApi,
   TokenObtainPairApi,
+  ToolDiscoveryResponseApi,
   ToolsApi,
   TraceApi,
   TraceErrorAnalysisResponseApi,
@@ -11008,7 +11012,7 @@ export const agentccWebhooksTest = async (id: string,
 
 
 export type aiToolsToolsListResponse200 = {
-  data: void
+  data: ToolDiscoveryResponseApi
   status: 200
 }
 
@@ -11081,16 +11085,23 @@ export const apiDeploymentInfoList = async ( options?: RequestInit): Promise<api
 
 
 export type apiHealthClickhouseListResponse200 = {
-  data: void
+  data: ClickHouseHealthResponseApi
   status: 200
+}
+
+export type apiHealthClickhouseListResponse503 = {
+  data: ClickHouseHealthResponseApi
+  status: 503
 }
 
 export type apiHealthClickhouseListResponseSuccess = (apiHealthClickhouseListResponse200) & {
   headers: Headers;
 };
-;
+export type apiHealthClickhouseListResponseError = (apiHealthClickhouseListResponse503) & {
+  headers: Headers;
+};
 
-export type apiHealthClickhouseListResponse = (apiHealthClickhouseListResponseSuccess)
+export type apiHealthClickhouseListResponse = (apiHealthClickhouseListResponseSuccess | apiHealthClickhouseListResponseError)
 
 export const getApiHealthClickhouseListUrl = () => {
 
@@ -11166,17 +11177,24 @@ export const apiPublicHealthList = async ( options?: RequestInit): Promise<apiPu
 
 
 
-export type apiPublicIngestionCreateResponse201 = {
-  data: void
-  status: 201
+export type apiPublicIngestionCreateResponse207 = {
+  data: LangfuseIngestionResponseApi
+  status: 207
 }
 
-export type apiPublicIngestionCreateResponseSuccess = (apiPublicIngestionCreateResponse201) & {
+export type apiPublicIngestionCreateResponse403 = {
+  data: void
+  status: 403
+}
+
+export type apiPublicIngestionCreateResponseSuccess = (apiPublicIngestionCreateResponse207) & {
   headers: Headers;
 };
-;
+export type apiPublicIngestionCreateResponseError = (apiPublicIngestionCreateResponse403) & {
+  headers: Headers;
+};
 
-export type apiPublicIngestionCreateResponse = (apiPublicIngestionCreateResponseSuccess)
+export type apiPublicIngestionCreateResponse = (apiPublicIngestionCreateResponseSuccess | apiPublicIngestionCreateResponseError)
 
 export const getApiPublicIngestionCreateUrl = () => {
 
@@ -11194,14 +11212,15 @@ Returns ``207 Multi-Status`` with per-event success/error reporting,
 matching the Langfuse ingestion API contract.
  * @summary Langfuse-compatible ``POST /api/public/ingestion`` endpoint.
  */
-export const apiPublicIngestionCreate = async ( options?: RequestInit): Promise<apiPublicIngestionCreateResponse> => {
+export const apiPublicIngestionCreate = async (langfuseIngestionRequestApi: LangfuseIngestionRequestApi, options?: RequestInit): Promise<apiPublicIngestionCreateResponse> => {
 
   return apiMutator<apiPublicIngestionCreateResponse>(getApiPublicIngestionCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      langfuseIngestionRequestApi,)
   }
 );}
 

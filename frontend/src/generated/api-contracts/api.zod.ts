@@ -6038,6 +6038,42 @@ export const AgentccWebhooksTestBody = zod.object({
 
 
 /**
+ * Lists all registered AI tools for discovery and debugging.
+ */
+export const aiToolsToolsListResponseStatusDefault = true;
+
+
+
+
+
+
+export const AiToolsToolsListResponse = zod.object({
+  "status": zod.boolean().default(aiToolsToolsListResponseStatusDefault),
+  "result": zod.object({
+  "tools": zod.array(zod.object({
+  "name": zod.string().min(1).optional(),
+  "category": zod.string().min(1).optional(),
+  "description": zod.string().optional(),
+  "parameters": zod.array(zod.object({
+  "name": zod.string().min(1).optional(),
+  "type": zod.string().min(1).optional(),
+  "description": zod.string().optional(),
+  "required": zod.boolean().optional()
+})).optional(),
+  "returns": zod.object({
+
+}).passthrough().optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})).optional(),
+  "categories": zod.array(zod.string().min(1)).optional(),
+  "total": zod.number().optional()
+})
+})
+
+
+/**
  * Returns ``{"mode": "oss"|"ee"|"cloud"}``. No auth — public config.
  * @summary Public deployment-mode probe used by the frontend to gate UI.
  */
@@ -6048,6 +6084,30 @@ export const ApiDeploymentInfoListResponse = zod.object({
   "result": zod.object({
   "mode": zod.enum(['oss', 'ee', 'cloud'])
 })
+})
+
+
+/**
+ * Returns JSON with:
+- status: healthy | degraded | unhealthy | disabled
+- clickhouse_connected: bool
+- cdc_lag: per-table replication lag in seconds
+- routing: per-query-type routing configuration
+
+No authentication required (intended for infrastructure monitoring).
+ * @summary Health check endpoint for the ClickHouse analytics backend.
+ */
+
+
+
+export const ApiHealthClickhouseListResponse = zod.object({
+  "status": zod.enum(['healthy', 'degraded', 'unhealthy', 'disabled']),
+  "clickhouse_connected": zod.boolean(),
+  "cdc_lag": zod.record(zod.string(), zod.number()),
+  "routing": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "error": zod.string().min(1).optional()
 })
 
 
@@ -6067,6 +6127,29 @@ authentication layer.
 export const ApiPublicHealthListResponse = zod.object({
   "status": zod.enum(['OK']),
   "version": zod.string().min(1)
+})
+
+
+/**
+ * Accepts batch events from Langfuse SDK / compatible clients (e.g. Vapi)
+and ingests them as traces, observation spans, and scores.
+
+Returns ``207 Multi-Status`` with per-event success/error reporting,
+matching the Langfuse ingestion API contract.
+ * @summary Langfuse-compatible ``POST /api/public/ingestion`` endpoint.
+ */
+
+
+
+export const ApiPublicIngestionCreateBody = zod.object({
+  "batch": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "type": zod.string().min(1),
+  "body": zod.object({
+
+}).passthrough().optional(),
+  "timestamp": zod.string().optional()
+}))
 })
 
 

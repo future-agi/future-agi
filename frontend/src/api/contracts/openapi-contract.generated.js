@@ -4163,7 +4163,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "ai-tools_tools_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ToolDiscoveryResponse"
+          }
+        }
       }
     },
     "/api/deployment-info/": {
@@ -4183,7 +4187,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "api_health_clickhouse_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ClickHouseHealthResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ClickHouseHealthResponse"
+          }
+        }
       }
     },
     "/api/public/health": {
@@ -4201,9 +4212,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/api/public/ingestion": {
       "post": {
         "operationId": "api_public_ingestion_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/LangfuseIngestionRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "207": {
+            "$ref": "#/definitions/LangfuseIngestionResponse"
+          }
+        }
       }
     },
     "/api/public/otel/v1/traces": {
@@ -26238,6 +26255,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ClickHouseHealthResponse": {
+      "required": [
+        "status",
+        "clickhouse_connected",
+        "cdc_lag",
+        "routing"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "healthy",
+            "degraded",
+            "unhealthy",
+            "disabled"
+          ]
+        },
+        "clickhouse_connected": {
+          "title": "Clickhouse connected",
+          "type": "boolean"
+        },
+        "cdc_lag": {
+          "title": "Cdc lag",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "routing": {
+          "title": "Routing",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "CreateLinearIssue": {
       "required": [
         "team_id"
@@ -29311,6 +29372,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Version",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "LangfuseIngestionRequest": {
+      "required": [
+        "batch"
+      ],
+      "type": "object",
+      "properties": {
+        "batch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LangfuseIngestionEvent"
+          }
+        }
+      }
+    },
+    "LangfuseIngestionResponse": {
+      "required": [
+        "successes",
+        "errors"
+      ],
+      "type": "object",
+      "properties": {
+        "successes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LangfuseIngestionSuccess"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LangfuseIngestionError"
+          }
         }
       }
     },
@@ -35552,6 +35648,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ToolDiscoveryResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/ToolDiscoveryResult"
+        }
+      }
+    },
     "Tools": {
       "required": [
         "name",
@@ -38134,6 +38246,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "LangfuseIngestionEvent": {
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "title": "Body",
+          "type": "object",
+          "x-nullable": true
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        }
+      }
+    },
+    "LangfuseIngestionError": {
+      "required": [
+        "id",
+        "status",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "LangfuseIngestionSuccess": {
+      "required": [
+        "id",
+        "status"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        }
+      }
+    },
     "LangfuseTracesMeta": {
       "required": [
         "page",
@@ -39586,6 +39766,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "readOnly": true,
           "minLength": 1,
           "x-nullable": true
+        }
+      }
+    },
+    "ToolDiscoveryResult": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ToolDiscoveryItem"
+          },
+          "readOnly": true
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "readOnly": true
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer",
+          "readOnly": true
         }
       }
     },
@@ -41282,6 +41487,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true
     },
+    "ToolDiscoveryItem": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "category": {
+          "title": "Category",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "readOnly": true
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ToolParameter"
+          },
+          "readOnly": true
+        },
+        "returns": {
+          "title": "Returns",
+          "type": "object",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "readOnly": true,
+          "x-nullable": true
+        }
+      }
+    },
     "TracesAggregates": {
       "required": [
         "total_traces",
@@ -41718,6 +41964,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Arguments",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "ToolParameter": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "readOnly": true
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean",
+          "readOnly": true
         }
       }
     }

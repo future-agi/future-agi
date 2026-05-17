@@ -6,9 +6,11 @@ lag, and per-query-type routing configuration.
 """
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tracer.serializers.health import ClickHouseHealthResponseSerializer
 from tracer.services.clickhouse.consistency import ConsistencyChecker
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +32,12 @@ class ClickHouseHealthView(APIView):
     authentication_classes = []
     permission_classes = []
 
+    @swagger_auto_schema(
+        responses={
+            200: ClickHouseHealthResponseSerializer,
+            503: ClickHouseHealthResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         try:
             checker = ConsistencyChecker()

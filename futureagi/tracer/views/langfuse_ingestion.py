@@ -2,6 +2,7 @@ import uuid
 from collections import defaultdict
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,6 +11,10 @@ from rest_framework.views import APIView
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from integrations.transformers.langfuse_transformer import LangfuseTransformer
 from tracer.models.project import Project
+from tracer.serializers.langfuse_ingestion import (
+    LangfuseIngestionRequestSerializer,
+    LangfuseIngestionResponseSerializer,
+)
 from tracer.utils.langfuse_upsert import parse_langfuse_timestamp, upsert_langfuse_trace
 from tracer.utils.otel import get_or_create_project
 
@@ -123,6 +128,13 @@ class LangfuseIngestionView(APIView):
     authentication_classes = [LangfuseBasicAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=LangfuseIngestionRequestSerializer,
+        responses={
+            207: LangfuseIngestionResponseSerializer,
+            403: "Forbidden",
+        },
+    )
     def post(self, request, *args, **kwargs):
         batch = request.data.get("batch", [])
         if not batch:

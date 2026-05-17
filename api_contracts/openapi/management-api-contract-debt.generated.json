@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 308,
-    "operations_without_response_schema": 523
+    "mutation_endpoints_without_body_schema": 307,
+    "operations_without_response_schema": 520
   },
   "by_group": {
     "accounts": {
@@ -29,13 +29,13 @@
       "paths": 1,
       "operations": 1,
       "mutation_endpoints_without_body_schema": 0,
-      "operations_without_response_schema": 1
+      "operations_without_response_schema": 0
     },
     "api": {
       "paths": 9,
       "operations": 9,
-      "mutation_endpoints_without_body_schema": 1,
-      "operations_without_response_schema": 2
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0
     },
     "call-websocket": {
       "paths": 1,
@@ -829,15 +829,6 @@
       "operation_id": "agentcc_webhook_shadow-results_create",
       "tags": [
         "agentcc"
-      ]
-    },
-    {
-      "group": "api",
-      "method": "POST",
-      "path": "/api/public/ingestion",
-      "operation_id": "api_public_ingestion_create",
-      "tags": [
-        "api"
       ]
     },
     {
@@ -4017,33 +4008,6 @@
       "operation_id": "agentcc_webhook_shadow-results_create",
       "tags": [
         "agentcc"
-      ]
-    },
-    {
-      "group": "ai-tools",
-      "method": "GET",
-      "path": "/ai-tools/tools/",
-      "operation_id": "ai-tools_tools_list",
-      "tags": [
-        "ai-tools"
-      ]
-    },
-    {
-      "group": "api",
-      "method": "GET",
-      "path": "/api/health/clickhouse/",
-      "operation_id": "api_health_clickhouse_list",
-      "tags": [
-        "api"
-      ]
-    },
-    {
-      "group": "api",
-      "method": "POST",
-      "path": "/api/public/ingestion",
-      "operation_id": "api_public_ingestion_create",
-      "tags": [
-        "api"
       ]
     },
     {
