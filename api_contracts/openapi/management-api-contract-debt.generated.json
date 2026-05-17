@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 136,
-    "operations_without_response_schema": 222
+    "mutation_endpoints_without_body_schema": 133,
+    "operations_without_response_schema": 216
   },
   "by_group": {
     "accounts": {
@@ -70,8 +70,8 @@
     "model-hub": {
       "paths": 365,
       "operations": 478,
-      "mutation_endpoints_without_body_schema": 136,
-      "operations_without_response_schema": 222
+      "mutation_endpoints_without_body_schema": 133,
+      "operations_without_response_schema": 216
     },
     "saml2_auth": {
       "paths": 12,
@@ -1079,33 +1079,6 @@
       "method": "POST",
       "path": "/model-hub/ground-truth/{ground_truth_id}/search/",
       "operation_id": "model-hub_ground-truth_search_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/knowledge-base/",
-      "operation_id": "model-hub_knowledge-base_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PATCH",
-      "path": "/model-hub/knowledge-base/",
-      "operation_id": "model-hub_knowledge-base_partial_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/knowledge-base/files/",
-      "operation_id": "model-hub_knowledge-base_files_create",
       "tags": [
         "model-hub"
       ]
@@ -2908,60 +2881,6 @@
       "method": "GET",
       "path": "/model-hub/ground-truth/{ground_truth_id}/status/",
       "operation_id": "model-hub_ground-truth_status_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/knowledge-base/",
-      "operation_id": "model-hub_knowledge-base_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/knowledge-base/",
-      "operation_id": "model-hub_knowledge-base_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PATCH",
-      "path": "/model-hub/knowledge-base/",
-      "operation_id": "model-hub_knowledge-base_partial_update",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/knowledge-base/files/",
-      "operation_id": "model-hub_knowledge-base_files_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/knowledge-base/get/",
-      "operation_id": "model-hub_knowledge-base_get_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/knowledge-base/list/",
-      "operation_id": "model-hub_knowledge-base_list_list",
       "tags": [
         "model-hub"
       ]

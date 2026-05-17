@@ -142,3 +142,25 @@ class EmbeddingModelOptionSerializer(serializers.Serializer):
 class KnowledgeBaseEmbeddingModelsResponseSerializer(serializers.Serializer):
     status = serializers.IntegerField()
     result = EmbeddingModelOptionSerializer(many=True)
+
+
+class LegacyKnowledgeBaseMutationRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+    kb_id = serializers.UUIDField(required=False)
+    files = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
+    kb_id = serializers.UUIDField()
+    search = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    sort = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
+    page_number = serializers.IntegerField(required=False, default=0)
+    page_size = serializers.IntegerField(required=False, default=10)

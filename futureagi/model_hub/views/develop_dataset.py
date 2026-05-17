@@ -46,6 +46,7 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from docx import Document
+from drf_yasg.utils import swagger_auto_schema
 from pinecone import Pinecone
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -126,6 +127,12 @@ from model_hub.serializers.develop_dataset import (
     FileSerializer,
     KnowledgeBaseFileSerializer,
     UploadFileForm,
+)
+from model_hub.serializers.contracts import (
+    LegacyKnowledgeBaseFilesRequestSerializer,
+    LegacyKnowledgeBaseMutationRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
 from model_hub.serializers.eval_runner import UserEvalSerializer
@@ -14036,6 +14043,9 @@ class CreateKnowledgeBaseView(APIView):
             ingest_files_to_s3.delay(uploaded_file_paths, str(kb_id), str(org))
 
     # Api for fetching sdk code
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -14090,6 +14100,10 @@ class CreateKnowledgeBaseView(APIView):
                 "Error in getting the kb sdk code"
             )
 
+    @swagger_auto_schema(
+        request_body=LegacyKnowledgeBaseMutationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             start_time = time.time()
@@ -14224,6 +14238,10 @@ class CreateKnowledgeBaseView(APIView):
             )
 
     # Update knowledge base name and/or Add files
+    @swagger_auto_schema(
+        request_body=LegacyKnowledgeBaseMutationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def patch(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -14371,6 +14389,9 @@ class GetKnowledgeBaseDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     # List knowledge base table data
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -14519,6 +14540,9 @@ class ListKnowledgeBaseDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     # List knowledge base in org for dropdowns
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -14565,6 +14589,10 @@ class ExistingKnowledgeBaseView(APIView):
     permission_classes = [IsAuthenticated]
 
     # List files present in the KB
+    @swagger_auto_schema(
+        request_body=LegacyKnowledgeBaseFilesRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization

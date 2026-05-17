@@ -333,6 +333,8 @@ import type {
   LangfuseIngestionRequestApi,
   LangfuseIngestionResponseApi,
   LangfuseTracesResponseApi,
+  LegacyKnowledgeBaseFilesRequestApi,
+  LegacyKnowledgeBaseMutationRequestApi,
   LinearTeamsResponseApi,
   LiveKitCallExecutionUpdateRequestApi,
   LiveKitErrorResponseApi,
@@ -30203,16 +30205,43 @@ export const modelHubKbDelete = async (id: string, options?: RequestInit): Promi
 
 
 export type modelHubKnowledgeBaseListResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKnowledgeBaseListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseListResponseSuccess = (modelHubKnowledgeBaseListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBaseListResponseError = (modelHubKnowledgeBaseListResponse400 | modelHubKnowledgeBaseListResponse403 | modelHubKnowledgeBaseListResponse404 | modelHubKnowledgeBaseListResponse409 | modelHubKnowledgeBaseListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBaseListResponse = (modelHubKnowledgeBaseListResponseSuccess)
+export type modelHubKnowledgeBaseListResponse = (modelHubKnowledgeBaseListResponseSuccess | modelHubKnowledgeBaseListResponseError)
 
 export const getModelHubKnowledgeBaseListUrl = () => {
 
@@ -30235,17 +30264,44 @@ export const modelHubKnowledgeBaseList = async ( options?: RequestInit): Promise
 
 
 
-export type modelHubKnowledgeBaseCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubKnowledgeBaseCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubKnowledgeBaseCreateResponseSuccess = (modelHubKnowledgeBaseCreateResponse201) & {
+export type modelHubKnowledgeBaseCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubKnowledgeBaseCreateResponseSuccess = (modelHubKnowledgeBaseCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBaseCreateResponseError = (modelHubKnowledgeBaseCreateResponse400 | modelHubKnowledgeBaseCreateResponse403 | modelHubKnowledgeBaseCreateResponse404 | modelHubKnowledgeBaseCreateResponse409 | modelHubKnowledgeBaseCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBaseCreateResponse = (modelHubKnowledgeBaseCreateResponseSuccess)
+export type modelHubKnowledgeBaseCreateResponse = (modelHubKnowledgeBaseCreateResponseSuccess | modelHubKnowledgeBaseCreateResponseError)
 
 export const getModelHubKnowledgeBaseCreateUrl = () => {
 
@@ -30255,30 +30311,58 @@ export const getModelHubKnowledgeBaseCreateUrl = () => {
   return `/model-hub/knowledge-base/`
 }
 
-export const modelHubKnowledgeBaseCreate = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseCreateResponse> => {
+export const modelHubKnowledgeBaseCreate = async (legacyKnowledgeBaseMutationRequestApi: LegacyKnowledgeBaseMutationRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseCreateResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseCreateResponse>(getModelHubKnowledgeBaseCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseMutationRequestApi,)
   }
 );}
 
 
 
 export type modelHubKnowledgeBasePartialUpdateResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKnowledgeBasePartialUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBasePartialUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBasePartialUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBasePartialUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBasePartialUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBasePartialUpdateResponseSuccess = (modelHubKnowledgeBasePartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBasePartialUpdateResponseError = (modelHubKnowledgeBasePartialUpdateResponse400 | modelHubKnowledgeBasePartialUpdateResponse403 | modelHubKnowledgeBasePartialUpdateResponse404 | modelHubKnowledgeBasePartialUpdateResponse409 | modelHubKnowledgeBasePartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBasePartialUpdateResponse = (modelHubKnowledgeBasePartialUpdateResponseSuccess)
+export type modelHubKnowledgeBasePartialUpdateResponse = (modelHubKnowledgeBasePartialUpdateResponseSuccess | modelHubKnowledgeBasePartialUpdateResponseError)
 
 export const getModelHubKnowledgeBasePartialUpdateUrl = () => {
 
@@ -30288,14 +30372,15 @@ export const getModelHubKnowledgeBasePartialUpdateUrl = () => {
   return `/model-hub/knowledge-base/`
 }
 
-export const modelHubKnowledgeBasePartialUpdate = async ( options?: RequestInit): Promise<modelHubKnowledgeBasePartialUpdateResponse> => {
+export const modelHubKnowledgeBasePartialUpdate = async (legacyKnowledgeBaseMutationRequestApi: LegacyKnowledgeBaseMutationRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBasePartialUpdateResponse> => {
 
   return apiMutator<modelHubKnowledgeBasePartialUpdateResponse>(getModelHubKnowledgeBasePartialUpdateUrl(),
   {
     ...options,
-    method: 'PATCH'
-
-
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseMutationRequestApi,)
   }
 );}
 
@@ -30334,17 +30419,44 @@ export const modelHubKnowledgeBaseDelete = async ( options?: RequestInit): Promi
 
 
 
-export type modelHubKnowledgeBaseFilesCreateResponse201 = {
-  data: void
-  status: 201
+export type modelHubKnowledgeBaseFilesCreateResponse200 = {
+  data: ModelHubJSONResponseApi
+  status: 200
 }
 
-export type modelHubKnowledgeBaseFilesCreateResponseSuccess = (modelHubKnowledgeBaseFilesCreateResponse201) & {
+export type modelHubKnowledgeBaseFilesCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseFilesCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseFilesCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseFilesCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseFilesCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubKnowledgeBaseFilesCreateResponseSuccess = (modelHubKnowledgeBaseFilesCreateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBaseFilesCreateResponseError = (modelHubKnowledgeBaseFilesCreateResponse400 | modelHubKnowledgeBaseFilesCreateResponse403 | modelHubKnowledgeBaseFilesCreateResponse404 | modelHubKnowledgeBaseFilesCreateResponse409 | modelHubKnowledgeBaseFilesCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBaseFilesCreateResponse = (modelHubKnowledgeBaseFilesCreateResponseSuccess)
+export type modelHubKnowledgeBaseFilesCreateResponse = (modelHubKnowledgeBaseFilesCreateResponseSuccess | modelHubKnowledgeBaseFilesCreateResponseError)
 
 export const getModelHubKnowledgeBaseFilesCreateUrl = () => {
 
@@ -30354,14 +30466,15 @@ export const getModelHubKnowledgeBaseFilesCreateUrl = () => {
   return `/model-hub/knowledge-base/files/`
 }
 
-export const modelHubKnowledgeBaseFilesCreate = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseFilesCreateResponse> => {
+export const modelHubKnowledgeBaseFilesCreate = async (legacyKnowledgeBaseFilesRequestApi: LegacyKnowledgeBaseFilesRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseFilesCreateResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseFilesCreateResponse>(getModelHubKnowledgeBaseFilesCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseFilesRequestApi,)
   }
 );}
 
@@ -30401,16 +30514,43 @@ export const modelHubKnowledgeBaseFilesDelete = async ( options?: RequestInit): 
 
 
 export type modelHubKnowledgeBaseGetListResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKnowledgeBaseGetListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseGetListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseGetListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseGetListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseGetListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseGetListResponseSuccess = (modelHubKnowledgeBaseGetListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBaseGetListResponseError = (modelHubKnowledgeBaseGetListResponse400 | modelHubKnowledgeBaseGetListResponse403 | modelHubKnowledgeBaseGetListResponse404 | modelHubKnowledgeBaseGetListResponse409 | modelHubKnowledgeBaseGetListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBaseGetListResponse = (modelHubKnowledgeBaseGetListResponseSuccess)
+export type modelHubKnowledgeBaseGetListResponse = (modelHubKnowledgeBaseGetListResponseSuccess | modelHubKnowledgeBaseGetListResponseError)
 
 export const getModelHubKnowledgeBaseGetListUrl = () => {
 
@@ -30434,16 +30574,43 @@ export const modelHubKnowledgeBaseGetList = async ( options?: RequestInit): Prom
 
 
 export type modelHubKnowledgeBaseListListResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKnowledgeBaseListListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseListListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseListListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseListListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseListListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseListListResponseSuccess = (modelHubKnowledgeBaseListListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKnowledgeBaseListListResponseError = (modelHubKnowledgeBaseListListResponse400 | modelHubKnowledgeBaseListListResponse403 | modelHubKnowledgeBaseListListResponse404 | modelHubKnowledgeBaseListListResponse409 | modelHubKnowledgeBaseListListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKnowledgeBaseListListResponse = (modelHubKnowledgeBaseListListResponseSuccess)
+export type modelHubKnowledgeBaseListListResponse = (modelHubKnowledgeBaseListListResponseSuccess | modelHubKnowledgeBaseListListResponseError)
 
 export const getModelHubKnowledgeBaseListListUrl = () => {
 

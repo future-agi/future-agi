@@ -68,6 +68,10 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/kb/supported-embedding-models",
         "/model-hub/kb/supported_embedding_models/",
         "/model-hub/kb/{id}/",
+        "/model-hub/knowledge-base/",
+        "/model-hub/knowledge-base/files/",
+        "/model-hub/knowledge-base/get/",
+        "/model-hub/knowledge-base/list/",
     }
 
     body_gaps = {
@@ -107,6 +111,15 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ),
         ("POST", "/model-hub/kb/"): "KnowledgeBaseCreate",
         ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBase",
+        ("POST", "/model-hub/knowledge-base/"): (
+            "LegacyKnowledgeBaseMutationRequest"
+        ),
+        ("PATCH", "/model-hub/knowledge-base/"): (
+            "LegacyKnowledgeBaseMutationRequest"
+        ),
+        ("POST", "/model-hub/knowledge-base/files/"): (
+            "LegacyKnowledgeBaseFilesRequest"
+        ),
     }
 
     for (method, path), definition_name in expected.items():
@@ -148,6 +161,12 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("GET", "/model-hub/kb/{id}/"): "ModelHubJSONResponse",
         ("PUT", "/model-hub/kb/{id}/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/knowledge-base/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/knowledge-base/"): "ModelHubJSONResponse",
+        ("PATCH", "/model-hub/knowledge-base/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/knowledge-base/files/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/knowledge-base/get/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/knowledge-base/list/"): "ModelHubJSONResponse",
     }
 
     for (method, path), definition_name in expected.items():

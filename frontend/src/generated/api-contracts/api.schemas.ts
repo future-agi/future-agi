@@ -4983,6 +4983,22 @@ export interface KnowledgeBaseApi {
   readonly updated_at?: string;
 }
 
+export interface LegacyKnowledgeBaseMutationRequestApi {
+  name?: string;
+  kb_id?: string;
+  files?: string[];
+}
+
+export type LegacyKnowledgeBaseFilesRequestApiSortItem = { [key: string]: unknown };
+
+export interface LegacyKnowledgeBaseFilesRequestApi {
+  kb_id: string;
+  search?: string;
+  sort?: LegacyKnowledgeBaseFilesRequestApiSortItem[];
+  page_number?: number;
+  page_size?: number;
+}
+
 export type OptimizationDatasetApiMessagesItem = { [key: string]: unknown };
 
 export type OptimizationDatasetApiModelConfig = { [key: string]: unknown };

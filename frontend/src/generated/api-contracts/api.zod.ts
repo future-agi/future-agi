@@ -16456,6 +16456,156 @@ export const ModelHubKbDeleteParams = zod.object({
 })
 
 
+export const ModelHubKnowledgeBaseListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubKnowledgeBaseCreateBodyFilesDefault = [];
+
+export const ModelHubKnowledgeBaseCreateBody = zod.object({
+  "name": zod.string().optional(),
+  "kb_id": zod.string().uuid().optional(),
+  "files": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseCreateBodyFilesDefault)
+})
+
+export const ModelHubKnowledgeBaseCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubKnowledgeBasePartialUpdateBodyFilesDefault = [];
+
+export const ModelHubKnowledgeBasePartialUpdateBody = zod.object({
+  "name": zod.string().optional(),
+  "kb_id": zod.string().uuid().optional(),
+  "files": zod.array(zod.string().uuid()).default(modelHubKnowledgeBasePartialUpdateBodyFilesDefault)
+})
+
+export const ModelHubKnowledgeBasePartialUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubKnowledgeBaseFilesCreateBodySortDefault = [];
+export const modelHubKnowledgeBaseFilesCreateBodyPageNumberDefault = 0;
+export const modelHubKnowledgeBaseFilesCreateBodyPageSizeDefault = 10;
+
+export const ModelHubKnowledgeBaseFilesCreateBody = zod.object({
+  "kb_id": zod.string().uuid(),
+  "search": zod.string().optional(),
+  "sort": zod.array(zod.object({
+
+}).passthrough()).default(modelHubKnowledgeBaseFilesCreateBodySortDefault),
+  "page_number": zod.number().default(modelHubKnowledgeBaseFilesCreateBodyPageNumberDefault),
+  "page_size": zod.number().default(modelHubKnowledgeBaseFilesCreateBodyPageSizeDefault)
+})
+
+export const ModelHubKnowledgeBaseFilesCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubKnowledgeBaseGetListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubKnowledgeBaseListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubOptimisationListQueryParams = zod.object({
   "optimize_type": zod.string().optional(),
   "status": zod.string().optional(),

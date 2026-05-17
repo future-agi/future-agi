@@ -12814,19 +12814,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_knowledge-base_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "post": {
         "operationId": "model-hub_knowledge-base_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseMutationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "patch": {
         "operationId": "model-hub_knowledge-base_partial_update",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseMutationRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_delete",
@@ -12838,9 +12899,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/knowledge-base/files/": {
       "post": {
         "operationId": "model-hub_knowledge-base_files_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseFilesRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_files_delete",
@@ -12854,7 +12936,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_knowledge-base_get_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/knowledge-base/list/": {
@@ -12862,7 +12963,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "model-hub_knowledge-base_list_list",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubJSONResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/metrics/by-column/": {
@@ -37725,6 +37845,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "meta": {
           "$ref": "#/definitions/LangfuseTracesMeta"
+        }
+      }
+    },
+    "LegacyKnowledgeBaseFilesRequest": {
+      "required": [
+        "kb_id"
+      ],
+      "type": "object",
+      "properties": {
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "search": {
+          "title": "Search",
+          "type": "string",
+          "x-nullable": true
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "page_number": {
+          "title": "Page number",
+          "type": "integer",
+          "default": 0
+        },
+        "page_size": {
+          "title": "Page size",
+          "type": "integer",
+          "default": 10
+        }
+      }
+    },
+    "LegacyKnowledgeBaseMutationRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
         }
       }
     },
