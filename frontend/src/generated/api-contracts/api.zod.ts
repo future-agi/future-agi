@@ -18551,23 +18551,47 @@ export const ModelHubEvalTemplatesCompositeExecuteAdhocCreateBody = zod.object({
   "pass_threshold": zod.number().default(modelHubEvalTemplatesCompositeExecuteAdhocCreateBodyPassThresholdDefault)
 })
 
+
+
+
+
+
 export const ModelHubEvalTemplatesCompositeExecuteAdhocCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "composite_id": zod.string().optional(),
+  "composite_name": zod.string().min(1),
+  "aggregation_enabled": zod.boolean(),
+  "aggregation_function": zod.string().optional(),
+  "aggregate_score": zod.number().optional(),
+  "aggregate_pass": zod.boolean().optional(),
+  "children": zod.array(zod.object({
+  "child_id": zod.string().uuid(),
+  "child_name": zod.string().min(1),
+  "order": zod.number(),
+  "score": zod.number().optional(),
+  "output": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
+  "reason": zod.string().optional(),
+  "output_type": zod.string().optional(),
+  "status": zod.string().min(1),
+  "error": zod.string().optional(),
+  "log_id": zod.string().optional(),
+  "weight": zod.number().optional(),
+  "error_localizer_result": zod.object({
 
 }).passthrough().optional()
+})),
+  "summary": zod.string().optional(),
+  "error_localizer_results": zod.object({
+
+}).passthrough().optional(),
+  "total_children": zod.number(),
+  "completed_children": zod.number(),
+  "failed_children": zod.number(),
+  "evaluation_id": zod.string().optional()
+})
 })
 
 
@@ -18596,23 +18620,34 @@ export const ModelHubEvalTemplatesCreateCompositeCreateBody = zod.object({
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).default(modelHubEvalTemplatesCreateCompositeCreateBodyCompositeChildAxisDefault)
 })
 
+
+
+
+
+
+
+
+
 export const ModelHubEvalTemplatesCreateCompositeCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "template_type": zod.string().min(1).optional(),
+  "aggregation_enabled": zod.boolean(),
+  "aggregation_function": zod.string().min(1),
+  "composite_child_axis": zod.string().optional(),
+  "children": zod.array(zod.object({
+  "child_id": zod.string().uuid(),
+  "child_name": zod.string().min(1),
+  "order": zod.number(),
+  "eval_type": zod.string().min(1).optional(),
+  "pinned_version_id": zod.string().uuid().optional(),
+  "pinned_version_number": zod.number().optional(),
+  "weight": zod.number().optional(),
+  "required_keys": zod.array(zod.string().min(1)).optional()
+}))
+})
 })
 
 
@@ -18791,23 +18826,40 @@ export const ModelHubEvalTemplatesCompositeListParams = zod.object({
   "template_id": zod.string()
 })
 
+
+
+
+
+
+
+
+
+
 export const ModelHubEvalTemplatesCompositeListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "template_type": zod.string().min(1).optional(),
+  "aggregation_enabled": zod.boolean(),
+  "aggregation_function": zod.string().min(1),
+  "composite_child_axis": zod.string().optional(),
+  "children": zod.array(zod.object({
+  "child_id": zod.string().uuid(),
+  "child_name": zod.string().min(1),
+  "order": zod.number(),
+  "eval_type": zod.string().min(1).optional(),
+  "pinned_version_id": zod.string().uuid().optional(),
+  "pinned_version_number": zod.number().optional(),
+  "weight": zod.number().optional(),
+  "required_keys": zod.array(zod.string().min(1)).optional()
+})),
+  "description": zod.string().optional(),
+  "tags": zod.array(zod.string().min(1)).optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional(),
+  "version_number": zod.number().optional()
+})
 })
 
 
@@ -18841,23 +18893,40 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional()
 })
 
+
+
+
+
+
+
+
+
+
 export const ModelHubEvalTemplatesCompositePartialUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "template_type": zod.string().min(1).optional(),
+  "aggregation_enabled": zod.boolean(),
+  "aggregation_function": zod.string().min(1),
+  "composite_child_axis": zod.string().optional(),
+  "children": zod.array(zod.object({
+  "child_id": zod.string().uuid(),
+  "child_name": zod.string().min(1),
+  "order": zod.number(),
+  "eval_type": zod.string().min(1).optional(),
+  "pinned_version_id": zod.string().uuid().optional(),
+  "pinned_version_number": zod.number().optional(),
+  "weight": zod.number().optional(),
+  "required_keys": zod.array(zod.string().min(1)).optional()
+})),
+  "description": zod.string().optional(),
+  "tags": zod.array(zod.string().min(1)).optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional(),
+  "version_number": zod.number().optional()
+})
 })
 
 
@@ -18905,23 +18974,47 @@ export const ModelHubEvalTemplatesCompositeExecuteCreateBody = zod.object({
 }).passthrough().optional()
 })
 
+
+
+
+
+
 export const ModelHubEvalTemplatesCompositeExecuteCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "composite_id": zod.string().optional(),
+  "composite_name": zod.string().min(1),
+  "aggregation_enabled": zod.boolean(),
+  "aggregation_function": zod.string().optional(),
+  "aggregate_score": zod.number().optional(),
+  "aggregate_pass": zod.boolean().optional(),
+  "children": zod.array(zod.object({
+  "child_id": zod.string().uuid(),
+  "child_name": zod.string().min(1),
+  "order": zod.number(),
+  "score": zod.number().optional(),
+  "output": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
+  "reason": zod.string().optional(),
+  "output_type": zod.string().optional(),
+  "status": zod.string().min(1),
+  "error": zod.string().optional(),
+  "log_id": zod.string().optional(),
+  "weight": zod.number().optional(),
+  "error_localizer_result": zod.object({
 
 }).passthrough().optional()
+})),
+  "summary": zod.string().optional(),
+  "error_localizer_results": zod.object({
+
+}).passthrough().optional(),
+  "total_children": zod.number(),
+  "completed_children": zod.number(),
+  "failed_children": zod.number(),
+  "evaluation_id": zod.string().optional()
+})
 })
 
 

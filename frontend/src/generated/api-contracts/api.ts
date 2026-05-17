@@ -221,7 +221,10 @@ import type {
   CompareStartEvalsRequestApi,
   CompositeEvalAdhocExecuteRequestApi,
   CompositeEvalCreateRequestApi,
+  CompositeEvalCreateResponseApi,
+  CompositeEvalDetailResponseApi,
   CompositeEvalExecuteRequestApi,
+  CompositeEvalExecuteResponseApi,
   CompositeEvalUpdateRequestApi,
   ConditionalColumnRequestApi,
   ConversationCreateRequestApi,
@@ -29705,7 +29708,7 @@ export const modelHubEvalTemplatesBulkDeleteCreate = async (evalTemplateBulkDele
 
 
 export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompositeEvalExecuteResponseApi
   status: 200
 }
 
@@ -29774,7 +29777,7 @@ export const modelHubEvalTemplatesCompositeExecuteAdhocCreate = async (composite
 
 
 export type modelHubEvalTemplatesCreateCompositeCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompositeEvalCreateResponseApi
   status: 200
 }
 
@@ -30038,7 +30041,7 @@ export const modelHubEvalTemplatesListCreate = async (evalListRequestApi: EvalLi
 
 
 export type modelHubEvalTemplatesCompositeListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompositeEvalDetailResponseApi
   status: 200
 }
 
@@ -30102,7 +30105,7 @@ export const modelHubEvalTemplatesCompositeList = async (templateId: string, opt
 
 
 export type modelHubEvalTemplatesCompositePartialUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompositeEvalDetailResponseApi
   status: 200
 }
 
@@ -30172,7 +30175,7 @@ export const modelHubEvalTemplatesCompositePartialUpdate = async (templateId: st
 
 
 export type modelHubEvalTemplatesCompositeExecuteCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompositeEvalExecuteResponseApi
   status: 200
 }
 

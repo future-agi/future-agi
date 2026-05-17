@@ -782,10 +782,10 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "ModelHubJSONResponse"
         ),
         ("POST", "/model-hub/eval-templates/composite/execute-adhoc/"): (
-            "ModelHubJSONResponse"
+            "CompositeEvalExecuteResponse"
         ),
         ("POST", "/model-hub/eval-templates/create-composite/"): (
-            "ModelHubJSONResponse"
+            "CompositeEvalCreateResponse"
         ),
         ("POST", "/model-hub/eval-templates/create-v2/"): (
             "ModelHubJSONResponse"
@@ -795,13 +795,13 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "ModelHubJSONResponse"
         ),
         ("GET", "/model-hub/eval-templates/{template_id}/composite/"): (
-            "ModelHubJSONResponse"
+            "CompositeEvalDetailResponse"
         ),
         ("PATCH", "/model-hub/eval-templates/{template_id}/composite/"): (
-            "ModelHubJSONResponse"
+            "CompositeEvalDetailResponse"
         ),
         ("POST", "/model-hub/eval-templates/{template_id}/composite/execute/"): (
-            "ModelHubJSONResponse"
+            "CompositeEvalExecuteResponse"
         ),
         ("GET", "/model-hub/eval-templates/{template_id}/detail/"): (
             "ModelHubJSONResponse"

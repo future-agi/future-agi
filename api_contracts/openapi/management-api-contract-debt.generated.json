@@ -5,7 +5,7 @@
     "operations": 1336,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
-    "broad_success_response_schemas": 296
+    "broad_success_response_schemas": 291
   },
   "by_group": {
     "accounts": {
@@ -83,7 +83,7 @@
       "operations": 473,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 178
+      "broad_success_response_schemas": 173
     },
     "saml2_auth": {
       "paths": 12,
@@ -2090,30 +2090,6 @@
     {
       "group": "model-hub",
       "method": "POST",
-      "path": "/model-hub/eval-templates/composite/execute-adhoc/",
-      "operation_id": "model-hub_eval-templates_composite_execute-adhoc_create",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/eval-templates/create-composite/",
-      "operation_id": "model-hub_eval-templates_create-composite_create",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
       "path": "/model-hub/eval-templates/create-v2/",
       "operation_id": "model-hub_eval-templates_create-v2_create",
       "tags": [
@@ -2140,42 +2116,6 @@
       "method": "POST",
       "path": "/model-hub/eval-templates/list/",
       "operation_id": "model-hub_eval-templates_list_create",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/eval-templates/{template_id}/composite/",
-      "operation_id": "model-hub_eval-templates_composite_list",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "PATCH",
-      "path": "/model-hub/eval-templates/{template_id}/composite/",
-      "operation_id": "model-hub_eval-templates_composite_partial_update",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/eval-templates/{template_id}/composite/execute/",
-      "operation_id": "model-hub_eval-templates_composite_execute_create",
       "tags": [
         "model-hub"
       ],

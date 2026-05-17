@@ -6392,6 +6392,51 @@ export interface CompositeEvalAdhocExecuteRequestApi {
   pass_threshold?: number;
 }
 
+export type CompositeChildResultApiOutput = { [key: string]: unknown };
+
+export type CompositeChildResultApiErrorLocalizerResult = { [key: string]: unknown };
+
+export interface CompositeChildResultApi {
+  child_id: string;
+  /** @minLength 1 */
+  child_name: string;
+  order: number;
+  score?: number;
+  output?: CompositeChildResultApiOutput;
+  reason?: string;
+  output_type?: string;
+  /** @minLength 1 */
+  status: string;
+  error?: string;
+  log_id?: string;
+  weight?: number;
+  error_localizer_result?: CompositeChildResultApiErrorLocalizerResult;
+}
+
+export type CompositeEvalExecuteResponseResultApiErrorLocalizerResults = { [key: string]: unknown };
+
+export interface CompositeEvalExecuteResponseResultApi {
+  composite_id?: string;
+  /** @minLength 1 */
+  composite_name: string;
+  aggregation_enabled: boolean;
+  aggregation_function?: string;
+  aggregate_score?: number;
+  aggregate_pass?: boolean;
+  children: CompositeChildResultApi[];
+  summary?: string;
+  error_localizer_results?: CompositeEvalExecuteResponseResultApiErrorLocalizerResults;
+  total_children: number;
+  completed_children: number;
+  failed_children: number;
+  evaluation_id?: string;
+}
+
+export interface CompositeEvalExecuteResponseApi {
+  status: boolean;
+  result: CompositeEvalExecuteResponseResultApi;
+}
+
 export type CompositeEvalCreateRequestApiAggregationFunction = typeof CompositeEvalCreateRequestApiAggregationFunction[keyof typeof CompositeEvalCreateRequestApiAggregationFunction];
 
 
@@ -6429,6 +6474,37 @@ export interface CompositeEvalCreateRequestApi {
   aggregation_function?: CompositeEvalCreateRequestApiAggregationFunction;
   child_weights?: CompositeEvalCreateRequestApiChildWeights;
   composite_child_axis?: CompositeEvalCreateRequestApiCompositeChildAxis;
+}
+
+export interface CompositeChildItemApi {
+  child_id: string;
+  /** @minLength 1 */
+  child_name: string;
+  order: number;
+  /** @minLength 1 */
+  eval_type?: string;
+  pinned_version_id?: string;
+  pinned_version_number?: number;
+  weight?: number;
+  required_keys?: string[];
+}
+
+export interface CompositeEvalCreateResponseResultApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  template_type?: string;
+  aggregation_enabled: boolean;
+  /** @minLength 1 */
+  aggregation_function: string;
+  composite_child_axis?: string;
+  children: CompositeChildItemApi[];
+}
+
+export interface CompositeEvalCreateResponseApi {
+  status: boolean;
+  result: CompositeEvalCreateResponseResultApi;
 }
 
 export type EvalTemplateCreateV2RequestApiEvalType = typeof EvalTemplateCreateV2RequestApiEvalType[keyof typeof EvalTemplateCreateV2RequestApiEvalType];
@@ -6597,6 +6673,29 @@ export interface EvalListRequestApi {
   filters?: EvalListFiltersApi;
   sort_by?: EvalListRequestApiSortBy;
   sort_order?: EvalListRequestApiSortOrder;
+}
+
+export interface CompositeEvalDetailResponseResultApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  template_type?: string;
+  aggregation_enabled: boolean;
+  /** @minLength 1 */
+  aggregation_function: string;
+  composite_child_axis?: string;
+  children: CompositeChildItemApi[];
+  description?: string;
+  tags?: string[];
+  created_at?: string;
+  updated_at?: string;
+  version_number?: number;
+}
+
+export interface CompositeEvalDetailResponseApi {
+  status: boolean;
+  result: CompositeEvalDetailResponseResultApi;
 }
 
 export type CompositeEvalUpdateRequestApiAggregationFunction = typeof CompositeEvalUpdateRequestApiAggregationFunction[keyof typeof CompositeEvalUpdateRequestApiAggregationFunction];

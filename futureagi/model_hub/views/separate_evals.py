@@ -41,7 +41,10 @@ from model_hub.serializers.contracts import (
     CellErrorLocalizerResponseSerializer,
     CompositeEvalAdhocExecuteRequestSerializer,
     CompositeEvalCreateRequestSerializer,
+    CompositeEvalCreateResponseSerializer,
+    CompositeEvalDetailResponseSerializer,
     CompositeEvalExecuteRequestSerializer,
+    CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
     EvalTemplateBulkDeleteRequestSerializer,
@@ -2919,7 +2922,10 @@ class CompositeEvalCreateView(APIView):
 
     @swagger_auto_schema(
         request_body=CompositeEvalCreateRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompositeEvalCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         import re
@@ -3098,7 +3104,10 @@ class CompositeEvalDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: CompositeEvalDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import CompositeEvalChild
@@ -3166,7 +3175,10 @@ class CompositeEvalDetailView(APIView):
 
     @swagger_auto_schema(
         request_body=CompositeEvalUpdateRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompositeEvalDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def patch(self, request, template_id, *args, **kwargs):
         """PATCH — partial update of a composite eval.
@@ -3543,7 +3555,10 @@ class CompositeEvalExecuteView(APIView):
 
     @swagger_auto_schema(
         request_body=CompositeEvalExecuteRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompositeEvalExecuteResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import CompositeEvalChild
@@ -3671,7 +3686,10 @@ class CompositeEvalAdhocExecuteView(APIView):
 
     @swagger_auto_schema(
         request_body=CompositeEvalAdhocExecuteRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompositeEvalExecuteResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         from model_hub.models.evals_metric import CompositeEvalChild

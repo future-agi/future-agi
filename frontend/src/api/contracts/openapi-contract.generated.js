@@ -13612,7 +13612,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompositeEvalExecuteResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13641,7 +13641,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompositeEvalCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13755,7 +13755,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompositeEvalDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13782,7 +13782,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompositeEvalDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13811,7 +13811,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompositeEvalExecuteResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -38993,6 +38993,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "CompositeEvalCreateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompositeEvalCreateResponseResult"
+        }
+      }
+    },
+    "CompositeEvalDetailResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompositeEvalDetailResponseResult"
+        }
+      }
+    },
     "CompositeEvalExecuteRequest": {
       "required": [
         "mapping"
@@ -39047,6 +39079,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Row context",
           "type": "object",
           "x-nullable": true
+        }
+      }
+    },
+    "CompositeEvalExecuteResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompositeEvalExecuteResponseResult"
         }
       }
     },
@@ -59964,6 +60012,198 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "CompositeEvalCreateResponseResult": {
+      "required": [
+        "id",
+        "name",
+        "aggregation_enabled",
+        "aggregation_function",
+        "children"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "template_type": {
+          "title": "Template type",
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregation_enabled": {
+          "title": "Aggregation enabled",
+          "type": "boolean"
+        },
+        "aggregation_function": {
+          "title": "Aggregation function",
+          "type": "string",
+          "minLength": 1
+        },
+        "composite_child_axis": {
+          "title": "Composite child axis",
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CompositeChildItem"
+          }
+        }
+      }
+    },
+    "CompositeEvalDetailResponseResult": {
+      "required": [
+        "id",
+        "name",
+        "aggregation_enabled",
+        "aggregation_function",
+        "children"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "template_type": {
+          "title": "Template type",
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregation_enabled": {
+          "title": "Aggregation enabled",
+          "type": "boolean"
+        },
+        "aggregation_function": {
+          "title": "Aggregation function",
+          "type": "string",
+          "minLength": 1
+        },
+        "composite_child_axis": {
+          "title": "Composite child axis",
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CompositeChildItem"
+          }
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string"
+        },
+        "version_number": {
+          "title": "Version number",
+          "type": "integer",
+          "x-nullable": true
+        }
+      }
+    },
+    "CompositeEvalExecuteResponseResult": {
+      "required": [
+        "composite_name",
+        "aggregation_enabled",
+        "children",
+        "total_children",
+        "completed_children",
+        "failed_children"
+      ],
+      "type": "object",
+      "properties": {
+        "composite_id": {
+          "title": "Composite id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "composite_name": {
+          "title": "Composite name",
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregation_enabled": {
+          "title": "Aggregation enabled",
+          "type": "boolean"
+        },
+        "aggregation_function": {
+          "title": "Aggregation function",
+          "type": "string",
+          "x-nullable": true
+        },
+        "aggregate_score": {
+          "title": "Aggregate score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "aggregate_pass": {
+          "title": "Aggregate pass",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CompositeChildResult"
+          }
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_localizer_results": {
+          "title": "Error localizer results",
+          "type": "object",
+          "x-nullable": true
+        },
+        "total_children": {
+          "title": "Total children",
+          "type": "integer"
+        },
+        "completed_children": {
+          "title": "Completed children",
+          "type": "integer"
+        },
+        "failed_children": {
+          "title": "Failed children",
+          "type": "integer"
+        },
+        "evaluation_id": {
+          "title": "Evaluation id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
     "FalconConversationDetail": {
       "type": "object",
       "properties": {
@@ -67066,6 +67306,126 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Text",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "CompositeChildItem": {
+      "required": [
+        "child_id",
+        "child_name",
+        "order"
+      ],
+      "type": "object",
+      "properties": {
+        "child_id": {
+          "title": "Child id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "child_name": {
+          "title": "Child name",
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "title": "Order",
+          "type": "integer"
+        },
+        "eval_type": {
+          "title": "Eval type",
+          "type": "string",
+          "minLength": 1
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "pinned_version_number": {
+          "title": "Pinned version number",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "weight": {
+          "title": "Weight",
+          "type": "number"
+        },
+        "required_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "CompositeChildResult": {
+      "required": [
+        "child_id",
+        "child_name",
+        "order",
+        "status"
+      ],
+      "type": "object",
+      "properties": {
+        "child_id": {
+          "title": "Child id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "child_name": {
+          "title": "Child name",
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "title": "Order",
+          "type": "integer"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "output": {
+          "title": "Output",
+          "type": "object",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "log_id": {
+          "title": "Log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "weight": {
+          "title": "Weight",
+          "type": "number"
+        },
+        "error_localizer_result": {
+          "title": "Error localizer result",
+          "type": "object",
+          "x-nullable": true
         }
       }
     },

@@ -1115,6 +1115,90 @@ class CompositeEvalAdhocExecuteRequestSerializer(CompositeEvalExecuteRequestSeri
     pass_threshold = serializers.FloatField(required=False, default=0.5)
 
 
+class CompositeChildItemSerializer(serializers.Serializer):
+    child_id = serializers.UUIDField()
+    child_name = serializers.CharField()
+    order = serializers.IntegerField()
+    eval_type = serializers.CharField(required=False)
+    pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
+    pinned_version_number = serializers.IntegerField(required=False, allow_null=True)
+    weight = serializers.FloatField(required=False)
+    required_keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+
+
+class CompositeEvalCreateResponseResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    template_type = serializers.CharField(required=False)
+    aggregation_enabled = serializers.BooleanField()
+    aggregation_function = serializers.CharField()
+    composite_child_axis = serializers.CharField(required=False, allow_blank=True)
+    children = CompositeChildItemSerializer(many=True)
+
+
+class CompositeEvalCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = CompositeEvalCreateResponseResultSerializer()
+
+
+class CompositeEvalDetailResponseResultSerializer(
+    CompositeEvalCreateResponseResultSerializer
+):
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False)
+    created_at = serializers.CharField(required=False, allow_blank=True)
+    updated_at = serializers.CharField(required=False, allow_blank=True)
+    version_number = serializers.IntegerField(required=False, allow_null=True)
+
+
+class CompositeEvalDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = CompositeEvalDetailResponseResultSerializer()
+
+
+class CompositeChildResultSerializer(serializers.Serializer):
+    child_id = serializers.UUIDField()
+    child_name = serializers.CharField()
+    order = serializers.IntegerField()
+    score = serializers.FloatField(required=False, allow_null=True)
+    output = serializers.JSONField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    output_type = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    status = serializers.CharField()
+    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    log_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    weight = serializers.FloatField(required=False)
+    error_localizer_result = serializers.JSONField(required=False, allow_null=True)
+
+
+class CompositeEvalExecuteResponseResultSerializer(serializers.Serializer):
+    composite_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    composite_name = serializers.CharField()
+    aggregation_enabled = serializers.BooleanField()
+    aggregation_function = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    aggregate_score = serializers.FloatField(required=False, allow_null=True)
+    aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
+    children = CompositeChildResultSerializer(many=True)
+    summary = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    error_localizer_results = serializers.JSONField(required=False, allow_null=True)
+    total_children = serializers.IntegerField()
+    completed_children = serializers.IntegerField()
+    failed_children = serializers.IntegerField()
+    evaluation_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class CompositeEvalExecuteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = CompositeEvalExecuteResponseResultSerializer()
+
+
 class GroundTruthUploadRequestSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
