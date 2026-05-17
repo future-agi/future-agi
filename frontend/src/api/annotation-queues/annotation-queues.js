@@ -9,6 +9,7 @@ import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { apiPath } from "src/api/contracts/api-surface";
 import { scoreKeys } from "src/api/scores/scores";
+import { paramsSerializer } from "src/utils/utils";
 
 // ---------------------------------------------------------------------------
 // Helper – extract response payload consistently across endpoints that may
@@ -378,6 +379,7 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
     queryFn: ({ pageParam = 1 }) =>
       axios.get(annotationQueueEndpoints.items(queueId), {
         params: { ...restFilters, page: pageParam, limit: limit || 25 },
+        paramsSerializer: paramsSerializer(),
       }),
     getNextPageParam: (lastPage) => {
       const data = lastPage.data;

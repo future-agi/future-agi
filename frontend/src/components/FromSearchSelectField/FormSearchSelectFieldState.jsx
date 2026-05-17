@@ -21,6 +21,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       showClear = true,
       createLabel,
       multiple = false,
+      multipleAllLabel,
       placeholder = "Select Option",
       sx,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
@@ -116,6 +117,14 @@ const FormSearchSelectFieldState = React.forwardRef(
 
     const getValue = useMemo(() => {
       if (multiple) {
+        const selectedCount = Array.isArray(value) ? value.length : 0;
+        if (
+          multipleAllLabel &&
+          options?.length > 0 &&
+          selectedCount === options.length
+        ) {
+          return multipleAllLabel;
+        }
         const selectedOptions = options?.filter((item) =>
           value?.includes(item.value),
         );
@@ -126,7 +135,7 @@ const FormSearchSelectFieldState = React.forwardRef(
         const option = options?.find((item) => item.value === value);
         return option?.label || value || "";
       }
-    }, [value, options, multiple]);
+    }, [value, options, multiple, multipleAllLabel]);
 
     const id = useMemo(
       () => (openDropdown ? `${label}-popper` : undefined),
@@ -303,6 +312,7 @@ FormSearchSelectFieldState.propTypes = {
   sx: PropTypes.object,
   createLabel: PropTypes.string,
   multiple: PropTypes.bool,
+  multipleAllLabel: PropTypes.string,
   placeholder: PropTypes.string,
   shrink: PropTypes.bool,
 };

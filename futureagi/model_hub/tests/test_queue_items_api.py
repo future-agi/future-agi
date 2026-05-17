@@ -316,11 +316,38 @@ class TestListItems:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3
 
+    def test_filter_by_multiple_statuses(self, auth_client, queue, dataset_with_rows):
+        """The item list accepts repeated status params from the multi-select UI."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        first_item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        first_item.status = "completed"
+        first_item.save(update_fields=["status", "updated_at"])
+
+        resp = auth_client.get(
+            items_url(queue), {"status": ["pending", "completed"]}
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+
     def test_filter_by_source_type(self, auth_client, queue, dataset_with_rows):
         """TC-9: Filter by source_type."""
         _, rows = dataset_with_rows
         self._add_rows(auth_client, queue, rows)
         resp = auth_client.get(items_url(queue), {"source_type": "dataset_row"})
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+
+    def test_filter_by_multiple_source_types(self, auth_client, queue, dataset_with_rows):
+        """The item list accepts repeated source_type params from the multi-select UI."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+
+        resp = auth_client.get(
+            items_url(queue), {"source_type": ["dataset_row", "trace"]}
+        )
+
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3
 

@@ -22,6 +22,7 @@ import {
   useItemDiscussion,
   useNextItem,
   useOrgMembersInfinite,
+  useQueueItems,
   useQueueItemsForSource,
   useSkipItem,
   useReopenDiscussionThread,
@@ -180,6 +181,30 @@ describe("Annotation Queues API", () => {
         "list",
         filters,
       ]);
+    });
+  });
+
+  describe("useQueueItems", () => {
+    it("serializes multi-select filters as repeated query params", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { results: [], count: 0, current_page: 1, total_pages: 1 },
+      });
+
+      renderHook(
+        () =>
+          useQueueItems("q-1", {
+            status: ["pending", "completed"],
+            source_type: ["dataset_row", "trace"],
+          }),
+        { wrapper: createQueryWrapper() },
+      );
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalled());
+
+      const requestConfig = axios.get.mock.calls[0][1];
+      expect(requestConfig.paramsSerializer.serialize(requestConfig.params)).toBe(
+        "status=pending&status=completed&source_type=dataset_row&source_type=trace&page=1&limit=25",
+      );
     });
   });
 
