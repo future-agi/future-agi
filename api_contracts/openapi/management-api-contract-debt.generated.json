@@ -3,8 +3,8 @@
   "summary": {
     "paths": 964,
     "operations": 1326,
-    "mutation_endpoints_without_body_schema": 307,
-    "operations_without_response_schema": 520
+    "mutation_endpoints_without_body_schema": 306,
+    "operations_without_response_schema": 516
   },
   "by_group": {
     "accounts": {
@@ -16,8 +16,8 @@
     "agent-playground": {
       "paths": 24,
       "operations": 34,
-      "mutation_endpoints_without_body_schema": 1,
-      "operations_without_response_schema": 4
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0
     },
     "agentcc": {
       "paths": 101,
@@ -649,15 +649,6 @@
       "operation_id": "accounts_workspaces_members_create",
       "tags": [
         "accounts"
-      ]
-    },
-    {
-      "group": "agent-playground",
-      "method": "POST",
-      "path": "/agent-playground/graphs/from-trace/",
-      "operation_id": "agent-playground_graphs_from-trace_create",
-      "tags": [
-        "agent-playground"
       ]
     },
     {
@@ -3666,42 +3657,6 @@
       "operation_id": "accounts_workspaces_members_create",
       "tags": [
         "accounts"
-      ]
-    },
-    {
-      "group": "agent-playground",
-      "method": "GET",
-      "path": "/agent-playground/executions/{execution_id}/nodes/{node_execution_id}/",
-      "operation_id": "agent-playground_executions_node_detail",
-      "tags": [
-        "agent-playground"
-      ]
-    },
-    {
-      "group": "agent-playground",
-      "method": "POST",
-      "path": "/agent-playground/graphs/from-trace/",
-      "operation_id": "agent-playground_graphs_from-trace_create",
-      "tags": [
-        "agent-playground"
-      ]
-    },
-    {
-      "group": "agent-playground",
-      "method": "GET",
-      "path": "/agent-playground/graphs/{graph_id}/executions/",
-      "operation_id": "agent-playground_graphs_executions_list",
-      "tags": [
-        "agent-playground"
-      ]
-    },
-    {
-      "group": "agent-playground",
-      "method": "GET",
-      "path": "/agent-playground/graphs/{graph_id}/executions/{execution_id}/",
-      "operation_id": "agent-playground_graphs_executions_read",
-      "tags": [
-        "agent-playground"
       ]
     },
     {

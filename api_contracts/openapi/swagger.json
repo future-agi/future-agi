@@ -1758,7 +1758,22 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/NodeExecutionDetailResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -1899,10 +1914,40 @@
                 "operationId": "agent-playground_graphs_from-trace_create",
                 "summary": "POST /agent-playground/graphs/from-trace/",
                 "description": "Create a new agent playground graph from a trace's LLM spans.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceToGraphRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "201": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceToGraphResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -2094,7 +2139,16 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GraphExecutionListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -2118,7 +2172,22 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GraphExecutionDetailResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -39398,6 +39467,163 @@
                 }
             }
         },
+        "NodeExecutionData": {
+            "type": "object",
+            "properties": {
+                "port_id": {
+                    "title": "Port id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "port_key": {
+                    "title": "Port key",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "port_direction": {
+                    "title": "Port direction",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "is_valid": {
+                    "title": "Is valid",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "validation_errors": {
+                    "title": "Validation errors",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            }
+        },
+        "NodeExecutionDetailResult": {
+            "type": "object",
+            "properties": {
+                "node_execution_id": {
+                    "title": "Node execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "node_id": {
+                    "title": "Node id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "node_name": {
+                    "title": "Node name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "node_type": {
+                    "title": "Node type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "duration_seconds": {
+                    "title": "Duration seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeExecutionData"
+                    },
+                    "readOnly": true
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeExecutionData"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "NodeExecutionDetailResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/NodeExecutionDetailResult"
+                }
+            }
+        },
+        "ApiErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "UserBrief": {
             "type": "object",
             "properties": {
@@ -39509,6 +39735,54 @@
                 }
             }
         },
+        "TraceToGraphRequest": {
+            "required": [
+                "trace_id"
+            ],
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "TraceToGraphResult": {
+            "required": [
+                "graph_id",
+                "version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "graph_id": {
+                    "title": "Graph id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "TraceToGraphResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/TraceToGraphResult"
+                }
+            }
+        },
         "CellUpdate": {
             "type": "object",
             "properties": {
@@ -39536,6 +39810,178 @@
                     "type": "string",
                     "default": "tasks_l",
                     "minLength": 1
+                }
+            }
+        },
+        "GraphExecutionList": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "running",
+                        "success",
+                        "failed",
+                        "cancelled"
+                    ],
+                    "readOnly": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "graph_version": {
+                    "title": "Graph version",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "GraphExecutionListResult": {
+            "type": "object",
+            "properties": {
+                "executions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/GraphExecutionList"
+                    },
+                    "readOnly": true
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "GraphExecutionListResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/GraphExecutionListResult"
+                }
+            }
+        },
+        "GraphExecutionDetailResult": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "running",
+                        "success",
+                        "failed",
+                        "cancelled"
+                    ],
+                    "readOnly": true
+                },
+                "input_payload": {
+                    "title": "Input payload",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "output_payload": {
+                    "title": "Output payload",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "readOnly": true
+                },
+                "node_connections": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "GraphExecutionDetailResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/GraphExecutionDetailResult"
                 }
             }
         },
@@ -42225,31 +42671,6 @@
                 "p95": {
                     "title": "P95",
                     "type": "number",
-                    "x-nullable": true
-                }
-            }
-        },
-        "ApiErrorResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "object",
                     "x-nullable": true
                 }
             }

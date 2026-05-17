@@ -13,6 +13,57 @@ export interface TokenObtainPairApi {
   password: string;
 }
 
+export type NodeExecutionDataApiPayload = { [key: string]: unknown };
+
+export type NodeExecutionDataApiValidationErrors = { [key: string]: unknown };
+
+export interface NodeExecutionDataApi {
+  readonly port_id?: string;
+  /** @minLength 1 */
+  readonly port_key?: string;
+  /** @minLength 1 */
+  readonly port_direction?: string;
+  readonly payload?: NodeExecutionDataApiPayload;
+  readonly is_valid?: boolean;
+  readonly validation_errors?: NodeExecutionDataApiValidationErrors;
+}
+
+export interface NodeExecutionDetailResultApi {
+  readonly node_execution_id?: string;
+  readonly node_id?: string;
+  /** @minLength 1 */
+  readonly node_name?: string;
+  /** @minLength 1 */
+  readonly node_type?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  readonly started_at?: string;
+  readonly completed_at?: string;
+  readonly duration_seconds?: number;
+  /** @minLength 1 */
+  readonly error_message?: string;
+  readonly inputs?: readonly NodeExecutionDataApi[];
+  readonly outputs?: readonly NodeExecutionDataApi[];
+}
+
+export interface NodeExecutionDetailResponseApi {
+  status?: boolean;
+  result: NodeExecutionDetailResultApi;
+}
+
+export type ApiErrorResponseApiResult = { [key: string]: unknown };
+
+export type ApiErrorResponseApiMessage = { [key: string]: unknown };
+
+export type ApiErrorResponseApiError = { [key: string]: unknown };
+
+export interface ApiErrorResponseApi {
+  status?: boolean;
+  result?: ApiErrorResponseApiResult;
+  message?: ApiErrorResponseApiMessage;
+  error?: ApiErrorResponseApiError;
+}
+
 export interface UserBriefApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -49,6 +100,20 @@ export interface GraphCreateApi {
   description?: string;
 }
 
+export interface TraceToGraphRequestApi {
+  trace_id: string;
+}
+
+export interface TraceToGraphResultApi {
+  graph_id: string;
+  version_id: string;
+}
+
+export interface TraceToGraphResponseApi {
+  status?: boolean;
+  result: TraceToGraphResultApi;
+}
+
 export interface CellUpdateApi {
   value?: string;
 }
@@ -58,6 +123,75 @@ export interface ExecuteRequestApi {
   row_ids?: string[];
   /** @minLength 1 */
   task_queue?: string;
+}
+
+export type GraphExecutionListApiStatus = typeof GraphExecutionListApiStatus[keyof typeof GraphExecutionListApiStatus];
+
+
+export const GraphExecutionListApiStatus = {
+  pending: 'pending',
+  running: 'running',
+  success: 'success',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+export interface GraphExecutionListApi {
+  readonly id?: string;
+  readonly status?: GraphExecutionListApiStatus;
+  readonly started_at?: string;
+  readonly completed_at?: string;
+  readonly graph_version?: string;
+  readonly created_at?: string;
+}
+
+export type GraphExecutionListResultApiMetadata = {[key: string]: string};
+
+export interface GraphExecutionListResultApi {
+  readonly executions?: readonly GraphExecutionListApi[];
+  readonly metadata?: GraphExecutionListResultApiMetadata;
+}
+
+export interface GraphExecutionListResponseApi {
+  status?: boolean;
+  result: GraphExecutionListResultApi;
+}
+
+export type GraphExecutionDetailResultApiStatus = typeof GraphExecutionDetailResultApiStatus[keyof typeof GraphExecutionDetailResultApiStatus];
+
+
+export const GraphExecutionDetailResultApiStatus = {
+  pending: 'pending',
+  running: 'running',
+  success: 'success',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+export type GraphExecutionDetailResultApiInputPayload = { [key: string]: unknown };
+
+export type GraphExecutionDetailResultApiOutputPayload = { [key: string]: unknown };
+
+export type GraphExecutionDetailResultApiNodesItem = { [key: string]: unknown };
+
+export type GraphExecutionDetailResultApiNodeConnectionsItem = { [key: string]: unknown };
+
+export interface GraphExecutionDetailResultApi {
+  readonly id?: string;
+  readonly status?: GraphExecutionDetailResultApiStatus;
+  readonly input_payload?: GraphExecutionDetailResultApiInputPayload;
+  readonly output_payload?: GraphExecutionDetailResultApiOutputPayload;
+  readonly started_at?: string;
+  readonly completed_at?: string;
+  /** @minLength 1 */
+  readonly error_message?: string;
+  readonly nodes?: readonly GraphExecutionDetailResultApiNodesItem[];
+  readonly node_connections?: readonly GraphExecutionDetailResultApiNodeConnectionsItem[];
+}
+
+export interface GraphExecutionDetailResponseApi {
+  status?: boolean;
+  result: GraphExecutionDetailResultApi;
 }
 
 export interface GraphDetailApi {
@@ -1191,19 +1325,6 @@ export interface SpanAttributeDetailResponseApi {
   avg?: number;
   p50?: number;
   p95?: number;
-}
-
-export type ApiErrorResponseApiResult = { [key: string]: unknown };
-
-export type ApiErrorResponseApiMessage = { [key: string]: unknown };
-
-export type ApiErrorResponseApiError = { [key: string]: unknown };
-
-export interface ApiErrorResponseApi {
-  status?: boolean;
-  result?: ApiErrorResponseApiResult;
-  message?: ApiErrorResponseApiMessage;
-  error?: ApiErrorResponseApiError;
 }
 
 export type SpanAttributeKeyApiType = typeof SpanAttributeKeyApiType[keyof typeof SpanAttributeKeyApiType];

@@ -217,6 +217,8 @@ import type {
   GetTraceAnnotationApi,
   GraphCreateApi,
   GraphDetailApi,
+  GraphExecutionDetailResponseApi,
+  GraphExecutionListResponseApi,
   GraphListApi,
   GraphUpdateApi,
   HealthCheckResponseApi,
@@ -318,6 +320,7 @@ import type {
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
   ModelHubTtsVoicesListParams,
+  NodeExecutionDetailResponseApi,
   NodeReadApi,
   NodeTemplateDetailApi,
   OTLPHTTPErrorResponseApi,
@@ -478,6 +481,8 @@ import type {
   TraceErrorTaskUpdateResponseApi,
   TraceSessionApi,
   TraceTagsUpdateApi,
+  TraceToGraphRequestApi,
+  TraceToGraphResponseApi,
   TracerChartsFetchGraph200,
   TracerChartsFetchGraphParams,
   TracerChartsList200,
@@ -4016,16 +4021,28 @@ export const accountsWorkspacesMembersRead = async (workspaceId: string,
 
 
 export type agentPlaygroundExecutionsNodeDetailResponse200 = {
-  data: void
+  data: NodeExecutionDetailResponseApi
   status: 200
+}
+
+export type agentPlaygroundExecutionsNodeDetailResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type agentPlaygroundExecutionsNodeDetailResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type agentPlaygroundExecutionsNodeDetailResponseSuccess = (agentPlaygroundExecutionsNodeDetailResponse200) & {
   headers: Headers;
 };
-;
+export type agentPlaygroundExecutionsNodeDetailResponseError = (agentPlaygroundExecutionsNodeDetailResponse404 | agentPlaygroundExecutionsNodeDetailResponse500) & {
+  headers: Headers;
+};
 
-export type agentPlaygroundExecutionsNodeDetailResponse = (agentPlaygroundExecutionsNodeDetailResponseSuccess)
+export type agentPlaygroundExecutionsNodeDetailResponse = (agentPlaygroundExecutionsNodeDetailResponseSuccess | agentPlaygroundExecutionsNodeDetailResponseError)
 
 export const getAgentPlaygroundExecutionsNodeDetailUrl = (executionId: string,
     nodeExecutionId: string,) => {
@@ -4176,16 +4193,33 @@ export const agentPlaygroundGraphsBulkDelete = async (graphListApi: NonReadonly<
 
 
 export type agentPlaygroundGraphsFromTraceCreateResponse201 = {
-  data: void
+  data: TraceToGraphResponseApi
   status: 201
+}
+
+export type agentPlaygroundGraphsFromTraceCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type agentPlaygroundGraphsFromTraceCreateResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type agentPlaygroundGraphsFromTraceCreateResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type agentPlaygroundGraphsFromTraceCreateResponseSuccess = (agentPlaygroundGraphsFromTraceCreateResponse201) & {
   headers: Headers;
 };
-;
+export type agentPlaygroundGraphsFromTraceCreateResponseError = (agentPlaygroundGraphsFromTraceCreateResponse400 | agentPlaygroundGraphsFromTraceCreateResponse404 | agentPlaygroundGraphsFromTraceCreateResponse500) & {
+  headers: Headers;
+};
 
-export type agentPlaygroundGraphsFromTraceCreateResponse = (agentPlaygroundGraphsFromTraceCreateResponseSuccess)
+export type agentPlaygroundGraphsFromTraceCreateResponse = (agentPlaygroundGraphsFromTraceCreateResponseSuccess | agentPlaygroundGraphsFromTraceCreateResponseError)
 
 export const getAgentPlaygroundGraphsFromTraceCreateUrl = () => {
 
@@ -4199,14 +4233,15 @@ export const getAgentPlaygroundGraphsFromTraceCreateUrl = () => {
  * Create a new agent playground graph from a trace's LLM spans.
  * @summary POST /agent-playground/graphs/from-trace/
  */
-export const agentPlaygroundGraphsFromTraceCreate = async ( options?: RequestInit): Promise<agentPlaygroundGraphsFromTraceCreateResponse> => {
+export const agentPlaygroundGraphsFromTraceCreate = async (traceToGraphRequestApi: TraceToGraphRequestApi, options?: RequestInit): Promise<agentPlaygroundGraphsFromTraceCreateResponse> => {
 
   return apiMutator<agentPlaygroundGraphsFromTraceCreateResponse>(getAgentPlaygroundGraphsFromTraceCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      traceToGraphRequestApi,)
   }
 );}
 
@@ -4405,16 +4440,23 @@ export const agentPlaygroundGraphsDatasetRowsDeleteRows = async (graphId: string
 
 
 export type agentPlaygroundGraphsExecutionsListResponse200 = {
-  data: void
+  data: GraphExecutionListResponseApi
   status: 200
+}
+
+export type agentPlaygroundGraphsExecutionsListResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type agentPlaygroundGraphsExecutionsListResponseSuccess = (agentPlaygroundGraphsExecutionsListResponse200) & {
   headers: Headers;
 };
-;
+export type agentPlaygroundGraphsExecutionsListResponseError = (agentPlaygroundGraphsExecutionsListResponse500) & {
+  headers: Headers;
+};
 
-export type agentPlaygroundGraphsExecutionsListResponse = (agentPlaygroundGraphsExecutionsListResponseSuccess)
+export type agentPlaygroundGraphsExecutionsListResponse = (agentPlaygroundGraphsExecutionsListResponseSuccess | agentPlaygroundGraphsExecutionsListResponseError)
 
 export const getAgentPlaygroundGraphsExecutionsListUrl = (graphId: string,
     params?: AgentPlaygroundGraphsExecutionsListParams,) => {
@@ -4450,16 +4492,28 @@ export const agentPlaygroundGraphsExecutionsList = async (graphId: string,
 
 
 export type agentPlaygroundGraphsExecutionsReadResponse200 = {
-  data: void
+  data: GraphExecutionDetailResponseApi
   status: 200
+}
+
+export type agentPlaygroundGraphsExecutionsReadResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
+export type agentPlaygroundGraphsExecutionsReadResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type agentPlaygroundGraphsExecutionsReadResponseSuccess = (agentPlaygroundGraphsExecutionsReadResponse200) & {
   headers: Headers;
 };
-;
+export type agentPlaygroundGraphsExecutionsReadResponseError = (agentPlaygroundGraphsExecutionsReadResponse404 | agentPlaygroundGraphsExecutionsReadResponse500) & {
+  headers: Headers;
+};
 
-export type agentPlaygroundGraphsExecutionsReadResponse = (agentPlaygroundGraphsExecutionsReadResponseSuccess)
+export type agentPlaygroundGraphsExecutionsReadResponse = (agentPlaygroundGraphsExecutionsReadResponseSuccess | agentPlaygroundGraphsExecutionsReadResponseError)
 
 export const getAgentPlaygroundGraphsExecutionsReadUrl = (graphId: string,
     executionId: string,) => {

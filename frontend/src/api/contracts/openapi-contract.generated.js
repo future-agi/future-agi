@@ -794,7 +794,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "agent-playground_executions_node_detail",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/NodeExecutionDetailResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/agent-playground/graphs/": {
@@ -876,9 +886,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/agent-playground/graphs/from-trace/": {
       "post": {
         "operationId": "agent-playground_graphs_from-trace_create",
-        "requestBody": null,
+        "requestBody": {
+          "$ref": "#/definitions/TraceToGraphRequest"
+        },
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/TraceToGraphResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/agent-playground/graphs/{graph_id}/dataset/": {
@@ -961,7 +986,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           }
         },
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/GraphExecutionListResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/agent-playground/graphs/{graph_id}/executions/{execution_id}/": {
@@ -969,7 +1001,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "agent-playground_graphs_executions_read",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/GraphExecutionDetailResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          }
+        }
       }
     },
     "/agent-playground/graphs/{id}/": {
@@ -28845,6 +28887,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "GraphExecutionDetailResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/GraphExecutionDetailResult"
+        }
+      }
+    },
+    "GraphExecutionListResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/GraphExecutionListResult"
+        }
+      }
+    },
     "GraphList": {
       "type": "object",
       "properties": {
@@ -29580,6 +29654,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/LiveKitTranscriptRow"
           }
+        }
+      }
+    },
+    "NodeExecutionDetailResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/NodeExecutionDetailResult"
         }
       }
     },
@@ -35896,6 +35986,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TraceToGraphRequest": {
+      "required": [
+        "trace_id"
+      ],
+      "type": "object",
+      "properties": {
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "TraceToGraphResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/TraceToGraphResult"
+        }
+      }
+    },
     "TracesTabApiResponse": {
       "required": [
         "result"
@@ -38182,6 +38301,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "GraphExecutionDetailResult": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "success",
+            "failed",
+            "cancelled"
+          ],
+          "readOnly": true
+        },
+        "input_payload": {
+          "title": "Input payload",
+          "type": "object",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "output_payload": {
+          "title": "Output payload",
+          "type": "object",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "completed_at": {
+          "title": "Completed at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "error_message": {
+          "title": "Error message",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "readOnly": true
+        },
+        "node_connections": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "readOnly": true
+        }
+      }
+    },
+    "GraphExecutionListResult": {
+      "type": "object",
+      "properties": {
+        "executions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/GraphExecutionList"
+          },
+          "readOnly": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "readOnly": true
+        }
+      }
+    },
     "UserBrief": {
       "type": "object",
       "properties": {
@@ -38406,6 +38616,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "End time ms",
           "type": "integer",
           "default": 0
+        }
+      }
+    },
+    "NodeExecutionDetailResult": {
+      "type": "object",
+      "properties": {
+        "node_execution_id": {
+          "title": "Node execution id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "node_id": {
+          "title": "Node id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "node_name": {
+          "title": "Node name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "node_type": {
+          "title": "Node type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "completed_at": {
+          "title": "Completed at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "duration_seconds": {
+          "title": "Duration seconds",
+          "type": "number",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "error_message": {
+          "title": "Error message",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NodeExecutionData"
+          },
+          "readOnly": true
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NodeExecutionData"
+          },
+          "readOnly": true
         }
       }
     },
@@ -39976,6 +40262,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TraceToGraphResult": {
+      "required": [
+        "graph_id",
+        "version_id"
+      ],
+      "type": "object",
+      "properties": {
+        "graph_id": {
+          "title": "Graph id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "version_id": {
+          "title": "Version id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
     "TracesTabResponse": {
       "required": [
         "aggregates",
@@ -40999,6 +41304,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "GraphExecutionList": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "success",
+            "failed",
+            "cancelled"
+          ],
+          "readOnly": true
+        },
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "completed_at": {
+          "title": "Completed at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "graph_version": {
+          "title": "Graph version",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        }
+      }
+    },
     "ImagineAnalysisItem": {
       "required": [
         "id",
@@ -41060,6 +41414,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "key": {
           "title": "Key",
           "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "NodeExecutionData": {
+      "type": "object",
+      "properties": {
+        "port_id": {
+          "title": "Port id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "port_key": {
+          "title": "Port key",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "port_direction": {
+          "title": "Port direction",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "payload": {
+          "title": "Payload",
+          "type": "object",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "is_valid": {
+          "title": "Is valid",
+          "type": "boolean",
+          "readOnly": true
+        },
+        "validation_errors": {
+          "title": "Validation errors",
+          "type": "object",
+          "readOnly": true,
           "x-nullable": true
         }
       }

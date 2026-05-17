@@ -1,9 +1,15 @@
 import structlog
 from django.core.exceptions import ValidationError
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agent_playground.serializers.trace_import import (
+    TraceToGraphRequestSerializer,
+    TraceToGraphResponseSerializer,
+)
 from agent_playground.services.trace_to_graph import convert_trace_to_graph
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.trace import Trace
 
@@ -20,6 +26,15 @@ class TraceToGraphView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=TraceToGraphRequestSerializer,
+        responses={
+            201: TraceToGraphResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def post(self, request):
         trace_id = request.data.get("trace_id")
         if not trace_id:

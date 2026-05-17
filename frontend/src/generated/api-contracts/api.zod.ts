@@ -200,6 +200,55 @@ export const AgentPlaygroundExecutionsNodeDetailParams = zod.object({
   "node_execution_id": zod.string()
 })
 
+export const agentPlaygroundExecutionsNodeDetailResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
+export const AgentPlaygroundExecutionsNodeDetailResponse = zod.object({
+  "status": zod.boolean().default(agentPlaygroundExecutionsNodeDetailResponseStatusDefault),
+  "result": zod.object({
+  "node_execution_id": zod.string().uuid().optional(),
+  "node_id": zod.string().uuid().optional(),
+  "node_name": zod.string().min(1).optional(),
+  "node_type": zod.string().min(1).optional(),
+  "status": zod.string().min(1).optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "duration_seconds": zod.number().optional(),
+  "error_message": zod.string().min(1).optional(),
+  "inputs": zod.array(zod.object({
+  "port_id": zod.string().uuid().optional(),
+  "port_key": zod.string().min(1).optional(),
+  "port_direction": zod.string().min(1).optional(),
+  "payload": zod.object({
+
+}).passthrough().optional(),
+  "is_valid": zod.boolean().optional(),
+  "validation_errors": zod.object({
+
+}).passthrough().optional()
+})).optional(),
+  "outputs": zod.array(zod.object({
+  "port_id": zod.string().uuid().optional(),
+  "port_key": zod.string().min(1).optional(),
+  "port_direction": zod.string().min(1).optional(),
+  "payload": zod.object({
+
+}).passthrough().optional(),
+  "is_valid": zod.boolean().optional(),
+  "validation_errors": zod.object({
+
+}).passthrough().optional()
+})).optional()
+})
+})
+
 
 /**
  * List all graphs for the user's org/workspace.
@@ -275,6 +324,15 @@ export const AgentPlaygroundGraphsBulkDeleteBody = zod.object({
   "name": zod.string().min(1).optional(),
   "email": zod.string().email().min(1).optional()
 }).optional()
+})
+
+
+/**
+ * Create a new agent playground graph from a trace's LLM spans.
+ * @summary POST /agent-playground/graphs/from-trace/
+ */
+export const AgentPlaygroundGraphsFromTraceCreateBody = zod.object({
+  "trace_id": zod.string().uuid()
 })
 
 
@@ -368,6 +426,23 @@ export const AgentPlaygroundGraphsExecutionsListQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
+export const agentPlaygroundGraphsExecutionsListResponseStatusDefault = true;
+
+export const AgentPlaygroundGraphsExecutionsListResponse = zod.object({
+  "status": zod.boolean().default(agentPlaygroundGraphsExecutionsListResponseStatusDefault),
+  "result": zod.object({
+  "executions": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "status": zod.enum(['pending', 'running', 'success', 'failed', 'cancelled']).optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "graph_version": zod.string().uuid().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional()
+})).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+})
+})
+
 
 /**
  * Response includes basic execution data, the graph version DAG
@@ -379,6 +454,32 @@ graph version and execution details (recursive).
 export const AgentPlaygroundGraphsExecutionsReadParams = zod.object({
   "graph_id": zod.string(),
   "execution_id": zod.string()
+})
+
+export const agentPlaygroundGraphsExecutionsReadResponseStatusDefault = true;
+
+
+export const AgentPlaygroundGraphsExecutionsReadResponse = zod.object({
+  "status": zod.boolean().default(agentPlaygroundGraphsExecutionsReadResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
+  "status": zod.enum(['pending', 'running', 'success', 'failed', 'cancelled']).optional(),
+  "input_payload": zod.object({
+
+}).passthrough().optional(),
+  "output_payload": zod.object({
+
+}).passthrough().optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "error_message": zod.string().min(1).optional(),
+  "nodes": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "node_connections": zod.array(zod.object({
+
+}).passthrough()).optional()
+})
 })
 
 
