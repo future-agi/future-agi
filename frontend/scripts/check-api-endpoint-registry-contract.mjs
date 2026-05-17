@@ -23,6 +23,7 @@ const endpointRegistryPath = path.join(
   "axios.js",
 );
 const MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS = 0;
+const MAX_RAW_REGISTRY_PATHS = 315;
 const MAX_LEGACY_REGISTRY_PATHS = 51;
 const MANAGEMENT_API_GROUPS = Object.keys(API_SURFACE_CONTRACT.groups)
   .filter((groupName) => groupName !== "root")
@@ -172,6 +173,7 @@ const invalidLegacyPaths = legacyPaths.filter(
 );
 
 if (
+  registryPaths.length > MAX_RAW_REGISTRY_PATHS ||
   uncontracted.length > MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS ||
   legacyPaths.length > MAX_LEGACY_REGISTRY_PATHS ||
   invalidLegacyPaths.length
@@ -179,6 +181,7 @@ if (
   console.error(
     [
       "Endpoint registry contract coverage failed.",
+      `Raw registry paths: ${registryPaths.length}/${MAX_RAW_REGISTRY_PATHS}`,
       `Unmarked uncontracted paths: ${uncontracted.length}/${MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS}`,
       `Marked legacy paths: ${legacyPaths.length}/${MAX_LEGACY_REGISTRY_PATHS}`,
       "Add the missing backend Swagger serializer/path first, switch contracted endpoints to apiPath(), or mark genuinely deprecated endpoints with legacyApiPath(path, reason).",
@@ -199,7 +202,7 @@ if (
 console.log(
   [
     "Endpoint registry contract coverage:",
-    `  raw registry paths: ${registryPaths.length}`,
+    `  raw registry paths: ${registryPaths.length}/${MAX_RAW_REGISTRY_PATHS}`,
     `  contracted by Swagger: ${registryPaths.length - uncontracted.length}`,
     `  unmarked uncontracted paths: ${uncontracted.length}/${MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS}`,
     `  marked legacy paths: ${legacyPaths.length}/${MAX_LEGACY_REGISTRY_PATHS}`,
