@@ -402,6 +402,65 @@ class TestCustomEvalTemplateCreateView(EvalRunnerBaseTestCase):
 
 
 # =============================================================================
+# Legacy EvalTemplate action view tests
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestLegacyEvalTemplateActionViews(EvalRunnerBaseTestCase):
+    """Tests for legacy eval template delete/duplicate endpoints."""
+
+    def _create_user_template(self, name="user-template"):
+        return EvalTemplate.objects.create(
+            name=name,
+            description="User template",
+            organization=self.organization,
+            owner=OwnerChoices.USER.value,
+            config={
+                "required_keys": ["response"],
+                "eval_type_id": "OutputEvaluator",
+                "output": "Pass/Fail",
+            },
+        )
+
+    def test_delete_eval_template_success(self):
+        template = self._create_user_template("delete-me")
+
+        response = self.client.post(
+            "/model-hub/delete-eval-template/",
+            {"eval_template_id": str(template.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == "Evaluation template Deleted successfully"
+
+        template.refresh_from_db()
+        assert template.deleted is True
+
+    def test_duplicate_eval_template_success(self):
+        template = self._create_user_template("duplicate-source")
+
+        response = self.client.post(
+            "/model-hub/duplicate-eval-template/",
+            {
+                "eval_template_id": str(template.id),
+                "name": "duplicate-target",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["message"] == "Evaluation template duplicated successfully"
+
+        duplicated = EvalTemplate.objects.get(id=result["eval_template_id"])
+        assert duplicated.name == "duplicate-target"
+        assert duplicated.organization == self.organization
+        assert duplicated.owner == OwnerChoices.USER.value
+
+
+# =============================================================================
 # EvalTemplateCreateView Tests
 # =============================================================================
 

@@ -6123,6 +6123,17 @@ export interface DuplicateEvalTemplateApi {
   name: string;
 }
 
+export interface DuplicateEvalTemplateResponseResultApi {
+  /** @minLength 1 */
+  message: string;
+  eval_template_id: string;
+}
+
+export interface DuplicateEvalTemplateResponseApi {
+  status: boolean;
+  result: DuplicateEvalTemplateResponseResultApi;
+}
+
 export interface EvalGroupApi {
   readonly id?: string;
   /**

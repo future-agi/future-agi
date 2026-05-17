@@ -43,6 +43,7 @@ from model_hub.serializers.contracts import (
     CompositeEvalCreateRequestSerializer,
     CompositeEvalExecuteRequestSerializer,
     CompositeEvalUpdateRequestSerializer,
+    DuplicateEvalTemplateResponseSerializer,
     EvalTemplateBulkDeleteRequestSerializer,
     EvalTemplateCreateV2RequestSerializer,
     EvalTemplateListChartsRequestSerializer,
@@ -59,6 +60,7 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     ModelHubEmptyRequestSerializer,
     ModelHubJSONResponseSerializer,
+    ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.eval_list import EvalListRequestSerializer
 from model_hub.serializers.eval_runner import (
@@ -5988,7 +5990,10 @@ class DeleteEvalTemplateView(APIView):
 
     @swagger_auto_schema(
         request_body=DeleteEvalTemplateSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -6054,7 +6059,10 @@ class DuplicateEvalTemplateView(APIView):
 
     @swagger_auto_schema(
         request_body=DuplicateEvalTemplateSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DuplicateEvalTemplateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:

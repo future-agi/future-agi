@@ -62,6 +62,16 @@ class CustomEvalTemplateCreateResponseSerializer(serializers.Serializer):
     result = CustomEvalTemplateCreateResponseResultSerializer()
 
 
+class DuplicateEvalTemplateResponseResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    eval_template_id = serializers.UUIDField()
+
+
+class DuplicateEvalTemplateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = DuplicateEvalTemplateResponseResultSerializer()
+
+
 class AIEvalWriterRequestSerializer(serializers.Serializer):
     description = serializers.CharField()
     output_format = serializers.ChoiceField(

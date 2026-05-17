@@ -756,8 +756,12 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/create_custom_evals/"): (
             "CustomEvalTemplateCreateResponse"
         ),
-        ("POST", "/model-hub/delete-eval-template/"): "ModelHubJSONResponse",
-        ("POST", "/model-hub/duplicate-eval-template/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/delete-eval-template/"): (
+            "ModelHubStringResultResponse"
+        ),
+        ("POST", "/model-hub/duplicate-eval-template/"): (
+            "DuplicateEvalTemplateResponse"
+        ),
         ("POST", "/model-hub/evaluate-rows/"): "ModelHubJSONResponse",
         ("POST", "/model-hub/eval-playground/"): "ModelHubJSONResponse",
         ("POST", "/model-hub/eval-playground/feedback/"): "ModelHubJSONResponse",

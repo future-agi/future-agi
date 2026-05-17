@@ -303,6 +303,7 @@ import type {
   DownloadInvoiceResponseApi,
   DuplicateDatasetRequestApi,
   DuplicateEvalTemplateApi,
+  DuplicateEvalTemplateResponseApi,
   DuplicateRowsRequestApi,
   EELicenseCreateRequestApi,
   EELicenseCreateResponseApi,
@@ -25256,7 +25257,7 @@ export const modelHubDatasetsPreviewCreate = async (datasetId: string,
 
 
 export type modelHubDeleteEvalTemplateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -28647,7 +28648,7 @@ export const modelHubDevelopsGetExperimentDatasetTableList = async (experimentDa
 
 
 export type modelHubDuplicateEvalTemplateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DuplicateEvalTemplateResponseApi
   status: 200
 }
 

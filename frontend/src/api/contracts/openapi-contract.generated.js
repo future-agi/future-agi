@@ -11626,7 +11626,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ModelHubStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13146,7 +13146,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DuplicateEvalTemplateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -41565,6 +41565,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DuplicateEvalTemplateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DuplicateEvalTemplateResponseResult"
+        }
+      }
+    },
     "DuplicateRowsRequest": {
       "type": "object",
       "properties": {
@@ -60353,6 +60369,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uri",
           "minLength": 1
+        }
+      }
+    },
+    "DuplicateEvalTemplateResponseResult": {
+      "required": [
+        "message",
+        "eval_template_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "eval_template_id": {
+          "title": "Eval template id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },

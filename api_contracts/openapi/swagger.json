@@ -22053,7 +22053,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ModelHubStringResultResponse"
                         }
                     },
                     "400": {
@@ -25318,7 +25318,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DuplicateEvalTemplateResponse"
                         }
                     },
                     "400": {
@@ -75994,6 +75994,41 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                }
+            }
+        },
+        "DuplicateEvalTemplateResponseResult": {
+            "required": [
+                "message",
+                "eval_template_id"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eval_template_id": {
+                    "title": "Eval template id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "DuplicateEvalTemplateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DuplicateEvalTemplateResponseResult"
                 }
             }
         },

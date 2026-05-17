@@ -5,7 +5,7 @@
     "operations": 1336,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
-    "broad_success_response_schemas": 322
+    "broad_success_response_schemas": 320
   },
   "by_group": {
     "accounts": {
@@ -83,7 +83,7 @@
       "operations": 473,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 204
+      "broad_success_response_schemas": 202
     },
     "saml2_auth": {
       "paths": 12,
@@ -1502,18 +1502,6 @@
     {
       "group": "model-hub",
       "method": "POST",
-      "path": "/model-hub/delete-eval-template/",
-      "operation_id": "model-hub_delete-eval-template_create",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
       "path": "/model-hub/develops/add-as-new/",
       "operation_id": "model-hub_develops_add-as-new_create",
       "tags": [
@@ -2092,18 +2080,6 @@
       "method": "GET",
       "path": "/model-hub/develops/{experiment_dataset_id}/get-experiment-dataset-table/",
       "operation_id": "model-hub_develops_get-experiment-dataset-table_list",
-      "tags": [
-        "model-hub"
-      ],
-      "status_code": "200",
-      "schema": "ModelHubJSONResponse",
-      "reason": "ModelHubJSONResponse.result is an unshaped object"
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/duplicate-eval-template/",
-      "operation_id": "model-hub_duplicate-eval-template_create",
       "tags": [
         "model-hub"
       ],

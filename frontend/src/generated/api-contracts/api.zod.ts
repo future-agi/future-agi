@@ -16334,23 +16334,12 @@ export const ModelHubDeleteEvalTemplateCreateBody = zod.object({
   "eval_template_id": zod.string().uuid()
 })
 
+
+
+
 export const ModelHubDeleteEvalTemplateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -18040,23 +18029,15 @@ export const ModelHubDuplicateEvalTemplateCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubDuplicateEvalTemplateCreateBodyNameMax)
 })
 
+
+
+
 export const ModelHubDuplicateEvalTemplateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "eval_template_id": zod.string().uuid()
+})
 })
 
 
