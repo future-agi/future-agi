@@ -16278,6 +16278,25 @@ export const ModelHubKbListQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
+export const ModelHubKbListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Create a new knowledge base.
@@ -16309,12 +16328,43 @@ export const ModelHubKbSupportedEmbeddingModelsQueryParams = zod.object({
 })
 
 
+
+
+
+export const ModelHubKbSupportedEmbeddingModelsResponse = zod.object({
+  "status": zod.number(),
+  "result": zod.array(zod.object({
+  "value": zod.string().min(1),
+  "label": zod.string().min(1)
+}))
+})
+
+
 /**
  * Retrieve a specific knowledge base.
  * @summary Retrieve a specific knowledge base.
  */
 export const ModelHubKbReadParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this knowledge base.')
+})
+
+export const ModelHubKbReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16337,6 +16387,25 @@ export const ModelHubKbUpdateBody = zod.object({
   "name": zod.string().min(1).max(modelHubKbUpdateBodyNameMax),
   "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
   "chunk_size": zod.number().min(modelHubKbUpdateBodyChunkSizeMin).max(modelHubKbUpdateBodyChunkSizeMax)
+})
+
+export const ModelHubKbUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 

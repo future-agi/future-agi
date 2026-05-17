@@ -37,7 +37,10 @@ def _body_ref(operation):
 
 
 def _response_ref(operation, status_code="200"):
-    schema = operation["responses"][status_code]["schema"]
+    responses = operation["responses"]
+    if status_code not in responses:
+        status_code = next(code for code in sorted(responses) if code.startswith("2"))
+    schema = responses[status_code]["schema"]
     if "$ref" in schema:
         return schema["$ref"].rsplit("/", 1)[-1]
     if schema.get("type") == "array" and schema.get("items", {}).get("$ref"):
@@ -61,6 +64,10 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/custom-metric/test/",
         "/model-hub/custom-metric/update/",
         "/model-hub/custom-metric/{model_id}/",
+        "/model-hub/kb/",
+        "/model-hub/kb/supported-embedding-models",
+        "/model-hub/kb/supported_embedding_models/",
+        "/model-hub/kb/{id}/",
     }
 
     body_gaps = {
@@ -98,6 +105,8 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/custom-metric/update/"): (
             "CustomMetricMutationRequest"
         ),
+        ("POST", "/model-hub/kb/"): "KnowledgeBaseCreate",
+        ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBase",
     }
 
     for (method, path), definition_name in expected.items():
@@ -129,6 +138,16 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/custom-metric/test/"): "CustomMetricTestResponse",
         ("POST", "/model-hub/custom-metric/update/"): "ModelHubJSONResponse",
         ("GET", "/model-hub/custom-metric/{model_id}/"): "ModelHubPaginatedResponse",
+        ("GET", "/model-hub/kb/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/kb/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/kb/supported-embedding-models"): (
+            "KnowledgeBaseEmbeddingModelsResponse"
+        ),
+        ("GET", "/model-hub/kb/supported_embedding_models/"): (
+            "KnowledgeBaseEmbeddingModelsResponse"
+        ),
+        ("GET", "/model-hub/kb/{id}/"): "ModelHubJSONResponse",
+        ("PUT", "/model-hub/kb/{id}/"): "ModelHubJSONResponse",
     }
 
     for (method, path), definition_name in expected.items():

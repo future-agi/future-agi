@@ -4946,6 +4946,18 @@ export interface KnowledgeBaseCreateApi {
   readonly updated_at?: string;
 }
 
+export interface EmbeddingModelOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface KnowledgeBaseEmbeddingModelsResponseApi {
+  status: number;
+  result: EmbeddingModelOptionApi[];
+}
+
 export type KnowledgeBaseApiEmbeddingModel = typeof KnowledgeBaseApiEmbeddingModel[keyof typeof KnowledgeBaseApiEmbeddingModel];
 
 

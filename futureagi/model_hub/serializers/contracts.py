@@ -132,3 +132,13 @@ class CustomMetricListResponseSerializer(serializers.Serializer):
 class MetricTagOptionSerializer(serializers.Serializer):
     label = serializers.CharField()
     value = serializers.CharField()
+
+
+class EmbeddingModelOptionSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+
+
+class KnowledgeBaseEmbeddingModelsResponseSerializer(serializers.Serializer):
+    status = serializers.IntegerField()
+    result = EmbeddingModelOptionSerializer(many=True)

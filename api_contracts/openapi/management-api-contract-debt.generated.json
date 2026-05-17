@@ -4,7 +4,7 @@
     "paths": 964,
     "operations": 1326,
     "mutation_endpoints_without_body_schema": 136,
-    "operations_without_response_schema": 228
+    "operations_without_response_schema": 222
   },
   "by_group": {
     "accounts": {
@@ -71,7 +71,7 @@
       "paths": 365,
       "operations": 478,
       "mutation_endpoints_without_body_schema": 136,
-      "operations_without_response_schema": 228
+      "operations_without_response_schema": 222
     },
     "saml2_auth": {
       "paths": 12,
@@ -2908,60 +2908,6 @@
       "method": "GET",
       "path": "/model-hub/ground-truth/{ground_truth_id}/status/",
       "operation_id": "model-hub_ground-truth_status_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/kb/",
-      "operation_id": "model-hub_kb_list",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "POST",
-      "path": "/model-hub/kb/",
-      "operation_id": "model-hub_kb_create",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/kb/supported-embedding-models",
-      "operation_id": "model-hub_kb_supported_embedding_models",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/kb/supported_embedding_models/",
-      "operation_id": "model-hub_kb_supported_embedding_models",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "GET",
-      "path": "/model-hub/kb/{id}/",
-      "operation_id": "model-hub_kb_read",
-      "tags": [
-        "model-hub"
-      ]
-    },
-    {
-      "group": "model-hub",
-      "method": "PUT",
-      "path": "/model-hub/kb/{id}/",
-      "operation_id": "model-hub_kb_update",
       "tags": [
         "model-hub"
       ]

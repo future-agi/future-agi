@@ -328,6 +328,7 @@ import type {
   InviteResendApi,
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
+  KnowledgeBaseEmbeddingModelsResponseApi,
   LangfuseHealthResponseApi,
   LangfuseIngestionRequestApi,
   LangfuseIngestionResponseApi,
@@ -29763,16 +29764,43 @@ export const modelHubGroundTruthStatusList = async (groundTruthId: string, optio
 
 
 export type modelHubKbListResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKbListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbListResponseSuccess = (modelHubKbListResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKbListResponseError = (modelHubKbListResponse400 | modelHubKbListResponse403 | modelHubKbListResponse404 | modelHubKbListResponse409 | modelHubKbListResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbListResponse = (modelHubKbListResponseSuccess)
+export type modelHubKbListResponse = (modelHubKbListResponseSuccess | modelHubKbListResponseError)
 
 export const getModelHubKbListUrl = (params?: ModelHubKbListParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -29807,16 +29835,43 @@ export const modelHubKbList = async (params?: ModelHubKbListParams, options?: Re
 
 
 export type modelHubKbCreateResponse201 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 201
+}
+
+export type modelHubKbCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbCreateResponseSuccess = (modelHubKbCreateResponse201) & {
   headers: Headers;
 };
-;
+export type modelHubKbCreateResponseError = (modelHubKbCreateResponse400 | modelHubKbCreateResponse403 | modelHubKbCreateResponse404 | modelHubKbCreateResponse409 | modelHubKbCreateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbCreateResponse = (modelHubKbCreateResponseSuccess)
+export type modelHubKbCreateResponse = (modelHubKbCreateResponseSuccess | modelHubKbCreateResponseError)
 
 export const getModelHubKbCreateUrl = () => {
 
@@ -29845,16 +29900,43 @@ export const modelHubKbCreate = async (knowledgeBaseCreateApi: NonReadonly<Knowl
 
 
 export type modelHubKbSupportedEmbeddingModelsResponse200 = {
-  data: void
+  data: KnowledgeBaseEmbeddingModelsResponseApi
   status: 200
+}
+
+export type modelHubKbSupportedEmbeddingModelsResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbSupportedEmbeddingModelsResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbSupportedEmbeddingModelsResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbSupportedEmbeddingModelsResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbSupportedEmbeddingModelsResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbSupportedEmbeddingModelsResponseSuccess = (modelHubKbSupportedEmbeddingModelsResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKbSupportedEmbeddingModelsResponseError = (modelHubKbSupportedEmbeddingModelsResponse400 | modelHubKbSupportedEmbeddingModelsResponse403 | modelHubKbSupportedEmbeddingModelsResponse404 | modelHubKbSupportedEmbeddingModelsResponse409 | modelHubKbSupportedEmbeddingModelsResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbSupportedEmbeddingModelsResponse = (modelHubKbSupportedEmbeddingModelsResponseSuccess)
+export type modelHubKbSupportedEmbeddingModelsResponse = (modelHubKbSupportedEmbeddingModelsResponseSuccess | modelHubKbSupportedEmbeddingModelsResponseError)
 
 export const getModelHubKbSupportedEmbeddingModelsUrl = (params?: ModelHubKbSupportedEmbeddingModelsParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -29889,16 +29971,43 @@ export const modelHubKbSupportedEmbeddingModels = async (params?: ModelHubKbSupp
 
 
 export type modelHubKbReadResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKbReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbReadResponseSuccess = (modelHubKbReadResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKbReadResponseError = (modelHubKbReadResponse400 | modelHubKbReadResponse403 | modelHubKbReadResponse404 | modelHubKbReadResponse409 | modelHubKbReadResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbReadResponse = (modelHubKbReadResponseSuccess)
+export type modelHubKbReadResponse = (modelHubKbReadResponseSuccess | modelHubKbReadResponseError)
 
 export const getModelHubKbReadUrl = (id: string,) => {
 
@@ -29926,16 +30035,43 @@ export const modelHubKbRead = async (id: string, options?: RequestInit): Promise
 
 
 export type modelHubKbUpdateResponse200 = {
-  data: void
+  data: ModelHubJSONResponseApi
   status: 200
+}
+
+export type modelHubKbUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbUpdateResponseSuccess = (modelHubKbUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type modelHubKbUpdateResponseError = (modelHubKbUpdateResponse400 | modelHubKbUpdateResponse403 | modelHubKbUpdateResponse404 | modelHubKbUpdateResponse409 | modelHubKbUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbUpdateResponse = (modelHubKbUpdateResponseSuccess)
+export type modelHubKbUpdateResponse = (modelHubKbUpdateResponseSuccess | modelHubKbUpdateResponseError)
 
 export const getModelHubKbUpdateUrl = (id: string,) => {
 
@@ -30007,12 +30143,39 @@ export type modelHubKbDeleteResponse204 = {
   status: 204
 }
 
+export type modelHubKbDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
 export type modelHubKbDeleteResponseSuccess = (modelHubKbDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type modelHubKbDeleteResponseError = (modelHubKbDeleteResponse400 | modelHubKbDeleteResponse403 | modelHubKbDeleteResponse404 | modelHubKbDeleteResponse409 | modelHubKbDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type modelHubKbDeleteResponse = (modelHubKbDeleteResponseSuccess)
+export type modelHubKbDeleteResponse = (modelHubKbDeleteResponseSuccess | modelHubKbDeleteResponseError)
 
 export const getModelHubKbDeleteUrl = (id: string,) => {
 
