@@ -11,7 +11,10 @@ import {
   API_SURFACE_CONTRACT,
   API_SURFACE_PATHS,
 } from "../src/api/contracts/api-surface.generated.js";
-import { LEGACY_API_SURFACE } from "../src/api/contracts/legacy-api-surface.js";
+import {
+  LEGACY_API_STATUSES,
+  LEGACY_API_SURFACE,
+} from "../src/api/contracts/legacy-api-surface.js";
 
 const traverse = traverseModule.default;
 
@@ -177,6 +180,11 @@ const missingLegacyMetadata = legacySurfacePaths.filter((value) => {
   const meta = LEGACY_API_SURFACE[value];
   return !meta?.group || !meta?.status || !meta?.reason || !meta?.next;
 });
+const validLegacyStatuses = new Set(Object.values(LEGACY_API_STATUSES));
+const invalidLegacyStatuses = legacySurfacePaths.filter((value) => {
+  const status = LEGACY_API_SURFACE[value]?.status;
+  return status && !validLegacyStatuses.has(status);
+});
 const contractedLegacySurfacePaths = legacySurfacePaths.filter((value) =>
   matchedContractTemplate(value),
 );
@@ -197,6 +205,7 @@ if (
   invalidLegacyPaths.length ||
   unusedLegacySurfacePaths.length ||
   missingLegacyMetadata.length ||
+  invalidLegacyStatuses.length ||
   contractedLegacySurfacePaths.length
 ) {
   console.error(
@@ -222,6 +231,12 @@ if (
       ...missingLegacyMetadata
         .slice(0, 80)
         .map((value) => `  - incomplete legacy manifest metadata: ${value}`),
+      ...invalidLegacyStatuses
+        .slice(0, 80)
+        .map(
+          (value) =>
+            `  - invalid legacy manifest status: ${value} (${LEGACY_API_SURFACE[value]?.status})`,
+        ),
       ...contractedLegacySurfacePaths
         .slice(0, 80)
         .map((value) => `  - legacy manifest path is now contracted: ${value}`),
