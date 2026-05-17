@@ -5,6 +5,7 @@ import uuid
 import structlog
 from django.forms import model_to_dict
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -15,6 +16,11 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.serializers.contracts import (
+    CreateDatasetFromExperimentRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.utils import get_recommendations, update_column_id
@@ -45,6 +51,10 @@ class CreateDatasetFromExpView(APIView):
         except (ValueError, AttributeError, TypeError):
             return False
 
+    @swagger_auto_schema(
+        request_body=CreateDatasetFromExperimentRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, exp_dataset_id, *args, **kwargs):
         try:
             new_dataset_name = request.data.get("name")

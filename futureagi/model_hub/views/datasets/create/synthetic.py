@@ -3,6 +3,7 @@ import uuid
 
 import structlog
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -11,6 +12,10 @@ from accounts.models import Organization
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.develop_dataset import (
     DatasetSerializer,
     SyntheticDatasetConfigSerializer,
@@ -42,6 +47,10 @@ class CreateSyntheticDataset(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=SyntheticDatasetCreationSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Entitlement check: synthetic data feature
@@ -240,6 +249,9 @@ class GetSyntheticDatasetConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             # Get dataset and verify it exists and belongs to user's organization
@@ -275,6 +287,10 @@ class UpdateSyntheticDatasetConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=SyntheticDatasetConfigSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, dataset_id, *args, **kwargs):
         try:
             # Initialize task manager

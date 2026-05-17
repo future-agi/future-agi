@@ -1486,6 +1486,10 @@ class AddRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=AddRunPromptSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
@@ -1618,6 +1622,10 @@ class PreviewRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=PreviewRunPromptSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Validate incoming data
@@ -1755,6 +1763,10 @@ class EditRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=EditRunPromptColumnSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
@@ -1918,6 +1930,9 @@ class RetrieveRunPromptColumnConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request):
         try:
             # Get the column and verify it's a run prompt column
@@ -2067,6 +2082,9 @@ class RetrieveRunPromptOptionsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             # Get available models from LiteLLM model manager

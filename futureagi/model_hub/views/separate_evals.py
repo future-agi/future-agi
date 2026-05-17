@@ -4422,6 +4422,9 @@ class EvalUsageStatsView(APIView):
         "365d": timedelta(days=365),
     }
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, template_id, *args, **kwargs):
         try:
             try:
@@ -4807,6 +4810,9 @@ class EvalFeedbackListView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import Feedback
 

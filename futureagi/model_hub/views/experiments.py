@@ -17,6 +17,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django_filters import rest_framework as django_filters
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import generics
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
@@ -43,6 +44,15 @@ from model_hub.models.experiments import (
     ExperimentsTable,
 )
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.serializers.contracts import (
+    DatasetRowDiffRequestSerializer,
+    ExperimentAdditionalEvaluationsRequestSerializer,
+    ExperimentComparisonWeightsRequestSerializer,
+    ExperimentRerunRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubEmptyRequestSerializer,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.experiments import (
     ExperimentCreateV2Serializer,
     ExperimentDetailV2Serializer,
@@ -335,6 +345,9 @@ class ExperimentsTableView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request):
         experiment_id = request.query_params.get("experiment_id")
         organization = (
@@ -354,6 +367,10 @@ class ExperimentsTableView(APIView):
         except Exception:
             return self._gm.bad_request("Invalid experiment ID")
 
+    @swagger_auto_schema(
+        request_body=ExperimentsTableSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             serializer = ExperimentsTableSerializer(data=request.data)
@@ -402,6 +419,10 @@ class ExperimentsTableView(APIView):
             logger.exception(f"Error in creating experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_EXP"))
 
+    @swagger_auto_schema(
+        request_body=ExperimentsTableSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request):
         try:
             data = request.data
@@ -708,6 +729,9 @@ class DatasetExperimentsView(APIView):
             return parsed if isinstance(parsed, dict) else {}
         return {}
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id, row_id=None, *args, **kwargs):
         try:
             # Get pagination parameters
@@ -1372,6 +1396,10 @@ class GetRowDiffView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetRowDiffRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             experiment_id = request.data.get("experiment_id")
@@ -1446,6 +1474,10 @@ class GetRowDiffV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetRowDiffRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             experiment_id = request.data.get("experiment_id")
@@ -1559,6 +1591,9 @@ class ExperimentStatsView(APIView):
     renderer_classes = (JSONRenderer,)
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         organization = (
             getattr(request, "organization", None) or request.user.organization
@@ -1951,6 +1986,9 @@ class ExperimentStatsV2View(APIView):
     renderer_classes = (JSONRenderer,)
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         organization = (
             getattr(request, "organization", None) or request.user.organization
@@ -2300,6 +2338,9 @@ class ExperimentStatsV2View(APIView):
 class ExperimentEvaluationStatsView(APIView):
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id, evaluation_id):
         try:
             # Get the experiment and its associated datasets
@@ -2569,6 +2610,10 @@ class ExperimentDatasetComparisonView(APIView):
             "columns": eval_column_metrics,
         }
 
+    @swagger_auto_schema(
+        request_body=ExperimentComparisonWeightsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id):
         try:
             # Get evaluation-specific weights
@@ -2787,6 +2832,10 @@ class ExperimentDatasetComparisonV2View(APIView):
             "columns": eval_column_metrics,
         }
 
+    @swagger_auto_schema(
+        request_body=ExperimentComparisonWeightsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id):
         try:
             self.weights = {
@@ -2879,6 +2928,10 @@ class ExperimentDatasetComparisonV2View(APIView):
 class RunAdditionalEvaluationsView(APIView):
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        request_body=ExperimentAdditionalEvaluationsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id):
         """
         Request body format:
@@ -2943,6 +2996,10 @@ class AddExperimentEvalView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=UserEvalSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id, *args, **kwargs):
         try:
             organization = (
@@ -3100,6 +3157,9 @@ class ExperimentComparisonDetailsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         try:
             # Get the latest comparison per dataset for this experiment
@@ -3199,6 +3259,10 @@ class ExperimentRerunView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ExperimentRerunRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             serializer = ExperimentIdListSerializer(data=request.data)
@@ -3264,6 +3328,9 @@ class DownloadExperimentsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id, *args, **kwargs):
         try:
             # Get dataset and verify it exists
@@ -3384,6 +3451,9 @@ class ExperimentsTableV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         organization = getattr(request, "organization", None) or request.user.organization
 
@@ -3419,6 +3489,10 @@ class ExperimentsTableV2View(APIView):
         )
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        request_body=ExperimentCreateV2Serializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = ExperimentCreateV2Serializer(data=request.data)
         if not serializer.is_valid():
@@ -3730,6 +3804,10 @@ class ExperimentsTableV2View(APIView):
             logger.exception(f"Error creating V2 experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_EXP"))
 
+    @swagger_auto_schema(
+        request_body=ExperimentUpdateV2Serializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, experiment_id):
         """Update a V2 experiment with diff-based selective re-run.
 
@@ -3866,6 +3944,14 @@ class ExperimentsTableV2View(APIView):
         except Exception as e:
             logger.exception(f"Error updating V2 experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_EXP"))
+
+
+class ExperimentsTableV2CreateView(ExperimentsTableV2View):
+    http_method_names = ["post", "options"]
+
+
+class ExperimentsTableV2DetailView(ExperimentsTableV2View):
+    http_method_names = ["get", "put", "options"]
 
 
 # =============================================================================
@@ -4770,6 +4856,9 @@ class ExperimentJsonSchemaView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         try:
             from model_hub.views.develop_dataset import get_json_column_schemas
@@ -4806,6 +4895,9 @@ class ExperimentDerivedVariablesView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_id):
         try:
             from model_hub.services.derived_variable_service import (
@@ -4919,6 +5011,10 @@ class ExperimentRerunV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ExperimentRerunRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request):
         try:
             serializer = ExperimentIdListSerializer(data=request.data)
@@ -4971,6 +5067,10 @@ class ExperimentRerunCellsV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ExperimentRerunCellsSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id):
         try:
             serializer = ExperimentRerunCellsSerializer(data=request.data)
@@ -5508,6 +5608,10 @@ class ExperimentStopV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ModelHubEmptyRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, experiment_id):
         try:
             organization = getattr(request, "organization", None) or request.user.organization
@@ -5584,6 +5688,9 @@ class ExperimentNameSuggestionView(APIView):
             ds_name = ds_name[: max(available, self.MIN_NAME_LENGTH)]
         return f"DS_{ds_name}_exp_{date_str}{suffix}"
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id):
         try:
             organization = getattr(request, "organization", None) or request.user.organization
@@ -5642,6 +5749,9 @@ class ExperimentNameValidationView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request):
         organization = getattr(request, "organization", None) or request.user.organization
         dataset_id = request.query_params.get("dataset_id")

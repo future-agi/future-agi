@@ -4,17 +4,23 @@ import uuid
 import structlog
 from django.db.models import Max
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.develop_dataset import SyntheticDataSerializer
 from model_hub.tasks.develop_dataset import generate_new_columns, generate_new_rows
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
+
+logger = structlog.get_logger(__name__)
 
 
 class AddSyntheticData(APIView):
@@ -22,6 +28,10 @@ class AddSyntheticData(APIView):
     permission_classes = [IsAuthenticated]
 
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
+    @swagger_auto_schema(
+        request_body=SyntheticDataSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             serializer = SyntheticDataSerializer(data=request.data)

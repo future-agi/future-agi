@@ -120,18 +120,42 @@ from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTabl
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.serializers.contracts import (
-    MODEL_HUB_ERROR_RESPONSES,
+    AddAsNewDatasetRequestSerializer,
+    AddRowsFromFileRequestSerializer,
+    CloneDatasetRequestSerializer,
     CompareDatasetStatsRequestSerializer,
     CompareEvalsListRequestSerializer,
     ComparePreviewRunEvalRequestSerializer,
     CompareStartEvalsRequestSerializer,
+    DatasetAddColumnsRequestSerializer,
+    DatasetAddEmptyColumnsRequestSerializer,
+    DatasetAddEmptyRowsRequestSerializer,
+    DatasetAddRowsRequestSerializer,
+    DatasetRowDataRequestSerializer,
+    DatasetBehaviorRequestSerializer,
+    DatasetCellDataRequestSerializer,
+    DatasetMultipleStaticColumnsRequestSerializer,
+    DatasetSdkRowsRequestSerializer,
+    DatasetStaticColumnRequestSerializer,
+    DatasetUpdateCellValueRequestSerializer,
+    DatasetUpdateColumnNameRequestSerializer,
+    DatasetUpdateColumnTypeRequestSerializer,
+    DuplicateDatasetRequestSerializer,
+    DuplicateRowsRequestSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetListRequestSerializer,
     LegacyKnowledgeBaseFilesRequestSerializer,
     LegacyKnowledgeBaseMutationRequestSerializer,
+    ManualDatasetCreateRequestSerializer,
+    MergeDatasetRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
     ModelHubEmptyRequestSerializer,
     ModelHubJSONResponseSerializer,
+    PreviewRunEvalRequestSerializer,
     SingleRowEvaluationRequestSerializer,
+    StartEvalsProcessRequestSerializer,
+    StopUserEvalRequestSerializer,
+    UserEvalMutationRequestSerializer,
 )
 from model_hub.serializers.develop_dataset import (
     ColumnSerializer,
@@ -475,6 +499,10 @@ class AddRowsFromFile(CreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=AddRowsFromFileRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             form = UploadFileForm(request.POST, request.FILES)
@@ -678,6 +706,10 @@ class CloneDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=CloneDatasetRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             call_log_row_entry = log_and_deduct_cost_for_resource_request(
@@ -850,6 +882,10 @@ class AddAsNewDataset(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=AddAsNewDatasetRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             dataset_id = request.data.get("dataset_id")
@@ -1422,6 +1458,9 @@ class GetDatasetsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):  # Changed from 'post' to 'get'
         try:
             # Get pagination and sorting parameters
@@ -2004,6 +2043,9 @@ class GetDatasetTableView(APIView):
 
         return filtered_rows, search_results
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             # Get request parameters from query params instead of request.data
@@ -2696,6 +2738,10 @@ class GetRowDataView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetRowDataRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             # Get request parameters
@@ -2864,6 +2910,9 @@ class GetExperimentDatasetTableView(APIView):
         except (ValueError, AttributeError, TypeError):
             return False
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, experiment_dataset_id, *args, **kwargs):
         try:
             # Get request parameters
@@ -3296,6 +3345,9 @@ class GetDatasetsNamesView(APIView):
     #     import traceback
     #     traceback.print_exc()
     #     return self._gm.internal_server_error_response(str(e))
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             excluded_datasets = request.GET.getlist("excluded_dataset", [])
@@ -3394,6 +3446,10 @@ class AddColumnsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetAddColumnsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             columns_data = request.data.get("new_columns_data")
@@ -3510,6 +3566,10 @@ class AddEmptyColumnsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetAddEmptyColumnsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             num_cols = request.data.get("num_cols", 0)
@@ -3570,6 +3630,10 @@ class GetCellDataView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetCellDataRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Get request parameters
@@ -3633,6 +3697,10 @@ class AddStaticColumnView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetStaticColumnRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             with transaction.atomic():
@@ -3725,6 +3793,10 @@ class AddMultipleStaticColumnsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetMultipleStaticColumnsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         """
         Add multiple static columns to a dataset at once.
@@ -4082,6 +4154,10 @@ class AddEmptyRowsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetAddEmptyRowsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             from model_hub.services.dataset_validators import validate_num_rows
@@ -4165,6 +4241,10 @@ class AddSDKRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetSdkRowsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             dataset_name = request.data.get("dataset_name")
@@ -4285,6 +4365,10 @@ class ManuallyCreateDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=ManualDatasetCreateRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Get and validate input parameters
@@ -4443,6 +4527,10 @@ class AddDataRowsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetAddRowsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id: str, *args, **kwargs):
         try:
             rows = request.data.get("rows", [])
@@ -4649,6 +4737,10 @@ class UpdateColumnNameView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetUpdateColumnNameRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
             new_column_name = request.data.get("new_column_name")
@@ -4767,6 +4859,10 @@ class EditDatasetBehaviorView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=DatasetBehaviorRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, dataset_id, *args, **kwargs):
         try:
             # Get request parameters
@@ -4947,6 +5043,10 @@ class UpdateCellValueView(APIView):
         else:
             return None
 
+    @swagger_auto_schema(
+        request_body=DatasetUpdateCellValueRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             row_id = request.data.get("row_id") or request.data.get("rowId")
@@ -5334,6 +5434,10 @@ class UpdateColumnTypeView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetUpdateColumnTypeRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
             new_data_type = request.data.get("new_column_type")
@@ -6124,6 +6228,9 @@ class DownloadDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             # Get dataset and verify it exists
@@ -6228,6 +6335,9 @@ class GetFunctionList(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             eval_templates = EvalTemplate.no_workspace_objects.filter(
@@ -6247,6 +6357,9 @@ class GetEvalsListView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(
         self, request, dataset_id=None, *args, **kwargs
     ):  # Changed from 'post' to 'get'
@@ -6919,6 +7032,9 @@ class GetEvalStructureView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(
         self, request, eval_id, dataset_id=None, *args, **kwargs
     ):  # Changed from 'post' to 'get'
@@ -7090,6 +7206,10 @@ class StartEvalsProcess(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=StartEvalsProcessRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             user_eval_ids = request.data.get("user_eval_ids", [])
@@ -7428,6 +7548,10 @@ class EditAndRunUserEvalView(APIView):
             return value.strip().lower() not in {"false", "0", "no", ""}
         return bool(value)
 
+    @swagger_auto_schema(
+        request_body=UserEvalMutationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
 
@@ -7690,6 +7814,10 @@ class AddUserEvalView(CreateAPIView):
             return value.strip().lower() not in {"false", "0", "no", ""}
         return bool(value)
 
+    @swagger_auto_schema(
+        request_body=UserEvalMutationRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
 
@@ -7918,6 +8046,10 @@ class StopUserEvalView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=StopUserEvalRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
         try:
             experiment_id = request.data.get("experiment_id")
@@ -7985,6 +8117,10 @@ class PreviewRunEvalView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=PreviewRunEvalRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             config = request.data.get("config")
@@ -8092,6 +8228,9 @@ class GetProviderStatusView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             # Get all providers from choices
@@ -11045,6 +11184,10 @@ class DuplicateRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DuplicateRowsRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             row_ids = request.data.get("row_ids", [])
@@ -11172,6 +11315,10 @@ class DuplicateDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DuplicateDatasetRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             new_name = request.data.get("name")
@@ -11380,6 +11527,10 @@ class MergeDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=MergeDatasetRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             target_dataset_id = request.data.get("target_dataset_id")
@@ -11584,6 +11735,9 @@ class GetDerivedDatasets(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             dataset = get_object_or_404(Dataset, id=dataset_id)

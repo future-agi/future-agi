@@ -4973,6 +4973,20 @@ export interface ConditionalColumnRequestApi {
   concurrency?: number;
 }
 
+export interface DuplicateRowsRequestApi {
+  row_ids?: string[];
+  selected_all_rows?: boolean;
+  /** @minimum 1 */
+  num_copies?: number;
+}
+
+export interface DuplicateDatasetRequestApi {
+  row_ids?: string[];
+  selected_all_rows?: boolean;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface ExtractEntitiesRequestApi {
   column_id: string;
   /** @minLength 1 */
@@ -4981,6 +4995,12 @@ export interface ExtractEntitiesRequestApi {
   language_model_id?: string;
   concurrency?: number;
   new_column_name?: string;
+}
+
+export interface MergeDatasetRequestApi {
+  row_ids?: string[];
+  selected_all_rows?: boolean;
+  target_dataset_id: string;
 }
 
 export type PreviewDatasetOperationRequestApiConfig = { [key: string]: unknown };
@@ -4999,6 +5019,125 @@ export interface DeleteEvalTemplateApi {
   eval_template_id: string;
 }
 
+export type AddAsNewDatasetRequestApiColumns = { [key: string]: unknown };
+
+export interface AddAsNewDatasetRequestApi {
+  dataset_id: string;
+  name?: string;
+  columns?: AddAsNewDatasetRequestApiColumns;
+}
+
+export interface AddRowsFromFileRequestApi {
+  readonly file?: string;
+  dataset_id: string;
+  model_type?: string;
+}
+
+export interface DatasetSdkRowsRequestApi {
+  dataset_name?: string;
+  dataset_id?: string;
+}
+
+/**
+ * Tool selection mode: 'auto' or 'required'.
+ */
+export type PromptConfigApiToolChoice = typeof PromptConfigApiToolChoice[keyof typeof PromptConfigApiToolChoice];
+
+
+export const PromptConfigApiToolChoice = {
+  auto: 'auto',
+  required: 'required',
+} as const;
+
+/**
+ * Output format type.
+ */
+export type PromptConfigApiOutputFormat = typeof PromptConfigApiOutputFormat[keyof typeof PromptConfigApiOutputFormat];
+
+
+export const PromptConfigApiOutputFormat = {
+  array: 'array',
+  string: 'string',
+  number: 'number',
+  object: 'object',
+  audio: 'audio',
+  image: 'image',
+} as const;
+
+export type PromptConfigApiRunPromptConfig = {[key: string]: string};
+
+export type PromptConfigApiMessagesItem = {[key: string]: string};
+
+/**
+ * JSON schema for response format if required. Can be a JSON object or string. Defaults to None.
+ */
+export type PromptConfigApiResponseFormat = { [key: string]: unknown };
+
+export type PromptConfigApiToolsItem = {[key: string]: string};
+
+export interface PromptConfigApi {
+  /** @maxLength 255 */
+  model?: string;
+  run_prompt_config?: PromptConfigApiRunPromptConfig;
+  /** List of messages with format [{'role': 'user/assistant', 'content': 'text'}] */
+  messages?: PromptConfigApiMessagesItem[];
+  /**
+     * Controls the randomness. Value between 0 and 2.
+     * @minimum 0
+     * @maximum 2
+     */
+  temperature?: number;
+  /**
+     * Penalty for word repetition. Value between -2 and 2.
+     * @minimum -2
+     * @maximum 2
+     */
+  frequency_penalty?: number;
+  /**
+     * Penalty for new word usage. Value between -2 and 2.
+     * @minimum -2
+     * @maximum 2
+     */
+  presence_penalty?: number;
+  /**
+     * Maximum number of tokens to generate. Null = use provider default.
+     * @minimum 1
+     * @maximum 65536
+     */
+  max_tokens?: number;
+  /**
+     * Controls diversity via nucleus sampling. Value between 0 and 1.
+     * @minimum 0
+     * @maximum 1
+     */
+  top_p?: number;
+  /** JSON schema for response format if required. Can be a JSON object or string. Defaults to None. */
+  response_format?: PromptConfigApiResponseFormat;
+  /** Tool selection mode: 'auto' or 'required'. */
+  tool_choice?: PromptConfigApiToolChoice;
+  /** List of tools with tool properties if available. */
+  tools?: PromptConfigApiToolsItem[];
+  /** Output format type. */
+  output_format?: PromptConfigApiOutputFormat;
+  /**
+     * Number of concurrent operations allowed. Maximum 10.
+     * @minimum 1
+     * @maximum 10
+     */
+  concurrency?: number;
+}
+
+export interface AddRunPromptApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  name: string;
+  config?: PromptConfigApi;
+}
+
+export interface CloneDatasetRequestApi {
+  new_dataset_name?: string;
+}
+
 export interface HuggingFaceDatasetCreateRequestApi {
   name?: string;
   model_type?: string;
@@ -5011,9 +5150,109 @@ export interface HuggingFaceDatasetCreateRequestApi {
   huggingface_dataset_split: string;
 }
 
+export interface CreateDatasetFromLocalFileRequestApi {
+  readonly file?: string;
+  new_dataset_name?: string;
+  model_type?: string;
+  source?: string;
+}
+
+export interface ManualDatasetCreateRequestApi {
+  /** @minLength 1 */
+  dataset_name: string;
+  /** @minimum 1 */
+  number_of_rows?: number;
+  /** @minimum 1 */
+  number_of_columns?: number;
+}
+
+export interface CreateEmptyDatasetRequestApi {
+  /** @minLength 1 */
+  new_dataset_name: string;
+  model_type?: string;
+  is_sdk?: boolean;
+  /** @minimum 0 */
+  row?: number;
+}
+
+export type SyntheticDatasetCreationApiDataset = { [key: string]: unknown };
+
+export interface SyntheticDatasetCreationApi {
+  num_rows: number;
+  columns: string[];
+  dataset: SyntheticDatasetCreationApiDataset;
+  kb_id?: string;
+}
+
+export interface EditRunPromptColumnApi {
+  dataset_id: string;
+  column_id: string;
+  /** @minLength 1 */
+  name?: string;
+  config?: PromptConfigApi;
+}
+
+export interface DatasetCellDataRequestApi {
+  row_ids: string[];
+  column_ids: string[];
+}
+
 export interface HuggingFaceDatasetConfigRequestApi {
   /** @minLength 1 */
   dataset_path: string;
+}
+
+export interface DatasetRowDiffRequestApi {
+  experiment_id: string;
+  column_ids: string[];
+  row_ids: string[];
+  compare_column_ids: string[];
+}
+
+export interface PreviewRunPromptApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  name: string;
+  config?: PromptConfigApi;
+  /** @minimum 1 */
+  first_n_rows?: number;
+  /** List of row indices to preview. Must contain at least one integer. */
+  row_indices?: number[];
+}
+
+export type DatasetAddColumnsRequestApiNewColumnsDataItem = { [key: string]: unknown };
+
+export interface DatasetAddColumnsRequestApi {
+  new_columns_data: DatasetAddColumnsRequestApiNewColumnsDataItem[];
+}
+
+export interface DatasetAddEmptyColumnsRequestApi {
+  /** @minimum 0 */
+  num_cols?: number;
+}
+
+export interface DatasetAddEmptyRowsRequestApi {
+  /** @minimum 1 */
+  num_rows?: number;
+}
+
+export type DatasetMultipleStaticColumnsRequestApiColumnsItem = { [key: string]: unknown };
+
+export interface DatasetMultipleStaticColumnsRequestApi {
+  columns: DatasetMultipleStaticColumnsRequestApiColumnsItem[];
+}
+
+export type DatasetAddRowsRequestApiRowsItem = { [key: string]: unknown };
+
+export interface DatasetAddRowsRequestApi {
+  rows: DatasetAddRowsRequestApiRowsItem[];
+}
+
+export type DatasetAddRowsFromExistingRequestApiColumnMapping = {[key: string]: string};
+
+export interface DatasetAddRowsFromExistingRequestApi {
+  source_dataset_id: string;
+  column_mapping: DatasetAddRowsFromExistingRequestApiColumnMapping;
 }
 
 export interface HuggingFaceAddRowsRequestApi {
@@ -5027,12 +5266,131 @@ export interface HuggingFaceAddRowsRequestApi {
   huggingface_dataset_split: string;
 }
 
+export interface DatasetStaticColumnRequestApi {
+  /** @minLength 1 */
+  new_column_name: string;
+  /** @minLength 1 */
+  column_type: string;
+  source?: string;
+}
+
+export type SyntheticDataApiDataset = { [key: string]: unknown };
+
+export interface SyntheticDataApi {
+  num_rows: number;
+  columns: string[];
+  dataset: SyntheticDataApiDataset;
+  kb_id?: string;
+  fill_existing_rows?: boolean;
+}
+
+export type UserEvalMutationRequestApiConfig = { [key: string]: unknown };
+
+export type UserEvalMutationRequestApiCompositeWeightOverrides = { [key: string]: unknown };
+
+export interface UserEvalMutationRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  template_id: string;
+  config: UserEvalMutationRequestApiConfig;
+  kb_id?: string;
+  error_localizer?: boolean;
+  /** @maxLength 100 */
+  model?: string;
+  run?: boolean;
+  save_as_template?: boolean;
+  experiment_id?: string;
+  composite_weight_overrides?: UserEvalMutationRequestApiCompositeWeightOverrides;
+}
+
+export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
+
+export type DatasetBehaviorRequestApiDatasetConfig = { [key: string]: unknown };
+
+export interface DatasetBehaviorRequestApi {
+  dataset_name?: string;
+  column_order?: string[];
+  column_config?: DatasetBehaviorRequestApiColumnConfig;
+  dataset_config?: DatasetBehaviorRequestApiDatasetConfig;
+}
+
 export interface ExtractJsonColumnRequestApi {
   column_id: string;
   /** @minLength 1 */
   json_key: string;
   new_column_name?: string;
   concurrency?: number;
+}
+
+export type DatasetRowDataRequestApiFiltersItem = { [key: string]: unknown };
+
+export type DatasetRowDataRequestApiSortItem = { [key: string]: unknown };
+
+export interface DatasetRowDataRequestApi {
+  filters?: DatasetRowDataRequestApiFiltersItem[];
+  sort?: DatasetRowDataRequestApiSortItem[];
+  row_id: string;
+}
+
+export type PreviewRunEvalRequestApiConfig = { [key: string]: unknown };
+
+export interface PreviewRunEvalRequestApi {
+  config: PreviewRunEvalRequestApiConfig;
+  template_id: string;
+  model?: string;
+  sdk_uuid?: string;
+  source?: string;
+}
+
+export interface StartEvalsProcessRequestApi {
+  user_eval_ids: string[];
+  experiment_id?: string;
+  failed_only?: boolean;
+}
+
+export interface StopUserEvalRequestApi {
+  experiment_id?: string;
+}
+
+export type SyntheticDatasetConfigApiDataset = { [key: string]: unknown };
+
+export interface SyntheticDatasetConfigApi {
+  num_rows: number;
+  columns: string[];
+  dataset: SyntheticDatasetConfigApiDataset;
+  kb_id?: string;
+}
+
+export type DatasetUpdateCellValueRequestApiNewValue = { [key: string]: unknown };
+
+export interface DatasetUpdateCellValueRequestApi {
+  row_id: string;
+  column_id: string;
+  new_value?: DatasetUpdateCellValueRequestApiNewValue;
+}
+
+export interface DatasetUpdateColumnNameRequestApi {
+  /** @minLength 1 */
+  new_column_name: string;
+}
+
+export interface DatasetUpdateColumnTypeRequestApi {
+  /** @minLength 1 */
+  new_column_type: string;
+  preview?: boolean;
+  force_update?: boolean;
+}
+
+export interface CreateDatasetFromExperimentRequestApi {
+  name?: string;
+  model_type?: string;
 }
 
 export interface DuplicateEvalTemplateApi {
@@ -5668,6 +6026,20 @@ export interface ExperimentsTableGetApi {
   name: string;
 }
 
+export type ExperimentsTableApiPromptConfig = { [key: string]: unknown };
+
+export interface ExperimentsTableApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  dataset_id: string;
+  prompt_config?: ExperimentsTableApiPromptConfig;
+  user_eval_template_ids?: string[];
+  column_id: string;
+}
+
 export type ExperimentListApiStatus = typeof ExperimentListApiStatus[keyof typeof ExperimentListApiStatus];
 
 
@@ -5703,6 +6075,80 @@ export interface ExperimentListApi {
   readonly created_at?: string;
   readonly models_count?: string;
   dataset: string;
+}
+
+export interface ExperimentRerunRequestApi {
+  experiment_ids: string[];
+  use_temporal?: boolean;
+  /** @minimum 1 */
+  max_concurrent_rows?: number;
+}
+
+export type ExperimentCreateV2ApiExperimentType = typeof ExperimentCreateV2ApiExperimentType[keyof typeof ExperimentCreateV2ApiExperimentType];
+
+
+export const ExperimentCreateV2ApiExperimentType = {
+  llm: 'llm',
+  tts: 'tts',
+  stt: 'stt',
+  image: 'image',
+} as const;
+
+export type PromptConfigEntryApiModel = { [key: string]: unknown };
+
+export type PromptConfigEntryApiModelParams = {[key: string]: string};
+
+export type PromptConfigEntryApiConfiguration = {[key: string]: string};
+
+export type PromptConfigEntryApiMessagesItem = {[key: string]: string};
+
+export interface PromptConfigEntryApi {
+  id?: string;
+  name?: string;
+  prompt_id?: string;
+  prompt_version?: string;
+  agent_id?: string;
+  agent_version?: string;
+  model?: PromptConfigEntryApiModel;
+  model_params?: PromptConfigEntryApiModelParams;
+  configuration?: PromptConfigEntryApiConfiguration;
+  /** @minLength 1 */
+  output_format?: string;
+  messages?: PromptConfigEntryApiMessagesItem[];
+  voice_input_column_id?: string;
+}
+
+export type EvalMetricEntryApiConfig = { [key: string]: unknown };
+
+export type EvalMetricEntryApiCompositeWeightOverrides = { [key: string]: unknown };
+
+export interface EvalMetricEntryApi {
+  id?: string;
+  template_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 2000
+     */
+  name: string;
+  config: EvalMetricEntryApiConfig;
+  /** @maxLength 255 */
+  model?: string;
+  error_localizer?: boolean;
+  kb_id?: string;
+  composite_weight_overrides?: EvalMetricEntryApiCompositeWeightOverrides;
+}
+
+export interface ExperimentCreateV2Api {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  dataset_id: string;
+  column_id?: string;
+  experiment_type?: ExperimentCreateV2ApiExperimentType;
+  prompt_config: PromptConfigEntryApi[];
+  user_eval_metrics: EvalMetricEntryApi[];
 }
 
 export type ExperimentListV2ApiStatus = typeof ExperimentListV2ApiStatus[keyof typeof ExperimentListV2ApiStatus];
@@ -5758,6 +6204,19 @@ export interface ExperimentListV2Api {
   dataset: string;
 }
 
+export interface ExperimentUpdateV2Api {
+  column_id?: string;
+  prompt_config?: PromptConfigEntryApi[];
+  user_eval_metrics?: EvalMetricEntryApi[];
+}
+
+export type ExperimentComparisonWeightsRequestApiWeights = { [key: string]: unknown };
+
+export interface ExperimentComparisonWeightsRequestApi {
+  eval_template_ids?: string[];
+  weights?: ExperimentComparisonWeightsRequestApiWeights;
+}
+
 export type FeedbackApiSource = typeof FeedbackApiSource[keyof typeof FeedbackApiSource];
 
 
@@ -5809,6 +6268,22 @@ export interface ExperimentFeedbackSubmitRequestApi {
   user_eval_metric_id: string;
   value?: ExperimentFeedbackSubmitRequestApiValue;
   explanation?: string;
+}
+
+export interface RerunCellEntryApi {
+  column_id: string;
+  row_id: string;
+}
+
+export interface ExperimentRerunCellsApi {
+  source_ids?: string[];
+  cells?: RerunCellEntryApi[];
+  user_eval_metric_ids?: string[];
+  failed_only?: boolean;
+}
+
+export interface ExperimentAdditionalEvaluationsRequestApi {
+  eval_template_ids: string[];
 }
 
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };

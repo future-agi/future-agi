@@ -120,7 +120,8 @@ from model_hub.views.experiments import (
     ExperimentRerunV2View,
     ExperimentRerunView,
     ExperimentsTableDetailView,
-    ExperimentsTableV2View,
+    ExperimentsTableV2CreateView,
+    ExperimentsTableV2DetailView,
     ExperimentsTableView,
     ExperimentStatsV2View,
     ExperimentStatsView,
@@ -1246,12 +1247,12 @@ urlpatterns = [
     # V2 Experiment APIs
     path(
         "experiments/v2/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2CreateView.as_view(),
         name="experiments-v2-create",
     ),
     path(
         "experiments/v2/<uuid:experiment_id>/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2DetailView.as_view(),
         name="experiments-v2-detail",
     ),
     path(

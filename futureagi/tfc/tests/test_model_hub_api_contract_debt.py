@@ -208,6 +208,8 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         if item["group"] == "model-hub"
     }
 
+    assert not body_gaps
+    assert not response_gaps
     assert protected_paths.isdisjoint(body_gaps)
     assert protected_paths.isdisjoint(response_gaps)
 
@@ -262,6 +264,15 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/datasets/{dataset_id}/compare-stats/"): (
             "CompareDatasetStatsRequest"
         ),
+        ("POST", "/model-hub/datasets/{dataset_id}/duplicate-rows/"): (
+            "DuplicateRowsRequest"
+        ),
+        ("POST", "/model-hub/datasets/{dataset_id}/duplicate/"): (
+            "DuplicateDatasetRequest"
+        ),
+        ("POST", "/model-hub/datasets/{dataset_id}/merge/"): (
+            "MergeDatasetRequest"
+        ),
         ("POST", "/model-hub/datasets/{dataset_id}/conditional-column/"): (
             "ConditionalColumnRequest"
         ),
@@ -289,11 +300,109 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/develops/create-dataset-from-huggingface/"): (
             "HuggingFaceDatasetCreateRequest"
         ),
+        ("POST", "/model-hub/develops/add-as-new/"): (
+            "AddAsNewDatasetRequest"
+        ),
+        ("POST", "/model-hub/develops/add_rows_from_file/"): (
+            "AddRowsFromFileRequest"
+        ),
+        ("POST", "/model-hub/develops/add_run_prompt_column/"): (
+            "AddRunPrompt"
+        ),
+        ("POST", "/model-hub/develops/clone-dataset/{dataset_id}/"): (
+            "CloneDatasetRequest"
+        ),
+        ("POST", "/model-hub/develops/create-dataset-from-local-file/"): (
+            "CreateDatasetFromLocalFileRequest"
+        ),
+        ("POST", "/model-hub/develops/create-dataset-manually/"): (
+            "ManualDatasetCreateRequest"
+        ),
+        ("POST", "/model-hub/develops/create-empty-dataset/"): (
+            "CreateEmptyDatasetRequest"
+        ),
+        ("POST", "/model-hub/develops/create-synthetic-dataset/"): (
+            "SyntheticDatasetCreation"
+        ),
+        ("POST", "/model-hub/develops/edit_run_prompt_column/"): (
+            "EditRunPromptColumn"
+        ),
+        ("POST", "/model-hub/develops/get-cell-data/"): (
+            "DatasetCellDataRequest"
+        ),
+        ("POST", "/model-hub/develops/get-row-diff/"): (
+            "DatasetRowDiffRequest"
+        ),
         ("POST", "/model-hub/develops/get-huggingface-dataset-config/"): (
             "HuggingFaceDatasetConfigRequest"
         ),
+        ("POST", "/model-hub/develops/preview_run_prompt_column/"): (
+            "PreviewRunPrompt"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_columns/"): (
+            "DatasetAddColumnsRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_empty_columns/"): (
+            "DatasetAddEmptyColumnsRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_empty_rows/"): (
+            "DatasetAddEmptyRowsRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_multiple_static_columns/"): (
+            "DatasetMultipleStaticColumnsRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_rows/"): (
+            "DatasetAddRowsRequest"
+        ),
+        (
+            "POST",
+            "/model-hub/develops/{dataset_id}/add_rows_from_existing_dataset/",
+        ): "DatasetAddRowsFromExistingRequest",
         ("POST", "/model-hub/develops/{dataset_id}/add_rows_from_huggingface/"): (
             "HuggingFaceAddRowsRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_static_column/"): (
+            "DatasetStaticColumnRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_synthetic_data/"): (
+            "SyntheticData"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/add_user_eval/"): (
+            "UserEvalMutationRequest"
+        ),
+        (
+            "POST",
+            "/model-hub/develops/{dataset_id}/edit_and_run_user_eval/{eval_id}/",
+        ): "UserEvalMutationRequest",
+        ("PUT", "/model-hub/develops/{dataset_id}/edit_dataset_behavior/"): (
+            "DatasetBehaviorRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/get-row-data/"): (
+            "DatasetRowDataRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/preview_run_eval/"): (
+            "PreviewRunEvalRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/start_evals_process/"): (
+            "StartEvalsProcessRequest"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/stop_user_eval/{eval_id}/"): (
+            "StopUserEvalRequest"
+        ),
+        ("PUT", "/model-hub/develops/{dataset_id}/update-synthetic-config/"): (
+            "SyntheticDatasetConfig"
+        ),
+        ("POST", "/model-hub/develops/{dataset_id}/update_cell_value/"): (
+            "DatasetUpdateCellValueRequest"
+        ),
+        ("PUT", "/model-hub/develops/{dataset_id}/update_column_name/{column_id}/"): (
+            "DatasetUpdateColumnNameRequest"
+        ),
+        ("PUT", "/model-hub/develops/{dataset_id}/update_column_type/{column_id}/"): (
+            "DatasetUpdateColumnTypeRequest"
+        ),
+        ("POST", "/model-hub/develops/{exp_dataset_id}/create-dataset/"): (
+            "CreateDatasetFromExperimentRequest"
         ),
         ("POST", "/model-hub/develops/{dataset_id}/extract-json-column/"): (
             "ExtractJsonColumnRequest"
@@ -353,6 +462,43 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("PUT", "/model-hub/eval-summary-templates/{template_id}/"): (
             "EvalSummaryTemplateMutationRequest"
         ),
+        ("POST", "/model-hub/experiments/"): "ExperimentsTable",
+        ("PUT", "/model-hub/experiments/"): "ExperimentsTable",
+        ("POST", "/model-hub/experiments/re-run/"): (
+            "ExperimentRerunRequest"
+        ),
+        ("POST", "/model-hub/experiments/v2/"): "ExperimentCreateV2",
+        ("POST", "/model-hub/experiments/v2/re-run/"): (
+            "ExperimentRerunRequest"
+        ),
+        ("POST", "/model-hub/experiments/v2/row-diff/"): (
+            "DatasetRowDiffRequest"
+        ),
+        ("PUT", "/model-hub/experiments/v2/{experiment_id}/"): (
+            "ExperimentUpdateV2"
+        ),
+        (
+            "POST",
+            "/model-hub/experiments/v2/{experiment_id}/compare-experiments/",
+        ): "ExperimentComparisonWeightsRequest",
+        (
+            "POST",
+            "/model-hub/experiments/v2/{experiment_id}/rerun-cells/",
+        ): "ExperimentRerunCells",
+        ("POST", "/model-hub/experiments/v2/{experiment_id}/stop/"): (
+            "ModelHubEmptyRequest"
+        ),
+        ("POST", "/model-hub/experiments/{experiment_id}/add-eval/"): (
+            "UserEval"
+        ),
+        (
+            "POST",
+            "/model-hub/experiments/{experiment_id}/compare-experiments/",
+        ): "ExperimentComparisonWeightsRequest",
+        (
+            "POST",
+            "/model-hub/experiments/{experiment_id}/run-evaluations/",
+        ): "ExperimentAdditionalEvaluationsRequest",
         ("POST", "/model-hub/eval-template/create/"): "EvalTemplate",
         ("POST", "/model-hub/eval-user-template/create/"): "EvalUserTemplate",
         ("POST", "/model-hub/get-column-values/"): "ColumnValuesRequest",

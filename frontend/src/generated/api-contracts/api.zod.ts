@@ -15155,6 +15155,25 @@ export const ModelHubDatasetEvalStatsListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDatasetEvalStatsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * API endpoint to get JSON schemas and images metadata for columns in a dataset.
@@ -15888,9 +15907,69 @@ export const ModelHubDatasetsDuplicateRowsCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const modelHubDatasetsDuplicateRowsCreateBodyRowIdsDefault = [];
+export const modelHubDatasetsDuplicateRowsCreateBodySelectedAllRowsDefault = false;
+export const modelHubDatasetsDuplicateRowsCreateBodyNumCopiesDefault = 1;
+
+
+
+export const ModelHubDatasetsDuplicateRowsCreateBody = zod.object({
+  "row_ids": zod.array(zod.string().uuid()).default(modelHubDatasetsDuplicateRowsCreateBodyRowIdsDefault),
+  "selected_all_rows": zod.boolean().default(modelHubDatasetsDuplicateRowsCreateBodySelectedAllRowsDefault),
+  "num_copies": zod.number().min(1).default(modelHubDatasetsDuplicateRowsCreateBodyNumCopiesDefault)
+})
+
+export const ModelHubDatasetsDuplicateRowsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDatasetsDuplicateCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDatasetsDuplicateCreateBodyRowIdsDefault = [];
+export const modelHubDatasetsDuplicateCreateBodySelectedAllRowsDefault = false;
+
+
+export const ModelHubDatasetsDuplicateCreateBody = zod.object({
+  "row_ids": zod.array(zod.string().uuid()).default(modelHubDatasetsDuplicateCreateBodyRowIdsDefault),
+  "selected_all_rows": zod.boolean().default(modelHubDatasetsDuplicateCreateBodySelectedAllRowsDefault),
+  "name": zod.string().min(1)
+})
+
+export const ModelHubDatasetsDuplicateCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -15933,6 +16012,34 @@ export const ModelHubDatasetsExtractEntitiesCreateResponse = zod.object({
 
 export const ModelHubDatasetsMergeCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDatasetsMergeCreateBodyRowIdsDefault = [];
+export const modelHubDatasetsMergeCreateBodySelectedAllRowsDefault = false;
+
+export const ModelHubDatasetsMergeCreateBody = zod.object({
+  "row_ids": zod.array(zod.string().uuid()).default(modelHubDatasetsMergeCreateBodyRowIdsDefault),
+  "selected_all_rows": zod.boolean().default(modelHubDatasetsMergeCreateBodySelectedAllRowsDefault),
+  "target_dataset_id": zod.string().uuid()
+})
+
+export const ModelHubDatasetsMergeCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16000,8 +16107,174 @@ export const ModelHubDeleteEvalTemplateCreateResponse = zod.object({
 })
 
 
+export const modelHubDevelopsAddAsNewCreateBodyColumnsDefault = {  };
+
+export const ModelHubDevelopsAddAsNewCreateBody = zod.object({
+  "dataset_id": zod.string().uuid(),
+  "name": zod.string().optional(),
+  "columns": zod.object({
+
+}).passthrough().default(modelHubDevelopsAddAsNewCreateBodyColumnsDefault)
+})
+
+export const ModelHubDevelopsAddAsNewCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsAddRowsFromFileCreateBody = zod.object({
+  "dataset_id": zod.string().uuid(),
+  "model_type": zod.string().optional()
+})
+
+export const ModelHubDevelopsAddRowsFromFileCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsAddRowsSdkCreateBody = zod.object({
+  "dataset_name": zod.string().optional(),
+  "dataset_id": zod.string().uuid().optional()
+})
+
+export const ModelHubDevelopsAddRowsSdkCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigModelMax = 255;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin = 0;
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax = 2;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMin = -2;
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax = 2;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin = -2;
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax = 2;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigMaxTokensMax = 65536;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin = 0;
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax = 1;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax = 10;
+
+export const modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault = { temperature: null, frequency_penalty: null, presence_penalty: null, max_tokens: null, top_p: null, response_format: null, tool_choice: null, tools: null, output_format: null, concurrency: null };
+
+export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
+  "dataset_id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "config": zod.object({
+  "model": zod.string().max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigModelMax).optional(),
+  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "temperature": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
+  "frequency_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
+  "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
+  "max_tokens": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
+  "top_p": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
+  "response_format": zod.object({
+
+}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+  "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
+  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
+  "concurrency": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
+}).default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault)
+})
+
+export const ModelHubDevelopsAddRunPromptColumnCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubDevelopsCloneDatasetCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsCloneDatasetCreateBody = zod.object({
+  "new_dataset_name": zod.string().optional()
+})
+
+export const ModelHubDevelopsCloneDatasetCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16023,6 +16296,127 @@ export const ModelHubDevelopsCreateDatasetFromHuggingfaceCreateBody = zod.object
 })
 
 export const ModelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsCreateDatasetFromLocalFileCreateBody = zod.object({
+  "new_dataset_name": zod.string().optional(),
+  "model_type": zod.string().optional(),
+  "source": zod.string().optional()
+})
+
+export const ModelHubDevelopsCreateDatasetFromLocalFileCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+export const modelHubDevelopsCreateDatasetManuallyCreateBodyNumberOfRowsDefault = 1;
+
+export const modelHubDevelopsCreateDatasetManuallyCreateBodyNumberOfColumnsDefault = 1;
+
+
+
+export const ModelHubDevelopsCreateDatasetManuallyCreateBody = zod.object({
+  "dataset_name": zod.string().min(1),
+  "number_of_rows": zod.number().min(1).default(modelHubDevelopsCreateDatasetManuallyCreateBodyNumberOfRowsDefault),
+  "number_of_columns": zod.number().min(1).default(modelHubDevelopsCreateDatasetManuallyCreateBodyNumberOfColumnsDefault)
+})
+
+export const ModelHubDevelopsCreateDatasetManuallyCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+export const modelHubDevelopsCreateEmptyDatasetCreateBodyIsSdkDefault = false;
+export const modelHubDevelopsCreateEmptyDatasetCreateBodyRowMin = 0;
+
+
+
+export const ModelHubDevelopsCreateEmptyDatasetCreateBody = zod.object({
+  "new_dataset_name": zod.string().min(1),
+  "model_type": zod.string().optional(),
+  "is_sdk": zod.boolean().default(modelHubDevelopsCreateEmptyDatasetCreateBodyIsSdkDefault),
+  "row": zod.number().min(modelHubDevelopsCreateEmptyDatasetCreateBodyRowMin).optional()
+})
+
+export const ModelHubDevelopsCreateEmptyDatasetCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsCreateSyntheticDatasetCreateBody = zod.object({
+  "num_rows": zod.number(),
+  "columns": zod.array(zod.string()),
+  "dataset": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional()
+})
+
+export const ModelHubDevelopsCreateSyntheticDatasetCreateResponse = zod.object({
   "status": zod.object({
 
 }).passthrough().optional(),
@@ -16069,8 +16463,156 @@ export const ModelHubDevelopsDatasetCreationProgressReadResponse = zod.object({
 })
 
 
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax = 255;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin = 0;
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax = 2;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMin = -2;
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax = 2;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin = -2;
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax = 2;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigMaxTokensMax = 65536;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin = 0;
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax = 1;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax = 10;
+
+export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault = { temperature: null, frequency_penalty: null, presence_penalty: null, max_tokens: null, top_p: null, response_format: null, tool_choice: null, tools: null, output_format: null, concurrency: null };
+
+export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid(),
+  "name": zod.string().min(1).optional(),
+  "config": zod.object({
+  "model": zod.string().max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax).optional(),
+  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "temperature": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
+  "frequency_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
+  "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
+  "max_tokens": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
+  "top_p": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
+  "response_format": zod.object({
+
+}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+  "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
+  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
+  "concurrency": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
+}).default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault)
+})
+
+export const ModelHubDevelopsEditRunPromptColumnCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsGetCellDataCreateBody = zod.object({
+  "row_ids": zod.array(zod.string().uuid()),
+  "column_ids": zod.array(zod.string().uuid())
+})
+
+export const ModelHubDevelopsGetCellDataCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsGetDatasetsNamesListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsGetDatasetsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubDevelopsGetDerivedDatasetsReadParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsGetDerivedDatasetsReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16101,8 +16643,208 @@ export const ModelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse = zod.obj
 })
 
 
+export const ModelHubDevelopsGetRowDiffCreateBody = zod.object({
+  "experiment_id": zod.string().uuid(),
+  "column_ids": zod.array(zod.string().uuid()),
+  "row_ids": zod.array(zod.string().uuid()),
+  "compare_column_ids": zod.array(zod.string().uuid())
+})
+
+export const ModelHubDevelopsGetRowDiffCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsGetFunctionListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigModelMax = 255;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMin = 0;
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax = 2;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMin = -2;
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax = 2;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin = -2;
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax = 2;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigMaxTokensMax = 65536;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin = 0;
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax = 1;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax = 10;
+
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault = { temperature: null, frequency_penalty: null, presence_penalty: null, max_tokens: null, top_p: null, response_format: null, tool_choice: null, tools: null, output_format: null, concurrency: null };
+export const modelHubDevelopsPreviewRunPromptColumnCreateBodyRowIndicesItemMin = 0;
+
+
+
+export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
+  "dataset_id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "config": zod.object({
+  "model": zod.string().max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigModelMax).optional(),
+  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "temperature": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
+  "frequency_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
+  "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
+  "max_tokens": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
+  "top_p": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
+  "response_format": zod.object({
+
+}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+  "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
+  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
+  "concurrency": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
+}).default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),
+  "first_n_rows": zod.number().min(1).optional(),
+  "row_indices": zod.array(zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyRowIndicesItemMin)).optional().describe('List of row indices to preview. Must contain at least one integer.')
+})
+
+export const ModelHubDevelopsPreviewRunPromptColumnCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsProviderStatusListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsRetrieveRunPromptColumnConfigListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubDevelopsRetrieveRunPromptOptionsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubDevelopsAddColumnsCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsAddColumnsCreateBody = zod.object({
+  "new_columns_data": zod.array(zod.object({
+
+}).passthrough())
+})
+
+export const ModelHubDevelopsAddColumnsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16110,9 +16852,64 @@ export const ModelHubDevelopsAddEmptyColumnsCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const modelHubDevelopsAddEmptyColumnsCreateBodyNumColsDefault = 0;
+export const modelHubDevelopsAddEmptyColumnsCreateBodyNumColsMin = 0;
+
+
+
+export const ModelHubDevelopsAddEmptyColumnsCreateBody = zod.object({
+  "num_cols": zod.number().min(modelHubDevelopsAddEmptyColumnsCreateBodyNumColsMin).default(modelHubDevelopsAddEmptyColumnsCreateBodyNumColsDefault)
+})
+
+export const ModelHubDevelopsAddEmptyColumnsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsAddEmptyRowsCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsAddEmptyRowsCreateBodyNumRowsDefault = 1;
+
+
+
+export const ModelHubDevelopsAddEmptyRowsCreateBody = zod.object({
+  "num_rows": zod.number().min(1).default(modelHubDevelopsAddEmptyRowsCreateBodyNumRowsDefault)
+})
+
+export const ModelHubDevelopsAddEmptyRowsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16138,14 +16935,88 @@ export const ModelHubDevelopsAddMultipleStaticColumnsCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsAddMultipleStaticColumnsCreateBody = zod.object({
+  "columns": zod.array(zod.object({
+
+}).passthrough())
+})
+
+export const ModelHubDevelopsAddMultipleStaticColumnsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsAddRowsCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsAddRowsCreateBody = zod.object({
+  "rows": zod.array(zod.object({
+
+}).passthrough())
+})
+
+export const ModelHubDevelopsAddRowsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsAddRowsFromExistingDatasetCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsAddRowsFromExistingDatasetCreateBody = zod.object({
+  "source_dataset_id": zod.string().uuid(),
+  "column_mapping": zod.record(zod.string(), zod.string().uuid())
+})
+
+export const ModelHubDevelopsAddRowsFromExistingDatasetCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16192,13 +17063,119 @@ export const ModelHubDevelopsAddStaticColumnCreateParams = zod.object({
 })
 
 
+
+
+
+export const ModelHubDevelopsAddStaticColumnCreateBody = zod.object({
+  "new_column_name": zod.string().min(1),
+  "column_type": zod.string().min(1),
+  "source": zod.string().optional()
+})
+
+export const ModelHubDevelopsAddStaticColumnCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubDevelopsAddSyntheticDataCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsAddSyntheticDataCreateBodyFillExistingRowsDefault = false;
+
+export const ModelHubDevelopsAddSyntheticDataCreateBody = zod.object({
+  "num_rows": zod.number(),
+  "columns": zod.array(zod.string()),
+  "dataset": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional(),
+  "fill_existing_rows": zod.boolean().default(modelHubDevelopsAddSyntheticDataCreateBodyFillExistingRowsDefault)
+})
+
+export const ModelHubDevelopsAddSyntheticDataCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
 export const ModelHubDevelopsAddUserEvalCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsAddUserEvalCreateBodyNameMax = 50;
+
+export const modelHubDevelopsAddUserEvalCreateBodyTemplateIdMax = 500;
+
+export const modelHubDevelopsAddUserEvalCreateBodyErrorLocalizerDefault = false;
+export const modelHubDevelopsAddUserEvalCreateBodyModelMax = 100;
+
+export const modelHubDevelopsAddUserEvalCreateBodyRunDefault = false;
+export const modelHubDevelopsAddUserEvalCreateBodySaveAsTemplateDefault = false;
+
+export const ModelHubDevelopsAddUserEvalCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubDevelopsAddUserEvalCreateBodyNameMax),
+  "template_id": zod.string().min(1).max(modelHubDevelopsAddUserEvalCreateBodyTemplateIdMax),
+  "config": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional(),
+  "error_localizer": zod.boolean().default(modelHubDevelopsAddUserEvalCreateBodyErrorLocalizerDefault),
+  "model": zod.string().max(modelHubDevelopsAddUserEvalCreateBodyModelMax).optional(),
+  "run": zod.boolean().default(modelHubDevelopsAddUserEvalCreateBodyRunDefault),
+  "save_as_template": zod.boolean().default(modelHubDevelopsAddUserEvalCreateBodySaveAsTemplateDefault),
+  "experiment_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubDevelopsAddUserEvalCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16229,15 +17206,114 @@ export const ModelHubDevelopsDownloadDatasetListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsDownloadDatasetListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsEditAndRunUserEvalCreateParams = zod.object({
   "dataset_id": zod.string(),
   "eval_id": zod.string()
 })
 
+export const modelHubDevelopsEditAndRunUserEvalCreateBodyNameMax = 50;
+
+export const modelHubDevelopsEditAndRunUserEvalCreateBodyTemplateIdMax = 500;
+
+export const modelHubDevelopsEditAndRunUserEvalCreateBodyErrorLocalizerDefault = false;
+export const modelHubDevelopsEditAndRunUserEvalCreateBodyModelMax = 100;
+
+export const modelHubDevelopsEditAndRunUserEvalCreateBodyRunDefault = false;
+export const modelHubDevelopsEditAndRunUserEvalCreateBodySaveAsTemplateDefault = false;
+
+export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubDevelopsEditAndRunUserEvalCreateBodyNameMax),
+  "template_id": zod.string().min(1).max(modelHubDevelopsEditAndRunUserEvalCreateBodyTemplateIdMax),
+  "config": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional(),
+  "error_localizer": zod.boolean().default(modelHubDevelopsEditAndRunUserEvalCreateBodyErrorLocalizerDefault),
+  "model": zod.string().max(modelHubDevelopsEditAndRunUserEvalCreateBodyModelMax).optional(),
+  "run": zod.boolean().default(modelHubDevelopsEditAndRunUserEvalCreateBodyRunDefault),
+  "save_as_template": zod.boolean().default(modelHubDevelopsEditAndRunUserEvalCreateBodySaveAsTemplateDefault),
+  "experiment_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubDevelopsEditAndRunUserEvalCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsEditDatasetBehaviorUpdateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsEditDatasetBehaviorUpdateBodyColumnOrderDefault = [];
+export const modelHubDevelopsEditDatasetBehaviorUpdateBodyColumnConfigDefault = {  };
+export const modelHubDevelopsEditDatasetBehaviorUpdateBodyDatasetConfigDefault = {  };
+
+export const ModelHubDevelopsEditDatasetBehaviorUpdateBody = zod.object({
+  "dataset_name": zod.string().optional(),
+  "column_order": zod.array(zod.string().uuid()).default(modelHubDevelopsEditDatasetBehaviorUpdateBodyColumnOrderDefault),
+  "column_config": zod.object({
+
+}).passthrough().default(modelHubDevelopsEditDatasetBehaviorUpdateBodyColumnConfigDefault),
+  "dataset_config": zod.object({
+
+}).passthrough().default(modelHubDevelopsEditDatasetBehaviorUpdateBodyDatasetConfigDefault)
+})
+
+export const ModelHubDevelopsEditDatasetBehaviorUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16279,9 +17355,60 @@ export const ModelHubDevelopsGetDatasetTableListParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsGetRowDataCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsGetRowDataCreateBodyFiltersDefault = [];
+export const modelHubDevelopsGetRowDataCreateBodySortDefault = [];
+
+export const ModelHubDevelopsGetRowDataCreateBody = zod.object({
+  "filters": zod.array(zod.object({
+
+}).passthrough()).default(modelHubDevelopsGetRowDataCreateBodyFiltersDefault),
+  "sort": zod.array(zod.object({
+
+}).passthrough()).default(modelHubDevelopsGetRowDataCreateBodySortDefault),
+  "row_id": zod.string().uuid()
+})
+
+export const ModelHubDevelopsGetRowDataCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16290,9 +17417,47 @@ export const ModelHubDevelopsGetEvalStructureReadParams = zod.object({
   "eval_id": zod.string()
 })
 
+export const ModelHubDevelopsGetEvalStructureReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsGetEvalsListListParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsGetEvalsListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16300,9 +17465,65 @@ export const ModelHubDevelopsPreviewRunEvalCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsPreviewRunEvalCreateBody = zod.object({
+  "config": zod.object({
+
+}).passthrough(),
+  "template_id": zod.string().uuid(),
+  "model": zod.string().optional(),
+  "sdk_uuid": zod.string().optional(),
+  "source": zod.string().optional()
+})
+
+export const ModelHubDevelopsPreviewRunEvalCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsStartEvalsProcessCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const modelHubDevelopsStartEvalsProcessCreateBodyFailedOnlyDefault = false;
+
+export const ModelHubDevelopsStartEvalsProcessCreateBody = zod.object({
+  "user_eval_ids": zod.array(zod.string().uuid()),
+  "experiment_id": zod.string().uuid().optional(),
+  "failed_only": zod.boolean().default(modelHubDevelopsStartEvalsProcessCreateBodyFailedOnlyDefault)
+})
+
+export const ModelHubDevelopsStartEvalsProcessCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16319,9 +17540,51 @@ export const ModelHubDevelopsStopUserEvalCreateParams = zod.object({
   "eval_id": zod.string()
 })
 
+export const ModelHubDevelopsStopUserEvalCreateBody = zod.object({
+  "experiment_id": zod.string().uuid().optional()
+})
+
+export const ModelHubDevelopsStopUserEvalCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsSyntheticConfigListParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsSyntheticConfigListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16329,9 +17592,64 @@ export const ModelHubDevelopsUpdateSyntheticConfigUpdateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsUpdateSyntheticConfigUpdateBody = zod.object({
+  "num_rows": zod.number(),
+  "columns": zod.array(zod.string()),
+  "dataset": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional()
+})
+
+export const ModelHubDevelopsUpdateSyntheticConfigUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsUpdateCellValueCreateParams = zod.object({
   "dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsUpdateCellValueCreateBody = zod.object({
+  "row_id": zod.string().uuid(),
+  "column_id": zod.string().uuid(),
+  "new_value": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubDevelopsUpdateCellValueCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16341,9 +17659,64 @@ export const ModelHubDevelopsUpdateColumnNameUpdateParams = zod.object({
 })
 
 
+
+
+export const ModelHubDevelopsUpdateColumnNameUpdateBody = zod.object({
+  "new_column_name": zod.string().min(1)
+})
+
+export const ModelHubDevelopsUpdateColumnNameUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubDevelopsUpdateColumnTypeUpdateParams = zod.object({
   "dataset_id": zod.string(),
   "column_id": zod.string()
+})
+
+
+export const modelHubDevelopsUpdateColumnTypeUpdateBodyPreviewDefault = true;
+export const modelHubDevelopsUpdateColumnTypeUpdateBodyForceUpdateDefault = false;
+
+export const ModelHubDevelopsUpdateColumnTypeUpdateBody = zod.object({
+  "new_column_type": zod.string().min(1),
+  "preview": zod.boolean().default(modelHubDevelopsUpdateColumnTypeUpdateBodyPreviewDefault),
+  "force_update": zod.boolean().default(modelHubDevelopsUpdateColumnTypeUpdateBodyForceUpdateDefault)
+})
+
+export const ModelHubDevelopsUpdateColumnTypeUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -16351,9 +17724,52 @@ export const ModelHubDevelopsCreateDatasetCreateParams = zod.object({
   "exp_dataset_id": zod.string()
 })
 
+export const ModelHubDevelopsCreateDatasetCreateBody = zod.object({
+  "name": zod.string().optional(),
+  "model_type": zod.string().optional()
+})
+
+export const ModelHubDevelopsCreateDatasetCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubDevelopsGetExperimentDatasetTableListParams = zod.object({
   "experiment_dataset_id": zod.string()
+})
+
+export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -17336,6 +18752,25 @@ export const ModelHubEvalTemplatesFeedbackListListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const ModelHubEvalTemplatesFeedbackListListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Manages ground truth configuration on the eval template's config JSONField.
@@ -17576,6 +19011,25 @@ export const ModelHubEvalTemplatesUsageListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const ModelHubEvalTemplatesUsageListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * List all versions for an eval template.
@@ -17799,6 +19253,94 @@ export const ModelHubExperimentDetailListResponse = zod.object({
 })
 
 
+export const ModelHubExperimentsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubExperimentsCreateBodyNameMax = 255;
+
+
+
+export const ModelHubExperimentsCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubExperimentsCreateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "prompt_config": zod.object({
+
+}).passthrough().optional(),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "column_id": zod.string().uuid()
+})
+
+export const ModelHubExperimentsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubExperimentsUpdateBodyNameMax = 255;
+
+
+
+export const ModelHubExperimentsUpdateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubExperimentsUpdateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "prompt_config": zod.object({
+
+}).passthrough().optional(),
+  "user_eval_template_ids": zod.array(zod.string().uuid()).optional(),
+  "column_id": zod.string().uuid()
+})
+
+export const ModelHubExperimentsUpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
 export const ModelHubExperimentsDataListQueryParams = zod.object({
   "created_at": zod.string().optional(),
   "status": zod.string().optional(),
@@ -17826,6 +19368,106 @@ export const ModelHubExperimentsDataListResponse = zod.object({
   "models_count": zod.string().optional(),
   "dataset": zod.string().uuid()
 }))
+})
+
+
+export const modelHubExperimentsReRunCreateBodyUseTemporalDefault = true;
+
+
+export const ModelHubExperimentsReRunCreateBody = zod.object({
+  "experiment_ids": zod.array(zod.string().uuid()),
+  "use_temporal": zod.boolean().default(modelHubExperimentsReRunCreateBodyUseTemporalDefault),
+  "max_concurrent_rows": zod.number().min(1).optional()
+})
+
+export const ModelHubExperimentsReRunCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const modelHubExperimentsV2CreateBodyNameMax = 255;
+
+export const modelHubExperimentsV2CreateBodyExperimentTypeDefault = `llm`;
+export const modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault = {  };
+export const modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault = {  };
+export const modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault = `string`;
+
+export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemNameMax = 2000;
+
+export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelDefault = ``;
+export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelMax = 255;
+
+export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemErrorLocalizerDefault = false;
+
+export const ModelHubExperimentsV2CreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubExperimentsV2CreateBodyNameMax),
+  "dataset_id": zod.string().uuid(),
+  "column_id": zod.string().uuid().optional(),
+  "experiment_type": zod.enum(['llm', 'tts', 'stt', 'image']).default(modelHubExperimentsV2CreateBodyExperimentTypeDefault),
+  "prompt_config": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().optional(),
+  "prompt_id": zod.string().uuid().optional(),
+  "prompt_version": zod.string().uuid().optional(),
+  "agent_id": zod.string().uuid().optional(),
+  "agent_version": zod.string().uuid().optional(),
+  "model": zod.object({
+
+}).passthrough().optional(),
+  "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault),
+  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault),
+  "output_format": zod.string().min(1).default(modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "voice_input_column_id": zod.string().uuid().optional()
+})),
+  "user_eval_metrics": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "template_id": zod.string().uuid(),
+  "name": zod.string().min(1).max(modelHubExperimentsV2CreateBodyUserEvalMetricsItemNameMax),
+  "config": zod.object({
+
+}).passthrough(),
+  "model": zod.string().max(modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelMax).default(modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelDefault),
+  "error_localizer": zod.boolean().default(modelHubExperimentsV2CreateBodyUserEvalMetricsItemErrorLocalizerDefault),
+  "kb_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+}))
+})
+
+export const ModelHubExperimentsV2CreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -17865,30 +19507,138 @@ export const ModelHubExperimentsV2ListListResponse = zod.object({
 
 
 /**
+ * No manual workflow cancel needed — Temporal's TERMINATE_IF_RUNNING ID
+reuse policy automatically cancels any running workflow with the same ID.
+Cell reset is handled by the workflow itself (cleanup + setup activities).
+ * @summary V2 re-run: org-scoped, uses V2 Temporal workflow.
+ */
+export const modelHubExperimentsV2ReRunCreateBodyUseTemporalDefault = true;
+
+
+export const ModelHubExperimentsV2ReRunCreateBody = zod.object({
+  "experiment_ids": zod.array(zod.string().uuid()),
+  "use_temporal": zod.boolean().default(modelHubExperimentsV2ReRunCreateBodyUseTemporalDefault),
+  "max_concurrent_rows": zod.number().min(1).optional()
+})
+
+export const ModelHubExperimentsV2ReRunCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubExperimentsV2RowDiffCreateBody = zod.object({
+  "experiment_id": zod.string().uuid(),
+  "column_ids": zod.array(zod.string().uuid()),
+  "row_ids": zod.array(zod.string().uuid()),
+  "compare_column_ids": zod.array(zod.string().uuid())
+})
+
+export const ModelHubExperimentsV2RowDiffCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+/**
  * Generate a suggested experiment name for a dataset.
  */
 export const ModelHubExperimentsV2SuggestNameReadParams = zod.object({
   "dataset_id": zod.string()
 })
 
+export const ModelHubExperimentsV2SuggestNameReadResponse = zod.object({
+  "status": zod.object({
 
-/**
- * V2 experiment API.
-POST /experiments/v2/ — Create experiment with structured configs.
-GET  /experiments/v2/<experiment_id>/ — Retrieve experiment detail.
- */
-export const ModelHubExperimentsV2ReadParams = zod.object({
-  "experiment_id": zod.string()
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
 /**
- * V2 experiment API.
-POST /experiments/v2/ — Create experiment with structured configs.
-GET  /experiments/v2/<experiment_id>/ — Retrieve experiment detail.
+ * Validate that an experiment name is unique within a dataset.
  */
-export const ModelHubExperimentsV2CreateParams = zod.object({
+export const ModelHubExperimentsV2ValidateNameListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
+
+export const ModelHubExperimentsV2ReadParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsV2ReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -17905,6 +19655,70 @@ export const ModelHubExperimentsV2UpdateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault = {  };
+export const modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault = {  };
+export const modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault = `string`;
+
+export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemNameMax = 2000;
+
+export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelDefault = ``;
+export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelMax = 255;
+
+export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemErrorLocalizerDefault = false;
+
+export const ModelHubExperimentsV2UpdateBody = zod.object({
+  "column_id": zod.string().uuid().optional(),
+  "prompt_config": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().optional(),
+  "prompt_id": zod.string().uuid().optional(),
+  "prompt_version": zod.string().uuid().optional(),
+  "agent_id": zod.string().uuid().optional(),
+  "agent_version": zod.string().uuid().optional(),
+  "model": zod.object({
+
+}).passthrough().optional(),
+  "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault),
+  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault),
+  "output_format": zod.string().min(1).default(modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "voice_input_column_id": zod.string().uuid().optional()
+})).optional(),
+  "user_eval_metrics": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "template_id": zod.string().uuid(),
+  "name": zod.string().min(1).max(modelHubExperimentsV2UpdateBodyUserEvalMetricsItemNameMax),
+  "config": zod.object({
+
+}).passthrough(),
+  "model": zod.string().max(modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelMax).default(modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelDefault),
+  "error_localizer": zod.boolean().default(modelHubExperimentsV2UpdateBodyUserEvalMetricsItemErrorLocalizerDefault),
+  "kb_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})).optional()
+})
+
+export const ModelHubExperimentsV2UpdateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * V2 compare view: reads from experiment_datasets FK + snapshot_dataset.
@@ -17913,9 +19727,57 @@ export const ModelHubExperimentsV2CompareExperimentsCreateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const modelHubExperimentsV2CompareExperimentsCreateBodyEvalTemplateIdsDefault = [];
+export const modelHubExperimentsV2CompareExperimentsCreateBodyWeightsDefault = {  };
+
+export const ModelHubExperimentsV2CompareExperimentsCreateBody = zod.object({
+  "eval_template_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsV2CompareExperimentsCreateBodyEvalTemplateIdsDefault),
+  "weights": zod.object({
+
+}).passthrough().default(modelHubExperimentsV2CompareExperimentsCreateBodyWeightsDefault)
+})
+
+export const ModelHubExperimentsV2CompareExperimentsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsV2ComparisonsListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsV2ComparisonsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -17927,15 +19789,72 @@ export const ModelHubExperimentsV2DerivedVariablesListParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const ModelHubExperimentsV2DerivedVariablesListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsV2DownloadListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsV2DownloadListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
 export const ModelHubExperimentsV2EvaluationsStatsListParams = zod.object({
   "experiment_id": zod.string(),
   "evaluation_id": zod.string()
+})
+
+export const ModelHubExperimentsV2EvaluationsStatsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18086,6 +20005,25 @@ export const ModelHubExperimentsV2JsonSchemaListParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const ModelHubExperimentsV2JsonSchemaListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Accepts source_ids (EDT IDs for full column rerun) and/or
@@ -18098,9 +20036,62 @@ export const ModelHubExperimentsV2RerunCellsCreateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const modelHubExperimentsV2RerunCellsCreateBodySourceIdsDefault = [];
+export const modelHubExperimentsV2RerunCellsCreateBodyCellsDefault = [];
+export const modelHubExperimentsV2RerunCellsCreateBodyUserEvalMetricIdsDefault = [];
+export const modelHubExperimentsV2RerunCellsCreateBodyFailedOnlyDefault = false;
+
+export const ModelHubExperimentsV2RerunCellsCreateBody = zod.object({
+  "source_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsV2RerunCellsCreateBodySourceIdsDefault),
+  "cells": zod.array(zod.object({
+  "column_id": zod.string().uuid(),
+  "row_id": zod.string().uuid()
+})).default(modelHubExperimentsV2RerunCellsCreateBodyCellsDefault),
+  "user_eval_metric_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsV2RerunCellsCreateBodyUserEvalMetricIdsDefault),
+  "failed_only": zod.boolean().default(modelHubExperimentsV2RerunCellsCreateBodyFailedOnlyDefault)
+})
+
+export const ModelHubExperimentsV2RerunCellsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsV2RowsListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsV2RowsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18109,12 +20100,50 @@ export const ModelHubExperimentsV2RowsReadParams = zod.object({
   "row_id": zod.string()
 })
 
+export const ModelHubExperimentsV2RowsReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 /**
  * Stats view for V2 experiments that read from snapshot_dataset.
  */
 export const ModelHubExperimentsV2StatsListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsV2StatsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18129,10 +20158,52 @@ export const ModelHubExperimentsV2StopCreateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const ModelHubExperimentsV2StopCreateBody = zod.object({
+
+}).passthrough()
+
+export const ModelHubExperimentsV2StopCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsReadParams = zod.object({
   "experiment_id": zod.string(),
   "row_id": zod.string()
+})
+
+export const ModelHubExperimentsReadResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18140,9 +20211,80 @@ export const ModelHubExperimentsAddEvalCreateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const modelHubExperimentsAddEvalCreateBodyNameMax = 50;
+
+export const modelHubExperimentsAddEvalCreateBodyTemplateIdMax = 500;
+
+export const modelHubExperimentsAddEvalCreateBodyErrorLocalizerDefault = false;
+export const modelHubExperimentsAddEvalCreateBodyModelMax = 100;
+
+
+
+export const ModelHubExperimentsAddEvalCreateBody = zod.object({
+  "name": zod.string().min(1).max(modelHubExperimentsAddEvalCreateBodyNameMax),
+  "template_id": zod.string().min(1).max(modelHubExperimentsAddEvalCreateBodyTemplateIdMax),
+  "config": zod.object({
+
+}).passthrough(),
+  "kb_id": zod.string().uuid().optional(),
+  "error_localizer": zod.boolean().default(modelHubExperimentsAddEvalCreateBodyErrorLocalizerDefault),
+  "model": zod.string().min(1).max(modelHubExperimentsAddEvalCreateBodyModelMax).optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})
+
+export const ModelHubExperimentsAddEvalCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsCompareExperimentsCreateParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const modelHubExperimentsCompareExperimentsCreateBodyEvalTemplateIdsDefault = [];
+export const modelHubExperimentsCompareExperimentsCreateBodyWeightsDefault = {  };
+
+export const ModelHubExperimentsCompareExperimentsCreateBody = zod.object({
+  "eval_template_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsCompareExperimentsCreateBodyEvalTemplateIdsDefault),
+  "weights": zod.object({
+
+}).passthrough().default(modelHubExperimentsCompareExperimentsCreateBodyWeightsDefault)
+})
+
+export const ModelHubExperimentsCompareExperimentsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18150,15 +20292,72 @@ export const ModelHubExperimentsComparisonsListParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const ModelHubExperimentsComparisonsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsDownloadListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsDownloadListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
 export const ModelHubExperimentsEvaluationsStatsListParams = zod.object({
   "experiment_id": zod.string(),
   "evaluation_id": zod.string()
+})
+
+export const ModelHubExperimentsEvaluationsStatsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 
@@ -18172,9 +20371,51 @@ export const ModelHubExperimentsRunEvaluationsCreateParams = zod.object({
   "experiment_id": zod.string()
 })
 
+export const ModelHubExperimentsRunEvaluationsCreateBody = zod.object({
+  "eval_template_ids": zod.array(zod.string().uuid())
+})
+
+export const ModelHubExperimentsRunEvaluationsCreateResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
+})
+
 
 export const ModelHubExperimentsStatsListParams = zod.object({
   "experiment_id": zod.string()
+})
+
+export const ModelHubExperimentsStatsListResponse = zod.object({
+  "status": zod.object({
+
+}).passthrough().optional(),
+  "message": zod.string().optional(),
+  "result": zod.object({
+
+}).passthrough().optional(),
+  "data": zod.object({
+
+}).passthrough().optional(),
+  "error": zod.object({
+
+}).passthrough().optional(),
+  "detail": zod.object({
+
+}).passthrough().optional()
 })
 
 

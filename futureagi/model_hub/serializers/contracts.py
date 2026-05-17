@@ -780,3 +780,218 @@ class ComparePreviewRunEvalRequestSerializer(serializers.Serializer):
         allow_blank=True,
         default="dataset_evaluation",
     )
+
+
+class DatasetRowSelectionRequestSerializer(serializers.Serializer):
+    row_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    selected_all_rows = serializers.BooleanField(required=False, default=False)
+
+
+class DuplicateRowsRequestSerializer(DatasetRowSelectionRequestSerializer):
+    num_copies = serializers.IntegerField(required=False, min_value=1, default=1)
+
+
+class DuplicateDatasetRequestSerializer(DatasetRowSelectionRequestSerializer):
+    name = serializers.CharField()
+
+
+class MergeDatasetRequestSerializer(DatasetRowSelectionRequestSerializer):
+    target_dataset_id = serializers.UUIDField()
+
+
+class AddAsNewDatasetRequestSerializer(serializers.Serializer):
+    dataset_id = serializers.UUIDField()
+    name = serializers.CharField(required=False, allow_blank=True)
+    columns = serializers.JSONField(required=False, default=dict)
+
+
+class AddRowsFromFileRequestSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    dataset_id = serializers.UUIDField()
+    model_type = serializers.CharField(required=False, allow_blank=True)
+
+
+class CloneDatasetRequestSerializer(serializers.Serializer):
+    new_dataset_name = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateDatasetFromLocalFileRequestSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    new_dataset_name = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(required=False, allow_blank=True)
+    source = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateDatasetFromExperimentRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
+    new_dataset_name = serializers.CharField()
+    model_type = serializers.CharField(required=False, allow_blank=True)
+    is_sdk = serializers.BooleanField(required=False, default=False)
+    row = serializers.IntegerField(required=False, min_value=0)
+
+
+class ManualDatasetCreateRequestSerializer(serializers.Serializer):
+    dataset_name = serializers.CharField()
+    number_of_rows = serializers.IntegerField(required=False, min_value=1, default=1)
+    number_of_columns = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=1,
+    )
+
+
+class DatasetAddColumnsRequestSerializer(serializers.Serializer):
+    new_columns_data = serializers.ListField(child=serializers.JSONField())
+
+
+class DatasetAddEmptyColumnsRequestSerializer(serializers.Serializer):
+    num_cols = serializers.IntegerField(required=False, min_value=0, default=0)
+
+
+class DatasetCellDataRequestSerializer(serializers.Serializer):
+    row_ids = serializers.ListField(child=serializers.UUIDField())
+    column_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class DatasetStaticColumnRequestSerializer(serializers.Serializer):
+    new_column_name = serializers.CharField()
+    column_type = serializers.CharField()
+    source = serializers.CharField(required=False, allow_blank=True)
+
+
+class DatasetMultipleStaticColumnsRequestSerializer(serializers.Serializer):
+    columns = serializers.ListField(child=serializers.JSONField())
+
+
+class DatasetAddEmptyRowsRequestSerializer(serializers.Serializer):
+    num_rows = serializers.IntegerField(required=False, min_value=1, default=1)
+
+
+class DatasetSdkRowsRequestSerializer(serializers.Serializer):
+    dataset_name = serializers.CharField(required=False, allow_blank=True)
+    dataset_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class DatasetAddRowsRequestSerializer(serializers.Serializer):
+    rows = serializers.ListField(child=serializers.JSONField())
+
+
+class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):
+    source_dataset_id = serializers.UUIDField()
+    column_mapping = serializers.DictField(child=serializers.UUIDField())
+
+
+class DatasetUpdateColumnNameRequestSerializer(serializers.Serializer):
+    new_column_name = serializers.CharField()
+
+
+class DatasetBehaviorRequestSerializer(serializers.Serializer):
+    dataset_name = serializers.CharField(required=False, allow_blank=True)
+    column_order = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    column_config = serializers.JSONField(required=False, default=dict)
+    dataset_config = serializers.JSONField(required=False, default=dict)
+
+
+class DatasetUpdateCellValueRequestSerializer(serializers.Serializer):
+    row_id = serializers.UUIDField()
+    column_id = serializers.UUIDField()
+    new_value = serializers.JSONField(required=False, allow_null=True)
+
+
+class DatasetUpdateColumnTypeRequestSerializer(serializers.Serializer):
+    new_column_type = serializers.CharField()
+    preview = serializers.BooleanField(required=False, default=True)
+    force_update = serializers.BooleanField(required=False, default=False)
+
+
+class DatasetRowDataRequestSerializer(serializers.Serializer):
+    filters = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
+    sort = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
+    row_id = serializers.UUIDField()
+
+
+class DatasetRowDiffRequestSerializer(serializers.Serializer):
+    experiment_id = serializers.UUIDField()
+    column_ids = serializers.ListField(child=serializers.UUIDField())
+    row_ids = serializers.ListField(child=serializers.UUIDField())
+    compare_column_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class UserEvalMutationRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=50)
+    template_id = serializers.CharField(max_length=500)
+    config = serializers.JSONField()
+    kb_id = serializers.UUIDField(required=False)
+    error_localizer = serializers.BooleanField(required=False, default=False)
+    model = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    run = serializers.BooleanField(required=False, default=False)
+    save_as_template = serializers.BooleanField(required=False, default=False)
+    experiment_id = serializers.UUIDField(required=False)
+    composite_weight_overrides = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+
+
+class StartEvalsProcessRequestSerializer(serializers.Serializer):
+    user_eval_ids = serializers.ListField(child=serializers.UUIDField())
+    experiment_id = serializers.UUIDField(required=False)
+    failed_only = serializers.BooleanField(required=False, default=False)
+
+
+class StopUserEvalRequestSerializer(serializers.Serializer):
+    experiment_id = serializers.UUIDField(required=False)
+
+
+class PreviewRunEvalRequestSerializer(serializers.Serializer):
+    config = serializers.JSONField()
+    template_id = serializers.UUIDField()
+    model = serializers.CharField(required=False, allow_blank=True)
+    sdk_uuid = serializers.CharField(required=False, allow_blank=True)
+    source = serializers.CharField(required=False, allow_blank=True)
+
+
+class ExperimentRerunRequestSerializer(serializers.Serializer):
+    experiment_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+    )
+    use_temporal = serializers.BooleanField(required=False, default=True)
+    max_concurrent_rows = serializers.IntegerField(required=False, min_value=1)
+
+
+class ExperimentComparisonWeightsRequestSerializer(serializers.Serializer):
+    eval_template_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    weights = serializers.JSONField(required=False, default=dict)
+
+
+class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
+    eval_template_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+    )

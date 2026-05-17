@@ -4,30 +4,45 @@ import uuid
 
 import structlog
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentDatasetTable
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    DatasetAddRowsFromExistingRequestSerializer,
+    ModelHubJSONResponseSerializer,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
     APICallStatusChoices = None
     APICallTypeChoices = None
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 class AddRowsFromExistingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        request_body=DatasetAddRowsFromExistingRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             source_dataset_id = request.data.get("source_dataset_id")

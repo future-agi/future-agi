@@ -3342,6 +3342,9 @@ class DatasetEvalStatsView(APIView):
             )
         ]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id):
         try:
             # Get all evaluation columns for this dataset

@@ -1563,9 +1563,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post"
       ],
       "/model-hub/experiments/v2/": [
-        "get",
-        "post",
-        "put"
+        "post"
       ],
       "/model-hub/experiments/v2/delete/": [
         "delete"
@@ -1587,7 +1585,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/model-hub/experiments/v2/{experiment_id}/": [
         "get",
-        "post",
         "put"
       ],
       "/model-hub/experiments/v2/{experiment_id}/compare-experiments/": [
@@ -4831,9 +4828,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post"
   ],
   "/model-hub/experiments/v2/": [
-    "get",
-    "post",
-    "put"
+    "post"
   ],
   "/model-hub/experiments/v2/delete/": [
     "delete"
@@ -4855,7 +4850,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/model-hub/experiments/v2/{experiment_id}/": [
     "get",
-    "post",
     "put"
   ],
   "/model-hub/experiments/v2/{experiment_id}/compare-experiments/": [

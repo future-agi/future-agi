@@ -1,6 +1,7 @@
 import uuid
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -13,6 +14,11 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from model_hub.models.develop_dataset import Dataset
+from model_hub.serializers.contracts import (
+    CreateEmptyDatasetRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubJSONResponseSerializer,
+)
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.validators.dataset_validators import (
     validate_dataset_name_unique,
@@ -37,6 +43,10 @@ class CreateEmptyDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=CreateEmptyDatasetRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             call_log_row_entry = log_and_deduct_cost_for_resource_request(

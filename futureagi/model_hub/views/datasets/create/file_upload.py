@@ -34,6 +34,7 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
+    CreateDatasetFromLocalFileRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
     ModelHubJSONResponseSerializer,
 )
@@ -931,6 +932,10 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @swagger_auto_schema(
+        request_body=CreateDatasetFromLocalFileRequestSerializer,
+        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, *args, **kwargs):
         try:
             form = UploadFileForm(request.POST, request.FILES)
