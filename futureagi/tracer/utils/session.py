@@ -1,5 +1,3 @@
-import json
-
 import structlog
 from django.db import models
 from django.db.models import (
@@ -21,7 +19,18 @@ from tracer.utils.filters import FilterEngine
 logger = structlog.get_logger(__name__)
 
 
-def _try_session_navigation_ch(request, project_id, current_session_id):
+def _get_navigation_query_data(request, query_data=None):
+    if query_data is not None:
+        return query_data
+
+    from tracer.serializers.trace_session import TraceSessionRetrieveQuerySerializer
+
+    serializer = TraceSessionRetrieveQuerySerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    return serializer.validated_data
+
+
+def _try_session_navigation_ch(request, project_id, current_session_id, query_data=None):
     """Attempt to compute session navigation using ClickHouse.
 
     Returns (next_session_id, previous_session_id) on success,
@@ -40,16 +49,7 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         if not service.should_use_clickhouse(QueryType.SESSION_ANALYTICS):
             return None
 
-        query_data = {
-            "filters": request.query_params.get("filters", "[]"),
-            "sort_params": request.query_params.get("sort_params", "[]")
-            or request.query_params.get("sortParams", "[]"),
-        }
-        if query_data["filters"]:
-            query_data["filters"] = json.loads(query_data["filters"])
-        if query_data["sort_params"]:
-            query_data["sort_params"] = json.loads(query_data["sort_params"])
-
+        query_data = _get_navigation_query_data(request, query_data)
         filters = query_data.get("filters", [])
         sort_params = query_data.get("sort_params", [])
 
@@ -58,9 +58,7 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         # Get session navigation data
         nav_query, nav_params = builder.build_session_navigation_query()
 
-        user_id = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        user_id = query_data.get("user_id")
         if user_id:
             # Add user filter to the navigation query
             nav_params["user_id"] = user_id
@@ -161,7 +159,7 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         return None
 
 
-def get_session_navigation(request, project_id, current_session_id):
+def get_session_navigation(request, project_id, current_session_id, query_data=None):
     """
     Get previous and next session IDs based on the same ordering as list_sessions.
 
@@ -174,24 +172,18 @@ def get_session_navigation(request, project_id, current_session_id):
         tuple: (next_session_id, previous_session_id)
     """
     # Try ClickHouse first
-    ch_result = _try_session_navigation_ch(request, project_id, current_session_id)
+    query_data = _get_navigation_query_data(request, query_data)
+
+    ch_result = _try_session_navigation_ch(
+        request, project_id, current_session_id, query_data
+    )
     if ch_result is not None:
         return ch_result
-
-    query_data = {
-        "filters": request.query_params.get("filters", "[]"),
-        "sort_params": request.query_params.get("sort_params", "[]")
-        or request.query_params.get("sortParams", "[]"),
-    }
-    if query_data["filters"]:
-        query_data["filters"] = json.loads(query_data["filters"])
-    if query_data["sort_params"]:
-        query_data["sort_params"] = json.loads(query_data["sort_params"])
 
     filters = query_data.get("filters", [])
     sort_params = query_data.get("sort_params", [])
 
-    user_id = request.query_params.get("user_id") or request.query_params.get("userId")
+    user_id = query_data.get("user_id")
     end_user_filter = {}
     if user_id:
         try:

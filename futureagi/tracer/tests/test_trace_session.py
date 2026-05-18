@@ -162,6 +162,21 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["previous_session_id"] == str(s2.id)
         assert metadata["next_session_id"] is None
 
+    def test_retrieve_session_rejects_legacy_navigation_aliases(
+        self, auth_client, trace_session
+    ):
+        response = auth_client.get(
+            f"/tracer/trace-session/{trace_session.id}/",
+            {
+                "userId": "customer-1",
+                "sortParams": "[]",
+                "pageNumber": "1",
+                "pageSize": "10",
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api

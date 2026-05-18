@@ -69,6 +69,7 @@ from tracer.serializers.trace_session import (
     TraceSessionFilterValuesQuerySerializer,
     TraceSessionGraphDataRequestSerializer,
     TraceSessionListQuerySerializer,
+    TraceSessionRetrieveQuerySerializer,
     TraceSessionSerializer,
 )
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
@@ -102,6 +103,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         try:
+            query_serializer = TraceSessionRetrieveQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+
             trace_session_id = self.kwargs.get("pk")
             trace_session = TraceSession.objects.get(
                 id=trace_session_id,
@@ -120,7 +128,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
                 try:
                     return self._retrieve_clickhouse(
-                        request, trace_session_id, trace_session, project_id, analytics
+                        request,
+                        trace_session_id,
+                        trace_session,
+                        project_id,
+                        analytics,
+                        query_data,
                     )
                 except Exception as e:
                     logger.warning(
@@ -130,8 +143,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             serializer = self.get_serializer(trace_session)
             trace_session = serializer.data
 
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 30))
+            page_number = query_data["page_number"]
+            page_size = query_data["page_size"]
             page_start = page_number * page_size
             page_end = page_start + page_size + 1
 
@@ -187,7 +200,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             if not traces:
                 next_session_id, previous_session_id = get_session_navigation(
-                    request, project_id, trace_session_id
+                    request, project_id, trace_session_id, query_data
                 )
                 session_metadata["next_session_id"] = next_session_id
                 session_metadata["previous_session_id"] = previous_session_id
@@ -412,7 +425,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 response.append(result)
 
             next_session_id, previous_session_id = get_session_navigation(
-                request, project_id, trace_session_id
+                request, project_id, trace_session_id, query_data
             )
             session_metadata["next_session_id"] = next_session_id
             session_metadata["previous_session_id"] = previous_session_id
@@ -429,14 +442,20 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(f"Error retrieving trace session: {str(e)}")
 
     def _retrieve_clickhouse(
-        self, request, trace_session_id, trace_session_obj, project_id, analytics
+        self,
+        request,
+        trace_session_id,
+        trace_session_obj,
+        project_id,
+        analytics,
+        query_data,
     ):
         """Retrieve session detail from ClickHouse."""
         serializer = self.get_serializer(trace_session_obj)
         trace_session = serializer.data
 
-        page_number = int(self.request.query_params.get("page_number", 0))
-        page_size = int(self.request.query_params.get("page_size", 30))
+        page_number = query_data["page_number"]
+        page_size = query_data["page_size"]
         page_start = page_number * page_size
 
         # Get session-level aggregates from CH
@@ -515,7 +534,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         if not traces_data:
             next_session_id, previous_session_id = get_session_navigation(
-                request, project_id, trace_session_id
+                request, project_id, trace_session_id, query_data
             )
             session_metadata["next_session_id"] = next_session_id
             session_metadata["previous_session_id"] = previous_session_id
@@ -606,7 +625,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             response.append(result)
 
         next_session_id, previous_session_id = get_session_navigation(
-            request, project_id, trace_session_id
+            request, project_id, trace_session_id, query_data
         )
         session_metadata["next_session_id"] = next_session_id
         session_metadata["previous_session_id"] = previous_session_id
@@ -920,7 +939,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SESSION_LIST):
+            bookmarked = validated_data.get("bookmarked")
+            if (
+                bookmarked is None
+                and analytics.should_use_clickhouse(QueryType.SESSION_LIST)
+            ):
                 try:
                     return self._list_sessions_clickhouse(
                         request,
@@ -944,6 +967,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 if org_scope
                 else TraceSession.objects.filter(project_id=project_id)
             )
+            if bookmarked is not None:
+                trace_sessions_qs = trace_sessions_qs.filter(bookmarked=bookmarked)
             trace_sessions_qs, remaining_filters = apply_created_at_filters(
                 trace_sessions_qs, filters
             )

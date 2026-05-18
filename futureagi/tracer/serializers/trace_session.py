@@ -50,6 +50,7 @@ class TraceSessionFilterValuesQuerySerializer(serializers.Serializer):
 class TraceSessionListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False)
     user_id = serializers.CharField(required=False, allow_blank=True)
+    bookmarked = serializers.BooleanField(required=False, allow_null=True)
     filters = filter_list_query_param_field(required=False, default=list)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
@@ -61,6 +62,16 @@ class TraceSessionListQuerySerializer(StrictInputSerializer):
 
 class TraceSessionExportQuerySerializer(TraceSessionListQuerySerializer):
     project_id = serializers.UUIDField()
+
+
+class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
+    user_id = serializers.CharField(required=False, allow_blank=True)
+    filters = filter_list_query_param_field(required=False, default=list)
+    sort_params = SortParamListQueryParamField(required=False, default=list)
+    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(
+        required=False, default=30, min_value=1, max_value=500
+    )
 
 
 class TraceSessionGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):

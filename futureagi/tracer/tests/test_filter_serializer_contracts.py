@@ -45,6 +45,7 @@ from tracer.serializers.trace_session import (
     TraceSessionFilterValuesQuerySerializer,
     TraceSessionGraphDataRequestSerializer,
     TraceSessionListQuerySerializer,
+    TraceSessionRetrieveQuerySerializer,
 )
 
 
@@ -212,6 +213,7 @@ class TestFilterSerializerContracts:
                 ),
                 "page_number": "1",
                 "page_size": "75",
+                "bookmarked": "true",
             }
         )
 
@@ -221,6 +223,7 @@ class TestFilterSerializerContracts:
             {"column_id": "start_time", "direction": "desc"}
         ]
         assert serializer.validated_data["page_size"] == 75
+        assert serializer.validated_data["bookmarked"] is True
 
     def test_session_list_query_rejects_legacy_query_and_filter_aliases(self):
         serializer = TraceSessionListQuerySerializer(
@@ -248,6 +251,25 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "filters" in serializer.errors
+
+    def test_session_retrieve_query_rejects_legacy_aliases(self):
+        serializer = TraceSessionRetrieveQuerySerializer(
+            data={
+                "userId": "customer-1",
+                "sortParams": json.dumps(
+                    [{"column_id": "start_time", "direction": "desc"}]
+                ),
+                "pageNumber": "1",
+                "pageSize": "75",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "userId" in serializer.errors
+        assert "sortParams" in serializer.errors
+        assert "pageNumber" in serializer.errors
+        assert "pageSize" in serializer.errors
 
     def test_eval_task_list_query_accepts_canonical_filters_and_sort(self):
         serializer = EvalTaskListQuerySerializer(
