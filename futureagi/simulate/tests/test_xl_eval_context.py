@@ -495,3 +495,139 @@ def test_context_map_scenario_metadata_jsonfield_flattening(persona_setup):
 
     assert ctx["scenario.metadata.tags"] == "urgent, billing"
     assert ctx["scenario.metadata.single_tag"] == "solo"
+
+
+# ---------------------------------------------------------------------------
+# Task 1.4 — resolve_scenario_column_by_name + scenario.<col> resolver branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def call_with_dataset_columns(db, organization, workspace, user):
+    """Bootstrap a CallExecution backed by a Dataset with named columns.
+
+    Returns a closure that takes a {column_name: cell_value} dict and yields
+    (call_execution, columns_by_name).
+    """
+    agent_def = _make_agent_definition(organization, workspace)
+    simulator = SimulatorAgent.objects.create(
+        name="Sim",
+        prompt="You are a simulator",
+        voice_provider="elevenlabs",
+        voice_name="marissa",
+        model="gpt-4",
+        organization=organization,
+        workspace=workspace,
+    )
+
+    def _build(columns):
+        column_specs = list(columns.items())
+        dataset, row, columns_by_name = _make_dataset_with_columns(
+            organization, workspace, user, column_specs
+        )
+        scenario = _make_scenario(
+            organization, workspace, agent_def, dataset=dataset
+        )
+        rt = _make_run_test(organization, workspace, agent_def, simulator, scenario)
+        te = TestExecution.objects.create(
+            run_test=rt,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            simulator_agent=simulator,
+            agent_definition=agent_def,
+        )
+        call = _make_call_execution(te, scenario, row_id=row.id)
+        return call, columns_by_name
+
+    return _build
+
+
+@pytest.mark.django_db
+def test_resolve_scenario_column_by_name_returns_cell_value(call_with_dataset_columns):
+    from simulate.utils.eval_context import resolve_scenario_column_by_name
+
+    call, _ = call_with_dataset_columns({"outcome": "resolved successfully"})
+
+    assert resolve_scenario_column_by_name(call, "outcome") == "resolved successfully"
+
+
+@pytest.mark.django_db
+def test_resolve_scenario_column_by_name_returns_empty_for_unknown_column(
+    call_with_dataset_columns,
+):
+    from simulate.utils.eval_context import resolve_scenario_column_by_name
+
+    call, _ = call_with_dataset_columns({"outcome": "..."})
+
+    assert resolve_scenario_column_by_name(call, "does_not_exist") == ""
+
+
+@pytest.mark.django_db
+def test_resolve_scenario_column_by_name_returns_empty_when_no_row_id(persona_setup):
+    from simulate.utils.eval_context import resolve_scenario_column_by_name
+
+    call = persona_setup(scenario_metadata={}, row_data={})
+
+    assert resolve_scenario_column_by_name(call, "outcome") == ""
+
+
+@pytest.mark.django_db
+def test_resolve_scenario_column_first_by_created_at_on_name_collision(
+    db, organization, workspace, user, call_with_dataset_columns
+):
+    """Two columns with the same name in one dataset — first by created_at
+    wins (rest are logged but ignored).
+    """
+    from simulate.utils.eval_context import resolve_scenario_column_by_name
+
+    call, columns_by_name = call_with_dataset_columns({"outcome": "first value"})
+    first_col = columns_by_name["outcome"]
+
+    # Create a second column with the same name on the same dataset.
+    Column.objects.create(
+        dataset=first_col.dataset,
+        name="outcome",
+        data_type="text",
+        source=SourceChoices.OTHERS.value,
+    )
+
+    # first_col was created earlier — should win.
+    assert resolve_scenario_column_by_name(call, "outcome") == "first value"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_run_single_evaluation_resolves_scenario_dotted_column_name(
+    call_with_dataset_columns, organization, workspace, user
+):
+    """End-to-end: an eval mapped to scenario.<col> resolves the cell value
+    via the new branch in _run_single_evaluation. run_eval_func is mocked so
+    we observe what `mappings` the underlying eval received.
+    """
+    from unittest.mock import patch
+
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models.eval_config import SimulateEvalConfig
+    from simulate.temporal.activities.xl import _run_single_evaluation
+
+    call, _ = call_with_dataset_columns({"outcome": "resolved successfully"})
+
+    eval_template = EvalTemplate.objects.create(
+        name="test template",
+        config={"prompt": "evaluate this"},
+        organization=organization,
+    )
+    eval_config = SimulateEvalConfig.objects.create(
+        eval_template=eval_template,
+        name="test eval",
+        run_test=call.test_execution.run_test,
+        mapping={"target": "scenario.outcome"},
+        config={},
+    )
+
+    with patch(
+        "model_hub.views.utils.evals.run_eval_func",
+        return_value={"output": True, "reason": "", "output_type": "boolean"},
+    ) as mock_run:
+        _run_single_evaluation(eval_config, call, {"transcript": "..."})
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs["mappings"]["target"] == "resolved successfully"

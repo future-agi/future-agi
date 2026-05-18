@@ -42,6 +42,7 @@ from simulate.utils.eval_context import (
     flatten_jsonfield_value,
     flatten_persona_for_resolver,
     resolve_persona_for_call,
+    resolve_scenario_column_by_name,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 
@@ -592,6 +593,10 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 continue
             if value in context_map:
                 continue
+            if value.startswith("scenario."):
+                # Resolved by the scenario.<col> branch in the main loop;
+                # never a Column.id, so don't probe the mismatch table.
+                continue
             if value in scenario_column_order_set:
                 cell_column_ids.append(value)
             else:
@@ -675,6 +680,13 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     updated_mapping[key] = transcript_data.get(legacy_key, "")
             elif value in context_map:
                 updated_mapping[key] = context_map[value]
+            elif value.startswith("scenario.") and not (
+                value.startswith("scenario.info.")
+                or value.startswith("scenario.metadata.")
+            ):
+                updated_mapping[key] = resolve_scenario_column_by_name(
+                    call_execution, value[len("scenario.") :]
+                )
             elif value in scenario_column_order_set:
                 if not row_id:
                     updated_mapping[key] = ""

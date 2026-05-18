@@ -99,6 +99,56 @@ def flatten_persona_for_resolver(persona, simulator_agent):
     return flat
 
 
+def resolve_scenario_column_by_name(call_execution, column_name):
+    """Look up Column.name within the call's scenario dataset, fetch the cell.
+
+    Returns the cell value string, or "" if any of:
+    - call has no row_id (chat scenarios, free-form runs)
+    - the scenario has no linked dataset
+    - the column name doesn't exist in that dataset
+    - the cell for (row_id, column) is missing
+
+    Column.name is not unique within a dataset (no DB constraint). First match
+    by Column.created_at wins; duplicates are logged for follow-up cleanup.
+    """
+    import structlog
+
+    from model_hub.models.develop_dataset import Cell, Column
+
+    logger = structlog.get_logger(__name__)
+
+    metadata = call_execution.call_metadata or {}
+    row_id = metadata.get("row_id")
+    if not row_id:
+        return ""
+
+    scenario = getattr(call_execution, "scenario", None)
+    dataset = scenario.dataset if scenario else None
+    if not dataset:
+        return ""
+
+    matching = list(
+        Column.objects.filter(
+            dataset=dataset, name=column_name, deleted=False
+        ).order_by("created_at")
+    )
+    if not matching:
+        return ""
+    if len(matching) > 1:
+        logger.warning(
+            "duplicate_column_names_in_dataset",
+            dataset_id=str(dataset.id),
+            column_name=column_name,
+            column_ids=[str(c.id) for c in matching],
+        )
+
+    try:
+        cell = Cell.objects.get(row_id=row_id, column=matching[0], deleted=False)
+        return cell.value
+    except Cell.DoesNotExist:
+        return ""
+
+
 def resolve_persona_for_call(call_execution):
     """Pick the Persona used for this specific call.
 
