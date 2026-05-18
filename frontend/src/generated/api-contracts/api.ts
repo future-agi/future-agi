@@ -602,6 +602,7 @@ import type {
   MCPOAuthTokenRequestApi,
   MCPOAuthTokenResponseApi,
   MCPSessionListResponseApi,
+  MCPSessionRevokeResponseApi,
   MCPToolCallRequestApi,
   MCPToolCallResponseApi,
   MCPToolGroupConfigUpdateApi,
@@ -17806,12 +17807,24 @@ export type mcpConfigToolGroupsListResponse200 = {
   status: 200
 }
 
+export type mcpConfigToolGroupsListResponse403 = {
+  data: MCPErrorResponseApi
+  status: 403
+}
+
+export type mcpConfigToolGroupsListResponse500 = {
+  data: MCPErrorResponseApi
+  status: 500
+}
+
 export type mcpConfigToolGroupsListResponseSuccess = (mcpConfigToolGroupsListResponse200) & {
   headers: Headers;
 };
-;
+export type mcpConfigToolGroupsListResponseError = (mcpConfigToolGroupsListResponse403 | mcpConfigToolGroupsListResponse500) & {
+  headers: Headers;
+};
 
-export type mcpConfigToolGroupsListResponse = (mcpConfigToolGroupsListResponseSuccess)
+export type mcpConfigToolGroupsListResponse = (mcpConfigToolGroupsListResponseSuccess | mcpConfigToolGroupsListResponseError)
 
 export const getMcpConfigToolGroupsListUrl = () => {
 
@@ -17886,12 +17899,19 @@ export type mcpHealthListResponse200 = {
   status: 200
 }
 
+export type mcpHealthListResponse500 = {
+  data: MCPErrorResponseApi
+  status: 500
+}
+
 export type mcpHealthListResponseSuccess = (mcpHealthListResponse200) & {
   headers: Headers;
 };
-;
+export type mcpHealthListResponseError = (mcpHealthListResponse500) & {
+  headers: Headers;
+};
 
-export type mcpHealthListResponse = (mcpHealthListResponseSuccess)
+export type mcpHealthListResponse = (mcpHealthListResponseSuccess | mcpHealthListResponseError)
 
 export const getMcpHealthListUrl = () => {
 
@@ -18314,17 +18334,34 @@ export const mcpSessionsList = async ( options?: RequestInit): Promise<mcpSessio
 
 
 
-export type mcpSessionsDeleteResponse204 = {
-  data: void
-  status: 204
+export type mcpSessionsDeleteResponse200 = {
+  data: MCPSessionRevokeResponseApi
+  status: 200
 }
 
-export type mcpSessionsDeleteResponseSuccess = (mcpSessionsDeleteResponse204) & {
+export type mcpSessionsDeleteResponse403 = {
+  data: MCPErrorResponseApi
+  status: 403
+}
+
+export type mcpSessionsDeleteResponse404 = {
+  data: MCPErrorResponseApi
+  status: 404
+}
+
+export type mcpSessionsDeleteResponse500 = {
+  data: MCPErrorResponseApi
+  status: 500
+}
+
+export type mcpSessionsDeleteResponseSuccess = (mcpSessionsDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type mcpSessionsDeleteResponseError = (mcpSessionsDeleteResponse403 | mcpSessionsDeleteResponse404 | mcpSessionsDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type mcpSessionsDeleteResponse = (mcpSessionsDeleteResponseSuccess)
+export type mcpSessionsDeleteResponse = (mcpSessionsDeleteResponseSuccess | mcpSessionsDeleteResponseError)
 
 export const getMcpSessionsDeleteUrl = (sessionId: string,) => {
 

@@ -8130,6 +8130,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/MCPToolGroupsResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/MCPErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/MCPErrorResponse"
           }
         }
       },
@@ -8157,6 +8163,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/MCPHealthResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/MCPErrorResponse"
           }
         }
       }
@@ -8321,7 +8330,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "mcp_sessions_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/MCPSessionRevokeResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/MCPErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/MCPErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/MCPErrorResponse"
+          }
+        }
       }
     },
     "/model-hub/ai-eval-writer/": {
@@ -50638,6 +50660,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "MCPSessionRevokeResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/MCPSessionRevokeResult"
+        }
+      }
+    },
     "MCPToolCallRequest": {
       "required": [
         "tool_name"
@@ -73089,6 +73127,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "maximum": 2147483647,
           "minimum": 0
+        }
+      }
+    },
+    "MCPSessionRevokeResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

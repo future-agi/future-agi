@@ -14998,6 +14998,18 @@
                         "schema": {
                             "$ref": "#/definitions/MCPToolGroupsResponse"
                         }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -15047,6 +15059,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/MCPHealthResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
                         }
                     }
                 },
@@ -15354,8 +15372,29 @@
                 "description": "Revoke a specific MCP session.",
                 "parameters": [],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPSessionRevokeResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/MCPErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -74622,6 +74661,35 @@
                     "items": {
                         "$ref": "#/definitions/MCPSession"
                     }
+                }
+            }
+        },
+        "MCPSessionRevokeResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "MCPSessionRevokeResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/MCPSessionRevokeResult"
                 }
             }
         },

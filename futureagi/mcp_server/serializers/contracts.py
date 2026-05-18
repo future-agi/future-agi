@@ -66,6 +66,15 @@ class MCPSessionListResponseSerializer(serializers.Serializer):
     result = MCPSessionSerializer(many=True)
 
 
+class MCPSessionRevokeResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class MCPSessionRevokeResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = MCPSessionRevokeResultSerializer()
+
+
 class MCPToolCallRequestSerializer(serializers.Serializer):
     tool_name = serializers.CharField()
     params = serializers.DictField(required=False, default=dict)

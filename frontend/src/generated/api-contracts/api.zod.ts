@@ -11256,6 +11256,16 @@ export const McpSessionsDeleteParams = zod.object({
   "session_id": zod.string()
 })
 
+export const mcpSessionsDeleteResponseStatusDefault = true;
+
+
+export const McpSessionsDeleteResponse = zod.object({
+  "status": zod.boolean().default(mcpSessionsDeleteResponseStatusDefault),
+  "result": zod.object({
+  "message": zod.string().min(1)
+})
+})
+
 
 /**
  * POST /model-hub/ai-eval-writer/

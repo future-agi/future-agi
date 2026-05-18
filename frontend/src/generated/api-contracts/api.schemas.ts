@@ -4532,6 +4532,16 @@ export interface MCPSessionListResponseApi {
   result: MCPSessionApi[];
 }
 
+export interface MCPSessionRevokeResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface MCPSessionRevokeResponseApi {
+  status?: boolean;
+  result: MCPSessionRevokeResultApi;
+}
+
 export type AIEvalWriterRequestApiOutputFormat = typeof AIEvalWriterRequestApiOutputFormat[keyof typeof AIEvalWriterRequestApiOutputFormat];
 
 

@@ -7,9 +7,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -37,14 +35,12 @@ def _body_ref(operation):
 
 
 def _response_ref(operation, status_code="200"):
-    return (
-        operation["responses"][status_code]["schema"]["$ref"]
-        .rsplit("/", 1)[-1]
-    )
+    return operation["responses"][status_code]["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
 def test_mcp_contract_debt_is_fully_burned_down():
     report = _debt_report()
+    mcp_report = report["by_group"]["mcp"]
 
     assert [
         item
@@ -56,6 +52,8 @@ def test_mcp_contract_debt_is_fully_burned_down():
         for item in report["operations_without_response_schema"]
         if item["tags"] == ["mcp"]
     ] == []
+    assert mcp_report["operations_without_error_response_schema"] == 0
+    assert mcp_report["broad_error_response_schemas"] == 0
 
 
 def test_mcp_mutations_have_body_contracts():
@@ -90,7 +88,19 @@ def test_mcp_endpoints_have_response_contracts():
         ("POST", "/mcp/oauth/consent/"): "MCPOAuthRedirectResponse",
         ("POST", "/mcp/oauth/token/"): "MCPOAuthTokenResponse",
         ("GET", "/mcp/sessions/"): "MCPSessionListResponse",
+        ("DELETE", "/mcp/sessions/{session_id}/"): "MCPSessionRevokeResponse",
     }
 
     for (method, path), definition_name in expected.items():
         assert _response_ref(_operation(path, method)) == definition_name
+
+
+def test_mcp_error_responses_have_contracts():
+    expected = {
+        ("GET", "/mcp/health/", "500"): "MCPErrorResponse",
+        ("GET", "/mcp/config/tool-groups/", "403"): "MCPErrorResponse",
+        ("DELETE", "/mcp/sessions/{session_id}/", "404"): "MCPErrorResponse",
+    }
+
+    for (method, path, status_code), definition_name in expected.items():
+        assert _response_ref(_operation(path, method), status_code) == definition_name

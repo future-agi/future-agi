@@ -9,6 +9,7 @@ from mcp_server.models.session import MCPSession
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
     MCPSessionListResponseSerializer,
+    MCPSessionRevokeResponseSerializer,
 )
 from mcp_server.serializers.session import MCPSessionSerializer
 
@@ -36,9 +37,7 @@ class MCPSessionListView(APIView):
         status_filter = request.query_params.get("status")
         qs = MCPSession.objects.filter(
             organization=organization,
-        ).order_by(
-            "-started_at"
-        )[:50]
+        ).order_by("-started_at")[:50]
 
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -50,6 +49,14 @@ class MCPSessionListView(APIView):
 class MCPSessionDetailView(APIView):
     """Revoke a specific MCP session."""
 
+    @swagger_auto_schema(
+        responses={
+            200: MCPSessionRevokeResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
+            500: MCPErrorResponseSerializer,
+        }
+    )
     def delete(self, request, session_id):
         organization = getattr(request, "organization", None) or getattr(
             request.user, "organization", None

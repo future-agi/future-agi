@@ -109,7 +109,13 @@ class MCPConfigView(APIView):
 class MCPToolGroupsView(APIView):
     """Get or update tool group configuration."""
 
-    @swagger_auto_schema(responses={200: MCPToolGroupsResponseSerializer})
+    @swagger_auto_schema(
+        responses={
+            200: MCPToolGroupsResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            500: MCPErrorResponseSerializer,
+        }
+    )
     def get(self, request):
         user = request.user
         workspace = request.workspace

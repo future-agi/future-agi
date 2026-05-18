@@ -6,7 +6,7 @@
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
-    "operations_without_error_response_schema": 570,
+    "operations_without_error_response_schema": 567,
     "broad_error_response_schemas": 2890
   },
   "by_group": {
@@ -97,7 +97,7 @@
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
-      "operations_without_error_response_schema": 3,
+      "operations_without_error_response_schema": 0,
       "broad_error_response_schemas": 0
     },
     "model-hub": {
