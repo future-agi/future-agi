@@ -47,12 +47,14 @@ from model_hub.serializers.contracts import (
     CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
+    EvalApiLogTableQuerySerializer,
     EvalApiLogRowResponseSerializer,
     EvalApiLogTableResponseSerializer,
     EvalCodeSnippetResponseSerializer,
     EvalExecutionResponseSerializer,
     EvalFeedbackListResponseSerializer,
     EvalMetricResponseSerializer,
+    EvalMetricQuerySerializer,
     EvalPlaygroundFeedbackResponseSerializer,
     EvalTemplateBulkDeleteRequestSerializer,
     EvalTemplateBulkDeleteResponseSerializer,
@@ -346,28 +348,20 @@ class GetAPICallLogDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: EvalApiLogTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        query_serializer=EvalApiLogTableQuerySerializer,
+        responses={200: EvalApiLogTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:
-            eval_template_id = request.query_params.get(
-                "eval_template_id", None
-            ) or request.query_params.get("evalTemplateId", None)
-            page_size = int(request.query_params.get("page_size", 10)) or int(
-                request.query_params.get("pageSize", 10)
-            )
-            current_page = int(
-                request.query_params.get("current_page_index", 0)
-            ) or int(request.query_params.get("currentPageIndex", 0))
-            source = request.query_params.get(
-                "source", "logs"
-            ) or request.query_params.get("source", "logs")
-            search = request.query_params.get("search", "") or request.query_params.get(
-                "search", ""
-            )
-
-            if not eval_template_id:
-                return self._gm.bad_request({"error": "No eval template id provided"})
+            query_serializer = EvalApiLogTableQuerySerializer(data=request.query_params)
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            eval_template_id = str(query["eval_template_id"])
+            page_size = query["page_size"]
+            current_page = query["current_page_index"]
+            source = query["source"]
+            search = query["search"]
 
             logs = APICallLog.objects.filter(
                 source_id=eval_template_id,
@@ -388,14 +382,7 @@ class GetAPICallLogDetailsView(APIView):
 
             column_data = get_column_data(eval_template_id, source, request.user)
 
-            # Parse filters from query params (sent as JSON string)
-            filters_param = request.query_params.get("filters", "[]")
-            try:
-                filters = json.loads(filters_param)
-                if not isinstance(filters, list):
-                    filters = []
-            except (json.JSONDecodeError, TypeError):
-                filters = []
+            filters = query["filters"]
             if filters:
                 logs, new_filters = apply_created_at_filters(logs, filters)
             else:
@@ -980,20 +967,17 @@ class EvalMetricView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: EvalMetricResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        query_serializer=EvalMetricQuerySerializer,
+        responses={200: EvalMetricResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:
-            eval_template_id = request.query_params.get("eval_template_id", None)
-            filters_param = request.query_params.get("filters", "[]")
-
-            try:
-                filters = json.loads(filters_param) if filters_param else []
-            except json.JSONDecodeError:
-                filters = []
-
-            if not eval_template_id:
-                return self._gm.bad_request({"error": "No eval template id provided"})
+            query_serializer = EvalMetricQuerySerializer(data=request.query_params)
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            eval_template_id = str(query["eval_template_id"])
+            filters = query["filters"]
 
             logs = APICallLog.objects.filter(
                 source_id=eval_template_id,
@@ -1017,11 +1001,12 @@ class EvalMetricView(APIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            eval_template_id = request.data.get("eval_template_id", None)
-            filters = request.data.get("filters", [])
-
-            if not eval_template_id:
-                return self._gm.bad_request({"error": "No eval template id provided"})
+            body_serializer = EvalMetricRequestSerializer(data=request.data)
+            if not body_serializer.is_valid():
+                return self._gm.bad_request(body_serializer.errors)
+            body = body_serializer.validated_data
+            eval_template_id = str(body["eval_template_id"])
+            filters = body["filters"]
 
             logs = APICallLog.objects.filter(
                 source_id=eval_template_id,
@@ -1046,7 +1031,10 @@ class GetEvalTemplateNameView(APIView):
 
     @swagger_auto_schema(
         request_body=EvalTemplateNamesRequestSerializer,
-        responses={200: EvalTemplateNamesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalTemplateNamesResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         try:
@@ -1219,7 +1207,10 @@ class GetEvalTemplates(APIView):
 
     @swagger_auto_schema(
         request_body=LegacyEvalTemplatesRequestSerializer,
-        responses={200: LegacyEvalTemplatesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: LegacyEvalTemplatesResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -4454,7 +4445,10 @@ class GroundTruthTriggerEmbeddingView(APIView):
 
     @swagger_auto_schema(
         request_body=ModelHubEmptyRequestSerializer,
-        responses={200: GroundTruthEmbedResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: GroundTruthEmbedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth

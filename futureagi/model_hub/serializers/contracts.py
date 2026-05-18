@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from tracer.serializers.filters import (
+    filter_list_field,
     filter_list_query_param_field,
     parse_filter_list_payload,
 )
@@ -1329,6 +1330,27 @@ class EvalTemplateListChartsRequestSerializer(serializers.Serializer):
     template_ids = serializers.ListField(child=serializers.UUIDField())
 
 
+class EvalApiLogTableQuerySerializer(serializers.Serializer):
+    eval_template_id = serializers.UUIDField()
+    page_size = serializers.IntegerField(required=False, default=10, min_value=1)
+    current_page_index = serializers.IntegerField(
+        required=False, default=0, min_value=0
+    )
+    source = serializers.ChoiceField(
+        choices=["logs", "feedback", "eval_playground"],
+        required=False,
+        default="logs",
+    )
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    filters = filter_list_query_param_field(required=False, default=list)
+    sort = serializers.CharField(required=False, allow_blank=True, default="[]")
+
+
+class EvalMetricQuerySerializer(serializers.Serializer):
+    eval_template_id = serializers.UUIDField()
+    filters = filter_list_query_param_field(required=False, default=list)
+
+
 class EvalTemplateBulkDeleteRequestSerializer(serializers.Serializer):
     template_ids = serializers.ListField(child=serializers.UUIDField())
 
@@ -2298,11 +2320,7 @@ class GroundTruthEmbedResponseSerializer(serializers.Serializer):
 
 class EvalMetricRequestSerializer(serializers.Serializer):
     eval_template_id = serializers.UUIDField()
-    filters = serializers.ListField(
-        child=serializers.JSONField(),
-        required=False,
-        default=list,
-    )
+    filters = filter_list_field(required=False, default=list)
 
 
 class EvalTemplateNamesRequestSerializer(serializers.Serializer):

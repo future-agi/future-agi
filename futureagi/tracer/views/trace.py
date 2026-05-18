@@ -60,8 +60,9 @@ from tracer.serializers.observation_span import (
     SpanExportSerializer,
 )
 from tracer.serializers.trace import (
-    TraceListQuerySerializer,
+    TraceAgentGraphQuerySerializer,
     TraceExportSerializer,
+    TraceListQuerySerializer,
     TraceSerializer,
     UserCodeExampleResponseSerializer,
     UsersQuerySerializer,
@@ -5569,6 +5570,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     # Agent Graph — aggregate topology visualization
     # ------------------------------------------------------------------
 
+    @swagger_auto_schema(query_serializer=TraceAgentGraphQuerySerializer)
     @action(detail=False, methods=["get"])
     def agent_graph(self, request, *args, **kwargs):
         """Return the aggregate agent graph for a project.
@@ -5577,17 +5579,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         transitions) across all traces in the given time window.
         """
         try:
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                return self._gm.bad_request("Project id is required")
-
-            filters_raw = request.query_params.get("filters", "[]")
-            try:
-                filters = json.loads(filters_raw)
-            except json.JSONDecodeError:
-                filters = []
+            query_serializer = TraceAgentGraphQuerySerializer(data=request.query_params)
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            project_id = str(query["project_id"])
+            filters = query["filters"]
 
             builder = AgentGraphQueryBuilder(
                 project_id=project_id,

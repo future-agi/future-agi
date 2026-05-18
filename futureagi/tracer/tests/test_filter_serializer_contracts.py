@@ -1,6 +1,9 @@
 import json
 
 from model_hub.serializers.contracts import (
+    EvalApiLogTableQuerySerializer,
+    EvalMetricQuerySerializer,
+    EvalMetricRequestSerializer,
     OptimizeDatasetListQuerySerializer,
     PromptMetricsQuerySerializer,
 )
@@ -12,7 +15,11 @@ from tracer.serializers.project import (
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
 )
-from tracer.serializers.trace import TraceListQuerySerializer, UsersQuerySerializer
+from tracer.serializers.trace import (
+    TraceAgentGraphQuerySerializer,
+    TraceListQuerySerializer,
+    UsersQuerySerializer,
+)
 from tracer.serializers.trace_session import TraceSessionFilterValuesQuerySerializer
 
 
@@ -359,3 +366,61 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "filters" in serializer.errors
+
+    def test_eval_api_log_table_query_accepts_canonical_filters(self):
+        serializer = EvalApiLogTableQuerySerializer(
+            data={
+                "eval_template_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "page_size": "25",
+                "current_page_index": "2",
+                "source": "eval_playground",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["current_page_index"] == 2
+        assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
+
+    def test_eval_api_log_table_query_rejects_legacy_filter_and_query_aliases(self):
+        payload = _span_attr_filter()
+        payload["filterConfig"] = payload.pop("filter_config")
+        serializer = EvalApiLogTableQuerySerializer(
+            data={
+                "evalTemplateId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "currentPageIndex": "2",
+                "filters": json.dumps([payload]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "eval_template_id" in serializer.errors
+        assert "filters" in serializer.errors
+
+    def test_eval_metric_query_and_request_use_canonical_filters(self):
+        query_serializer = EvalMetricQuerySerializer(
+            data={
+                "eval_template_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+        body_serializer = EvalMetricRequestSerializer(
+            data={
+                "eval_template_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": [_span_attr_filter()],
+            }
+        )
+
+        assert query_serializer.is_valid(), query_serializer.errors
+        assert body_serializer.is_valid(), body_serializer.errors
+
+    def test_trace_agent_graph_query_rejects_camel_case_project_id(self):
+        serializer = TraceAgentGraphQuerySerializer(
+            data={
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "project_id" in serializer.errors

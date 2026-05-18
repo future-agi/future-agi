@@ -102,6 +102,11 @@ class TraceListQuerySerializer(serializers.Serializer):
     )
 
 
+class TraceAgentGraphQuerySerializer(serializers.Serializer):
+    project_id = serializers.UUIDField()
+    filters = filter_list_query_param_field(required=False, default=list)
+
+
 class UsersQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=False)
     search = serializers.CharField(required=False, allow_blank=True)
