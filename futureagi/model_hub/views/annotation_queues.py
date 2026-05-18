@@ -122,8 +122,8 @@ from model_hub.utils.annotation_queue_helpers import (
 from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
-    ApiErrorResponseSerializer,
     ApiSelectionTooLargeErrorSerializer,
+    ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
 )
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -137,11 +137,11 @@ from tracer.models.span_notes import SpanNotes
 logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES = {
-    400: ApiErrorResponseSerializer,
-    403: ApiErrorResponseSerializer,
-    404: ApiErrorResponseSerializer,
-    409: ApiErrorResponseSerializer,
-    500: ApiErrorResponseSerializer,
+    400: ApiTextErrorResponseSerializer,
+    403: ApiTextErrorResponseSerializer,
+    404: ApiTextErrorResponseSerializer,
+    409: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
 }
 
 # Shared cap for filter-mode bulk add. Phase 11 may introduce an async job
@@ -4329,8 +4329,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         responses={
             200: QueueAddItemsResponseSerializer,
             400: ApiSelectionTooLargeErrorSerializer,
-            403: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
+            403: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"], url_path="add-items")

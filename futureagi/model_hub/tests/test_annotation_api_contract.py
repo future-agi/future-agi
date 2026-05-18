@@ -306,28 +306,32 @@ class TestAnnotationApiContract:
                 "/model-hub/annotation-queues/{queue_id}/items/add-items/",
                 "post",
                 "403",
-            ): "#/definitions/ApiErrorResponse",
+            ): "#/definitions/ApiTextErrorResponse",
             (
                 "/model-hub/annotation-queues/{id}/progress/",
                 "get",
                 "400",
-            ): "#/definitions/ApiErrorResponse",
+            ): "#/definitions/ApiTextErrorResponse",
             (
                 "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/",
                 "post",
                 "400",
-            ): "#/definitions/ApiErrorResponse",
+            ): "#/definitions/ApiTextErrorResponse",
             (
                 "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
                 "post",
                 "409",
-            ): "#/definitions/ApiErrorResponse",
-            ("/model-hub/scores/", "post", "400"): "#/definitions/ApiErrorResponse",
+            ): "#/definitions/ApiTextErrorResponse",
+            (
+                "/model-hub/scores/",
+                "post",
+                "400",
+            ): "#/definitions/ApiTextErrorResponse",
             (
                 "/model-hub/scores/for-source/",
                 "get",
                 "500",
-            ): "#/definitions/ApiErrorResponse",
+            ): "#/definitions/ApiTextErrorResponse",
         }
         for (path, method, status_code), expected_ref in expected_error_refs.items():
             assert _response_ref(path, method, status_code) == expected_ref

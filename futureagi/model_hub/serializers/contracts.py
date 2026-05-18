@@ -38,10 +38,11 @@ class ModelHubPaginatedResponseSerializer(serializers.Serializer):
 
 
 class ModelHubErrorResponseSerializer(serializers.Serializer):
-    status = serializers.JSONField(required=False)
-    message = serializers.JSONField(required=False)
-    error = serializers.JSONField(required=False)
-    detail = serializers.JSONField(required=False)
+    status = serializers.BooleanField(required=False)
+    result = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    message = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    detail = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class ModelHubTextErrorResponseSerializer(serializers.Serializer):

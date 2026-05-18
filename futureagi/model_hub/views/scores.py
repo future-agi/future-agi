@@ -29,7 +29,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
 )
 from tfc.constants.roles import OrganizationRoles
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.span_notes import SpanNotes
@@ -37,11 +37,11 @@ from tracer.models.span_notes import SpanNotes
 logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES = {
-    400: ApiErrorResponseSerializer,
-    403: ApiErrorResponseSerializer,
-    404: ApiErrorResponseSerializer,
-    409: ApiErrorResponseSerializer,
-    500: ApiErrorResponseSerializer,
+    400: ApiTextErrorResponseSerializer,
+    403: ApiTextErrorResponseSerializer,
+    404: ApiTextErrorResponseSerializer,
+    409: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
 }
 
 

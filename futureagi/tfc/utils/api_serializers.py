@@ -62,14 +62,21 @@ class ApiDetailErrorResponseSerializer(serializers.Serializer):
     detail = serializers.CharField()
 
 
+class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=("selection_too_large",))
+    message = serializers.CharField()
+    total_matching = serializers.IntegerField()
+    cap = serializers.IntegerField()
+
+
 class ApiSelectionTooLargeErrorSerializer(serializers.Serializer):
     """Bulk-selection cap error envelope used by annotation queue item imports."""
 
     status = serializers.BooleanField(default=False)
-    result = serializers.JSONField(required=False, allow_null=True)
-    message = serializers.JSONField(required=False, allow_null=True)
+    result = serializers.CharField(required=False, allow_null=True)
+    message = serializers.CharField()
     code = serializers.IntegerField(default=400)
-    error = serializers.JSONField(required=False)
+    error = ApiSelectionTooLargeDetailSerializer()
 
 
 class HealthCheckResponseSerializer(serializers.Serializer):

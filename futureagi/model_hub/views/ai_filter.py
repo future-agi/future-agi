@@ -33,14 +33,14 @@ from model_hub.serializers.ai_filter import (
     AIFilterRequestSerializer,
     AIFilterResponseSerializer,
 )
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES = {
-    400: ApiErrorResponseSerializer,
-    500: ApiErrorResponseSerializer,
+    400: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
 }
 
 SYSTEM_PROMPT = """You are a filter assistant. Given a user's natural language query and a schema of available filter fields, return a JSON array of filter conditions.

@@ -15772,13 +15772,13 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -15946,31 +15946,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16004,31 +16004,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16154,31 +16154,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16212,31 +16212,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16270,31 +16270,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16328,31 +16328,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16395,31 +16395,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16470,31 +16470,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16538,31 +16538,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16596,31 +16596,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16663,31 +16663,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16730,31 +16730,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -16797,31 +16797,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17059,31 +17059,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17123,31 +17123,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17327,13 +17327,13 @@
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17374,31 +17374,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17439,31 +17439,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17554,31 +17554,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17751,31 +17751,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17815,31 +17815,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17888,31 +17888,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -17961,31 +17961,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18034,31 +18034,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18098,31 +18098,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18153,31 +18153,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18226,31 +18226,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18305,31 +18305,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18384,31 +18384,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18463,31 +18463,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18536,31 +18536,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18609,31 +18609,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18829,19 +18829,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -18989,19 +18989,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -19126,19 +19126,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -19172,19 +19172,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -19341,19 +19341,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -19394,19 +19394,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -21471,19 +21471,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -39064,31 +39064,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -39122,31 +39122,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -39207,31 +39207,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -39326,31 +39326,31 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -75874,19 +75874,27 @@
             "properties": {
                 "status": {
                     "title": "Status",
-                    "type": "object"
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "message": {
                     "title": "Message",
-                    "type": "object"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "error": {
                     "title": "Error",
-                    "type": "object"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "detail": {
                     "title": "Detail",
-                    "type": "object"
+                    "type": "string",
+                    "x-nullable": true
                 }
             }
         },
@@ -76045,31 +76053,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/AIFilterResult"
-                }
-            }
-        },
-        "ApiErrorResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "object",
-                    "x-nullable": true
                 }
             }
         },
@@ -78205,7 +78188,42 @@
                 }
             }
         },
+        "ApiSelectionTooLargeDetail": {
+            "required": [
+                "type",
+                "message",
+                "total_matching",
+                "cap"
+            ],
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "selection_too_large"
+                    ]
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "total_matching": {
+                    "title": "Total matching",
+                    "type": "integer"
+                },
+                "cap": {
+                    "title": "Cap",
+                    "type": "integer"
+                }
+            }
+        },
         "ApiSelectionTooLargeError": {
+            "required": [
+                "message",
+                "error"
+            ],
             "type": "object",
             "properties": {
                 "status": {
@@ -78215,13 +78233,14 @@
                 },
                 "result": {
                     "title": "Result",
-                    "type": "object",
+                    "type": "string",
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "message": {
                     "title": "Message",
-                    "type": "object",
-                    "x-nullable": true
+                    "type": "string",
+                    "minLength": 1
                 },
                 "code": {
                     "title": "Code",
@@ -78229,8 +78248,7 @@
                     "default": 400
                 },
                 "error": {
-                    "title": "Error",
-                    "type": "object"
+                    "$ref": "#/definitions/ApiSelectionTooLargeDetail"
                 }
             }
         },
@@ -107003,6 +107021,31 @@
                 },
                 "result": {
                     "$ref": "#/definitions/BulkAnnotationResponseResult"
+                }
+            }
+        },
+        "ApiErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },

@@ -57,7 +57,7 @@ from model_hub.utils.utils import corpus_builder
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer, EmptyRequestSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -66,9 +66,9 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES = {
-    400: ApiErrorResponseSerializer,
-    403: ApiErrorResponseSerializer,
-    500: ApiErrorResponseSerializer,
+    400: ApiTextErrorResponseSerializer,
+    403: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
 }
 
 

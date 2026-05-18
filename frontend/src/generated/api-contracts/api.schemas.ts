@@ -4578,19 +4578,12 @@ export interface AIEvalWriterResponseApi {
   result: AIEvalWriterResultApi;
 }
 
-export type ModelHubErrorResponseApiStatus = { [key: string]: unknown };
-
-export type ModelHubErrorResponseApiMessage = { [key: string]: unknown };
-
-export type ModelHubErrorResponseApiError = { [key: string]: unknown };
-
-export type ModelHubErrorResponseApiDetail = { [key: string]: unknown };
-
 export interface ModelHubErrorResponseApi {
-  status?: ModelHubErrorResponseApiStatus;
-  message?: ModelHubErrorResponseApiMessage;
-  error?: ModelHubErrorResponseApiError;
-  detail?: ModelHubErrorResponseApiDetail;
+  status?: boolean;
+  result?: string;
+  message?: string;
+  error?: string;
+  detail?: string;
 }
 
 export type AIFilterRequestApiMode = typeof AIFilterRequestApiMode[keyof typeof AIFilterRequestApiMode];
@@ -4653,19 +4646,6 @@ export interface AIFilterResultApi {
 export interface AIFilterResponseApi {
   status?: boolean;
   result: AIFilterResultApi;
-}
-
-export type ApiErrorResponseApiResult = { [key: string]: unknown };
-
-export type ApiErrorResponseApiMessage = { [key: string]: unknown };
-
-export type ApiErrorResponseApiError = { [key: string]: unknown };
-
-export interface ApiErrorResponseApi {
-  status?: boolean;
-  result?: ApiErrorResponseApiResult;
-  message?: ApiErrorResponseApiMessage;
-  error?: ApiErrorResponseApiError;
 }
 
 export type AnnotationQueueApiStatus = typeof AnnotationQueueApiStatus[keyof typeof AnnotationQueueApiStatus];
@@ -5400,18 +5380,29 @@ export interface QueueAddItemsResponseApi {
   result: QueueAddItemsResultApi;
 }
 
-export type ApiSelectionTooLargeErrorApiResult = { [key: string]: unknown };
+export type ApiSelectionTooLargeDetailApiType = typeof ApiSelectionTooLargeDetailApiType[keyof typeof ApiSelectionTooLargeDetailApiType];
 
-export type ApiSelectionTooLargeErrorApiMessage = { [key: string]: unknown };
 
-export type ApiSelectionTooLargeErrorApiError = { [key: string]: unknown };
+export const ApiSelectionTooLargeDetailApiType = {
+  selection_too_large: 'selection_too_large',
+} as const;
+
+export interface ApiSelectionTooLargeDetailApi {
+  type: ApiSelectionTooLargeDetailApiType;
+  /** @minLength 1 */
+  message: string;
+  total_matching: number;
+  cap: number;
+}
 
 export interface ApiSelectionTooLargeErrorApi {
   status?: boolean;
-  result?: ApiSelectionTooLargeErrorApiResult;
-  message?: ApiSelectionTooLargeErrorApiMessage;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message: string;
   code?: number;
-  error?: ApiSelectionTooLargeErrorApiError;
+  error: ApiSelectionTooLargeDetailApi;
 }
 
 export type AssignItemsApiAction = typeof AssignItemsApiAction[keyof typeof AssignItemsApiAction];
@@ -16679,6 +16670,19 @@ export interface BulkAnnotationResponseResultApi {
 export interface BulkAnnotationResponseApi {
   status?: boolean;
   result: BulkAnnotationResponseResultApi;
+}
+
+export type ApiErrorResponseApiResult = { [key: string]: unknown };
+
+export type ApiErrorResponseApiMessage = { [key: string]: unknown };
+
+export type ApiErrorResponseApiError = { [key: string]: unknown };
+
+export interface ApiErrorResponseApi {
+  status?: boolean;
+  result?: ApiErrorResponseApiResult;
+  message?: ApiErrorResponseApiMessage;
+  error?: ApiErrorResponseApiError;
 }
 
 export type FetchGraphApiFiltersItemFilterConfig = {

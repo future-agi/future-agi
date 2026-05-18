@@ -18691,12 +18691,12 @@ export type modelHubAiFilterCreateResponse200 = {
 }
 
 export type modelHubAiFilterCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAiFilterCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -18828,27 +18828,27 @@ export type modelHubAnnotationQueuesForSourceResponse200 = {
 }
 
 export type modelHubAnnotationQueuesForSourceResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesForSourceResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesForSourceResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesForSourceResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesForSourceResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -18905,27 +18905,27 @@ export type modelHubAnnotationQueuesGetOrCreateDefaultResponse200 = {
 }
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19124,27 +19124,27 @@ export type modelHubAnnotationQueuesAddLabelResponse200 = {
 }
 
 export type modelHubAnnotationQueuesAddLabelResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesAddLabelResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesAddLabelResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesAddLabelResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesAddLabelResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19191,27 +19191,27 @@ export type modelHubAnnotationQueuesAgreementResponse200 = {
 }
 
 export type modelHubAnnotationQueuesAgreementResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesAgreementResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesAgreementResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesAgreementResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesAgreementResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19254,27 +19254,27 @@ export type modelHubAnnotationQueuesAnalyticsResponse200 = {
 }
 
 export type modelHubAnnotationQueuesAnalyticsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesAnalyticsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesAnalyticsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesAnalyticsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesAnalyticsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19317,27 +19317,27 @@ export type modelHubAnnotationQueuesExportFieldsResponse200 = {
 }
 
 export type modelHubAnnotationQueuesExportFieldsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesExportFieldsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesExportFieldsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesExportFieldsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesExportFieldsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19380,27 +19380,27 @@ export type modelHubAnnotationQueuesExportToDatasetResponse200 = {
 }
 
 export type modelHubAnnotationQueuesExportToDatasetResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesExportToDatasetResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesExportToDatasetResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesExportToDatasetResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesExportToDatasetResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19445,27 +19445,27 @@ export type modelHubAnnotationQueuesExportAnnotationsResponse200 = {
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19517,27 +19517,27 @@ export type modelHubAnnotationQueuesHardDeleteResponse200 = {
 }
 
 export type modelHubAnnotationQueuesHardDeleteResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesHardDeleteResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesHardDeleteResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesHardDeleteResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesHardDeleteResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19587,27 +19587,27 @@ export type modelHubAnnotationQueuesProgressResponse200 = {
 }
 
 export type modelHubAnnotationQueuesProgressResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesProgressResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesProgressResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesProgressResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesProgressResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19647,27 +19647,27 @@ export type modelHubAnnotationQueuesRemoveLabelResponse200 = {
 }
 
 export type modelHubAnnotationQueuesRemoveLabelResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesRemoveLabelResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesRemoveLabelResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesRemoveLabelResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesRemoveLabelResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19712,27 +19712,27 @@ export type modelHubAnnotationQueuesRestoreResponse200 = {
 }
 
 export type modelHubAnnotationQueuesRestoreResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesRestoreResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesRestoreResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesRestoreResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesRestoreResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -19774,27 +19774,27 @@ export type modelHubAnnotationQueuesUpdateStatusResponse200 = {
 }
 
 export type modelHubAnnotationQueuesUpdateStatusResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesUpdateStatusResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesUpdateStatusResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesUpdateStatusResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesUpdateStatusResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20062,27 +20062,27 @@ export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse202 = {
 }
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20139,27 +20139,27 @@ export type modelHubAnnotationQueuesAutomationRulesPreviewResponse200 = {
 }
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20286,12 +20286,12 @@ export type modelHubAnnotationQueuesItemsAddItemsResponse400 = {
 }
 
 export type modelHubAnnotationQueuesItemsAddItemsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAddItemsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
@@ -20333,27 +20333,27 @@ export type modelHubAnnotationQueuesItemsAssignItemsResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20398,27 +20398,27 @@ export type modelHubAnnotationQueuesItemsBulkRemoveResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20460,27 +20460,27 @@ export type modelHubAnnotationQueuesItemsNextItemResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsNextItemResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsNextItemResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsNextItemResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsNextItemResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsNextItemResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20682,27 +20682,27 @@ export type modelHubAnnotationQueuesItemsAnnotateDetailResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20756,27 +20756,27 @@ export type modelHubAnnotationQueuesItemsAnnotationsListResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20821,27 +20821,27 @@ export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse200
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20888,27 +20888,27 @@ export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse200
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -20955,27 +20955,27 @@ export type modelHubAnnotationQueuesItemsCompleteItemResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21022,27 +21022,27 @@ export type modelHubAnnotationQueuesItemsDiscussionReadResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21087,27 +21087,27 @@ export type modelHubAnnotationQueuesItemsDiscussionCreateResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21154,27 +21154,27 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReac
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21223,27 +21223,27 @@ export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadRespons
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21289,27 +21289,27 @@ export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadRespon
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21355,27 +21355,27 @@ export type modelHubAnnotationQueuesItemsReleaseReservationResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21422,27 +21422,27 @@ export type modelHubAnnotationQueuesItemsReviewItemResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21489,27 +21489,27 @@ export type modelHubAnnotationQueuesItemsSkipItemResponse200 = {
 }
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21629,17 +21629,17 @@ export type modelHubAnnotationsLabelsListResponse200 = {
 }
 
 export type modelHubAnnotationsLabelsListResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsLabelsListResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsLabelsListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21859,17 +21859,17 @@ export type modelHubAnnotationsLabelsRestoreResponse200 = {
 }
 
 export type modelHubAnnotationsLabelsRestoreResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsLabelsRestoreResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsLabelsRestoreResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -21988,17 +21988,17 @@ export type modelHubAnnotationsBulkDestroyResponse200 = {
 }
 
 export type modelHubAnnotationsBulkDestroyResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsBulkDestroyResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsBulkDestroyResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -22043,17 +22043,17 @@ export type modelHubAnnotationsPreviewAnnotationsResponse200 = {
 }
 
 export type modelHubAnnotationsPreviewAnnotationsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsPreviewAnnotationsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsPreviewAnnotationsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -22278,17 +22278,17 @@ export type modelHubAnnotationsResetAnnotationsResponse200 = {
 }
 
 export type modelHubAnnotationsResetAnnotationsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsResetAnnotationsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsResetAnnotationsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -22330,17 +22330,17 @@ export type modelHubAnnotationsUpdateCellsResponse200 = {
 }
 
 export type modelHubAnnotationsUpdateCellsResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubAnnotationsUpdateCellsResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubAnnotationsUpdateCellsResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -24718,17 +24718,17 @@ export type modelHubDatasetAnnotationSummaryListResponse200 = {
 }
 
 export type modelHubDatasetAnnotationSummaryListResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubDatasetAnnotationSummaryListResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubDatasetAnnotationSummaryListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -42631,27 +42631,27 @@ export type modelHubScoresCreateResponse200 = {
 }
 
 export type modelHubScoresCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubScoresCreateResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubScoresCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubScoresCreateResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubScoresCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -42695,27 +42695,27 @@ export type modelHubScoresBulkCreateResponse200 = {
 }
 
 export type modelHubScoresBulkCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubScoresBulkCreateResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubScoresBulkCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubScoresBulkCreateResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubScoresBulkCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -42759,27 +42759,27 @@ export type modelHubScoresForSourceResponse200 = {
 }
 
 export type modelHubScoresForSourceResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubScoresForSourceResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubScoresForSourceResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubScoresForSourceResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubScoresForSourceResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -42954,27 +42954,27 @@ export type modelHubScoresDeleteResponse200 = {
 }
 
 export type modelHubScoresDeleteResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type modelHubScoresDeleteResponse403 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 403
 }
 
 export type modelHubScoresDeleteResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type modelHubScoresDeleteResponse409 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 409
 }
 
 export type modelHubScoresDeleteResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 

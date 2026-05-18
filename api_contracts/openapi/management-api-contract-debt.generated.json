@@ -7,7 +7,7 @@
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
     "operations_without_error_response_schema": 493,
-    "broad_error_response_schemas": 2267
+    "broad_error_response_schemas": 836
   },
   "by_group": {
     "accounts": {
@@ -107,7 +107,7 @@
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
       "operations_without_error_response_schema": 170,
-      "broad_error_response_schemas": 1431
+      "broad_error_response_schemas": 0
     },
     "saml2_auth": {
       "paths": 12,
