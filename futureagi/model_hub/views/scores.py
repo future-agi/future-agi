@@ -285,21 +285,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
             deleted=False,
         ).select_related("label", "annotator", "queue_item__queue")
 
+        query_params = getattr(self, "_validated_score_list_query", {})
         # Filter by source
-        source_type = self.request.query_params.get("source_type")
-        source_id = self.request.query_params.get("source_id")
+        source_type = query_params.get("source_type")
+        source_id = query_params.get("source_id")
         if source_type and source_id:
             fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
             if fk_field:
                 qs = qs.filter(**{f"{fk_field}_id": source_id})
 
         # Filter by label
-        label_id = self.request.query_params.get("label_id")
+        label_id = query_params.get("label_id")
         if label_id:
             qs = qs.filter(label_id=label_id)
 
         # Filter by annotator
-        annotator_id = self.request.query_params.get("annotator_id")
+        annotator_id = query_params.get("annotator_id")
         if annotator_id:
             qs = qs.filter(annotator_id=annotator_id)
 
@@ -307,6 +308,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(query_serializer=ScoreListQuerySerializer)
     def list(self, request, *args, **kwargs):
+        serializer = ScoreListQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return self._gm.bad_request(serializer.errors)
+        self._validated_score_list_query = serializer.validated_data
         return super().list(request, *args, **kwargs)
 
     @swagger_auto_schema(
@@ -582,11 +587,12 @@ class ScoreViewSet(viewsets.ModelViewSet):
         Get all scores for a specific source.
         GET /model-hub/scores/for-source/?source_type=trace&source_id=<uuid>
         """
-        source_type = request.query_params.get("source_type")
-        source_id = request.query_params.get("source_id")
-
-        if not source_type or not source_id:
-            return self._gm.bad_request("source_type and source_id are required.")
+        serializer = ScoreForSourceQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return self._gm.bad_request(serializer.errors)
+        query_params = serializer.validated_data
+        source_type = query_params["source_type"]
+        source_id = query_params["source_id"]
 
         # observation_span uses CharField PK (not UUID) — skip UUID validation for it
         if source_type != "observation_span":

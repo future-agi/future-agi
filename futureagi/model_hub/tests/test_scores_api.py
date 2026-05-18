@@ -259,6 +259,19 @@ class TestCreateScore:
         resp = auth_client.post(SCORE_URL, payload, format="json")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_rejects_legacy_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "labelId": str(star_label.id),
+            "value": {"rating": 3},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+
     def test_source_not_found(self, auth_client, star_label):
         """Non-existent source returns 404."""
         payload = {
@@ -318,6 +331,20 @@ class TestBulkCreateScores:
         result = resp.data["result"]
         assert len(result["scores"]) == 1
         assert len(result["errors"]) == 1
+
+    def test_bulk_create_rejects_legacy_nested_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "scores": [
+                {"labelId": str(star_label.id), "value": {"rating": 4}},
+            ],
+        }
+        resp = auth_client.post(f"{SCORE_URL}bulk/", payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
 
     def test_trace_bulk_create_can_save_notes_on_root_span(
         self, auth_client, trace, observation_span, thumbs_label, user
@@ -594,6 +621,19 @@ class TestListScores:
         )
         assert resp.status_code == status.HTTP_200_OK
 
+    def test_list_scores_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            SCORE_URL,
+            {
+                "sourceType": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+
 
 @pytest.mark.django_db
 class TestForSourceEndpoint:
@@ -629,6 +669,20 @@ class TestForSourceEndpoint:
         """Missing params returns 400."""
         resp = auth_client.get(f"{SCORE_URL}for-source/")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_for_source_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "sourceType": "observation_span",
+                "sourceId": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
 
 
 @pytest.mark.django_db

@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.choices import ScoreSource
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
+from tracer.serializers.filters import StrictInputSerializer
 
 
 class ScoreSerializer(serializers.ModelSerializer):
@@ -52,7 +53,7 @@ class ScoreSerializer(serializers.ModelSerializer):
         return str(obj.queue_item.queue_id) if obj.queue_item_id else None
 
 
-class CreateScoreSerializer(serializers.Serializer):
+class CreateScoreSerializer(StrictInputSerializer):
     """Write serializer for creating/updating scores."""
 
     source_type = serializers.ChoiceField(
@@ -77,7 +78,7 @@ class CreateScoreSerializer(serializers.Serializer):
     )
 
 
-class ScoreListQuerySerializer(serializers.Serializer):
+class ScoreListQuerySerializer(StrictInputSerializer):
     source_type = serializers.ChoiceField(
         choices=list(SCORE_SOURCE_FK_MAP.keys()),
         required=False,
@@ -87,7 +88,7 @@ class ScoreListQuerySerializer(serializers.Serializer):
     annotator_id = serializers.UUIDField(required=False)
 
 
-class ScoreForSourceQuerySerializer(serializers.Serializer):
+class ScoreForSourceQuerySerializer(StrictInputSerializer):
     source_type = serializers.ChoiceField(choices=list(SCORE_SOURCE_FK_MAP.keys()))
     source_id = serializers.CharField()
 
@@ -121,7 +122,18 @@ class ScoreDeleteResponseSerializer(serializers.Serializer):
     result = serializers.DictField(child=serializers.BooleanField())
 
 
-class BulkCreateScoresSerializer(serializers.Serializer):
+class BulkCreateScoreItemSerializer(StrictInputSerializer):
+    label_id = serializers.UUIDField()
+    value = serializers.JSONField()
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    score_source = serializers.ChoiceField(
+        choices=ScoreSource.get_choices(),
+        required=False,
+        default=ScoreSource.HUMAN.value,
+    )
+
+
+class BulkCreateScoresSerializer(StrictInputSerializer):
     """Write serializer for creating multiple scores at once (e.g. inline annotator)."""
 
     source_type = serializers.ChoiceField(
@@ -129,10 +141,7 @@ class BulkCreateScoresSerializer(serializers.Serializer):
     )
     # CharField because some sources (e.g. ObservationSpan) use non-UUID IDs
     source_id = serializers.CharField()
-    scores = serializers.ListField(
-        child=serializers.DictField(),
-        min_length=1,
-    )
+    scores = BulkCreateScoreItemSerializer(many=True)
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     span_notes = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
@@ -146,9 +155,6 @@ class BulkCreateScoresSerializer(serializers.Serializer):
     )
 
     def validate_scores(self, value):
-        for score in value:
-            if "label_id" not in score or "value" not in score:
-                raise serializers.ValidationError(
-                    "Each score must have 'label_id' and 'value'."
-                )
+        if not value:
+            raise serializers.ValidationError("At least one score is required.")
         return value
