@@ -20,6 +20,7 @@ Tests cover:
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -160,6 +161,19 @@ def _create_score_for_item(item, label, annotator, organization, value="positive
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def allow_queue_creation_entitlement():
+    """Keep workflow tests focused on queue behavior, not billing cache I/O."""
+    with (
+        patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature",
+            return_value=SimpleNamespace(allowed=True, reason=None),
+        ),
+    ):
+        yield check_can_create
 
 
 @pytest.fixture
