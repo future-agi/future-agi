@@ -284,6 +284,7 @@ const InstructionEditor = ({
   onSelectedKBsChange,
   activeContextOptions,
   onActiveContextOptionsChange,
+  hideDatasetContextToggle = false,
 }) => {
   const modelBarDisabled = modelSelectorDisabled ?? disabled;
   const quillRef = useRef(null);
@@ -979,6 +980,7 @@ const InstructionEditor = ({
               onSelectedKBsChange={onSelectedKBsChange}
               activeContextOptions={activeContextOptions}
               onActiveContextOptionsChange={onActiveContextOptionsChange}
+              hideDatasetContextToggle={hideDatasetContextToggle}
             />
           </Box>
           {!aiOpen && (
@@ -1023,6 +1025,7 @@ InstructionEditor.propTypes = {
   onTemplateFormatChange: PropTypes.func,
   datasetColumns: PropTypes.array,
   datasetJsonSchemas: PropTypes.object,
+  hideDatasetContextToggle: PropTypes.bool,
 };
 
 export default InstructionEditor;

@@ -1398,6 +1398,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setContextOptions(v);
                     setIsDirty(true);
                   }}
+                  hideDatasetContextToggle={source === "task"}
                 />
               )}
 
