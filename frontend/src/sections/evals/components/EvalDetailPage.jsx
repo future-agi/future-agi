@@ -53,6 +53,7 @@ import EvalFeedbackTab from "./EvalFeedbackTab";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
+import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
@@ -85,13 +86,21 @@ const resolve_context_options = (data_injection) => {
     return ["variables_only"];
   }
   const opts = [];
-  if (data_injection.full_row || data_injection.fullRow) opts.push("dataset_row");
-  if (data_injection.span_context || data_injection.spanContext) opts.push("span_context");
-  if (data_injection.trace_context || data_injection.traceContext) opts.push("trace_context");
-  if (data_injection.session_context || data_injection.sessionContext) opts.push("session_context");
-  if (data_injection.call_context || data_injection.callContext) opts.push("call_context");
+  if (data_injection.full_row || data_injection.fullRow)
+    opts.push("dataset_row");
+  if (data_injection.span_context || data_injection.spanContext)
+    opts.push("span_context");
+  if (data_injection.trace_context || data_injection.traceContext)
+    opts.push("trace_context");
+  if (data_injection.session_context || data_injection.sessionContext)
+    opts.push("session_context");
+  if (data_injection.call_context || data_injection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (data_injection.variables_only === false || data_injection.variablesOnly === false) {
+  if (
+    data_injection.variables_only === false ||
+    data_injection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -272,7 +281,7 @@ const EvalDetailPage = () => {
             setCode("");
           }
           setCodeLanguage(config.language || "python");
-          setModel(config.model || evalData.model || ("turing_large"));
+          setModel(config.model || evalData.model || "turing_large");
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -398,7 +407,7 @@ const EvalDetailPage = () => {
         setCode("");
       }
       setCodeLanguage(config.language || "python");
-      setModel(config.model || versionToLoad.model || ("turing_large"));
+      setModel(config.model || versionToLoad.model || "turing_large");
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -450,6 +459,8 @@ const EvalDetailPage = () => {
 
   // Three-dot menu
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Warn on page leave with unsaved changes
   useEffect(() => {
@@ -502,7 +513,7 @@ const EvalDetailPage = () => {
             evalData.code_language ||
             "python",
         );
-        setModel(config.model || evalData.model || ("turing_large"));
+        setModel(config.model || evalData.model || "turing_large");
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -958,7 +969,19 @@ const EvalDetailPage = () => {
   ]);
 
   // Delete
-  const handleDelete = useCallback(async () => {
+  const handleDeleteClick = useCallback(() => {
+    setMenuAnchor(null);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    if (!deleteLoading) {
+      setDeleteDialogOpen(false);
+    }
+  }, [deleteLoading]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    setDeleteLoading(true);
     try {
       await axios.post(endpoints.develop.eval.deleteEvalsTemplate, {
         eval_template_id: evalId,
@@ -967,8 +990,8 @@ const EvalDetailPage = () => {
       navigate("/dashboard/evaluations");
     } catch {
       enqueueSnackbar("Failed to delete evaluation", { variant: "error" });
+      setDeleteLoading(false);
     }
-    setMenuAnchor(null);
   }, [evalId, enqueueSnackbar, navigate]);
 
   // Duplicate
@@ -1145,7 +1168,10 @@ const EvalDetailPage = () => {
               Duplicate
             </MenuItem>
             {!isSystemEval && (
-              <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
+              <MenuItem
+                onClick={handleDeleteClick}
+                sx={{ color: "error.main" }}
+              >
                 <Iconify
                   icon="solar:trash-bin-trash-bold"
                   width={16}
@@ -1157,6 +1183,14 @@ const EvalDetailPage = () => {
           </Menu>
         </Box>
       </Box>
+
+      <BulkDeleteDialog
+        open={deleteDialogOpen}
+        count={1}
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        isLoading={deleteLoading}
+      />
 
       {/* Top Tabs */}
       <Tabs
