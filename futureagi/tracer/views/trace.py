@@ -46,6 +46,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -1438,16 +1439,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         return eval_configs, base_query
 
-    @swagger_auto_schema(request_body=TraceTagsUpdateSerializer)
+    @validated_request(request_serializer=TraceTagsUpdateSerializer)
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a trace."""
         try:
             trace_id = kwargs.get("pk")
             trace = Trace.objects.get(id=trace_id)
-            serializer = TraceTagsUpdateSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            tags = serializer.validated_data["tags"]
+            tags = request.validated_data["tags"]
             trace.tags = tags
             trace.save(update_fields=["tags", "updated_at"])
             return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
@@ -1549,18 +1548,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(f"Failed to fetch evaluation names: {str(e)}")
 
-    @swagger_auto_schema(query_serializer=TraceListQuerySerializer)
+    @validated_request(query_serializer=TraceListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_traces(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.
         """
         try:
-            query_serializer = TraceListQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-
-            query_params = query_serializer.validated_data
+            query_params = request.validated_query_data
             project_version_id = str(query_params["project_version_id"])
             project_version = None
             try:
@@ -1934,17 +1929,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the traces list {get_error_message('ERROR_GETTING_TRACE_LIST')}"
             )
 
-    @swagger_auto_schema(request_body=ObserveGraphDataRequestSerializer)
+    @validated_request(request_serializer=ObserveGraphDataRequestSerializer)
     @action(detail=False, methods=["post"])
     def get_graph_methods(self, request, *args, **kwargs):
         """
         Fetch data for the observe graph with optimized queries
         """
         try:
-            body_serializer = ObserveGraphDataRequestSerializer(data=request.data)
-            if not body_serializer.is_valid():
-                return self._gm.bad_request(body_serializer.errors)
-            body = body_serializer.validated_data
+            body = request.validated_data
             project_id = str(body["project_id"])
             project = Project.objects.get(
                 id=project_id,
@@ -2642,17 +2634,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error comparing traces: {get_error_message('ERROR_COMPARING_TRACES')}"
             )
 
-    @swagger_auto_schema(query_serializer=TraceIndexQuerySerializer)
+    @validated_request(query_serializer=TraceIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index(self, request, *args, **kwargs):
         """
         Get the previous and next trace id by index using efficient database queries.
         """
         try:
-            query_serializer = TraceIndexQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query = query_serializer.validated_data
+            query = request.validated_query_data
             trace_id = str(query["trace_id"])
             project_version_id = str(query["project_version_id"])
 
@@ -2900,7 +2889,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
-    @swagger_auto_schema(query_serializer=TraceObserveListQuerySerializer)
+    @validated_request(query_serializer=TraceObserveListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """
@@ -2909,11 +2898,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             export = kwargs.get("export", False) if kwargs else False
 
-            serializer = TraceObserveListQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_query_data
             project_id = (
                 str(validated_data["project_id"])
                 if validated_data.get("project_id")
@@ -4215,19 +4200,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         return self._gm.success_response(response)
 
-    @swagger_auto_schema(query_serializer=TraceObserveIndexQuerySerializer)
+    @validated_request(query_serializer=TraceObserveIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_observe(self, request, *args, **kwargs):
         """
         Get the previous and next trace id by index.
         """
         try:
-            query_serializer = TraceObserveIndexQuerySerializer(
-                data=request.query_params
-            )
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query = query_serializer.validated_data
+            query = request.validated_query_data
             trace_id = str(query["trace_id"])
             project_id = str(query["project_id"])
 
@@ -4406,7 +4386,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Apply filters
-            filters = validated_data.get("filters", [])
+            filters = query.get("filters", [])
 
             if filters:
                 # Apply system metric filters
@@ -5539,7 +5519,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     # Agent Graph — aggregate topology visualization
     # ------------------------------------------------------------------
 
-    @swagger_auto_schema(query_serializer=TraceAgentGraphQuerySerializer)
+    @validated_request(query_serializer=TraceAgentGraphQuerySerializer)
     @action(detail=False, methods=["get"])
     def agent_graph(self, request, *args, **kwargs):
         """Return the aggregate agent graph for a project.
@@ -5548,10 +5528,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         transitions) across all traces in the given time window.
         """
         try:
-            query_serializer = TraceAgentGraphQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query = query_serializer.validated_data
+            query = request.validated_query_data
             project_id = str(query["project_id"])
             filters = query["filters"]
 
@@ -5591,7 +5568,7 @@ class UsersView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=UsersQuerySerializer,
         responses={200: UsersResponseSerializer, **ERROR_RESPONSES},
     )
@@ -5600,9 +5577,7 @@ class UsersView(APIView):
         List traces filtered by project ID with optimized queries.
         """
         try:
-            query_serializer = UsersQuerySerializer(data=request.query_params)
-            query_serializer.is_valid(raise_exception=True)
-            query_data = query_serializer.validated_data
+            query_data = request.validated_query_data
 
             project_id = query_data.get("project_id") or None
             project_id = str(project_id) if project_id else None

@@ -5,9 +5,9 @@
     "futureagi/tracer/views"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 49,
-    "direct_swagger_auto_schema_decorators": 385,
-    "doc_only_input_contract_decorators": 258,
+    "runtime_backed_validated_request_decorators": 57,
+    "direct_swagger_auto_schema_decorators": 377,
+    "doc_only_input_contract_decorators": 250,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [
@@ -1994,70 +1994,6 @@
       "function": "get",
       "serializers": [
         "SpanAttributeDetailQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 1441,
-      "function": "update_tags",
-      "serializers": [
-        "TraceTagsUpdateSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 1552,
-      "function": "list_traces",
-      "serializers": [
-        "TraceListQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 1937,
-      "function": "get_graph_methods",
-      "serializers": [
-        "ObserveGraphDataRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 2645,
-      "function": "get_trace_id_by_index",
-      "serializers": [
-        "TraceIndexQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 2903,
-      "function": "list_traces_of_session",
-      "serializers": [
-        "TraceObserveListQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 4218,
-      "function": "get_trace_id_by_index_observe",
-      "serializers": [
-        "TraceObserveIndexQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 5542,
-      "function": "agent_graph",
-      "serializers": [
-        "TraceAgentGraphQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/trace.py",
-      "line": 5594,
-      "function": "get",
-      "serializers": [
-        "UsersQuerySerializer"
       ]
     },
     {
