@@ -5,9 +5,9 @@
     "futureagi/tracer/views"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 76,
-    "direct_swagger_auto_schema_decorators": 358,
-    "doc_only_input_contract_decorators": 231,
+    "runtime_backed_validated_request_decorators": 85,
+    "direct_swagger_auto_schema_decorators": 349,
+    "doc_only_input_contract_decorators": 222,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [
@@ -665,46 +665,6 @@
       "function": "preview_derived_variables",
       "serializers": [
         "DerivedVariablePreviewRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_annotations.py",
-      "line": 833,
-      "function": "bulk_destroy",
-      "serializers": [
-        "BulkDestroyAnnotationsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_annotations.py",
-      "line": 903,
-      "function": "update_cells",
-      "serializers": [
-        "UpdateAnnotationCellsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_annotations.py",
-      "line": 1176,
-      "function": "reset_annotations",
-      "serializers": [
-        "ResetAnnotationsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_annotations.py",
-      "line": 1239,
-      "function": "annotate_row",
-      "serializers": [
-        "AnnotateRowQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_annotations.py",
-      "line": 1485,
-      "function": "preview_annotations",
-      "serializers": [
-        "PreviewAnnotationsRequestSerializer"
       ]
     },
     {
@@ -1521,38 +1481,6 @@
       "function": "post",
       "serializers": [
         "RunPromptForRowsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/scores.py",
-      "line": 309,
-      "function": "list",
-      "serializers": [
-        "ScoreListQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/scores.py",
-      "line": 317,
-      "function": "create",
-      "serializers": [
-        "CreateScoreSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/scores.py",
-      "line": 415,
-      "function": "bulk_create",
-      "serializers": [
-        "BulkCreateScoresSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/scores.py",
-      "line": 580,
-      "function": "for_source",
-      "serializers": [
-        "ScoreForSourceQuerySerializer"
       ]
     },
     {

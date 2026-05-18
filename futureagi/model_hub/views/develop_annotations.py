@@ -830,8 +830,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 get_error_message("FAILED_TO_DELETE_ANNOTATION")
             )
 
-    @swagger_auto_schema(
-        request_body=BulkDestroyAnnotationsRequestSerializer,
+    @validated_request(
+        request_serializer=BulkDestroyAnnotationsRequestSerializer,
         responses={200: BulkDestroyAnnotationsResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=False, methods=["post"])
@@ -842,12 +842,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         Expected input: {"annotation_ids": ["uuid1", "uuid2", ...]}
         """
         try:
-            request_serializer = BulkDestroyAnnotationsRequestSerializer(
-                data=request.data
-            )
-            if not request_serializer.is_valid():
-                return self._gm.bad_request(request_serializer.errors)
-            annotation_ids = request_serializer.validated_data["annotation_ids"]
+            annotation_ids = request.validated_data["annotation_ids"]
 
             annotations = Annotations.objects.filter(
                 id__in=annotation_ids,
@@ -900,22 +895,16 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             label_type, "text"
         )  # Default to string if type not found
 
-    @swagger_auto_schema(
-        request_body=UpdateAnnotationCellsRequestSerializer,
+    @validated_request(
+        request_serializer=UpdateAnnotationCellsRequestSerializer,
         responses={200: AnnotationActionMessageResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=True, methods=["post"])
     def update_cells(self, request, pk=None):
         try:
-            request_serializer = UpdateAnnotationCellsRequestSerializer(
-                data=request.data
-            )
-            if not request_serializer.is_valid():
-                return self._gm.bad_request(request_serializer.errors)
-
             annotation = self.get_object()
-            label_updates = request_serializer.validated_data.get("label_values", [])
-            response_fields_updates = request_serializer.validated_data.get(
+            label_updates = request.validated_data.get("label_values", [])
+            response_fields_updates = request.validated_data.get(
                 "response_field_values", []
             )
 
@@ -1173,19 +1162,15 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         except Exception as e:
             raise ValidationError(f"Validation error: {str(e)}")  # noqa: B904
 
-    @swagger_auto_schema(
-        request_body=ResetAnnotationsRequestSerializer,
+    @validated_request(
+        request_serializer=ResetAnnotationsRequestSerializer,
         responses={200: AnnotationActionMessageResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=True, methods=["post"])
     def reset_annotations(self, request, pk=None):
         try:
-            request_serializer = ResetAnnotationsRequestSerializer(data=request.data)
-            if not request_serializer.is_valid():
-                return self._gm.bad_request(request_serializer.errors)
-
             annotation = Annotations.objects.get(id=pk)
-            row_id = str(request_serializer.validated_data["row_id"])
+            row_id = str(request.validated_data["row_id"])
             user_id = str(request.user.id)
 
             if request.user not in annotation.assigned_users.all():
@@ -1236,22 +1221,18 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 get_error_message("FAILED_TO_RESET_ANNOTATION")
             )
 
-    @swagger_auto_schema(query_serializer=AnnotateRowQuerySerializer)
+    @validated_request(query_serializer=AnnotateRowQuerySerializer)
     @action(detail=True, methods=["get"])
     def annotate_row(self, request, pk=None):
         """
         Annotate a specific row with the provided values.
         """
         try:
-            query_serializer = AnnotateRowQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-
             # Retrieve the annotation object
             annotation = Annotations.objects.get(id=pk, deleted=False)
             Dataset.objects.get(id=annotation.dataset.id, deleted=False)
 
-            row_order = query_serializer.validated_data["row_order"]
+            row_order = request.validated_query_data["row_order"]
 
             row = Row.objects.get(dataset=annotation.dataset, order=row_order)
 
@@ -1482,8 +1463,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
         return False, None
 
-    @swagger_auto_schema(
-        request_body=PreviewAnnotationsRequestSerializer,
+    @validated_request(
+        request_serializer=PreviewAnnotationsRequestSerializer,
         responses={200: PreviewAnnotationsResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=False, methods=["post"])
@@ -1491,11 +1472,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         """
         Preview the first row of data for specified columns in a dataset.
         """
-        request_serializer = PreviewAnnotationsRequestSerializer(data=request.data)
-        if not request_serializer.is_valid():
-            return self._gm.bad_request(request_serializer.errors)
-
-        request_data = request_serializer.validated_data
+        request_data = request.validated_data
         dataset_id = request_data["dataset_id"]
         static_columns = request_data.get("static_column", [])
         response_columns = request_data.get("response_column", [])

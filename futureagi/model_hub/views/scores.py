@@ -29,6 +29,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
 )
 from tfc.constants.roles import OrganizationRoles
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -306,23 +307,18 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         return qs.order_by("-created_at")
 
-    @swagger_auto_schema(query_serializer=ScoreListQuerySerializer)
+    @validated_request(query_serializer=ScoreListQuerySerializer)
     def list(self, request, *args, **kwargs):
-        serializer = ScoreListQuerySerializer(data=request.query_params)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        self._validated_score_list_query = serializer.validated_data
+        self._validated_score_list_query = request.validated_query_data
         return super().list(request, *args, **kwargs)
 
-    @swagger_auto_schema(
-        request_body=CreateScoreSerializer,
+    @validated_request(
+        request_serializer=CreateScoreSerializer,
         responses={200: ScoreResponseSerializer, **ERROR_RESPONSES},
     )
     def create(self, request, *args, **kwargs):
         """Create a single score."""
-        serializer = CreateScoreSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        data = request.validated_data
 
         source_type = data["source_type"]
         source_id = data["source_id"]
@@ -412,16 +408,14 @@ class ScoreViewSet(viewsets.ModelViewSet):
         result = ScoreSerializer(score).data
         return self._gm.success_response(result)
 
-    @swagger_auto_schema(
-        request_body=BulkCreateScoresSerializer,
+    @validated_request(
+        request_serializer=BulkCreateScoresSerializer,
         responses={200: BulkCreateScoresResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=False, methods=["post"], url_path="bulk")
     def bulk_create(self, request):
         """Create multiple scores on a single source (e.g. from inline annotator)."""
-        serializer = BulkCreateScoresSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        data = request.validated_data
 
         source_type = data["source_type"]
         source_id = data["source_id"]
@@ -577,7 +571,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=ScoreForSourceQuerySerializer,
         responses={200: ScoreForSourceResponseSerializer, **ERROR_RESPONSES},
     )
@@ -587,10 +581,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         Get all scores for a specific source.
         GET /model-hub/scores/for-source/?source_type=trace&source_id=<uuid>
         """
-        serializer = ScoreForSourceQuerySerializer(data=request.query_params)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        query_params = serializer.validated_data
+        query_params = request.validated_query_data
         source_type = query_params["source_type"]
         source_id = query_params["source_id"]
 
