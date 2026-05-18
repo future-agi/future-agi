@@ -10893,7 +10893,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareEvalListResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -10922,7 +10922,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/EvalPreviewResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -10949,7 +10949,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetRowResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -10974,7 +10974,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetDeleteResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11084,7 +11084,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetRowResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11109,7 +11109,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetDeleteResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11196,7 +11196,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11225,7 +11225,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11254,7 +11254,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11283,7 +11283,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11312,7 +11312,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11341,7 +11341,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "type": "file"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11370,7 +11370,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11399,7 +11399,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/CompareDatasetStatsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11428,7 +11428,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11455,7 +11455,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetDerivedVariablesResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11484,7 +11484,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DuplicateRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11513,7 +11513,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DuplicateDatasetResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11542,7 +11542,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11571,7 +11571,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/MergeDatasetResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11600,7 +11600,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/PreviewDatasetOperationResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11658,7 +11658,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCopyResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11687,7 +11687,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11716,7 +11716,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetSdkRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11745,7 +11745,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11774,7 +11774,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCopyResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11803,7 +11803,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCreateStartedResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11832,7 +11832,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/LocalFileDatasetCreateStartedResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11861,7 +11861,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ManualDatasetCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11890,7 +11890,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCreateStartedResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11919,7 +11919,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/SyntheticDatasetCreateStartedResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11946,7 +11946,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCreationProgressResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -11983,7 +11983,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12012,7 +12012,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetCellDataResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12039,7 +12039,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetNamesResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12066,7 +12066,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetListResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12122,7 +12122,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/HuggingFaceDatasetConfigResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12151,7 +12151,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentRowDiffResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12178,7 +12178,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/EvalFunctionListResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12207,7 +12207,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/RunPromptColumnPreviewResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12234,7 +12234,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ProviderStatusResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12317,7 +12317,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetColumnsMutationResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12346,7 +12346,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetColumnsMutationResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12375,7 +12375,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12404,7 +12404,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12433,7 +12433,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12462,7 +12462,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetRowsImportedResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12491,7 +12491,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetRowsImportMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12520,7 +12520,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12549,7 +12549,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12578,7 +12578,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12637,7 +12637,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "type": "file"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12666,7 +12666,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12695,7 +12695,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12724,7 +12724,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DynamicColumnCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12751,7 +12751,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetTableResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12780,7 +12780,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetRowDataResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12807,7 +12807,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/EvalStructureResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12834,7 +12834,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/EvalListResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12863,7 +12863,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/EvalPreviewResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12892,7 +12892,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12921,7 +12921,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12948,7 +12948,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/SyntheticDatasetConfigResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -12977,7 +12977,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/SyntheticDatasetUpdateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13006,7 +13006,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13035,7 +13035,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13064,7 +13064,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ColumnTypeConversionResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13093,7 +13093,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DevelopDatasetMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -13120,7 +13120,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/DatasetTableResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14289,7 +14289,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentLegacyDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14316,7 +14316,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14343,7 +14343,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14460,7 +14460,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14489,7 +14489,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14606,7 +14606,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStringResultResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14635,7 +14635,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentRowDiffResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14662,7 +14662,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentNameSuggestionResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14689,7 +14689,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentNameValidationResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14716,7 +14716,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentV2DetailResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14743,7 +14743,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentV2DetailResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14772,7 +14772,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentDatasetComparisonResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14799,7 +14799,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentComparisonDetailsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14826,7 +14826,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentDerivedVariablesResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14853,7 +14853,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "description": "CSV file download.",
+            "type": "file"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14880,7 +14881,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentEvaluationStatsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14909,7 +14910,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentFeedbackCreateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14936,7 +14937,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentFeedbackDetailsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14963,7 +14964,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentFeedbackTemplateResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -14992,7 +14993,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentFeedbackSubmitResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15019,7 +15020,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentJsonSchemaResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15048,7 +15049,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentWorkflowResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15075,7 +15076,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentTableRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15102,7 +15103,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentTableRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15129,7 +15130,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStatsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15158,7 +15159,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStopResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15185,7 +15186,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentTableRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15214,7 +15215,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentAddEvalResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15243,7 +15244,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentDatasetComparisonResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15270,7 +15271,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentComparisonDetailsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15297,7 +15298,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "description": "CSV file download.",
+            "type": "file"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15324,7 +15326,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentEvaluationStatsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15353,7 +15355,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15380,7 +15382,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentStatsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -15407,7 +15409,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ModelHubJSONResponse"
+            "$ref": "#/definitions/ExperimentTableRowsResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -32672,7 +32674,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/StripeWebhookResponse"
+            "$ref": "#/definitions/StripeWebhookLegacyResponse"
           },
           "400": {
             "$ref": "#/definitions/UsageErrorResponse"
@@ -39179,6 +39181,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ColumnTypeConversionResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ColumnTypeConversionResult"
+        }
+      }
+    },
     "ColumnValuesRequest": {
       "required": [
         "dataset_id",
@@ -39263,6 +39281,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "CompareDatasetDeleteResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompareDatasetDeleteResult"
+        }
+      }
+    },
+    "CompareDatasetResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompareDatasetResult"
+        }
+      }
+    },
+    "CompareDatasetRowResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompareDatasetRowResult"
+        }
+      }
+    },
     "CompareDatasetStatsRequest": {
       "required": [
         "base_column_name",
@@ -39290,6 +39356,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "run_prompt"
           ],
           "default": "evaluation"
+        }
+      }
+    },
+    "CompareDatasetStatsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "CompareEvalListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/CompareEvalListResult"
         }
       }
     },
@@ -41258,6 +41363,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetCellDataResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/definitions/DatasetCellValue"
+            }
+          }
+        }
+      }
+    },
     "DatasetColumnDetailResponse": {
       "required": [
         "status",
@@ -41271,6 +41399,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/DatasetColumnDetailResult"
+        }
+      }
+    },
+    "DatasetColumnsMutationResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetColumnsMutationResult"
+        }
+      }
+    },
+    "DatasetCopyResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetCopyResult"
+        }
+      }
+    },
+    "DatasetCreateStartedResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetCreateStartedResult"
+        }
+      }
+    },
+    "DatasetCreationProgressResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetCreationProgressResult"
+        }
+      }
+    },
+    "DatasetDerivedVariablesResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetDerivedVariablesResult"
         }
       }
     },
@@ -41329,6 +41537,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetListResult"
+        }
+      }
+    },
     "DatasetMultipleStaticColumnsRequest": {
       "required": [
         "columns"
@@ -41340,6 +41564,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "type": "object"
           }
+        }
+      }
+    },
+    "DatasetNamesResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetNamesResult"
         }
       }
     },
@@ -41729,6 +41969,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetRowDataResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetRowDataResult"
+        }
+      }
+    },
     "DatasetRowDiffRequest": {
       "required": [
         "experiment_id",
@@ -41766,6 +42022,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetRowsImportMessageResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetRowsImportMessageResult"
+        }
+      }
+    },
+    "DatasetRowsImportedResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetRowsImportedResult"
+        }
+      }
+    },
     "DatasetRunPromptStatsResponse": {
       "required": [
         "status",
@@ -41797,6 +42085,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetSdkRowsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetSdkRowsResult"
+        }
+      }
+    },
     "DatasetStaticColumnRequest": {
       "required": [
         "new_column_name",
@@ -41817,6 +42121,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source": {
           "title": "Source",
           "type": "string"
+        }
+      }
+    },
+    "DatasetTableResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DatasetTableResult"
         }
       }
     },
@@ -42142,6 +42462,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DevelopDatasetMessageResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "DiscussionCommentRequest": {
       "type": "object",
       "properties": {
@@ -42273,6 +42611,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DuplicateDatasetResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DuplicateDatasetResult"
+        }
+      }
+    },
     "DuplicateEvalTemplate": {
       "required": [
         "eval_template_id",
@@ -42330,6 +42684,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "default": 1,
           "minimum": 1
+        }
+      }
+    },
+    "DuplicateRowsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DuplicateRowsResult"
+        }
+      }
+    },
+    "DynamicColumnCreateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DynamicColumnCreateResult"
+        }
+      }
+    },
+    "DynamicColumnMessageResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/DynamicColumnMessageResult"
         }
       }
     },
@@ -42736,6 +43138,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalFunctionListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalFunctionListResult"
+        }
+      }
+    },
     "EvalGroup": {
       "required": [
         "name"
@@ -42848,6 +43266,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "desc"
           ],
           "default": "desc"
+        }
+      }
+    },
+    "EvalListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalListResult"
         }
       }
     },
@@ -43036,6 +43470,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/EvalPlaygroundFeedbackResponseResult"
+        }
+      }
+    },
+    "EvalPreviewResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalPreviewResult"
+        }
+      }
+    },
+    "EvalStructureResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalStructureResult"
         }
       }
     },
@@ -44056,6 +44522,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentAddEvalResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentAddEvalResult"
+        }
+      }
+    },
     "ExperimentAdditionalEvaluationsRequest": {
       "required": [
         "eval_template_ids"
@@ -44068,6 +44550,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           }
+        }
+      }
+    },
+    "ExperimentComparisonDetailsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentComparisonDetailsResult"
         }
       }
     },
@@ -44140,6 +44638,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentDatasetComparisonResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentDatasetComparisonResult"
+        }
+      }
+    },
+    "ExperimentDerivedVariablesResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentDerivedVariablesResult"
+        }
+      }
+    },
+    "ExperimentEvaluationStatsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentEvaluationStatsResult"
+        }
+      }
+    },
+    "ExperimentFeedbackCreateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentFeedbackCreateResult"
+        }
+      }
+    },
+    "ExperimentFeedbackDetailsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentFeedbackDetailsResult"
+        }
+      }
+    },
     "ExperimentFeedbackSubmitRequest": {
       "required": [
         "action_type",
@@ -44175,6 +44753,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "explanation": {
           "title": "Explanation",
           "type": "string"
+        }
+      }
+    },
+    "ExperimentFeedbackSubmitResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentFeedbackSubmitResult"
+        }
+      }
+    },
+    "ExperimentFeedbackTemplateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentFeedbackTemplateResult"
+        }
+      }
+    },
+    "ExperimentJsonSchemaResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/JsonColumnSchemaEntry"
+          }
+        }
+      }
+    },
+    "ExperimentLegacyDetailResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentsTable"
         }
       }
     },
@@ -44324,6 +44970,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentMessageResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentMessageResult"
+        }
+      }
+    },
+    "ExperimentNameSuggestionResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentNameSuggestionResult"
+        }
+      }
+    },
+    "ExperimentNameValidationResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentNameValidationResult"
+        }
+      }
+    },
     "ExperimentRerunCells": {
       "type": "object",
       "properties": {
@@ -44382,6 +45076,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentRowDiffResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/definitions/ExperimentRowDiffCell"
+            }
+          }
+        }
+      }
+    },
+    "ExperimentStatsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentStatsResult"
+        }
+      }
+    },
+    "ExperimentStopResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentStopResult"
+        }
+      }
+    },
+    "ExperimentStringResultResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExperimentTableRowsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentTableRowsResult"
+        }
+      }
+    },
     "ExperimentUpdateV2": {
       "type": "object",
       "properties": {
@@ -44402,6 +45185,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/EvalMetricEntry"
           }
+        }
+      }
+    },
+    "ExperimentV2DetailResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentDetailV2"
+        }
+      }
+    },
+    "ExperimentWorkflowResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ExperimentWorkflowResult"
         }
       }
     },
@@ -46180,6 +46995,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HuggingFaceDatasetConfigResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/HuggingFaceDatasetConfigResult"
+        }
+      }
+    },
     "HuggingFaceDatasetCreateRequest": {
       "required": [
         "huggingface_dataset_name",
@@ -47526,6 +48357,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "LocalFileDatasetCreateStartedResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/LocalFileDatasetCreateStartedResult"
+        }
+      }
+    },
     "MCPAnalyticsSummaryResponse": {
       "required": [
         "result"
@@ -48221,6 +49068,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ManualDatasetCreateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ManualDatasetCreateResult"
+        }
+      }
+    },
     "MemberListResponse": {
       "required": [
         "status",
@@ -48361,6 +49224,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "MergeDatasetResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/MergeDatasetResult"
+        }
+      }
+    },
     "MessageFeedback": {
       "required": [
         "feedback"
@@ -48470,35 +49349,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/ModelHubEvalConfigResponseResult"
-        }
-      }
-    },
-    "ModelHubJSONResponse": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "object"
-        },
-        "message": {
-          "title": "Message",
-          "type": "string"
-        },
-        "result": {
-          "title": "Result",
-          "type": "object"
-        },
-        "data": {
-          "title": "Data",
-          "type": "object"
-        },
-        "error": {
-          "title": "Error",
-          "type": "object"
-        },
-        "detail": {
-          "title": "Detail",
-          "type": "object"
         }
       }
     },
@@ -51660,6 +52510,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PreviewDatasetOperationResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/PreviewDatasetOperationResult"
+        }
+      }
+    },
     "PreviewRunEvalRequest": {
       "required": [
         "config",
@@ -52511,6 +53377,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "x-nullable": true
+        }
+      }
+    },
+    "ProviderStatusResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ProviderStatusResult"
         }
       }
     },
@@ -53756,6 +54638,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/RunPromptColumnConfigResult"
+        }
+      }
+    },
+    "RunPromptColumnPreviewResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/RunPromptColumnPreviewResult"
         }
       }
     },
@@ -56656,6 +57554,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "StripeWebhookLegacyResponse": {
+      "required": [
+        "status"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/StripeWebhookResult"
+        }
+      }
+    },
     "StripeWebhookRequest": {
       "type": "object",
       "properties": {
@@ -56979,6 +57892,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SyntheticDatasetConfigResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/SyntheticDatasetConfigResult"
+        }
+      }
+    },
+    "SyntheticDatasetCreateStartedResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/SyntheticDatasetCreateStartedResult"
+        }
+      }
+    },
     "SyntheticDatasetCreation": {
       "required": [
         "num_rows",
@@ -57006,6 +57951,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Kb id",
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "SyntheticDatasetUpdateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/SyntheticDatasetUpdateResult"
         }
       }
     },
@@ -63382,6 +64343,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ColumnTypeConversionResult": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "column_id": {
+          "title": "Column id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "new_data_type": {
+          "title": "New data type",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "invalid_count": {
+          "title": "Invalid count",
+          "type": "integer"
+        },
+        "invalid_values": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "valid_conversion_samples": {
+          "title": "Valid conversion samples",
+          "type": "object"
+        }
+      }
+    },
     "ColumnValuesResponseResult": {
       "required": [
         "result"
@@ -63393,6 +64393,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "object",
           "additionalProperties": {
             "$ref": "#/definitions/ColumnValuesItem"
+          }
+        }
+      }
+    },
+    "CompareDatasetDeleteResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "CompareDatasetResult": {
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/CompareDatasetMetadata"
+        },
+        "column_config": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "CompareDatasetRowResult": {
+      "required": [
+        "table"
+      ],
+      "type": "object",
+      "properties": {
+        "prev_row_id": {
+          "title": "Prev row id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "next_row_id": {
+          "title": "Next row id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "CompareEvalListResult": {
+      "required": [
+        "evals"
+      ],
+      "type": "object",
+      "properties": {
+        "evals": {
+          "type": "array",
+          "items": {
+            "type": "object"
           }
         }
       }
@@ -64067,6 +65140,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetCellValue": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "object",
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "value_infos": {
+          "title": "Value infos",
+          "type": "object",
+          "x-nullable": true
+        },
+        "feedback_info": {
+          "title": "Feedback info",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
     "DatasetColumnDetailResult": {
       "required": [
         "columns"
@@ -64077,6 +65175,175 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/DatasetColumnDetailItem"
+          }
+        }
+      }
+    },
+    "DatasetColumnsMutationResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Column"
+          }
+        }
+      }
+    },
+    "DatasetCopyResult": {
+      "required": [
+        "message",
+        "dataset_id",
+        "dataset_name"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DatasetCreateStartedResult": {
+      "required": [
+        "message",
+        "dataset_id",
+        "dataset_name"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_model_type": {
+          "title": "Dataset model type",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "DatasetCreationProgressResult": {
+      "required": [
+        "dataset_id",
+        "dataset_name",
+        "processing_status",
+        "is_processing",
+        "is_completed",
+        "is_failed"
+      ],
+      "type": "object",
+      "properties": {
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "processing_status": {
+          "title": "Processing status",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_processing": {
+          "title": "Is processing",
+          "type": "boolean"
+        },
+        "is_completed": {
+          "title": "Is completed",
+          "type": "boolean"
+        },
+        "is_failed": {
+          "title": "Is failed",
+          "type": "boolean"
+        },
+        "original_filename": {
+          "title": "Original filename",
+          "type": "string",
+          "x-nullable": true
+        },
+        "estimated_rows": {
+          "title": "Estimated rows",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "estimated_columns": {
+          "title": "Estimated columns",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "queued_at": {
+          "title": "Queued at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "completed_at": {
+          "title": "Completed at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "failed_at": {
+          "title": "Failed at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_message": {
+          "title": "Error message",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "DatasetDerivedVariablesResult": {
+      "required": [
+        "derived_variables"
+      ],
+      "type": "object",
+      "properties": {
+        "derived_variables": {
+          "title": "Derived variables",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/DatasetDerivedVariableDetail"
           }
         }
       }
@@ -64205,6 +65472,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetListResult": {
+      "required": [
+        "datasets",
+        "total_pages",
+        "total_count"
+      ],
+      "type": "object",
+      "properties": {
+        "datasets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetListItem"
+          }
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        },
+        "total_count": {
+          "title": "Total count",
+          "type": "integer"
+        }
+      }
+    },
+    "DatasetNamesResult": {
+      "required": [
+        "datasets"
+      ],
+      "type": "object",
+      "properties": {
+        "datasets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetNameItem"
+          }
+        }
+      }
+    },
     "DatasetOptimizationStep": {
       "required": [
         "name",
@@ -64299,6 +65604,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetRowDataResult": {
+      "required": [
+        "next",
+        "current"
+      ],
+      "type": "object",
+      "properties": {
+        "next": {
+          "$ref": "#/definitions/DatasetRowNavigation"
+        },
+        "current": {
+          "title": "Current",
+          "type": "object"
+        }
+      }
+    },
+    "DatasetRowsImportMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DatasetRowsImportedResult": {
+      "required": [
+        "message",
+        "rows_added"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "rows_added": {
+          "title": "Rows added",
+          "type": "integer"
+        }
+      }
+    },
     "DatasetRunPromptStatsResult": {
       "required": [
         "avg_tokens",
@@ -64325,6 +65677,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/DatasetRunPromptStatsPrompt"
           }
+        }
+      }
+    },
+    "DatasetSdkRowsResult": {
+      "required": [
+        "api_keys",
+        "dataset",
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "api_keys": {
+          "title": "Api keys",
+          "type": "object"
+        },
+        "dataset": {
+          "$ref": "#/definitions/Dataset"
+        },
+        "code": {
+          "$ref": "#/definitions/DatasetSdkRowsCode"
+        }
+      }
+    },
+    "DatasetTableResult": {
+      "required": [
+        "column_config"
+      ],
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/DatasetTableMetadata"
+        },
+        "column_config": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "dataset_config": {
+          "title": "Dataset config",
+          "type": "object"
+        },
+        "synthetic_dataset": {
+          "title": "Synthetic dataset",
+          "type": "boolean"
+        },
+        "synthetic_dataset_percentage": {
+          "title": "Synthetic dataset percentage",
+          "type": "object"
+        },
+        "synthetic_regenerate": {
+          "title": "Synthetic regenerate",
+          "type": "object"
+        },
+        "is_processing_data": {
+          "title": "Is processing data",
+          "type": "boolean"
         }
       }
     },
@@ -64512,6 +65927,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DuplicateDatasetResult": {
+      "required": [
+        "message",
+        "new_dataset_id",
+        "new_dataset_name",
+        "columns_copied",
+        "rows_copied"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "new_dataset_id": {
+          "title": "New dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "new_dataset_name": {
+          "title": "New dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "columns_copied": {
+          "title": "Columns copied",
+          "type": "integer"
+        },
+        "rows_copied": {
+          "title": "Rows copied",
+          "type": "integer"
+        }
+      }
+    },
     "DuplicateEvalTemplateResponseResult": {
       "required": [
         "message",
@@ -64528,6 +65978,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Eval template id",
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "DuplicateRowsResult": {
+      "required": [
+        "message",
+        "source_rows",
+        "copies_per_row",
+        "total_new_rows",
+        "new_row_ids"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_rows": {
+          "title": "Source rows",
+          "type": "integer"
+        },
+        "copies_per_row": {
+          "title": "Copies per row",
+          "type": "integer"
+        },
+        "total_new_rows": {
+          "title": "Total new rows",
+          "type": "integer"
+        },
+        "new_row_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "DynamicColumnCreateResult": {
+      "required": [
+        "message",
+        "new_column_id",
+        "new_column_name"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "new_column_id": {
+          "title": "New column id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "new_column_name": {
+          "title": "New column name",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DynamicColumnMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -64903,6 +66427,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalFunctionListResult": {
+      "required": [
+        "functions"
+      ],
+      "type": "object",
+      "properties": {
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
     "EvalListFilters": {
       "type": "object",
       "properties": {
@@ -64962,6 +66500,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true
     },
+    "EvalListResult": {
+      "required": [
+        "evals"
+      ],
+      "type": "object",
+      "properties": {
+        "evals": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "eval_recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "EvalMetricResponseResult": {
       "required": [
         "base_eval_template_id",
@@ -65004,6 +66563,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Feedback id",
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "EvalPreviewResult": {
+      "required": [
+        "responses"
+      ],
+      "type": "object",
+      "properties": {
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "EvalStructureResult": {
+      "required": [
+        "eval"
+      ],
+      "type": "object",
+      "properties": {
+        "eval": {
+          "$ref": "#/definitions/EvalStructure"
         }
       }
     },
@@ -65547,6 +67131,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentAddEvalResult": {
+      "required": [
+        "message",
+        "eval_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "eval_id": {
+          "title": "Eval id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ExperimentComparisonDetailsResult": {
+      "required": [
+        "experiment_id",
+        "total_comparisons",
+        "comparisons"
+      ],
+      "type": "object",
+      "properties": {
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "total_comparisons": {
+          "title": "Total comparisons",
+          "type": "integer"
+        },
+        "comparisons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentComparisonDetail"
+          }
+        }
+      }
+    },
     "EvalMetricEntry": {
       "required": [
         "template_id",
@@ -65683,6 +67311,260 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentDatasetComparisonResult": {
+      "required": [
+        "experiment_id",
+        "experiment_name",
+        "total_datasets",
+        "dataset_comparisons"
+      ],
+      "type": "object",
+      "properties": {
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "experiment_name": {
+          "title": "Experiment name",
+          "type": "string",
+          "minLength": 1
+        },
+        "total_datasets": {
+          "title": "Total datasets",
+          "type": "integer"
+        },
+        "weights_applied": {
+          "title": "Weights applied",
+          "type": "object"
+        },
+        "dataset_comparisons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentComparisonDatasetMetric"
+          }
+        }
+      }
+    },
+    "ExperimentDerivedVariablesResult": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "derived_variables": {
+          "title": "Derived variables",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "ExperimentEvaluationStatsResult": {
+      "required": [
+        "experiment_id",
+        "experiment_name",
+        "evaluation_id",
+        "evaluation_name",
+        "evaluation_template_id",
+        "dataset_id",
+        "dataset_name",
+        "evaluation_columns"
+      ],
+      "type": "object",
+      "properties": {
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "experiment_name": {
+          "title": "Experiment name",
+          "type": "string",
+          "minLength": 1
+        },
+        "evaluation_id": {
+          "title": "Evaluation id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "evaluation_name": {
+          "title": "Evaluation name",
+          "type": "string",
+          "minLength": 1
+        },
+        "evaluation_template_id": {
+          "title": "Evaluation template id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "evaluation_columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentEvaluationColumnStats"
+          }
+        }
+      }
+    },
+    "ExperimentFeedbackCreateResult": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ExperimentFeedbackDetailsResult": {
+      "required": [
+        "feedback",
+        "total_count"
+      ],
+      "type": "object",
+      "properties": {
+        "feedback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentFeedbackDetailItem"
+          }
+        },
+        "total_count": {
+          "title": "Total count",
+          "type": "integer"
+        }
+      }
+    },
+    "ExperimentFeedbackSubmitResult": {
+      "required": [
+        "message",
+        "action_type",
+        "user_eval_metric_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "action_type": {
+          "title": "Action type",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_eval_metric_id": {
+          "title": "User eval metric id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workflow_id": {
+          "title": "Workflow id",
+          "type": "string"
+        }
+      }
+    },
+    "ExperimentFeedbackTemplateResult": {
+      "required": [
+        "eval_name",
+        "user_eval_name"
+      ],
+      "type": "object",
+      "properties": {
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "eval_description": {
+          "title": "Eval description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_name": {
+          "title": "Eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_eval_name": {
+          "title": "User eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "multi_choice": {
+          "title": "Multi choice",
+          "type": "boolean"
+        }
+      }
+    },
+    "ExperimentMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExperimentNameSuggestionResult": {
+      "required": [
+        "suggested_name"
+      ],
+      "type": "object",
+      "properties": {
+        "suggested_name": {
+          "title": "Suggested name",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExperimentNameValidationResult": {
+      "required": [
+        "is_valid"
+      ],
+      "type": "object",
+      "properties": {
+        "is_valid": {
+          "title": "Is valid",
+          "type": "boolean"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      }
+    },
     "RerunCellEntry": {
       "required": [
         "column_id",
@@ -65699,6 +67581,228 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Row id",
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "ExperimentRowDiffCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "object",
+          "x-nullable": true
+        },
+        "cell_diff_value": {
+          "title": "Cell diff value",
+          "type": "object",
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "value_infos": {
+          "title": "Value infos",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentStatsResult": {
+      "required": [
+        "column_config",
+        "table_data",
+        "metadata"
+      ],
+      "type": "object",
+      "properties": {
+        "column_config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentStatsColumnConfig"
+          }
+        },
+        "table_data": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "metadata": {
+          "$ref": "#/definitions/ExperimentStatsMetadata"
+        }
+      }
+    },
+    "ExperimentStopResult": {
+      "required": [
+        "message",
+        "experiment_id",
+        "workflows_cancelled"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workflows_cancelled": {
+          "$ref": "#/definitions/ExperimentStopWorkflowsCancelled"
+        }
+      }
+    },
+    "ExperimentTableRowsResult": {
+      "required": [
+        "column_config"
+      ],
+      "type": "object",
+      "properties": {
+        "column_config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentTableRowsColumnConfig"
+          }
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "metadata": {
+          "$ref": "#/definitions/ExperimentTableRowsMetadata"
+        },
+        "output_format": {
+          "title": "Output format",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "next_row_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "ExperimentDetailV2": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "column_id": {
+          "title": "Column id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "experiment_type": {
+          "title": "Experiment type",
+          "description": "Determines how the experiment executes: llm, tts, stt, or image.",
+          "type": "string",
+          "enum": [
+            "llm",
+            "tts",
+            "stt",
+            "image"
+          ]
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "NotStarted",
+            "Queued",
+            "Running",
+            "Completed",
+            "Editing",
+            "Inactive",
+            "Failed",
+            "PartialRun",
+            "ExperimentEvaluation",
+            "Uploading",
+            "PartialExtracted",
+            "Processing",
+            "Deleting",
+            "PartialCompleted",
+            "OptimizationEvaluation",
+            "Error",
+            "Cancelled"
+          ]
+        },
+        "snapshot_dataset_id": {
+          "title": "Snapshot dataset id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "prompt_configs": {
+          "title": "Prompt configs",
+          "type": "string",
+          "readOnly": true
+        },
+        "agent_configs": {
+          "title": "Agent configs",
+          "type": "string",
+          "readOnly": true
+        },
+        "user_eval_metrics": {
+          "title": "User eval metrics",
+          "type": "string",
+          "readOnly": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        }
+      }
+    },
+    "ExperimentWorkflowResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_id": {
+          "title": "Workflow id",
+          "type": "string"
         }
       }
     },
@@ -66794,6 +68898,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HuggingFaceDatasetConfigResult": {
+      "required": [
+        "message",
+        "dataset_info"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_info": {
+          "title": "Dataset info",
+          "type": "object"
+        }
+      }
+    },
     "HuggingFaceDatasetDetailResponseResult": {
       "required": [
         "message",
@@ -67434,6 +69556,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "LocalFileDatasetCreateStartedResult": {
+      "required": [
+        "message",
+        "dataset_id",
+        "dataset_name",
+        "processing_status",
+        "estimated_rows",
+        "estimated_columns"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_model_type": {
+          "title": "Dataset model type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "processing_status": {
+          "title": "Processing status",
+          "type": "string",
+          "minLength": 1
+        },
+        "estimated_rows": {
+          "title": "Estimated rows",
+          "type": "integer"
+        },
+        "estimated_columns": {
+          "title": "Estimated columns",
+          "type": "integer"
+        }
+      }
+    },
     "MCPUsageSummary": {
       "required": [
         "total_calls",
@@ -68013,6 +70181,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ManualDatasetCreateResult": {
+      "required": [
+        "message",
+        "dataset_id",
+        "rows_created",
+        "columns_created"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "rows_created": {
+          "title": "Rows created",
+          "type": "integer"
+        },
+        "columns_created": {
+          "title": "Columns created",
+          "type": "integer"
+        }
+      }
+    },
     "MemberListResult": {
       "required": [
         "results",
@@ -68076,6 +70273,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "User id",
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "MergeDatasetResult": {
+      "required": [
+        "message",
+        "rows_added",
+        "new_columns_created",
+        "columns_mapped"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "rows_added": {
+          "title": "Rows added",
+          "type": "integer"
+        },
+        "new_columns_created": {
+          "title": "New columns created",
+          "type": "integer"
+        },
+        "columns_mapped": {
+          "title": "Columns mapped",
+          "type": "integer"
         }
       }
     },
@@ -69482,6 +71707,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PreviewDatasetOperationResult": {
+      "required": [
+        "message",
+        "preview_results",
+        "sample_size"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "preview_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PreviewDatasetOperationResultItem"
+          }
+        },
+        "sample_size": {
+          "title": "Sample size",
+          "type": "integer"
+        }
+      }
+    },
     "PricingCardDetailsResult": {
       "required": [
         "business_monthly_price",
@@ -69669,6 +71919,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationScenarioItem"
           },
           "readOnly": true
+        }
+      }
+    },
+    "ProviderStatusResult": {
+      "required": [
+        "providers"
+      ],
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ProviderStatusItem"
+          }
         }
       }
     },
@@ -70699,6 +72963,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "config": {
           "title": "Config",
+          "type": "object"
+        }
+      }
+    },
+    "RunPromptColumnPreviewResult": {
+      "required": [
+        "responses",
+        "token_usage",
+        "cost"
+      ],
+      "type": "object",
+      "properties": {
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "token_usage": {
+          "title": "Token usage",
+          "type": "object"
+        },
+        "cost": {
+          "title": "Cost",
           "type": "object"
         }
       }
@@ -72243,6 +74531,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Organization",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "SyntheticDatasetConfigResult": {
+      "required": [
+        "message",
+        "data"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "#/definitions/SyntheticDatasetConfigPayload"
+        }
+      }
+    },
+    "SyntheticDatasetCreateStartedResult": {
+      "required": [
+        "message",
+        "data"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "#/definitions/Dataset"
+        }
+      }
+    },
+    "SyntheticDatasetUpdateResult": {
+      "required": [
+        "message",
+        "data"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "#/definitions/SyntheticDatasetUpdateData"
         }
       }
     },
@@ -74517,6 +76856,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "CompareDatasetMetadata": {
+      "required": [
+        "compare_id",
+        "total_rows",
+        "total_pages"
+      ],
+      "type": "object",
+      "properties": {
+        "compare_id": {
+          "title": "Compare id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "total_rows": {
+          "title": "Total rows",
+          "type": "integer"
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        }
+      }
+    },
     "CompositeChildItem": {
       "required": [
         "child_id",
@@ -74824,6 +77186,117 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "Column": {
+      "required": [
+        "name",
+        "data_type",
+        "source"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string",
+          "enum": [
+            "text",
+            "boolean",
+            "integer",
+            "float",
+            "json",
+            "array",
+            "image",
+            "images",
+            "datetime",
+            "audio",
+            "document",
+            "others",
+            "persona"
+          ]
+        },
+        "dataset": {
+          "title": "Dataset",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "enum": [
+            "evaluation",
+            "evaluation_tags",
+            "evaluation_reason",
+            "run_prompt",
+            "experiment",
+            "optimisation",
+            "experiment_evaluation",
+            "experiment_evaluation_tags",
+            "optimisation_evaluation",
+            "annotation_label",
+            "optimisation_evaluation_tags",
+            "extracted_json",
+            "classification",
+            "extracted_entities",
+            "api_call",
+            "python_code",
+            "vector_db",
+            "conditional",
+            "eval_playground",
+            "OTHERS"
+          ]
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "maxLength": 2000,
+          "x-nullable": true
+        }
+      }
+    },
+    "DatasetDerivedVariableDetail": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "schema": {
+          "title": "Schema",
+          "type": "object"
+        },
+        "full_variables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "raw_sample": {
+          "title": "Raw sample",
+          "type": "object",
+          "x-nullable": true
+        },
+        "is_json": {
+          "title": "Is json",
+          "type": "boolean"
+        }
+      }
+    },
     "DatasetEvalStatsMetric": {
       "required": [
         "name",
@@ -74849,6 +77322,92 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "output": {
           "title": "Output",
           "type": "object"
+        }
+      }
+    },
+    "DatasetListItem": {
+      "required": [
+        "id",
+        "name",
+        "number_of_datapoints",
+        "number_of_experiments",
+        "number_of_optimisations",
+        "derived_datasets",
+        "created_at",
+        "dataset_type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "number_of_datapoints": {
+          "title": "Number of datapoints",
+          "type": "integer"
+        },
+        "number_of_experiments": {
+          "title": "Number of experiments",
+          "type": "integer"
+        },
+        "number_of_optimisations": {
+          "title": "Number of optimisations",
+          "type": "integer"
+        },
+        "derived_datasets": {
+          "title": "Derived datasets",
+          "type": "integer"
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_type": {
+          "title": "Dataset type",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DatasetNameItem": {
+      "required": [
+        "dataset_id",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "model_type": {
+          "title": "Model type",
+          "type": "string"
+        }
+      }
+    },
+    "DatasetRowNavigation": {
+      "type": "object",
+      "properties": {
+        "row_id": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       }
     },
@@ -74883,6 +77442,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_token": {
           "title": "Total token",
           "type": "number"
+        }
+      }
+    },
+    "DatasetSdkRowsCode": {
+      "required": [
+        "python_add_row",
+        "python_add_col",
+        "typescript_add_col",
+        "typescript_add_row",
+        "curl_add_col",
+        "curl_add_row"
+      ],
+      "type": "object",
+      "properties": {
+        "python_add_row": {
+          "title": "Python add row",
+          "type": "string",
+          "minLength": 1
+        },
+        "python_add_col": {
+          "title": "Python add col",
+          "type": "string",
+          "minLength": 1
+        },
+        "typescript_add_col": {
+          "title": "Typescript add col",
+          "type": "string",
+          "minLength": 1
+        },
+        "typescript_add_row": {
+          "title": "Typescript add row",
+          "type": "string",
+          "minLength": 1
+        },
+        "curl_add_col": {
+          "title": "Curl add col",
+          "type": "string",
+          "minLength": 1
+        },
+        "curl_add_row": {
+          "title": "Curl add row",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DatasetTableMetadata": {
+      "required": [
+        "dataset_name"
+      ],
+      "type": "object",
+      "properties": {
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "total_rows": {
+          "title": "Total rows",
+          "type": "integer"
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        },
+        "error_messages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "x-nullable": true
         }
       }
     },
@@ -75385,6 +78020,143 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalStructure": {
+      "required": [
+        "id",
+        "template_id",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "template_id": {
+          "title": "Template id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "eval_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "template_name": {
+          "title": "Template name",
+          "type": "string",
+          "minLength": 1
+        },
+        "required_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "optional_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "variable_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "run_prompt_column": {
+          "title": "Run prompt column",
+          "type": "boolean"
+        },
+        "mapping": {
+          "title": "Mapping",
+          "type": "object"
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
+        },
+        "params": {
+          "title": "Params",
+          "type": "object"
+        },
+        "function_params_schema": {
+          "title": "Function params schema",
+          "type": "object"
+        },
+        "eval_type_id": {
+          "title": "Eval type id",
+          "type": "string"
+        },
+        "eval_type": {
+          "title": "Eval type",
+          "type": "string"
+        },
+        "reason_column": {
+          "title": "Reason column",
+          "type": "boolean"
+        },
+        "models": {
+          "title": "Models",
+          "type": "object"
+        },
+        "selected_model": {
+          "title": "Selected model",
+          "type": "string"
+        },
+        "output": {
+          "title": "Output",
+          "type": "object"
+        },
+        "config_params_desc": {
+          "title": "Config params desc",
+          "type": "object"
+        },
+        "config_params_option": {
+          "title": "Config params option",
+          "type": "object"
+        },
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "error_localizer": {
+          "title": "Error localizer",
+          "type": "boolean"
+        },
+        "choices": {
+          "title": "Choices",
+          "type": "object",
+          "x-nullable": true
+        },
+        "api_key_available": {
+          "title": "Api key available",
+          "type": "boolean"
+        },
+        "run_config": {
+          "title": "Run config",
+          "type": "object"
+        }
+      }
+    },
     "EvalTemplateListChartsItem": {
       "required": [
         "chart",
@@ -75639,6 +78411,351 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "pass_rate": {
           "title": "Pass rate",
           "type": "number"
+        }
+      }
+    },
+    "ExperimentComparisonDetail": {
+      "required": [
+        "metrics",
+        "weights"
+      ],
+      "type": "object",
+      "properties": {
+        "scores_weight": {
+          "title": "Scores weight",
+          "type": "object"
+        },
+        "experiment_dataset_id": {
+          "title": "Experiment dataset id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "rank": {
+          "title": "Rank",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "rank_suffix": {
+          "title": "Rank suffix",
+          "type": "string"
+        },
+        "metrics": {
+          "$ref": "#/definitions/ExperimentComparisonMetrics"
+        },
+        "weights": {
+          "$ref": "#/definitions/ExperimentComparisonWeights"
+        },
+        "overall_rating": {
+          "title": "Overall rating",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentComparisonDatasetMetric": {
+      "required": [
+        "dataset_id"
+      ],
+      "type": "object",
+      "properties": {
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "avg_completion_tokens": {
+          "title": "Avg completion tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_total_tokens": {
+          "title": "Avg total tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_response_time": {
+          "title": "Avg response time",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_score": {
+          "title": "Avg score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentComparisonColumnMetric"
+          }
+        },
+        "normalized_scores": {
+          "title": "Normalized scores",
+          "type": "object"
+        },
+        "overall_rating": {
+          "title": "Overall rating",
+          "type": "number",
+          "x-nullable": true
+        },
+        "rank": {
+          "title": "Rank",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "rank_suffix": {
+          "title": "Rank suffix",
+          "type": "string"
+        },
+        "total_datasets": {
+          "title": "Total datasets",
+          "type": "integer"
+        }
+      }
+    },
+    "ExperimentEvaluationColumnStats": {
+      "required": [
+        "column_name",
+        "column_id",
+        "total_rows",
+        "success_rate",
+        "avg_response_time",
+        "token_usage"
+      ],
+      "type": "object",
+      "properties": {
+        "column_name": {
+          "title": "Column name",
+          "type": "string",
+          "minLength": 1
+        },
+        "column_id": {
+          "title": "Column id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "total_rows": {
+          "title": "Total rows",
+          "type": "integer"
+        },
+        "success_rate": {
+          "title": "Success rate",
+          "type": "number"
+        },
+        "avg_response_time": {
+          "title": "Avg response time",
+          "type": "number"
+        },
+        "token_usage": {
+          "$ref": "#/definitions/ExperimentEvaluationTokenUsage"
+        },
+        "avg_score": {
+          "title": "Avg score",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentFeedbackDetailItem": {
+      "required": [
+        "id",
+        "created_at"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "value": {
+          "title": "Value",
+          "type": "object",
+          "x-nullable": true
+        },
+        "comment": {
+          "title": "Comment",
+          "type": "string",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "action_type": {
+          "title": "Action type",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentStatsColumnConfig": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "reverse_output": {
+          "title": "Reverse output",
+          "type": "boolean"
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_template_id": {
+          "title": "Eval template id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentStatsMetadata": {
+      "required": [
+        "is_winner_chosen"
+      ],
+      "type": "object",
+      "properties": {
+        "is_winner_chosen": {
+          "title": "Is winner chosen",
+          "type": "boolean"
+        }
+      }
+    },
+    "ExperimentStopWorkflowsCancelled": {
+      "required": [
+        "main",
+        "reruns"
+      ],
+      "type": "object",
+      "properties": {
+        "main": {
+          "title": "Main",
+          "type": "boolean"
+        },
+        "reruns": {
+          "title": "Reruns",
+          "type": "boolean"
+        }
+      }
+    },
+    "ExperimentTableRowsColumnConfig": {
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "origin_type": {
+          "title": "Origin type",
+          "type": "string"
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "group": {
+          "title": "Group",
+          "type": "object",
+          "x-nullable": true
+        },
+        "average_score": {
+          "title": "Average score",
+          "type": "object",
+          "x-nullable": true
+        },
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string"
+        },
+        "choices_map": {
+          "title": "Choices map",
+          "type": "object"
+        },
+        "is_base_column": {
+          "title": "Is base column",
+          "type": "boolean"
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_template_id": {
+          "title": "Eval template id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string"
+        },
+        "is_agent": {
+          "title": "Is agent",
+          "type": "boolean"
+        },
+        "is_final": {
+          "title": "Is final",
+          "type": "boolean"
+        }
+      }
+    },
+    "ExperimentTableRowsMetadata": {
+      "type": "object",
+      "properties": {
+        "total_rows": {
+          "title": "Total rows",
+          "type": "integer"
+        },
+        "dataset": {
+          "title": "Dataset",
+          "type": "string"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string"
+        },
+        "column": {
+          "title": "Column",
+          "type": "string",
+          "x-nullable": true
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        },
+        "description": {
+          "title": "Description",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },
@@ -77446,6 +80563,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PreviewDatasetOperationResultItem": {
+      "required": [
+        "row_id"
+      ],
+      "type": "object",
+      "properties": {
+        "row_id": {
+          "title": "Row id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "input": {
+          "title": "Input",
+          "type": "object",
+          "x-nullable": true
+        },
+        "output": {
+          "title": "Output",
+          "type": "object",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
     "PromptMetricsMetadata": {
       "required": [
         "total_rows"
@@ -77513,6 +80658,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "readOnly": true
+        }
+      }
+    },
+    "ProviderStatusItem": {
+      "required": [
+        "provider",
+        "display_name",
+        "has_key",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "minLength": 1
+        },
+        "has_key": {
+          "title": "Has key",
+          "type": "boolean"
+        },
+        "masked_key": {
+          "title": "Masked key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "logo_url": {
+          "title": "Logo url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -78483,6 +81674,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1,
           "x-nullable": true
+        }
+      }
+    },
+    "SyntheticDatasetConfigPayload": {
+      "type": "object",
+      "properties": {
+        "num_rows": {
+          "title": "Num rows",
+          "type": "integer"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "dataset": {
+          "title": "Dataset",
+          "type": "object"
+        },
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
+    "SyntheticDatasetUpdateData": {
+      "required": [
+        "dataset_id",
+        "dataset_name"
+      ],
+      "type": "object",
+      "properties": {
+        "dataset_id": {
+          "title": "Dataset id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "dataset_name": {
+          "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "num_rows": {
+          "title": "Num rows",
+          "type": "integer"
+        },
+        "num_columns": {
+          "title": "Num columns",
+          "type": "integer"
         }
       }
     },
@@ -79751,6 +82994,111 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentComparisonMetrics": {
+      "required": [
+        "raw",
+        "normalized"
+      ],
+      "type": "object",
+      "properties": {
+        "raw": {
+          "$ref": "#/definitions/ExperimentComparisonRawMetrics"
+        },
+        "normalized": {
+          "$ref": "#/definitions/ExperimentComparisonNormalizedMetrics"
+        }
+      }
+    },
+    "ExperimentComparisonWeights": {
+      "type": "object",
+      "properties": {
+        "response_time": {
+          "title": "Response time",
+          "type": "number",
+          "x-nullable": true
+        },
+        "scores": {
+          "title": "Scores",
+          "type": "object"
+        },
+        "total_tokens": {
+          "title": "Total tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "completion_tokens": {
+          "title": "Completion tokens",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentComparisonColumnMetric": {
+      "required": [
+        "column_id",
+        "column_name",
+        "avg_completion_tokens",
+        "avg_total_tokens",
+        "avg_response_time"
+      ],
+      "type": "object",
+      "properties": {
+        "column_id": {
+          "title": "Column id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "column_name": {
+          "title": "Column name",
+          "type": "string",
+          "minLength": 1
+        },
+        "avg_completion_tokens": {
+          "title": "Avg completion tokens",
+          "type": "number"
+        },
+        "avg_total_tokens": {
+          "title": "Avg total tokens",
+          "type": "number"
+        },
+        "avg_response_time": {
+          "title": "Avg response time",
+          "type": "number"
+        },
+        "avg_score": {
+          "title": "Avg score",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentEvaluationTokenUsage": {
+      "required": [
+        "avg_completion_tokens",
+        "avg_prompt_tokens",
+        "avg_total_tokens",
+        "total_tokens"
+      ],
+      "type": "object",
+      "properties": {
+        "avg_completion_tokens": {
+          "title": "Avg completion tokens",
+          "type": "number"
+        },
+        "avg_prompt_tokens": {
+          "title": "Avg prompt tokens",
+          "type": "number"
+        },
+        "avg_total_tokens": {
+          "title": "Avg total tokens",
+          "type": "number"
+        },
+        "total_tokens": {
+          "title": "Total tokens",
+          "type": "integer"
+        }
+      }
+    },
     "ErrorName": {
       "required": [
         "name",
@@ -80231,6 +83579,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       },
       "x-nullable": true
+    },
+    "ExperimentComparisonNormalizedMetrics": {
+      "type": "object",
+      "properties": {
+        "completion_tokens": {
+          "title": "Completion tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "total_tokens": {
+          "title": "Total tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "response_time": {
+          "title": "Response time",
+          "type": "number",
+          "x-nullable": true
+        },
+        "score": {
+          "title": "Score",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "ExperimentComparisonRawMetrics": {
+      "type": "object",
+      "properties": {
+        "avg_completion_tokens": {
+          "title": "Avg completion tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_total_tokens": {
+          "title": "Avg total tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_response_time": {
+          "title": "Avg response time",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_score": {
+          "title": "Avg score",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
     },
     "AgentPromptOptimiserComponentEvalResult": {
       "type": "object",

@@ -43,6 +43,8 @@ def _response_ref(operation, status_code="200"):
     schema = responses[status_code]["schema"]
     if "$ref" in schema:
         return schema["$ref"].rsplit("/", 1)[-1]
+    if schema.get("type") == "file":
+        return "file"
     if schema.get("type") == "array" and schema.get("items", {}).get("$ref"):
         return f"{schema['items']['$ref'].rsplit('/', 1)[-1]}[]"
     raise AssertionError(f"Unexpected response schema: {schema}")
@@ -666,49 +668,49 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "DatasetJsonSchemaResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/add-api-column/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnCreateResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/add_vector_db_column/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnCreateResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/classify-column/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnCreateResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/compare-datasets/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/compare-datasets/add-eval/"): (
-            "ModelHubJSONResponse"
+            "DevelopDatasetMessageResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/compare-datasets/download/"): (
-            "ModelHubJSONResponse"
+            "file"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/compare-datasets/start-eval/"): (
-            "ModelHubJSONResponse"
+            "DevelopDatasetMessageResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/compare-stats/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetStatsResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/conditional-column/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnCreateResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/extract-entities/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnMessageResponse"
         ),
         ("POST", "/model-hub/datasets/{dataset_id}/preview/{operation_type}/"): (
-            "ModelHubJSONResponse"
+            "PreviewDatasetOperationResponse"
         ),
         ("POST", "/model-hub/datasets/compare/get-evals-list/"): (
-            "ModelHubJSONResponse"
+            "CompareEvalListResponse"
         ),
         ("POST", "/model-hub/datasets/compare/preview-run-eval/"): (
-            "ModelHubJSONResponse"
+            "EvalPreviewResponse"
         ),
         ("GET", "/model-hub/datasets/delete-compare/{compare_id}/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetRowResponse"
         ),
         ("DELETE", "/model-hub/datasets/delete-compare/{compare_id}/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetDeleteResponse"
         ),
         ("GET", "/model-hub/datasets/explanation-summary/{dataset_id}/"): (
             "DatasetExplanationSummaryResponse"
@@ -718,10 +720,10 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("GET", "/model-hub/datasets/get-base-columns/"): "BaseColumnsResponse",
         ("GET", "/model-hub/datasets/get-compare-row/{compare_id}/{row_id}/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetRowResponse"
         ),
         ("DELETE", "/model-hub/datasets/get-compare-row/{compare_id}/{row_id}/"): (
-            "ModelHubJSONResponse"
+            "CompareDatasetDeleteResponse"
         ),
         ("POST", "/model-hub/datasets/huggingface/detail/"): (
             "HuggingFaceDatasetDetailResponse"
@@ -733,13 +735,13 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "DatasetRunPromptStatsResponse"
         ),
         ("POST", "/model-hub/develops/create-dataset-from-huggingface/"): (
-            "ModelHubJSONResponse"
+            "DatasetCreateStartedResponse"
         ),
         ("GET", "/model-hub/develops/dataset-creation-progress/{dataset_id}/"): (
-            "ModelHubJSONResponse"
+            "DatasetCreationProgressResponse"
         ),
         ("POST", "/model-hub/develops/get-huggingface-dataset-config/"): (
-            "ModelHubJSONResponse"
+            "HuggingFaceDatasetConfigResponse"
         ),
         ("GET", "/model-hub/develops/retrieve_run_prompt_column_config/"): (
             "RunPromptColumnConfigResponse"
@@ -748,10 +750,10 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "RunPromptOptionsResponse"
         ),
         ("POST", "/model-hub/develops/{dataset_id}/add_rows_from_huggingface/"): (
-            "ModelHubJSONResponse"
+            "DatasetRowsImportMessageResponse"
         ),
         ("POST", "/model-hub/develops/{dataset_id}/extract-json-column/"): (
-            "ModelHubJSONResponse"
+            "DynamicColumnCreateResponse"
         ),
         ("POST", "/model-hub/create_custom_evals/"): (
             "CustomEvalTemplateCreateResponse"
@@ -852,19 +854,19 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/embeddings/"): "EmbeddingsResponse",
         ("GET", "/model-hub/embeddings/{type}/"): "EmbeddingsResponse",
         ("GET", "/model-hub/experiments/v2/{experiment_id}/feedback/get-template/"): (
-            "ModelHubJSONResponse"
+            "ExperimentFeedbackTemplateResponse"
         ),
         ("POST", "/model-hub/experiments/v2/{experiment_id}/feedback/"): (
-            "ModelHubJSONResponse"
+            "ExperimentFeedbackCreateResponse"
         ),
         (
             "GET",
             "/model-hub/experiments/v2/{experiment_id}/feedback/get-feedback-details/",
-        ): "ModelHubJSONResponse",
+        ): "ExperimentFeedbackDetailsResponse",
         (
             "POST",
             "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/",
-        ): "ModelHubJSONResponse",
+        ): "ExperimentFeedbackSubmitResponse",
         ("POST", "/model-hub/get-column-values/"): "ColumnValuesResponse",
         ("GET", "/model-hub/get-eval-config"): "ModelHubEvalConfigResponse",
         ("GET", "/model-hub/get-eval-logs"): "EvalApiLogRowResponse",

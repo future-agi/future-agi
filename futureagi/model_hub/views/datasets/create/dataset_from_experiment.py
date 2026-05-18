@@ -19,7 +19,9 @@ from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.contracts import (
     CreateDatasetFromExperimentRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DevelopDatasetMessageResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.eval_runner import EvaluationRunner
@@ -53,7 +55,10 @@ class CreateDatasetFromExpView(APIView):
 
     @swagger_auto_schema(
         request_body=CreateDatasetFromExperimentRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, exp_dataset_id, *args, **kwargs):
         try:

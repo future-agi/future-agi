@@ -13,7 +13,9 @@ from model_hub.models.experiments import ExperimentDatasetTable
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetAddRowsFromExistingRequestSerializer,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetRowsImportedResponseSerializer,
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -41,7 +43,10 @@ class AddRowsFromExistingView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetAddRowsFromExistingRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetRowsImportedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:

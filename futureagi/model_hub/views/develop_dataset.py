@@ -46,6 +46,7 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from docx import Document
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from pinecone import Pinecone
 from pypdf import PdfReader
@@ -165,13 +166,38 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     ModelHubEvalConfigResponseSerializer,
     ModelHubEmptyRequestSerializer,
-    ModelHubJSONResponseSerializer,
     PreviewRunEvalRequestSerializer,
     SingleRowEvaluationRequestSerializer,
     SingleRowEvaluationResponseSerializer,
     StartEvalsProcessRequestSerializer,
     StopUserEvalRequestSerializer,
     UserEvalMutationRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    ColumnTypeConversionResponseSerializer,
+    CompareDatasetDeleteResponseSerializer,
+    CompareDatasetResponseSerializer,
+    CompareDatasetRowResponseSerializer,
+    CompareDatasetStatsResponseSerializer,
+    CompareEvalListResponseSerializer,
+    DatasetCellDataResponseSerializer,
+    DatasetColumnsMutationResponseSerializer,
+    DatasetCopyResponseSerializer,
+    DatasetListResponseSerializer,
+    DatasetNamesResponseSerializer,
+    DatasetRowDataResponseSerializer,
+    DatasetSdkRowsResponseSerializer,
+    DatasetTableResponseSerializer,
+    DevelopDatasetMessageResponseSerializer,
+    DuplicateDatasetResponseSerializer,
+    DuplicateRowsResponseSerializer,
+    EvalFunctionListResponseSerializer,
+    EvalListResponseSerializer,
+    EvalPreviewResponseSerializer,
+    EvalStructureResponseSerializer,
+    ManualDatasetCreateResponseSerializer,
+    MergeDatasetResponseSerializer,
+    ProviderStatusResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import (
     ColumnSerializer,
@@ -517,7 +543,10 @@ class AddRowsFromFile(CreateAPIView):
 
     @swagger_auto_schema(
         request_body=AddRowsFromFileRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -724,7 +753,7 @@ class CloneDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=CloneDatasetRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -900,7 +929,7 @@ class AddAsNewDataset(APIView):
 
     @swagger_auto_schema(
         request_body=AddAsNewDatasetRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -1475,7 +1504,7 @@ class GetDatasetsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):  # Changed from 'post' to 'get'
         try:
@@ -2060,7 +2089,7 @@ class GetDatasetTableView(APIView):
         return filtered_rows, search_results
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
@@ -2756,7 +2785,7 @@ class GetRowDataView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetRowDataRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DatasetRowDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -2927,7 +2956,7 @@ class GetExperimentDatasetTableView(APIView):
             return False
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, experiment_dataset_id, *args, **kwargs):
         try:
@@ -3365,7 +3394,7 @@ class GetDatasetsNamesView(APIView):
     #     traceback.print_exc()
     #     return self._gm.internal_server_error_response(str(e))
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: DatasetNamesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -3467,7 +3496,10 @@ class AddColumnsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetAddColumnsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetColumnsMutationResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -3587,7 +3619,10 @@ class AddEmptyColumnsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetAddEmptyColumnsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetColumnsMutationResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -3651,7 +3686,7 @@ class GetCellDataView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetCellDataRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DatasetCellDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -3718,7 +3753,10 @@ class AddStaticColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetStaticColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -3814,7 +3852,10 @@ class AddMultipleStaticColumnsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetMultipleStaticColumnsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         """
@@ -4175,7 +4216,10 @@ class AddEmptyRowsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetAddEmptyRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -4262,7 +4306,7 @@ class AddSDKRowsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetSdkRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DatasetSdkRowsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -4386,7 +4430,10 @@ class ManuallyCreateDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=ManualDatasetCreateRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ManualDatasetCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -4548,7 +4595,10 @@ class AddDataRowsView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetAddRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id: str, *args, **kwargs):
         try:
@@ -4758,7 +4808,10 @@ class UpdateColumnNameView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetUpdateColumnNameRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
@@ -4880,7 +4933,10 @@ class EditDatasetBehaviorView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetBehaviorRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def put(self, request, dataset_id, *args, **kwargs):
         try:
@@ -5064,7 +5120,10 @@ class UpdateCellValueView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetUpdateCellValueRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -5455,7 +5514,10 @@ class UpdateColumnTypeView(APIView):
 
     @swagger_auto_schema(
         request_body=DatasetUpdateColumnTypeRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ColumnTypeConversionResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
@@ -6248,7 +6310,13 @@ class DownloadDatasetView(APIView):
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: openapi.Response(
+                "CSV export",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
@@ -6355,7 +6423,10 @@ class GetFunctionList(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: EvalFunctionListResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -6377,7 +6448,7 @@ class GetEvalsListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: EvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(
         self, request, dataset_id=None, *args, **kwargs
@@ -7055,7 +7126,7 @@ class GetEvalStructureView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: EvalStructureResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(
         self, request, eval_id, dataset_id=None, *args, **kwargs
@@ -7230,7 +7301,10 @@ class StartEvalsProcess(APIView):
 
     @swagger_auto_schema(
         request_body=StartEvalsProcessRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -7572,7 +7646,10 @@ class EditAndRunUserEvalView(APIView):
 
     @swagger_auto_schema(
         request_body=UserEvalMutationRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
@@ -7838,7 +7915,10 @@ class AddUserEvalView(CreateAPIView):
 
     @swagger_auto_schema(
         request_body=UserEvalMutationRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
@@ -8070,7 +8150,10 @@ class StopUserEvalView(APIView):
 
     @swagger_auto_schema(
         request_body=StopUserEvalRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
         try:
@@ -8141,7 +8224,7 @@ class PreviewRunEvalView(APIView):
 
     @swagger_auto_schema(
         request_body=PreviewRunEvalRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: EvalPreviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -8251,7 +8334,7 @@ class GetProviderStatusView(APIView):
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: ProviderStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -11217,7 +11300,7 @@ class DuplicateRowsView(APIView):
 
     @swagger_auto_schema(
         request_body=DuplicateRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: DuplicateRowsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -11348,7 +11431,10 @@ class DuplicateDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=DuplicateDatasetRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DuplicateDatasetResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -11560,7 +11646,7 @@ class MergeDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=MergeDatasetRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: MergeDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -11859,7 +11945,10 @@ class GetCompareDatasetRow(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: CompareDatasetRowResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, compare_id, row_id, *args, **kwargs):
         try:
@@ -12090,7 +12179,10 @@ class GetCompareDatasetRow(APIView):
         delete_compare_folder(compare_id)
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: CompareDatasetDeleteResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def delete(self, request, compare_id, *args, **kwargs):
         try:
@@ -12788,7 +12880,7 @@ class CompareDatasetsView(APIView):
 
     @swagger_auto_schema(
         request_body=CompareDatasetSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: CompareDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -13237,7 +13329,13 @@ class DownloadComparisonDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=CompareDatasetSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: openapi.Response(
+                "CSV export",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -13356,7 +13454,10 @@ class CompareDatasetsStatsView(APIView):
 
     @swagger_auto_schema(
         request_body=CompareDatasetStatsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: CompareDatasetStatsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -13470,7 +13571,10 @@ class AddCompareExperimentEvalView(APIView):
 
     @swagger_auto_schema(
         request_body=UserEvalSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         organization = (
@@ -13657,7 +13761,10 @@ class CompareDatasetsStartEvalsProcess(APIView):
 
     @swagger_auto_schema(
         request_body=CompareStartEvalsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -13763,7 +13870,7 @@ class GetCompareEvalsListView(APIView):
 
     @swagger_auto_schema(
         request_body=CompareEvalsListRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: CompareEvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -13856,7 +13963,7 @@ class ComparePreviewRunEvalView(APIView):
 
     @swagger_auto_schema(
         request_body=ComparePreviewRunEvalRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: EvalPreviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:

@@ -15,7 +15,9 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     HuggingFaceAddRowsRequestSerializer,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetRowsImportMessageResponseSerializer,
 )
 from model_hub.utils.utils import (
     get_data_type_huggingface,
@@ -48,7 +50,10 @@ class AddRowsFromHuggingFaceView(APIView):
 
     @swagger_auto_schema(
         request_body=HuggingFaceAddRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetRowsImportMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:

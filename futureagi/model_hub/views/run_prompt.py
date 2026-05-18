@@ -50,7 +50,6 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRunPromptStatsResponseSerializer,
     LiteLLMModelVoicesResponseSerializer,
-    ModelHubJSONResponseSerializer,
     ModelHubPaginatedResponseSerializer,
     ModelHubStringResultResponseSerializer,
     ModelHubSuccessMessageResponseSerializer,
@@ -58,6 +57,10 @@ from model_hub.serializers.contracts import (
     RunPromptColumnConfigResponseSerializer,
     RunPromptForRowsRequestSerializer,
     RunPromptOptionsResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DevelopDatasetMessageResponseSerializer,
+    RunPromptColumnPreviewResponseSerializer,
 )
 from model_hub.serializers.run_prompt import (
     AddRunPromptSerializer,
@@ -1500,7 +1503,10 @@ class AddRunPromptColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=AddRunPromptSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
@@ -1636,7 +1642,10 @@ class PreviewRunPromptColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=PreviewRunPromptSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: RunPromptColumnPreviewResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -1777,7 +1786,10 @@ class EditRunPromptColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=EditRunPromptColumnSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction

@@ -1,5 +1,4 @@
 import structlog
-from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
@@ -7,17 +6,23 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column
 from model_hub.models.evals_metric import Feedback, UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
 from model_hub.serializers.contracts import (
-    ExperimentFeedbackSubmitRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+    ExperimentFeedbackSubmitRequestSerializer,
 )
 from model_hub.serializers.develop_dataset import FeedbackSerializer
+from model_hub.serializers.experiment_contracts import (
+    ExperimentFeedbackCreateResponseSerializer,
+    ExperimentFeedbackDetailsResponseSerializer,
+    ExperimentFeedbackSubmitResponseSerializer,
+    ExperimentFeedbackTemplateResponseSerializer,
+)
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
 from tfc.utils.error_codes import get_error_message
@@ -47,7 +52,7 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: ExperimentFeedbackTemplateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, experiment_id):
         try:
@@ -129,7 +134,7 @@ class ExperimentFeedbackCreateV2View(APIView):
 
     @swagger_auto_schema(
         request_body=FeedbackSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: ExperimentFeedbackCreateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, experiment_id):
         try:
@@ -168,7 +173,7 @@ class ExperimentFeedbackDetailsV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: ExperimentFeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, experiment_id):
         try:
@@ -224,7 +229,7 @@ class ExperimentFeedbackSubmitV2View(APIView):
 
     @swagger_auto_schema(
         request_body=ExperimentFeedbackSubmitRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: ExperimentFeedbackSubmitResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, experiment_id):
         try:

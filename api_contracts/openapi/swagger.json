@@ -20474,7 +20474,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareEvalListResponse"
                         }
                     },
                     "400": {
@@ -20532,7 +20532,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/EvalPreviewResponse"
                         }
                     },
                     "400": {
@@ -20581,7 +20581,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetRowResponse"
                         }
                     },
                     "400": {
@@ -20627,7 +20627,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetDeleteResponse"
                         }
                     },
                     "400": {
@@ -20853,7 +20853,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetRowResponse"
                         }
                     },
                     "400": {
@@ -20899,7 +20899,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetDeleteResponse"
                         }
                     },
                     "400": {
@@ -21086,7 +21086,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnCreateResponse"
                         }
                     },
                     "400": {
@@ -21151,7 +21151,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnCreateResponse"
                         }
                     },
                     "400": {
@@ -21216,7 +21216,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnCreateResponse"
                         }
                     },
                     "400": {
@@ -21281,7 +21281,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetResponse"
                         }
                     },
                     "400": {
@@ -21346,7 +21346,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -21409,9 +21409,9 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "",
+                        "description": "CSV export",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -21476,7 +21476,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -21541,7 +21541,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/CompareDatasetStatsResponse"
                         }
                     },
                     "400": {
@@ -21606,7 +21606,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnCreateResponse"
                         }
                     },
                     "400": {
@@ -21663,7 +21663,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetDerivedVariablesResponse"
                         }
                     },
                     "400": {
@@ -21728,7 +21728,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DuplicateRowsResponse"
                         }
                     },
                     "400": {
@@ -21793,7 +21793,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DuplicateDatasetResponse"
                         }
                     },
                     "400": {
@@ -21858,7 +21858,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnMessageResponse"
                         }
                     },
                     "400": {
@@ -21923,7 +21923,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/MergeDatasetResponse"
                         }
                     },
                     "400": {
@@ -21988,7 +21988,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/PreviewDatasetOperationResponse"
                         }
                     },
                     "400": {
@@ -22117,7 +22117,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCopyResponse"
                         }
                     },
                     "400": {
@@ -22175,7 +22175,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -22233,7 +22233,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetSdkRowsResponse"
                         }
                     },
                     "400": {
@@ -22291,7 +22291,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -22349,7 +22349,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCopyResponse"
                         }
                     },
                     "400": {
@@ -22414,7 +22414,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCreateStartedResponse"
                         }
                     },
                     "400": {
@@ -22472,7 +22472,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/LocalFileDatasetCreateStartedResponse"
                         }
                     },
                     "400": {
@@ -22530,7 +22530,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ManualDatasetCreateResponse"
                         }
                     },
                     "400": {
@@ -22588,7 +22588,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCreateStartedResponse"
                         }
                     },
                     "400": {
@@ -22646,7 +22646,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/SyntheticDatasetCreateStartedResponse"
                         }
                     },
                     "400": {
@@ -22695,7 +22695,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCreationProgressResponse"
                         }
                     },
                     "400": {
@@ -22776,7 +22776,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -22834,7 +22834,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetCellDataResponse"
                         }
                     },
                     "400": {
@@ -22883,7 +22883,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetNamesResponse"
                         }
                     },
                     "400": {
@@ -22932,7 +22932,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetListResponse"
                         }
                     },
                     "400": {
@@ -23046,7 +23046,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/HuggingFaceDatasetConfigResponse"
                         }
                     },
                     "400": {
@@ -23104,7 +23104,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentRowDiffResponse"
                         }
                     },
                     "400": {
@@ -23153,7 +23153,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/EvalFunctionListResponse"
                         }
                     },
                     "400": {
@@ -23211,7 +23211,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/RunPromptColumnPreviewResponse"
                         }
                     },
                     "400": {
@@ -23260,7 +23260,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ProviderStatusResponse"
                         }
                     },
                     "400": {
@@ -23416,7 +23416,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetColumnsMutationResponse"
                         }
                     },
                     "400": {
@@ -23481,7 +23481,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetColumnsMutationResponse"
                         }
                     },
                     "400": {
@@ -23546,7 +23546,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -23612,7 +23612,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -23677,7 +23677,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -23742,7 +23742,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetRowsImportedResponse"
                         }
                     },
                     "400": {
@@ -23807,7 +23807,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetRowsImportMessageResponse"
                         }
                     },
                     "400": {
@@ -23872,7 +23872,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -23937,7 +23937,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24002,7 +24002,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24166,9 +24166,9 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": "",
+                        "description": "CSV export",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -24233,7 +24233,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24304,7 +24304,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24369,7 +24369,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DynamicColumnCreateResponse"
                         }
                     },
                     "400": {
@@ -24425,7 +24425,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetTableResponse"
                         }
                     },
                     "400": {
@@ -24490,7 +24490,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetRowDataResponse"
                         }
                     },
                     "400": {
@@ -24546,7 +24546,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/EvalStructureResponse"
                         }
                     },
                     "400": {
@@ -24608,7 +24608,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/EvalListResponse"
                         }
                     },
                     "400": {
@@ -24673,7 +24673,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/EvalPreviewResponse"
                         }
                     },
                     "400": {
@@ -24738,7 +24738,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24804,7 +24804,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -24866,7 +24866,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/SyntheticDatasetConfigResponse"
                         }
                     },
                     "400": {
@@ -24931,7 +24931,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/SyntheticDatasetUpdateResponse"
                         }
                     },
                     "400": {
@@ -24996,7 +24996,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -25061,7 +25061,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -25132,7 +25132,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ColumnTypeConversionResponse"
                         }
                     },
                     "400": {
@@ -25203,7 +25203,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
                         }
                     },
                     "400": {
@@ -25259,7 +25259,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/DatasetTableResponse"
                         }
                     },
                     "400": {
@@ -27599,7 +27599,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentLegacyDetailResponse"
                         }
                     },
                     "400": {
@@ -27654,7 +27654,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStringResultResponse"
                         }
                     },
                     "400": {
@@ -27709,7 +27709,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStringResultResponse"
                         }
                     },
                     "400": {
@@ -27877,7 +27877,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStringResultResponse"
                         }
                     },
                     "400": {
@@ -27935,7 +27935,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStringResultResponse"
                         }
                     },
                     "400": {
@@ -28104,7 +28104,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStringResultResponse"
                         }
                     },
                     "400": {
@@ -28162,7 +28162,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentRowDiffResponse"
                         }
                     },
                     "400": {
@@ -28211,7 +28211,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentNameSuggestionResponse"
                         }
                     },
                     "400": {
@@ -28267,7 +28267,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentNameValidationResponse"
                         }
                     },
                     "400": {
@@ -28316,7 +28316,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentV2DetailResponse"
                         }
                     },
                     "400": {
@@ -28372,7 +28372,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentV2DetailResponse"
                         }
                     },
                     "400": {
@@ -28437,7 +28437,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentDatasetComparisonResponse"
                         }
                     },
                     "400": {
@@ -28493,7 +28493,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentComparisonDetailsResponse"
                         }
                     },
                     "400": {
@@ -28549,7 +28549,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentDerivedVariablesResponse"
                         }
                     },
                     "400": {
@@ -28605,7 +28605,8 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "description": "CSV file download.",
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -28661,7 +28662,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentEvaluationStatsResponse"
                         }
                     },
                     "400": {
@@ -28732,7 +28733,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentFeedbackCreateResponse"
                         }
                     },
                     "400": {
@@ -28788,7 +28789,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentFeedbackDetailsResponse"
                         }
                     },
                     "400": {
@@ -28844,7 +28845,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentFeedbackTemplateResponse"
                         }
                     },
                     "400": {
@@ -28909,7 +28910,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentFeedbackSubmitResponse"
                         }
                     },
                     "400": {
@@ -28965,7 +28966,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentJsonSchemaResponse"
                         }
                     },
                     "400": {
@@ -29031,7 +29032,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentWorkflowResponse"
                         }
                     },
                     "400": {
@@ -29087,7 +29088,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
                     "400": {
@@ -29143,7 +29144,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
                     "400": {
@@ -29205,7 +29206,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStatsResponse"
                         }
                     },
                     "400": {
@@ -29271,7 +29272,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStopResponse"
                         }
                     },
                     "400": {
@@ -29327,7 +29328,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
                     "400": {
@@ -29392,7 +29393,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentAddEvalResponse"
                         }
                     },
                     "400": {
@@ -29457,7 +29458,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentDatasetComparisonResponse"
                         }
                     },
                     "400": {
@@ -29513,7 +29514,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentComparisonDetailsResponse"
                         }
                     },
                     "400": {
@@ -29569,7 +29570,8 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "description": "CSV file download.",
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -29625,7 +29627,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentEvaluationStatsResponse"
                         }
                     },
                     "400": {
@@ -29696,7 +29698,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentMessageResponse"
                         }
                     },
                     "400": {
@@ -29752,7 +29754,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentStatsResponse"
                         }
                     },
                     "400": {
@@ -29808,7 +29810,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubJSONResponse"
+                            "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
                     "400": {
@@ -60265,7 +60267,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/StripeWebhookResponse"
+                            "$ref": "#/definitions/StripeWebhookLegacyResponse"
                         }
                     },
                     "400": {
@@ -78259,32 +78261,33 @@
                 }
             }
         },
-        "ModelHubJSONResponse": {
+        "CompareEvalListResult": {
+            "required": [
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "CompareEvalListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
             "type": "object",
             "properties": {
                 "status": {
                     "title": "Status",
-                    "type": "object"
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "string"
+                    "type": "boolean"
                 },
                 "result": {
-                    "title": "Result",
-                    "type": "object"
-                },
-                "data": {
-                    "title": "Data",
-                    "type": "object"
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "object"
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "object"
+                    "$ref": "#/definitions/CompareEvalListResult"
                 }
             }
         },
@@ -78326,6 +78329,107 @@
                     "title": "Source",
                     "type": "string",
                     "default": "dataset_evaluation"
+                }
+            }
+        },
+        "EvalPreviewResult": {
+            "required": [
+                "responses"
+            ],
+            "type": "object",
+            "properties": {
+                "responses": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "EvalPreviewResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EvalPreviewResult"
+                }
+            }
+        },
+        "CompareDatasetRowResult": {
+            "required": [
+                "table"
+            ],
+            "type": "object",
+            "properties": {
+                "prev_row_id": {
+                    "title": "Prev row id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "next_row_id": {
+                    "title": "Next row id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "CompareDatasetRowResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/CompareDatasetRowResult"
+                }
+            }
+        },
+        "CompareDatasetDeleteResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "CompareDatasetDeleteResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/CompareDatasetDeleteResult"
                 }
             }
         },
@@ -78620,6 +78724,47 @@
                 }
             }
         },
+        "DynamicColumnCreateResult": {
+            "required": [
+                "message",
+                "new_column_id",
+                "new_column_name"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "new_column_id": {
+                    "title": "New column id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "new_column_name": {
+                    "title": "New column name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DynamicColumnCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DynamicColumnCreateResult"
+                }
+            }
+        },
         "VectorDBColumnRequest": {
             "required": [
                 "column_id",
@@ -78784,6 +78929,65 @@
                 }
             }
         },
+        "CompareDatasetMetadata": {
+            "required": [
+                "compare_id",
+                "total_rows",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "compare_id": {
+                    "title": "Compare id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                }
+            }
+        },
+        "CompareDatasetResult": {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "$ref": "#/definitions/CompareDatasetMetadata"
+                },
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "CompareDatasetResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/CompareDatasetResult"
+                }
+            }
+        },
         "UserEval": {
             "required": [
                 "name",
@@ -78828,6 +79032,24 @@
                     "title": "Composite weight overrides",
                     "type": "object",
                     "x-nullable": true
+                }
+            }
+        },
+        "DevelopDatasetMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -78884,6 +79106,29 @@
                 }
             }
         },
+        "CompareDatasetStatsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "ConditionalColumnRequest": {
             "required": [
                 "config",
@@ -78906,6 +79151,69 @@
                     "title": "Concurrency",
                     "type": "integer",
                     "default": 5
+                }
+            }
+        },
+        "DatasetDerivedVariableDetail": {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "schema": {
+                    "title": "Schema",
+                    "type": "object"
+                },
+                "full_variables": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "raw_sample": {
+                    "title": "Raw sample",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "is_json": {
+                    "title": "Is json",
+                    "type": "boolean"
+                }
+            }
+        },
+        "DatasetDerivedVariablesResult": {
+            "required": [
+                "derived_variables"
+            ],
+            "type": "object",
+            "properties": {
+                "derived_variables": {
+                    "title": "Derived variables",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/DatasetDerivedVariableDetail"
+                    }
+                }
+            }
+        },
+        "DatasetDerivedVariablesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetDerivedVariablesResult"
                 }
             }
         },
@@ -78933,6 +79241,58 @@
                 }
             }
         },
+        "DuplicateRowsResult": {
+            "required": [
+                "message",
+                "source_rows",
+                "copies_per_row",
+                "total_new_rows",
+                "new_row_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "source_rows": {
+                    "title": "Source rows",
+                    "type": "integer"
+                },
+                "copies_per_row": {
+                    "title": "Copies per row",
+                    "type": "integer"
+                },
+                "total_new_rows": {
+                    "title": "Total new rows",
+                    "type": "integer"
+                },
+                "new_row_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                }
+            }
+        },
+        "DuplicateRowsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DuplicateRowsResult"
+                }
+            }
+        },
         "DuplicateDatasetRequest": {
             "required": [
                 "name"
@@ -78956,6 +79316,57 @@
                     "title": "Name",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "DuplicateDatasetResult": {
+            "required": [
+                "message",
+                "new_dataset_id",
+                "new_dataset_name",
+                "columns_copied",
+                "rows_copied"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "new_dataset_id": {
+                    "title": "New dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "new_dataset_name": {
+                    "title": "New dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "columns_copied": {
+                    "title": "Columns copied",
+                    "type": "integer"
+                },
+                "rows_copied": {
+                    "title": "Rows copied",
+                    "type": "integer"
+                }
+            }
+        },
+        "DuplicateDatasetResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DuplicateDatasetResult"
                 }
             }
         },
@@ -78993,6 +79404,35 @@
                 }
             }
         },
+        "DynamicColumnMessageResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DynamicColumnMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DynamicColumnMessageResult"
+                }
+            }
+        },
         "MergeDatasetRequest": {
             "required": [
                 "target_dataset_id"
@@ -79016,6 +79456,50 @@
                     "title": "Target dataset id",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "MergeDatasetResult": {
+            "required": [
+                "message",
+                "rows_added",
+                "new_columns_created",
+                "columns_mapped"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows_added": {
+                    "title": "Rows added",
+                    "type": "integer"
+                },
+                "new_columns_created": {
+                    "title": "New columns created",
+                    "type": "integer"
+                },
+                "columns_mapped": {
+                    "title": "Columns mapped",
+                    "type": "integer"
+                }
+            }
+        },
+        "MergeDatasetResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/MergeDatasetResult"
                 }
             }
         },
@@ -79057,6 +79541,75 @@
                 }
             }
         },
+        "PreviewDatasetOperationResultItem": {
+            "required": [
+                "row_id"
+            ],
+            "type": "object",
+            "properties": {
+                "row_id": {
+                    "title": "Row id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "input": {
+                    "title": "Input",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "PreviewDatasetOperationResult": {
+            "required": [
+                "message",
+                "preview_results",
+                "sample_size"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "preview_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PreviewDatasetOperationResultItem"
+                    }
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer"
+                }
+            }
+        },
+        "PreviewDatasetOperationResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/PreviewDatasetOperationResult"
+                }
+            }
+        },
         "DeleteEvalTemplate": {
             "required": [
                 "eval_template_id"
@@ -79089,6 +79642,47 @@
                     "title": "Columns",
                     "type": "object",
                     "default": {}
+                }
+            }
+        },
+        "DatasetCopyResult": {
+            "required": [
+                "message",
+                "dataset_id",
+                "dataset_name"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DatasetCopyResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetCopyResult"
                 }
             }
         },
@@ -79127,6 +79721,150 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "Dataset": {
+            "required": [
+                "name",
+                "organization"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "minLength": 1
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "model_type": {
+                    "title": "Model type",
+                    "type": "string",
+                    "enum": [
+                        "Numeric",
+                        "ScoreCategorical",
+                        "Ranking",
+                        "BinaryClassification",
+                        "Regression",
+                        "ObjectDetection",
+                        "Segmentation",
+                        "GenerativeLLM",
+                        "GenerativeImage",
+                        "GenerativeVideo",
+                        "TTS",
+                        "STT",
+                        "MultiModal"
+                    ]
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "demo",
+                        "build",
+                        "sdk",
+                        "observe",
+                        "knowledge_base",
+                        "scenario",
+                        "experiment_snapshot",
+                        "graph"
+                    ]
+                },
+                "user": {
+                    "title": "User",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetSdkRowsCode": {
+            "required": [
+                "python_add_row",
+                "python_add_col",
+                "typescript_add_col",
+                "typescript_add_row",
+                "curl_add_col",
+                "curl_add_row"
+            ],
+            "type": "object",
+            "properties": {
+                "python_add_row": {
+                    "title": "Python add row",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "python_add_col": {
+                    "title": "Python add col",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "typescript_add_col": {
+                    "title": "Typescript add col",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "typescript_add_row": {
+                    "title": "Typescript add row",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "curl_add_col": {
+                    "title": "Curl add col",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "curl_add_row": {
+                    "title": "Curl add row",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DatasetSdkRowsResult": {
+            "required": [
+                "api_keys",
+                "dataset",
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "api_keys": {
+                    "title": "Api keys",
+                    "type": "object"
+                },
+                "dataset": {
+                    "$ref": "#/definitions/Dataset"
+                },
+                "code": {
+                    "$ref": "#/definitions/DatasetSdkRowsCode"
+                }
+            }
+        },
+        "DatasetSdkRowsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetSdkRowsResult"
                 }
             }
         },
@@ -79331,6 +80069,52 @@
                 }
             }
         },
+        "DatasetCreateStartedResult": {
+            "required": [
+                "message",
+                "dataset_id",
+                "dataset_name"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_model_type": {
+                    "title": "Dataset model type",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetCreateStartedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetCreateStartedResult"
+                }
+            }
+        },
         "CreateDatasetFromLocalFileRequest": {
             "type": "object",
             "properties": {
@@ -79351,6 +80135,68 @@
                 "source": {
                     "title": "Source",
                     "type": "string"
+                }
+            }
+        },
+        "LocalFileDatasetCreateStartedResult": {
+            "required": [
+                "message",
+                "dataset_id",
+                "dataset_name",
+                "processing_status",
+                "estimated_rows",
+                "estimated_columns"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_model_type": {
+                    "title": "Dataset model type",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "processing_status": {
+                    "title": "Processing status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "estimated_rows": {
+                    "title": "Estimated rows",
+                    "type": "integer"
+                },
+                "estimated_columns": {
+                    "title": "Estimated columns",
+                    "type": "integer"
+                }
+            }
+        },
+        "LocalFileDatasetCreateStartedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/LocalFileDatasetCreateStartedResult"
                 }
             }
         },
@@ -79376,6 +80222,51 @@
                     "type": "integer",
                     "default": 1,
                     "minimum": 1
+                }
+            }
+        },
+        "ManualDatasetCreateResult": {
+            "required": [
+                "message",
+                "dataset_id",
+                "rows_created",
+                "columns_created"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "rows_created": {
+                    "title": "Rows created",
+                    "type": "integer"
+                },
+                "columns_created": {
+                    "title": "Columns created",
+                    "type": "integer"
+                }
+            }
+        },
+        "ManualDatasetCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ManualDatasetCreateResult"
                 }
             }
         },
@@ -79436,6 +80327,135 @@
                 }
             }
         },
+        "SyntheticDatasetCreateStartedResult": {
+            "required": [
+                "message",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "$ref": "#/definitions/Dataset"
+                }
+            }
+        },
+        "SyntheticDatasetCreateStartedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SyntheticDatasetCreateStartedResult"
+                }
+            }
+        },
+        "DatasetCreationProgressResult": {
+            "required": [
+                "dataset_id",
+                "dataset_name",
+                "processing_status",
+                "is_processing",
+                "is_completed",
+                "is_failed"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "processing_status": {
+                    "title": "Processing status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_processing": {
+                    "title": "Is processing",
+                    "type": "boolean"
+                },
+                "is_completed": {
+                    "title": "Is completed",
+                    "type": "boolean"
+                },
+                "is_failed": {
+                    "title": "Is failed",
+                    "type": "boolean"
+                },
+                "original_filename": {
+                    "title": "Original filename",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "estimated_rows": {
+                    "title": "Estimated rows",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "estimated_columns": {
+                    "title": "Estimated columns",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "queued_at": {
+                    "title": "Queued at",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "failed_at": {
+                    "title": "Failed at",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetCreationProgressResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetCreationProgressResult"
+                }
+            }
+        },
         "EditRunPromptColumn": {
             "required": [
                 "dataset_id",
@@ -79487,6 +80507,198 @@
                 }
             }
         },
+        "DatasetCellValue": {
+            "type": "object",
+            "properties": {
+                "cell_value": {
+                    "title": "Cell value",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "value_infos": {
+                    "title": "Value infos",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "feedback_info": {
+                    "title": "Feedback info",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetCellDataResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/DatasetCellValue"
+                        }
+                    }
+                }
+            }
+        },
+        "DatasetNameItem": {
+            "required": [
+                "dataset_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "model_type": {
+                    "title": "Model type",
+                    "type": "string"
+                }
+            }
+        },
+        "DatasetNamesResult": {
+            "required": [
+                "datasets"
+            ],
+            "type": "object",
+            "properties": {
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DatasetNameItem"
+                    }
+                }
+            }
+        },
+        "DatasetNamesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetNamesResult"
+                }
+            }
+        },
+        "DatasetListItem": {
+            "required": [
+                "id",
+                "name",
+                "number_of_datapoints",
+                "number_of_experiments",
+                "number_of_optimisations",
+                "derived_datasets",
+                "created_at",
+                "dataset_type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "number_of_datapoints": {
+                    "title": "Number of datapoints",
+                    "type": "integer"
+                },
+                "number_of_experiments": {
+                    "title": "Number of experiments",
+                    "type": "integer"
+                },
+                "number_of_optimisations": {
+                    "title": "Number of optimisations",
+                    "type": "integer"
+                },
+                "derived_datasets": {
+                    "title": "Derived datasets",
+                    "type": "integer"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_type": {
+                    "title": "Dataset type",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DatasetListResult": {
+            "required": [
+                "datasets",
+                "total_pages",
+                "total_count"
+            ],
+            "type": "object",
+            "properties": {
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DatasetListItem"
+                    }
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "total_count": {
+                    "title": "Total count",
+                    "type": "integer"
+                }
+            }
+        },
+        "DatasetListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetListResult"
+                }
+            }
+        },
         "HuggingFaceDatasetConfigRequest": {
             "required": [
                 "dataset_path"
@@ -79497,6 +80709,40 @@
                     "title": "Dataset path",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "HuggingFaceDatasetConfigResult": {
+            "required": [
+                "message",
+                "dataset_info"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "dataset_info": {
+                    "title": "Dataset info",
+                    "type": "object"
+                }
+            }
+        },
+        "HuggingFaceDatasetConfigResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/HuggingFaceDatasetConfigResult"
                 }
             }
         },
@@ -79537,6 +80783,83 @@
                 }
             }
         },
+        "ExperimentRowDiffCell": {
+            "type": "object",
+            "properties": {
+                "cell_value": {
+                    "title": "Cell value",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "cell_diff_value": {
+                    "title": "Cell diff value",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string"
+                },
+                "value_infos": {
+                    "title": "Value infos",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentRowDiffResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/ExperimentRowDiffCell"
+                        }
+                    }
+                }
+            }
+        },
+        "EvalFunctionListResult": {
+            "required": [
+                "functions"
+            ],
+            "type": "object",
+            "properties": {
+                "functions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "EvalFunctionListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EvalFunctionListResult"
+                }
+            }
+        },
         "PreviewRunPrompt": {
             "required": [
                 "dataset_id",
@@ -79569,6 +80892,122 @@
                         "type": "integer",
                         "minimum": 0
                     }
+                }
+            }
+        },
+        "RunPromptColumnPreviewResult": {
+            "required": [
+                "responses",
+                "token_usage",
+                "cost"
+            ],
+            "type": "object",
+            "properties": {
+                "responses": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "token_usage": {
+                    "title": "Token usage",
+                    "type": "object"
+                },
+                "cost": {
+                    "title": "Cost",
+                    "type": "object"
+                }
+            }
+        },
+        "RunPromptColumnPreviewResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RunPromptColumnPreviewResult"
+                }
+            }
+        },
+        "ProviderStatusItem": {
+            "required": [
+                "provider",
+                "display_name",
+                "has_key",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "display_name": {
+                    "title": "Display name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "has_key": {
+                    "title": "Has key",
+                    "type": "boolean"
+                },
+                "masked_key": {
+                    "title": "Masked key",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "logo_url": {
+                    "title": "Logo url",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ProviderStatusResult": {
+            "required": [
+                "providers"
+            ],
+            "type": "object",
+            "properties": {
+                "providers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ProviderStatusItem"
+                    }
+                }
+            }
+        },
+        "ProviderStatusResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ProviderStatusResult"
                 }
             }
         },
@@ -79726,6 +81165,120 @@
                 }
             }
         },
+        "Column": {
+            "required": [
+                "name",
+                "data_type",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "minLength": 1
+                },
+                "data_type": {
+                    "title": "Data type",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "boolean",
+                        "integer",
+                        "float",
+                        "json",
+                        "array",
+                        "image",
+                        "images",
+                        "datetime",
+                        "audio",
+                        "document",
+                        "others",
+                        "persona"
+                    ]
+                },
+                "dataset": {
+                    "title": "Dataset",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "evaluation_tags",
+                        "evaluation_reason",
+                        "run_prompt",
+                        "experiment",
+                        "optimisation",
+                        "experiment_evaluation",
+                        "experiment_evaluation_tags",
+                        "optimisation_evaluation",
+                        "annotation_label",
+                        "optimisation_evaluation_tags",
+                        "extracted_json",
+                        "classification",
+                        "extracted_entities",
+                        "api_call",
+                        "python_code",
+                        "vector_db",
+                        "conditional",
+                        "eval_playground",
+                        "OTHERS"
+                    ]
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetColumnsMutationResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Column"
+                    }
+                }
+            }
+        },
+        "DatasetColumnsMutationResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetColumnsMutationResult"
+                }
+            }
+        },
         "DatasetAddEmptyColumnsRequest": {
             "type": "object",
             "properties": {
@@ -79798,6 +81351,40 @@
                 }
             }
         },
+        "DatasetRowsImportedResult": {
+            "required": [
+                "message",
+                "rows_added"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows_added": {
+                    "title": "Rows added",
+                    "type": "integer"
+                }
+            }
+        },
+        "DatasetRowsImportedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetRowsImportedResult"
+                }
+            }
+        },
         "HuggingFaceAddRowsRequest": {
             "required": [
                 "huggingface_dataset_name",
@@ -79825,6 +81412,35 @@
                     "title": "Huggingface dataset split",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "DatasetRowsImportMessageResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DatasetRowsImportMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetRowsImportMessageResult"
                 }
             }
         },
@@ -80002,6 +81618,98 @@
                 }
             }
         },
+        "DatasetTableMetadata": {
+            "required": [
+                "dataset_name"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "error_messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DatasetTableResult": {
+            "required": [
+                "column_config"
+            ],
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "$ref": "#/definitions/DatasetTableMetadata"
+                },
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "dataset_config": {
+                    "title": "Dataset config",
+                    "type": "object"
+                },
+                "synthetic_dataset": {
+                    "title": "Synthetic dataset",
+                    "type": "boolean"
+                },
+                "synthetic_dataset_percentage": {
+                    "title": "Synthetic dataset percentage",
+                    "type": "object"
+                },
+                "synthetic_regenerate": {
+                    "title": "Synthetic regenerate",
+                    "type": "object"
+                },
+                "is_processing_data": {
+                    "title": "Is processing data",
+                    "type": "boolean"
+                }
+            }
+        },
+        "DatasetTableResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetTableResult"
+                }
+            }
+        },
         "DatasetRowDataRequest": {
             "required": [
                 "row_id"
@@ -80026,6 +81734,251 @@
                     "title": "Row id",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "DatasetRowNavigation": {
+            "type": "object",
+            "properties": {
+                "row_id": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                }
+            }
+        },
+        "DatasetRowDataResult": {
+            "required": [
+                "next",
+                "current"
+            ],
+            "type": "object",
+            "properties": {
+                "next": {
+                    "$ref": "#/definitions/DatasetRowNavigation"
+                },
+                "current": {
+                    "title": "Current",
+                    "type": "object"
+                }
+            }
+        },
+        "DatasetRowDataResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetRowDataResult"
+                }
+            }
+        },
+        "EvalStructure": {
+            "required": [
+                "id",
+                "template_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "template_id": {
+                    "title": "Template id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "eval_tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "template_name": {
+                    "title": "Template name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "required_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "optional_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "variable_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "run_prompt_column": {
+                    "title": "Run prompt column",
+                    "type": "boolean"
+                },
+                "mapping": {
+                    "title": "Mapping",
+                    "type": "object"
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object"
+                },
+                "params": {
+                    "title": "Params",
+                    "type": "object"
+                },
+                "function_params_schema": {
+                    "title": "Function params schema",
+                    "type": "object"
+                },
+                "eval_type_id": {
+                    "title": "Eval type id",
+                    "type": "string"
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string"
+                },
+                "reason_column": {
+                    "title": "Reason column",
+                    "type": "boolean"
+                },
+                "models": {
+                    "title": "Models",
+                    "type": "object"
+                },
+                "selected_model": {
+                    "title": "Selected model",
+                    "type": "string"
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "object"
+                },
+                "config_params_desc": {
+                    "title": "Config params desc",
+                    "type": "object"
+                },
+                "config_params_option": {
+                    "title": "Config params option",
+                    "type": "object"
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "type": "boolean"
+                },
+                "choices": {
+                    "title": "Choices",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "api_key_available": {
+                    "title": "Api key available",
+                    "type": "boolean"
+                },
+                "run_config": {
+                    "title": "Run config",
+                    "type": "object"
+                }
+            }
+        },
+        "EvalStructureResult": {
+            "required": [
+                "eval"
+            ],
+            "type": "object",
+            "properties": {
+                "eval": {
+                    "$ref": "#/definitions/EvalStructure"
+                }
+            }
+        },
+        "EvalStructureResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EvalStructureResult"
+                }
+            }
+        },
+        "EvalListResult": {
+            "required": [
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_recommendations": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "EvalListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EvalListResult"
                 }
             }
         },
@@ -80094,6 +82047,64 @@
                 }
             }
         },
+        "SyntheticDatasetConfigPayload": {
+            "type": "object",
+            "properties": {
+                "num_rows": {
+                    "title": "Num rows",
+                    "type": "integer"
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "dataset": {
+                    "title": "Dataset",
+                    "type": "object"
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SyntheticDatasetConfigResult": {
+            "required": [
+                "message",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "$ref": "#/definitions/SyntheticDatasetConfigPayload"
+                }
+            }
+        },
+        "SyntheticDatasetConfigResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SyntheticDatasetConfigResult"
+                }
+            }
+        },
         "SyntheticDatasetConfig": {
             "required": [
                 "num_rows",
@@ -80122,6 +82133,66 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "SyntheticDatasetUpdateData": {
+            "required": [
+                "dataset_id",
+                "dataset_name"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "num_rows": {
+                    "title": "Num rows",
+                    "type": "integer"
+                },
+                "num_columns": {
+                    "title": "Num columns",
+                    "type": "integer"
+                }
+            }
+        },
+        "SyntheticDatasetUpdateResult": {
+            "required": [
+                "message",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "$ref": "#/definitions/SyntheticDatasetUpdateData"
+                }
+            }
+        },
+        "SyntheticDatasetUpdateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SyntheticDatasetUpdateResult"
                 }
             }
         },
@@ -80182,6 +82253,61 @@
                     "title": "Force update",
                     "type": "boolean",
                     "default": false
+                }
+            }
+        },
+        "ColumnTypeConversionResult": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "column_id": {
+                    "title": "Column id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "new_data_type": {
+                    "title": "New data type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "invalid_count": {
+                    "title": "Invalid count",
+                    "type": "integer"
+                },
+                "invalid_values": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "valid_conversion_samples": {
+                    "title": "Valid conversion samples",
+                    "type": "object"
+                }
+            }
+        },
+        "ColumnTypeConversionResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ColumnTypeConversionResult"
                 }
             }
         },
@@ -83446,6 +85572,40 @@
                 }
             }
         },
+        "ExperimentLegacyDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentsTable"
+                }
+            }
+        },
+        "ExperimentStringResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "ExperimentList": {
             "required": [
                 "name",
@@ -83804,6 +85964,178 @@
                 }
             }
         },
+        "ExperimentNameSuggestionResult": {
+            "required": [
+                "suggested_name"
+            ],
+            "type": "object",
+            "properties": {
+                "suggested_name": {
+                    "title": "Suggested name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "ExperimentNameSuggestionResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentNameSuggestionResult"
+                }
+            }
+        },
+        "ExperimentNameValidationResult": {
+            "required": [
+                "is_valid"
+            ],
+            "type": "object",
+            "properties": {
+                "is_valid": {
+                    "title": "Is valid",
+                    "type": "boolean"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                }
+            }
+        },
+        "ExperimentNameValidationResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentNameValidationResult"
+                }
+            }
+        },
+        "ExperimentDetailV2": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "column_id": {
+                    "title": "Column id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "experiment_type": {
+                    "title": "Experiment type",
+                    "description": "Determines how the experiment executes: llm, tts, stt, or image.",
+                    "type": "string",
+                    "enum": [
+                        "llm",
+                        "tts",
+                        "stt",
+                        "image"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "NotStarted",
+                        "Queued",
+                        "Running",
+                        "Completed",
+                        "Editing",
+                        "Inactive",
+                        "Failed",
+                        "PartialRun",
+                        "ExperimentEvaluation",
+                        "Uploading",
+                        "PartialExtracted",
+                        "Processing",
+                        "Deleting",
+                        "PartialCompleted",
+                        "OptimizationEvaluation",
+                        "Error",
+                        "Cancelled"
+                    ]
+                },
+                "snapshot_dataset_id": {
+                    "title": "Snapshot dataset id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_configs": {
+                    "title": "Prompt configs",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "agent_configs": {
+                    "title": "Agent configs",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "user_eval_metrics": {
+                    "title": "User eval metrics",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "ExperimentV2DetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentDetailV2"
+                }
+            }
+        },
         "ExperimentUpdateV2": {
             "type": "object",
             "properties": {
@@ -83842,6 +86174,504 @@
                     "title": "Weights",
                     "type": "object",
                     "default": {}
+                }
+            }
+        },
+        "ExperimentComparisonColumnMetric": {
+            "required": [
+                "column_id",
+                "column_name",
+                "avg_completion_tokens",
+                "avg_total_tokens",
+                "avg_response_time"
+            ],
+            "type": "object",
+            "properties": {
+                "column_id": {
+                    "title": "Column id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "column_name": {
+                    "title": "Column name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "avg_completion_tokens": {
+                    "title": "Avg completion tokens",
+                    "type": "number"
+                },
+                "avg_total_tokens": {
+                    "title": "Avg total tokens",
+                    "type": "number"
+                },
+                "avg_response_time": {
+                    "title": "Avg response time",
+                    "type": "number"
+                },
+                "avg_score": {
+                    "title": "Avg score",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentComparisonDatasetMetric": {
+            "required": [
+                "dataset_id"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "avg_completion_tokens": {
+                    "title": "Avg completion tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_total_tokens": {
+                    "title": "Avg total tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_response_time": {
+                    "title": "Avg response time",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_score": {
+                    "title": "Avg score",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentComparisonColumnMetric"
+                    }
+                },
+                "normalized_scores": {
+                    "title": "Normalized scores",
+                    "type": "object"
+                },
+                "overall_rating": {
+                    "title": "Overall rating",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "rank": {
+                    "title": "Rank",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "rank_suffix": {
+                    "title": "Rank suffix",
+                    "type": "string"
+                },
+                "total_datasets": {
+                    "title": "Total datasets",
+                    "type": "integer"
+                }
+            }
+        },
+        "ExperimentDatasetComparisonResult": {
+            "required": [
+                "experiment_id",
+                "experiment_name",
+                "total_datasets",
+                "dataset_comparisons"
+            ],
+            "type": "object",
+            "properties": {
+                "experiment_id": {
+                    "title": "Experiment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "experiment_name": {
+                    "title": "Experiment name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "total_datasets": {
+                    "title": "Total datasets",
+                    "type": "integer"
+                },
+                "weights_applied": {
+                    "title": "Weights applied",
+                    "type": "object"
+                },
+                "dataset_comparisons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentComparisonDatasetMetric"
+                    }
+                }
+            }
+        },
+        "ExperimentDatasetComparisonResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentDatasetComparisonResult"
+                }
+            }
+        },
+        "ExperimentComparisonRawMetrics": {
+            "type": "object",
+            "properties": {
+                "avg_completion_tokens": {
+                    "title": "Avg completion tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_total_tokens": {
+                    "title": "Avg total tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_response_time": {
+                    "title": "Avg response time",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_score": {
+                    "title": "Avg score",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentComparisonNormalizedMetrics": {
+            "type": "object",
+            "properties": {
+                "completion_tokens": {
+                    "title": "Completion tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "total_tokens": {
+                    "title": "Total tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "response_time": {
+                    "title": "Response time",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "score": {
+                    "title": "Score",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentComparisonMetrics": {
+            "required": [
+                "raw",
+                "normalized"
+            ],
+            "type": "object",
+            "properties": {
+                "raw": {
+                    "$ref": "#/definitions/ExperimentComparisonRawMetrics"
+                },
+                "normalized": {
+                    "$ref": "#/definitions/ExperimentComparisonNormalizedMetrics"
+                }
+            }
+        },
+        "ExperimentComparisonWeights": {
+            "type": "object",
+            "properties": {
+                "response_time": {
+                    "title": "Response time",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "scores": {
+                    "title": "Scores",
+                    "type": "object"
+                },
+                "total_tokens": {
+                    "title": "Total tokens",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "completion_tokens": {
+                    "title": "Completion tokens",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentComparisonDetail": {
+            "required": [
+                "metrics",
+                "weights"
+            ],
+            "type": "object",
+            "properties": {
+                "scores_weight": {
+                    "title": "Scores weight",
+                    "type": "object"
+                },
+                "experiment_dataset_id": {
+                    "title": "Experiment dataset id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "rank": {
+                    "title": "Rank",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "rank_suffix": {
+                    "title": "Rank suffix",
+                    "type": "string"
+                },
+                "metrics": {
+                    "$ref": "#/definitions/ExperimentComparisonMetrics"
+                },
+                "weights": {
+                    "$ref": "#/definitions/ExperimentComparisonWeights"
+                },
+                "overall_rating": {
+                    "title": "Overall rating",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentComparisonDetailsResult": {
+            "required": [
+                "experiment_id",
+                "total_comparisons",
+                "comparisons"
+            ],
+            "type": "object",
+            "properties": {
+                "experiment_id": {
+                    "title": "Experiment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total_comparisons": {
+                    "title": "Total comparisons",
+                    "type": "integer"
+                },
+                "comparisons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentComparisonDetail"
+                    }
+                }
+            }
+        },
+        "ExperimentComparisonDetailsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentComparisonDetailsResult"
+                }
+            }
+        },
+        "ExperimentDerivedVariablesResult": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "string"
+                },
+                "derived_variables": {
+                    "title": "Derived variables",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "ExperimentDerivedVariablesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentDerivedVariablesResult"
+                }
+            }
+        },
+        "ExperimentEvaluationTokenUsage": {
+            "required": [
+                "avg_completion_tokens",
+                "avg_prompt_tokens",
+                "avg_total_tokens",
+                "total_tokens"
+            ],
+            "type": "object",
+            "properties": {
+                "avg_completion_tokens": {
+                    "title": "Avg completion tokens",
+                    "type": "number"
+                },
+                "avg_prompt_tokens": {
+                    "title": "Avg prompt tokens",
+                    "type": "number"
+                },
+                "avg_total_tokens": {
+                    "title": "Avg total tokens",
+                    "type": "number"
+                },
+                "total_tokens": {
+                    "title": "Total tokens",
+                    "type": "integer"
+                }
+            }
+        },
+        "ExperimentEvaluationColumnStats": {
+            "required": [
+                "column_name",
+                "column_id",
+                "total_rows",
+                "success_rate",
+                "avg_response_time",
+                "token_usage"
+            ],
+            "type": "object",
+            "properties": {
+                "column_name": {
+                    "title": "Column name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "column_id": {
+                    "title": "Column id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer"
+                },
+                "success_rate": {
+                    "title": "Success rate",
+                    "type": "number"
+                },
+                "avg_response_time": {
+                    "title": "Avg response time",
+                    "type": "number"
+                },
+                "token_usage": {
+                    "$ref": "#/definitions/ExperimentEvaluationTokenUsage"
+                },
+                "avg_score": {
+                    "title": "Avg score",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentEvaluationStatsResult": {
+            "required": [
+                "experiment_id",
+                "experiment_name",
+                "evaluation_id",
+                "evaluation_name",
+                "evaluation_template_id",
+                "dataset_id",
+                "dataset_name",
+                "evaluation_columns"
+            ],
+            "type": "object",
+            "properties": {
+                "experiment_id": {
+                    "title": "Experiment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "experiment_name": {
+                    "title": "Experiment name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "evaluation_id": {
+                    "title": "Evaluation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "evaluation_name": {
+                    "title": "Evaluation name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "evaluation_template_id": {
+                    "title": "Evaluation template id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "evaluation_columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentEvaluationColumnStats"
+                    }
+                }
+            }
+        },
+        "ExperimentEvaluationStatsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentEvaluationStatsResult"
                 }
             }
         },
@@ -83919,6 +86749,160 @@
                 }
             }
         },
+        "ExperimentFeedbackCreateResult": {
+            "required": [
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "ExperimentFeedbackCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentFeedbackCreateResult"
+                }
+            }
+        },
+        "ExperimentFeedbackDetailItem": {
+            "required": [
+                "id",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "comment": {
+                    "title": "Comment",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "action_type": {
+                    "title": "Action type",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentFeedbackDetailsResult": {
+            "required": [
+                "feedback",
+                "total_count"
+            ],
+            "type": "object",
+            "properties": {
+                "feedback": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentFeedbackDetailItem"
+                    }
+                },
+                "total_count": {
+                    "title": "Total count",
+                    "type": "integer"
+                }
+            }
+        },
+        "ExperimentFeedbackDetailsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentFeedbackDetailsResult"
+                }
+            }
+        },
+        "ExperimentFeedbackTemplateResult": {
+            "required": [
+                "eval_name",
+                "user_eval_name"
+            ],
+            "type": "object",
+            "properties": {
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_description": {
+                    "title": "Eval description",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "eval_name": {
+                    "title": "Eval name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_eval_name": {
+                    "title": "User eval name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "choices": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "multi_choice": {
+                    "title": "Multi choice",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ExperimentFeedbackTemplateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentFeedbackTemplateResult"
+                }
+            }
+        },
         "ExperimentFeedbackSubmitRequest": {
             "required": [
                 "action_type",
@@ -83954,6 +86938,71 @@
                 "explanation": {
                     "title": "Explanation",
                     "type": "string"
+                }
+            }
+        },
+        "ExperimentFeedbackSubmitResult": {
+            "required": [
+                "message",
+                "action_type",
+                "user_eval_metric_id"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "action_type": {
+                    "title": "Action type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_eval_metric_id": {
+                    "title": "User eval metric id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workflow_id": {
+                    "title": "Workflow id",
+                    "type": "string"
+                }
+            }
+        },
+        "ExperimentFeedbackSubmitResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentFeedbackSubmitResult"
+                }
+            }
+        },
+        "ExperimentJsonSchemaResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/JsonColumnSchemaEntry"
+                    }
                 }
             }
         },
@@ -84009,6 +87058,376 @@
                 }
             }
         },
+        "ExperimentWorkflowResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "workflow_id": {
+                    "title": "Workflow id",
+                    "type": "string"
+                }
+            }
+        },
+        "ExperimentWorkflowResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentWorkflowResult"
+                }
+            }
+        },
+        "ExperimentTableRowsColumnConfig": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "origin_type": {
+                    "title": "Origin type",
+                    "type": "string"
+                },
+                "data_type": {
+                    "title": "Data type",
+                    "type": "string"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string"
+                },
+                "group": {
+                    "title": "Group",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "average_score": {
+                    "title": "Average score",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "type": "string"
+                },
+                "choices_map": {
+                    "title": "Choices map",
+                    "type": "object"
+                },
+                "is_base_column": {
+                    "title": "Is base column",
+                    "type": "boolean"
+                },
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "eval_template_id": {
+                    "title": "Eval template id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string"
+                },
+                "is_agent": {
+                    "title": "Is agent",
+                    "type": "boolean"
+                },
+                "is_final": {
+                    "title": "Is final",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ExperimentTableRowsMetadata": {
+            "type": "object",
+            "properties": {
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer"
+                },
+                "dataset": {
+                    "title": "Dataset",
+                    "type": "string"
+                },
+                "dataset_name": {
+                    "title": "Dataset name",
+                    "type": "string"
+                },
+                "column": {
+                    "title": "Column",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "ExperimentTableRowsResult": {
+            "required": [
+                "column_config"
+            ],
+            "type": "object",
+            "properties": {
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentTableRowsColumnConfig"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/ExperimentTableRowsMetadata"
+                },
+                "output_format": {
+                    "title": "Output format",
+                    "type": "string"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string"
+                },
+                "next_row_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                }
+            }
+        },
+        "ExperimentTableRowsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentTableRowsResult"
+                }
+            }
+        },
+        "ExperimentStatsColumnConfig": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reverse_output": {
+                    "title": "Reverse output",
+                    "type": "boolean"
+                },
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "eval_template_id": {
+                    "title": "Eval template id",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "ExperimentStatsMetadata": {
+            "required": [
+                "is_winner_chosen"
+            ],
+            "type": "object",
+            "properties": {
+                "is_winner_chosen": {
+                    "title": "Is winner chosen",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ExperimentStatsResult": {
+            "required": [
+                "column_config",
+                "table_data",
+                "metadata"
+            ],
+            "type": "object",
+            "properties": {
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentStatsColumnConfig"
+                    }
+                },
+                "table_data": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/ExperimentStatsMetadata"
+                }
+            }
+        },
+        "ExperimentStatsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentStatsResult"
+                }
+            }
+        },
+        "ExperimentStopWorkflowsCancelled": {
+            "required": [
+                "main",
+                "reruns"
+            ],
+            "type": "object",
+            "properties": {
+                "main": {
+                    "title": "Main",
+                    "type": "boolean"
+                },
+                "reruns": {
+                    "title": "Reruns",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ExperimentStopResult": {
+            "required": [
+                "message",
+                "experiment_id",
+                "workflows_cancelled"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "experiment_id": {
+                    "title": "Experiment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workflows_cancelled": {
+                    "$ref": "#/definitions/ExperimentStopWorkflowsCancelled"
+                }
+            }
+        },
+        "ExperimentStopResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentStopResult"
+                }
+            }
+        },
+        "ExperimentAddEvalResult": {
+            "required": [
+                "message",
+                "eval_id"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eval_id": {
+                    "title": "Eval id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "ExperimentAddEvalResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentAddEvalResult"
+                }
+            }
+        },
         "ExperimentAdditionalEvaluationsRequest": {
             "required": [
                 "eval_template_ids"
@@ -84021,6 +87440,35 @@
                         "type": "string",
                         "format": "uuid"
                     }
+                }
+            }
+        },
+        "ExperimentMessageResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "ExperimentMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ExperimentMessageResult"
                 }
             }
         },
@@ -99607,71 +103055,6 @@
                 }
             }
         },
-        "Dataset": {
-            "required": [
-                "name",
-                "organization"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "maxLength": 2000,
-                    "minLength": 1
-                },
-                "organization": {
-                    "title": "Organization",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "model_type": {
-                    "title": "Model type",
-                    "type": "string",
-                    "enum": [
-                        "Numeric",
-                        "ScoreCategorical",
-                        "Ranking",
-                        "BinaryClassification",
-                        "Regression",
-                        "ObjectDetection",
-                        "Segmentation",
-                        "GenerativeLLM",
-                        "GenerativeImage",
-                        "GenerativeVideo",
-                        "TTS",
-                        "STT",
-                        "MultiModal"
-                    ]
-                },
-                "source": {
-                    "title": "Source",
-                    "type": "string",
-                    "enum": [
-                        "demo",
-                        "build",
-                        "sdk",
-                        "observe",
-                        "knowledge_base",
-                        "scenario",
-                        "experiment_snapshot",
-                        "graph"
-                    ]
-                },
-                "user": {
-                    "title": "User",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                }
-            }
-        },
         "EvalTask": {
             "required": [
                 "project",
@@ -107945,6 +111328,21 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UsageWorkspaceBreakdownResult"
+                }
+            }
+        },
+        "StripeWebhookLegacyResponse": {
+            "required": [
+                "status"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/StripeWebhookResult"
                 }
             }
         }

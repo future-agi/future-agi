@@ -6624,23 +6624,15 @@ export interface CompareEvalsListRequestApi {
   dataset_ids: string[];
 }
 
-export type ModelHubJSONResponseApiStatus = { [key: string]: unknown };
+export type CompareEvalListResultApiEvalsItem = { [key: string]: unknown };
 
-export type ModelHubJSONResponseApiResult = { [key: string]: unknown };
+export interface CompareEvalListResultApi {
+  evals: CompareEvalListResultApiEvalsItem[];
+}
 
-export type ModelHubJSONResponseApiData = { [key: string]: unknown };
-
-export type ModelHubJSONResponseApiError = { [key: string]: unknown };
-
-export type ModelHubJSONResponseApiDetail = { [key: string]: unknown };
-
-export interface ModelHubJSONResponseApi {
-  status?: ModelHubJSONResponseApiStatus;
-  message?: string;
-  result?: ModelHubJSONResponseApiResult;
-  data?: ModelHubJSONResponseApiData;
-  error?: ModelHubJSONResponseApiError;
-  detail?: ModelHubJSONResponseApiDetail;
+export interface CompareEvalListResponseApi {
+  status: boolean;
+  result: CompareEvalListResultApi;
 }
 
 export type ComparePreviewRunEvalRequestApiConfig = { [key: string]: unknown };
@@ -6654,6 +6646,40 @@ export interface ComparePreviewRunEvalRequestApi {
   dataset_ids: string[];
   dataset_info?: ComparePreviewRunEvalRequestApiDatasetInfo;
   source?: string;
+}
+
+export type EvalPreviewResultApiResponsesItem = { [key: string]: unknown };
+
+export interface EvalPreviewResultApi {
+  responses: EvalPreviewResultApiResponsesItem[];
+}
+
+export interface EvalPreviewResponseApi {
+  status: boolean;
+  result: EvalPreviewResultApi;
+}
+
+export type CompareDatasetRowResultApiTableItem = { [key: string]: unknown };
+
+export interface CompareDatasetRowResultApi {
+  prev_row_id?: string;
+  next_row_id?: string;
+  table: CompareDatasetRowResultApiTableItem[];
+}
+
+export interface CompareDatasetRowResponseApi {
+  status: boolean;
+  result: CompareDatasetRowResultApi;
+}
+
+export interface CompareDatasetDeleteResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface CompareDatasetDeleteResponseApi {
+  status: boolean;
+  result: CompareDatasetDeleteResultApi;
 }
 
 export type DatasetExplanationSummaryResponseResultApiResponse = { [key: string]: unknown };
@@ -6749,6 +6775,19 @@ export interface AddApiColumnRequestApi {
   concurrency?: number;
 }
 
+export interface DynamicColumnCreateResultApi {
+  /** @minLength 1 */
+  message: string;
+  new_column_id: string;
+  /** @minLength 1 */
+  new_column_name: string;
+}
+
+export interface DynamicColumnCreateResponseApi {
+  status: boolean;
+  result: DynamicColumnCreateResultApi;
+}
+
 export type VectorDBColumnRequestApiEmbeddingConfig = { [key: string]: unknown };
 
 export interface VectorDBColumnRequestApi {
@@ -6794,6 +6833,27 @@ export interface CompareDatasetApi {
   dataset_ids: string[];
 }
 
+export interface CompareDatasetMetadataApi {
+  compare_id: string;
+  total_rows: number;
+  total_pages: number;
+}
+
+export type CompareDatasetResultApiColumnConfigItem = { [key: string]: unknown };
+
+export type CompareDatasetResultApiTableItem = { [key: string]: unknown };
+
+export interface CompareDatasetResultApi {
+  metadata?: CompareDatasetMetadataApi;
+  column_config?: CompareDatasetResultApiColumnConfigItem[];
+  table?: CompareDatasetResultApiTableItem[];
+}
+
+export interface CompareDatasetResponseApi {
+  status: boolean;
+  result: CompareDatasetResultApi;
+}
+
 export type UserEvalApiConfig = { [key: string]: unknown };
 
 export type UserEvalApiCompositeWeightOverrides = { [key: string]: unknown };
@@ -6820,6 +6880,12 @@ export interface UserEvalApi {
   composite_weight_overrides?: UserEvalApiCompositeWeightOverrides;
 }
 
+export interface DevelopDatasetMessageResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
 export interface CompareStartEvalsRequestApi {
   user_eval_names: string[];
   dataset_ids?: string[];
@@ -6840,6 +6906,15 @@ export interface CompareDatasetStatsRequestApi {
   stat_type?: CompareDatasetStatsRequestApiStatType;
 }
 
+export type CompareDatasetStatsResponseApiResultItem = { [key: string]: unknown };
+
+export type CompareDatasetStatsResponseApiResult = {[key: string]: CompareDatasetStatsResponseApiResultItem[]};
+
+export interface CompareDatasetStatsResponseApi {
+  status: boolean;
+  result: CompareDatasetStatsResponseApiResult;
+}
+
 export type ConditionalColumnRequestApiConfigItem = { [key: string]: unknown };
 
 export interface ConditionalColumnRequestApi {
@@ -6849,6 +6924,29 @@ export interface ConditionalColumnRequestApi {
   concurrency?: number;
 }
 
+export type DatasetDerivedVariableDetailApiSchema = { [key: string]: unknown };
+
+export type DatasetDerivedVariableDetailApiRawSample = { [key: string]: unknown };
+
+export interface DatasetDerivedVariableDetailApi {
+  paths?: string[];
+  schema?: DatasetDerivedVariableDetailApiSchema;
+  full_variables?: string[];
+  raw_sample?: DatasetDerivedVariableDetailApiRawSample;
+  is_json?: boolean;
+}
+
+export type DatasetDerivedVariablesResultApiDerivedVariables = {[key: string]: DatasetDerivedVariableDetailApi};
+
+export interface DatasetDerivedVariablesResultApi {
+  derived_variables: DatasetDerivedVariablesResultApiDerivedVariables;
+}
+
+export interface DatasetDerivedVariablesResponseApi {
+  status: boolean;
+  result: DatasetDerivedVariablesResultApi;
+}
+
 export interface DuplicateRowsRequestApi {
   row_ids?: string[];
   selected_all_rows?: boolean;
@@ -6856,11 +6954,40 @@ export interface DuplicateRowsRequestApi {
   num_copies?: number;
 }
 
+export interface DuplicateRowsResultApi {
+  /** @minLength 1 */
+  message: string;
+  source_rows: number;
+  copies_per_row: number;
+  total_new_rows: number;
+  new_row_ids: string[];
+}
+
+export interface DuplicateRowsResponseApi {
+  status: boolean;
+  result: DuplicateRowsResultApi;
+}
+
 export interface DuplicateDatasetRequestApi {
   row_ids?: string[];
   selected_all_rows?: boolean;
   /** @minLength 1 */
   name: string;
+}
+
+export interface DuplicateDatasetResultApi {
+  /** @minLength 1 */
+  message: string;
+  new_dataset_id: string;
+  /** @minLength 1 */
+  new_dataset_name: string;
+  columns_copied: number;
+  rows_copied: number;
+}
+
+export interface DuplicateDatasetResponseApi {
+  status: boolean;
+  result: DuplicateDatasetResultApi;
 }
 
 export interface ExtractEntitiesRequestApi {
@@ -6873,10 +7000,33 @@ export interface ExtractEntitiesRequestApi {
   new_column_name?: string;
 }
 
+export interface DynamicColumnMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface DynamicColumnMessageResponseApi {
+  status: boolean;
+  result: DynamicColumnMessageResultApi;
+}
+
 export interface MergeDatasetRequestApi {
   row_ids?: string[];
   selected_all_rows?: boolean;
   target_dataset_id: string;
+}
+
+export interface MergeDatasetResultApi {
+  /** @minLength 1 */
+  message: string;
+  rows_added: number;
+  new_columns_created: number;
+  columns_mapped: number;
+}
+
+export interface MergeDatasetResponseApi {
+  status: boolean;
+  result: MergeDatasetResultApi;
 }
 
 export type PreviewDatasetOperationRequestApiConfig = { [key: string]: unknown };
@@ -6891,6 +7041,31 @@ export interface PreviewDatasetOperationRequestApi {
   code?: string;
 }
 
+export type PreviewDatasetOperationResultItemApiInput = { [key: string]: unknown };
+
+export type PreviewDatasetOperationResultItemApiOutput = { [key: string]: unknown };
+
+export type PreviewDatasetOperationResultItemApiDetails = { [key: string]: unknown };
+
+export interface PreviewDatasetOperationResultItemApi {
+  row_id: string;
+  input?: PreviewDatasetOperationResultItemApiInput;
+  output?: PreviewDatasetOperationResultItemApiOutput;
+  details?: PreviewDatasetOperationResultItemApiDetails;
+}
+
+export interface PreviewDatasetOperationResultApi {
+  /** @minLength 1 */
+  message: string;
+  preview_results: PreviewDatasetOperationResultItemApi[];
+  sample_size: number;
+}
+
+export interface PreviewDatasetOperationResponseApi {
+  status: boolean;
+  result: PreviewDatasetOperationResultApi;
+}
+
 export interface DeleteEvalTemplateApi {
   eval_template_id: string;
 }
@@ -6903,6 +7078,19 @@ export interface AddAsNewDatasetRequestApi {
   columns?: AddAsNewDatasetRequestApiColumns;
 }
 
+export interface DatasetCopyResultApi {
+  /** @minLength 1 */
+  message: string;
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+}
+
+export interface DatasetCopyResponseApi {
+  status: boolean;
+  result: DatasetCopyResultApi;
+}
+
 export interface AddRowsFromFileRequestApi {
   readonly file?: string;
   dataset_id: string;
@@ -6912,6 +7100,80 @@ export interface AddRowsFromFileRequestApi {
 export interface DatasetSdkRowsRequestApi {
   dataset_name?: string;
   dataset_id?: string;
+}
+
+export type DatasetApiModelType = typeof DatasetApiModelType[keyof typeof DatasetApiModelType];
+
+
+export const DatasetApiModelType = {
+  Numeric: 'Numeric',
+  ScoreCategorical: 'ScoreCategorical',
+  Ranking: 'Ranking',
+  BinaryClassification: 'BinaryClassification',
+  Regression: 'Regression',
+  ObjectDetection: 'ObjectDetection',
+  Segmentation: 'Segmentation',
+  GenerativeLLM: 'GenerativeLLM',
+  GenerativeImage: 'GenerativeImage',
+  GenerativeVideo: 'GenerativeVideo',
+  TTS: 'TTS',
+  STT: 'STT',
+  MultiModal: 'MultiModal',
+} as const;
+
+export type DatasetApiSource = typeof DatasetApiSource[keyof typeof DatasetApiSource];
+
+
+export const DatasetApiSource = {
+  demo: 'demo',
+  build: 'build',
+  sdk: 'sdk',
+  observe: 'observe',
+  knowledge_base: 'knowledge_base',
+  scenario: 'scenario',
+  experiment_snapshot: 'experiment_snapshot',
+  graph: 'graph',
+} as const;
+
+export interface DatasetApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 2000
+     */
+  name: string;
+  organization: string;
+  model_type?: DatasetApiModelType;
+  source?: DatasetApiSource;
+  user?: string;
+}
+
+export interface DatasetSdkRowsCodeApi {
+  /** @minLength 1 */
+  python_add_row: string;
+  /** @minLength 1 */
+  python_add_col: string;
+  /** @minLength 1 */
+  typescript_add_col: string;
+  /** @minLength 1 */
+  typescript_add_row: string;
+  /** @minLength 1 */
+  curl_add_col: string;
+  /** @minLength 1 */
+  curl_add_row: string;
+}
+
+export type DatasetSdkRowsResultApiApiKeys = { [key: string]: unknown };
+
+export interface DatasetSdkRowsResultApi {
+  api_keys: DatasetSdkRowsResultApiApiKeys;
+  dataset: DatasetApi;
+  code: DatasetSdkRowsCodeApi;
+}
+
+export interface DatasetSdkRowsResponseApi {
+  status: boolean;
+  result: DatasetSdkRowsResultApi;
 }
 
 /**
@@ -7026,11 +7288,43 @@ export interface HuggingFaceDatasetCreateRequestApi {
   huggingface_dataset_split: string;
 }
 
+export interface DatasetCreateStartedResultApi {
+  /** @minLength 1 */
+  message: string;
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  dataset_model_type?: string;
+}
+
+export interface DatasetCreateStartedResponseApi {
+  status: boolean;
+  result: DatasetCreateStartedResultApi;
+}
+
 export interface CreateDatasetFromLocalFileRequestApi {
   readonly file?: string;
   new_dataset_name?: string;
   model_type?: string;
   source?: string;
+}
+
+export interface LocalFileDatasetCreateStartedResultApi {
+  /** @minLength 1 */
+  message: string;
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  dataset_model_type?: string;
+  /** @minLength 1 */
+  processing_status: string;
+  estimated_rows: number;
+  estimated_columns: number;
+}
+
+export interface LocalFileDatasetCreateStartedResponseApi {
+  status: boolean;
+  result: LocalFileDatasetCreateStartedResultApi;
 }
 
 export interface ManualDatasetCreateRequestApi {
@@ -7040,6 +7334,19 @@ export interface ManualDatasetCreateRequestApi {
   number_of_rows?: number;
   /** @minimum 1 */
   number_of_columns?: number;
+}
+
+export interface ManualDatasetCreateResultApi {
+  /** @minLength 1 */
+  message: string;
+  dataset_id: string;
+  rows_created: number;
+  columns_created: number;
+}
+
+export interface ManualDatasetCreateResponseApi {
+  status: boolean;
+  result: ManualDatasetCreateResultApi;
 }
 
 export interface CreateEmptyDatasetRequestApi {
@@ -7060,6 +7367,41 @@ export interface SyntheticDatasetCreationApi {
   kb_id?: string;
 }
 
+export interface SyntheticDatasetCreateStartedResultApi {
+  /** @minLength 1 */
+  message: string;
+  data: DatasetApi;
+}
+
+export interface SyntheticDatasetCreateStartedResponseApi {
+  status: boolean;
+  result: SyntheticDatasetCreateStartedResultApi;
+}
+
+export interface DatasetCreationProgressResultApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  /** @minLength 1 */
+  processing_status: string;
+  is_processing: boolean;
+  is_completed: boolean;
+  is_failed: boolean;
+  original_filename?: string;
+  estimated_rows?: number;
+  estimated_columns?: number;
+  queued_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
+  error_message?: string;
+}
+
+export interface DatasetCreationProgressResponseApi {
+  status: boolean;
+  result: DatasetCreationProgressResultApi;
+}
+
 export interface EditRunPromptColumnApi {
   dataset_id: string;
   column_id: string;
@@ -7073,9 +7415,83 @@ export interface DatasetCellDataRequestApi {
   column_ids: string[];
 }
 
+export type DatasetCellValueApiCellValue = { [key: string]: unknown };
+
+export type DatasetCellValueApiValueInfos = { [key: string]: unknown };
+
+export type DatasetCellValueApiFeedbackInfo = { [key: string]: unknown };
+
+export interface DatasetCellValueApi {
+  cell_value?: DatasetCellValueApiCellValue;
+  status?: string;
+  value_infos?: DatasetCellValueApiValueInfos;
+  feedback_info?: DatasetCellValueApiFeedbackInfo;
+}
+
+export type DatasetCellDataResponseApiResult = {[key: string]: {[key: string]: DatasetCellValueApi}};
+
+export interface DatasetCellDataResponseApi {
+  status: boolean;
+  result: DatasetCellDataResponseApiResult;
+}
+
+export interface DatasetNameItemApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  name: string;
+  model_type?: string;
+}
+
+export interface DatasetNamesResultApi {
+  datasets: DatasetNameItemApi[];
+}
+
+export interface DatasetNamesResponseApi {
+  status: boolean;
+  result: DatasetNamesResultApi;
+}
+
+export interface DatasetListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  number_of_datapoints: number;
+  number_of_experiments: number;
+  number_of_optimisations: number;
+  derived_datasets: number;
+  /** @minLength 1 */
+  created_at: string;
+  /** @minLength 1 */
+  dataset_type: string;
+}
+
+export interface DatasetListResultApi {
+  datasets: DatasetListItemApi[];
+  total_pages: number;
+  total_count: number;
+}
+
+export interface DatasetListResponseApi {
+  status: boolean;
+  result: DatasetListResultApi;
+}
+
 export interface HuggingFaceDatasetConfigRequestApi {
   /** @minLength 1 */
   dataset_path: string;
+}
+
+export type HuggingFaceDatasetConfigResultApiDatasetInfo = { [key: string]: unknown };
+
+export interface HuggingFaceDatasetConfigResultApi {
+  /** @minLength 1 */
+  message: string;
+  dataset_info: HuggingFaceDatasetConfigResultApiDatasetInfo;
+}
+
+export interface HuggingFaceDatasetConfigResponseApi {
+  status: boolean;
+  result: HuggingFaceDatasetConfigResultApi;
 }
 
 export interface DatasetRowDiffRequestApi {
@@ -7083,6 +7499,37 @@ export interface DatasetRowDiffRequestApi {
   column_ids: string[];
   row_ids: string[];
   compare_column_ids: string[];
+}
+
+export type ExperimentRowDiffCellApiCellValue = { [key: string]: unknown };
+
+export type ExperimentRowDiffCellApiCellDiffValue = { [key: string]: unknown };
+
+export type ExperimentRowDiffCellApiValueInfos = { [key: string]: unknown };
+
+export interface ExperimentRowDiffCellApi {
+  cell_value?: ExperimentRowDiffCellApiCellValue;
+  cell_diff_value?: ExperimentRowDiffCellApiCellDiffValue;
+  status?: string;
+  value_infos?: ExperimentRowDiffCellApiValueInfos;
+}
+
+export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowDiffCellApi}};
+
+export interface ExperimentRowDiffResponseApi {
+  status: boolean;
+  result: ExperimentRowDiffResponseApiResult;
+}
+
+export type EvalFunctionListResultApiFunctionsItem = { [key: string]: unknown };
+
+export interface EvalFunctionListResultApi {
+  functions: EvalFunctionListResultApiFunctionsItem[];
+}
+
+export interface EvalFunctionListResponseApi {
+  status: boolean;
+  result: EvalFunctionListResultApi;
 }
 
 export interface PreviewRunPromptApi {
@@ -7094,6 +7541,45 @@ export interface PreviewRunPromptApi {
   first_n_rows?: number;
   /** List of row indices to preview. Must contain at least one integer. */
   row_indices?: number[];
+}
+
+export type RunPromptColumnPreviewResultApiResponsesItem = { [key: string]: unknown };
+
+export type RunPromptColumnPreviewResultApiTokenUsage = { [key: string]: unknown };
+
+export type RunPromptColumnPreviewResultApiCost = { [key: string]: unknown };
+
+export interface RunPromptColumnPreviewResultApi {
+  responses: RunPromptColumnPreviewResultApiResponsesItem[];
+  token_usage: RunPromptColumnPreviewResultApiTokenUsage;
+  cost: RunPromptColumnPreviewResultApiCost;
+}
+
+export interface RunPromptColumnPreviewResponseApi {
+  status: boolean;
+  result: RunPromptColumnPreviewResultApi;
+}
+
+export interface ProviderStatusItemApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  display_name: string;
+  has_key: boolean;
+  masked_key?: string;
+  logo_url?: string;
+  /** @minLength 1 */
+  type: string;
+  id?: string;
+}
+
+export interface ProviderStatusResultApi {
+  providers: ProviderStatusItemApi[];
+}
+
+export interface ProviderStatusResponseApi {
+  status: boolean;
+  result: ProviderStatusResultApi;
 }
 
 export type RunPromptColumnConfigResultApiConfig = { [key: string]: unknown };
@@ -7151,6 +7637,76 @@ export interface DatasetAddColumnsRequestApi {
   new_columns_data: DatasetAddColumnsRequestApiNewColumnsDataItem[];
 }
 
+export type ColumnApiDataType = typeof ColumnApiDataType[keyof typeof ColumnApiDataType];
+
+
+export const ColumnApiDataType = {
+  text: 'text',
+  boolean: 'boolean',
+  integer: 'integer',
+  float: 'float',
+  json: 'json',
+  array: 'array',
+  image: 'image',
+  images: 'images',
+  datetime: 'datetime',
+  audio: 'audio',
+  document: 'document',
+  others: 'others',
+  persona: 'persona',
+} as const;
+
+export type ColumnApiSource = typeof ColumnApiSource[keyof typeof ColumnApiSource];
+
+
+export const ColumnApiSource = {
+  evaluation: 'evaluation',
+  evaluation_tags: 'evaluation_tags',
+  evaluation_reason: 'evaluation_reason',
+  run_prompt: 'run_prompt',
+  experiment: 'experiment',
+  optimisation: 'optimisation',
+  experiment_evaluation: 'experiment_evaluation',
+  experiment_evaluation_tags: 'experiment_evaluation_tags',
+  optimisation_evaluation: 'optimisation_evaluation',
+  annotation_label: 'annotation_label',
+  optimisation_evaluation_tags: 'optimisation_evaluation_tags',
+  extracted_json: 'extracted_json',
+  classification: 'classification',
+  extracted_entities: 'extracted_entities',
+  api_call: 'api_call',
+  python_code: 'python_code',
+  vector_db: 'vector_db',
+  conditional: 'conditional',
+  eval_playground: 'eval_playground',
+  OTHERS: 'OTHERS',
+} as const;
+
+export interface ColumnApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 2000
+     */
+  name: string;
+  data_type: ColumnApiDataType;
+  dataset?: string;
+  source: ColumnApiSource;
+  /** @maxLength 2000 */
+  source_id?: string;
+}
+
+export interface DatasetColumnsMutationResultApi {
+  /** @minLength 1 */
+  message: string;
+  data?: ColumnApi[];
+}
+
+export interface DatasetColumnsMutationResponseApi {
+  status: boolean;
+  result: DatasetColumnsMutationResultApi;
+}
+
 export interface DatasetAddEmptyColumnsRequestApi {
   /** @minimum 0 */
   num_cols?: number;
@@ -7180,6 +7736,17 @@ export interface DatasetAddRowsFromExistingRequestApi {
   column_mapping: DatasetAddRowsFromExistingRequestApiColumnMapping;
 }
 
+export interface DatasetRowsImportedResultApi {
+  /** @minLength 1 */
+  message: string;
+  rows_added: number;
+}
+
+export interface DatasetRowsImportedResponseApi {
+  status: boolean;
+  result: DatasetRowsImportedResultApi;
+}
+
 export interface HuggingFaceAddRowsRequestApi {
   /** @minimum 0 */
   num_rows?: number;
@@ -7189,6 +7756,16 @@ export interface HuggingFaceAddRowsRequestApi {
   huggingface_dataset_config: string;
   /** @minLength 1 */
   huggingface_dataset_split: string;
+}
+
+export interface DatasetRowsImportMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface DatasetRowsImportMessageResponseApi {
+  status: boolean;
+  result: DatasetRowsImportMessageResultApi;
 }
 
 export interface DatasetStaticColumnRequestApi {
@@ -7254,6 +7831,41 @@ export interface ExtractJsonColumnRequestApi {
   concurrency?: number;
 }
 
+export interface DatasetTableMetadataApi {
+  /** @minLength 1 */
+  dataset_name: string;
+  total_rows?: number;
+  total_pages?: number;
+  error_messages?: string[];
+  status?: string;
+}
+
+export type DatasetTableResultApiColumnConfigItem = { [key: string]: unknown };
+
+export type DatasetTableResultApiTableItem = { [key: string]: unknown };
+
+export type DatasetTableResultApiDatasetConfig = { [key: string]: unknown };
+
+export type DatasetTableResultApiSyntheticDatasetPercentage = { [key: string]: unknown };
+
+export type DatasetTableResultApiSyntheticRegenerate = { [key: string]: unknown };
+
+export interface DatasetTableResultApi {
+  metadata?: DatasetTableMetadataApi;
+  column_config: DatasetTableResultApiColumnConfigItem[];
+  table?: DatasetTableResultApiTableItem[];
+  dataset_config?: DatasetTableResultApiDatasetConfig;
+  synthetic_dataset?: boolean;
+  synthetic_dataset_percentage?: DatasetTableResultApiSyntheticDatasetPercentage;
+  synthetic_regenerate?: DatasetTableResultApiSyntheticRegenerate;
+  is_processing_data?: boolean;
+}
+
+export interface DatasetTableResponseApi {
+  status: boolean;
+  result: DatasetTableResultApi;
+}
+
 export type DatasetRowDataRequestApiFiltersItem = { [key: string]: unknown };
 
 export type DatasetRowDataRequestApiSortItem = { [key: string]: unknown };
@@ -7262,6 +7874,95 @@ export interface DatasetRowDataRequestApi {
   filters?: DatasetRowDataRequestApiFiltersItem[];
   sort?: DatasetRowDataRequestApiSortItem[];
   row_id: string;
+}
+
+export interface DatasetRowNavigationApi {
+  row_id?: string[];
+}
+
+export type DatasetRowDataResultApiCurrent = { [key: string]: unknown };
+
+export interface DatasetRowDataResultApi {
+  next: DatasetRowNavigationApi;
+  current: DatasetRowDataResultApiCurrent;
+}
+
+export interface DatasetRowDataResponseApi {
+  status: boolean;
+  result: DatasetRowDataResultApi;
+}
+
+export type EvalStructureApiMapping = { [key: string]: unknown };
+
+export type EvalStructureApiConfig = { [key: string]: unknown };
+
+export type EvalStructureApiParams = { [key: string]: unknown };
+
+export type EvalStructureApiFunctionParamsSchema = { [key: string]: unknown };
+
+export type EvalStructureApiModels = { [key: string]: unknown };
+
+export type EvalStructureApiOutput = { [key: string]: unknown };
+
+export type EvalStructureApiConfigParamsDesc = { [key: string]: unknown };
+
+export type EvalStructureApiConfigParamsOption = { [key: string]: unknown };
+
+export type EvalStructureApiChoices = { [key: string]: unknown };
+
+export type EvalStructureApiRunConfig = { [key: string]: unknown };
+
+export interface EvalStructureApi {
+  id: string;
+  template_id: string;
+  /** @minLength 1 */
+  name: string;
+  description?: string;
+  eval_tags?: string[];
+  /** @minLength 1 */
+  template_name?: string;
+  required_keys?: string[];
+  optional_keys?: string[];
+  variable_keys?: string[];
+  run_prompt_column?: boolean;
+  mapping?: EvalStructureApiMapping;
+  config?: EvalStructureApiConfig;
+  params?: EvalStructureApiParams;
+  function_params_schema?: EvalStructureApiFunctionParamsSchema;
+  eval_type_id?: string;
+  eval_type?: string;
+  reason_column?: boolean;
+  models?: EvalStructureApiModels;
+  selected_model?: string;
+  output?: EvalStructureApiOutput;
+  config_params_desc?: EvalStructureApiConfigParamsDesc;
+  config_params_option?: EvalStructureApiConfigParamsOption;
+  kb_id?: string;
+  error_localizer?: boolean;
+  choices?: EvalStructureApiChoices;
+  api_key_available?: boolean;
+  run_config?: EvalStructureApiRunConfig;
+}
+
+export interface EvalStructureResultApi {
+  eval: EvalStructureApi;
+}
+
+export interface EvalStructureResponseApi {
+  status: boolean;
+  result: EvalStructureResultApi;
+}
+
+export type EvalListResultApiEvalsItem = { [key: string]: unknown };
+
+export interface EvalListResultApi {
+  evals: EvalListResultApiEvalsItem[];
+  eval_recommendations?: string[];
+}
+
+export interface EvalListResponseApi {
+  status: boolean;
+  result: EvalListResultApi;
 }
 
 export type PreviewRunEvalRequestApiConfig = { [key: string]: unknown };
@@ -7284,6 +7985,28 @@ export interface StopUserEvalRequestApi {
   experiment_id?: string;
 }
 
+export type SyntheticDatasetConfigPayloadApiColumnsItem = { [key: string]: unknown };
+
+export type SyntheticDatasetConfigPayloadApiDataset = { [key: string]: unknown };
+
+export interface SyntheticDatasetConfigPayloadApi {
+  num_rows?: number;
+  columns?: SyntheticDatasetConfigPayloadApiColumnsItem[];
+  dataset?: SyntheticDatasetConfigPayloadApiDataset;
+  kb_id?: string;
+}
+
+export interface SyntheticDatasetConfigResultApi {
+  /** @minLength 1 */
+  message: string;
+  data: SyntheticDatasetConfigPayloadApi;
+}
+
+export interface SyntheticDatasetConfigResponseApi {
+  status: boolean;
+  result: SyntheticDatasetConfigResultApi;
+}
+
 export type SyntheticDatasetConfigApiDataset = { [key: string]: unknown };
 
 export interface SyntheticDatasetConfigApi {
@@ -7291,6 +8014,25 @@ export interface SyntheticDatasetConfigApi {
   columns: string[];
   dataset: SyntheticDatasetConfigApiDataset;
   kb_id?: string;
+}
+
+export interface SyntheticDatasetUpdateDataApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  num_rows?: number;
+  num_columns?: number;
+}
+
+export interface SyntheticDatasetUpdateResultApi {
+  /** @minLength 1 */
+  message: string;
+  data: SyntheticDatasetUpdateDataApi;
+}
+
+export interface SyntheticDatasetUpdateResponseApi {
+  status: boolean;
+  result: SyntheticDatasetUpdateResultApi;
 }
 
 export type DatasetUpdateCellValueRequestApiNewValue = { [key: string]: unknown };
@@ -7311,6 +8053,28 @@ export interface DatasetUpdateColumnTypeRequestApi {
   new_column_type: string;
   preview?: boolean;
   force_update?: boolean;
+}
+
+export type ColumnTypeConversionResultApiInvalidValuesItem = { [key: string]: unknown };
+
+export type ColumnTypeConversionResultApiValidConversionSamples = { [key: string]: unknown };
+
+export interface ColumnTypeConversionResultApi {
+  /** @minLength 1 */
+  message?: string;
+  column_id?: string;
+  /** @minLength 1 */
+  new_data_type?: string;
+  /** @minLength 1 */
+  status?: string;
+  invalid_count?: number;
+  invalid_values?: ColumnTypeConversionResultApiInvalidValuesItem[];
+  valid_conversion_samples?: ColumnTypeConversionResultApiValidConversionSamples;
+}
+
+export interface ColumnTypeConversionResponseApi {
+  status: boolean;
+  result: ColumnTypeConversionResultApi;
 }
 
 export interface CreateDatasetFromExperimentRequestApi {
@@ -8558,6 +9322,17 @@ export interface ExperimentsTableApi {
   column_id: string;
 }
 
+export interface ExperimentLegacyDetailResponseApi {
+  status: boolean;
+  result: ExperimentsTableApi;
+}
+
+export interface ExperimentStringResultResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
 export type ExperimentListApiStatus = typeof ExperimentListApiStatus[keyof typeof ExperimentListApiStatus];
 
 
@@ -8722,6 +9497,86 @@ export interface ExperimentListV2Api {
   dataset: string;
 }
 
+export interface ExperimentNameSuggestionResultApi {
+  /** @minLength 1 */
+  suggested_name: string;
+}
+
+export interface ExperimentNameSuggestionResponseApi {
+  status: boolean;
+  result: ExperimentNameSuggestionResultApi;
+}
+
+export interface ExperimentNameValidationResultApi {
+  is_valid: boolean;
+  message?: string;
+}
+
+export interface ExperimentNameValidationResponseApi {
+  status: boolean;
+  result: ExperimentNameValidationResultApi;
+}
+
+/**
+ * Determines how the experiment executes: llm, tts, stt, or image.
+ */
+export type ExperimentDetailV2ApiExperimentType = typeof ExperimentDetailV2ApiExperimentType[keyof typeof ExperimentDetailV2ApiExperimentType];
+
+
+export const ExperimentDetailV2ApiExperimentType = {
+  llm: 'llm',
+  tts: 'tts',
+  stt: 'stt',
+  image: 'image',
+} as const;
+
+export type ExperimentDetailV2ApiStatus = typeof ExperimentDetailV2ApiStatus[keyof typeof ExperimentDetailV2ApiStatus];
+
+
+export const ExperimentDetailV2ApiStatus = {
+  NotStarted: 'NotStarted',
+  Queued: 'Queued',
+  Running: 'Running',
+  Completed: 'Completed',
+  Editing: 'Editing',
+  Inactive: 'Inactive',
+  Failed: 'Failed',
+  PartialRun: 'PartialRun',
+  ExperimentEvaluation: 'ExperimentEvaluation',
+  Uploading: 'Uploading',
+  PartialExtracted: 'PartialExtracted',
+  Processing: 'Processing',
+  Deleting: 'Deleting',
+  PartialCompleted: 'PartialCompleted',
+  OptimizationEvaluation: 'OptimizationEvaluation',
+  Error: 'Error',
+  Cancelled: 'Cancelled',
+} as const;
+
+export interface ExperimentDetailV2Api {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  readonly dataset_id?: string;
+  readonly column_id?: string;
+  /** Determines how the experiment executes: llm, tts, stt, or image. */
+  experiment_type?: ExperimentDetailV2ApiExperimentType;
+  status?: ExperimentDetailV2ApiStatus;
+  readonly snapshot_dataset_id?: string;
+  readonly prompt_configs?: string;
+  readonly agent_configs?: string;
+  readonly user_eval_metrics?: string;
+  readonly created_at?: string;
+}
+
+export interface ExperimentV2DetailResponseApi {
+  status: boolean;
+  result: ExperimentDetailV2Api;
+}
+
 export interface ExperimentUpdateV2Api {
   column_id?: string;
   prompt_config?: PromptConfigEntryApi[];
@@ -8733,6 +9588,152 @@ export type ExperimentComparisonWeightsRequestApiWeights = { [key: string]: unkn
 export interface ExperimentComparisonWeightsRequestApi {
   eval_template_ids?: string[];
   weights?: ExperimentComparisonWeightsRequestApiWeights;
+}
+
+export type ExperimentComparisonColumnMetricApiAvgScore = { [key: string]: unknown };
+
+export interface ExperimentComparisonColumnMetricApi {
+  column_id: string;
+  /** @minLength 1 */
+  column_name: string;
+  avg_completion_tokens: number;
+  avg_total_tokens: number;
+  avg_response_time: number;
+  avg_score?: ExperimentComparisonColumnMetricApiAvgScore;
+}
+
+export type ExperimentComparisonDatasetMetricApiNormalizedScores = { [key: string]: unknown };
+
+export interface ExperimentComparisonDatasetMetricApi {
+  dataset_id: string;
+  avg_completion_tokens?: number;
+  avg_total_tokens?: number;
+  avg_response_time?: number;
+  avg_score?: number;
+  columns?: ExperimentComparisonColumnMetricApi[];
+  normalized_scores?: ExperimentComparisonDatasetMetricApiNormalizedScores;
+  overall_rating?: number;
+  rank?: number;
+  rank_suffix?: string;
+  total_datasets?: number;
+}
+
+export type ExperimentDatasetComparisonResultApiWeightsApplied = { [key: string]: unknown };
+
+export interface ExperimentDatasetComparisonResultApi {
+  experiment_id: string;
+  /** @minLength 1 */
+  experiment_name: string;
+  total_datasets: number;
+  weights_applied?: ExperimentDatasetComparisonResultApiWeightsApplied;
+  dataset_comparisons: ExperimentComparisonDatasetMetricApi[];
+}
+
+export interface ExperimentDatasetComparisonResponseApi {
+  status: boolean;
+  result: ExperimentDatasetComparisonResultApi;
+}
+
+export interface ExperimentComparisonRawMetricsApi {
+  avg_completion_tokens?: number;
+  avg_total_tokens?: number;
+  avg_response_time?: number;
+  avg_score?: number;
+}
+
+export interface ExperimentComparisonNormalizedMetricsApi {
+  completion_tokens?: number;
+  total_tokens?: number;
+  response_time?: number;
+  score?: number;
+}
+
+export interface ExperimentComparisonMetricsApi {
+  raw: ExperimentComparisonRawMetricsApi;
+  normalized: ExperimentComparisonNormalizedMetricsApi;
+}
+
+export type ExperimentComparisonWeightsApiScores = { [key: string]: unknown };
+
+export interface ExperimentComparisonWeightsApi {
+  response_time?: number;
+  scores?: ExperimentComparisonWeightsApiScores;
+  total_tokens?: number;
+  completion_tokens?: number;
+}
+
+export type ExperimentComparisonDetailApiScoresWeight = { [key: string]: unknown };
+
+export interface ExperimentComparisonDetailApi {
+  scores_weight?: ExperimentComparisonDetailApiScoresWeight;
+  experiment_dataset_id?: string;
+  rank?: number;
+  rank_suffix?: string;
+  metrics: ExperimentComparisonMetricsApi;
+  weights: ExperimentComparisonWeightsApi;
+  overall_rating?: number;
+}
+
+export interface ExperimentComparisonDetailsResultApi {
+  experiment_id: string;
+  total_comparisons: number;
+  comparisons: ExperimentComparisonDetailApi[];
+}
+
+export interface ExperimentComparisonDetailsResponseApi {
+  status: boolean;
+  result: ExperimentComparisonDetailsResultApi;
+}
+
+export type ExperimentDerivedVariablesResultApiDerivedVariables = {[key: string]: string[]};
+
+export interface ExperimentDerivedVariablesResultApi {
+  version?: string;
+  derived_variables?: ExperimentDerivedVariablesResultApiDerivedVariables;
+}
+
+export interface ExperimentDerivedVariablesResponseApi {
+  status: boolean;
+  result: ExperimentDerivedVariablesResultApi;
+}
+
+export interface ExperimentEvaluationTokenUsageApi {
+  avg_completion_tokens: number;
+  avg_prompt_tokens: number;
+  avg_total_tokens: number;
+  total_tokens: number;
+}
+
+export type ExperimentEvaluationColumnStatsApiAvgScore = { [key: string]: unknown };
+
+export interface ExperimentEvaluationColumnStatsApi {
+  /** @minLength 1 */
+  column_name: string;
+  column_id: string;
+  total_rows: number;
+  success_rate: number;
+  avg_response_time: number;
+  token_usage: ExperimentEvaluationTokenUsageApi;
+  avg_score?: ExperimentEvaluationColumnStatsApiAvgScore;
+}
+
+export interface ExperimentEvaluationStatsResultApi {
+  experiment_id: string;
+  /** @minLength 1 */
+  experiment_name: string;
+  evaluation_id: string;
+  /** @minLength 1 */
+  evaluation_name: string;
+  evaluation_template_id: string;
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  evaluation_columns: ExperimentEvaluationColumnStatsApi[];
+}
+
+export interface ExperimentEvaluationStatsResponseApi {
+  status: boolean;
+  result: ExperimentEvaluationStatsResultApi;
 }
 
 export type FeedbackApiSource = typeof FeedbackApiSource[keyof typeof FeedbackApiSource];
@@ -8768,6 +9769,52 @@ export interface FeedbackApi {
   action_type?: string;
 }
 
+export interface ExperimentFeedbackCreateResultApi {
+  id: string;
+}
+
+export interface ExperimentFeedbackCreateResponseApi {
+  status: boolean;
+  result: ExperimentFeedbackCreateResultApi;
+}
+
+export type ExperimentFeedbackDetailItemApiValue = { [key: string]: unknown };
+
+export interface ExperimentFeedbackDetailItemApi {
+  id: string;
+  value?: ExperimentFeedbackDetailItemApiValue;
+  comment?: string;
+  created_at: string;
+  action_type?: string;
+}
+
+export interface ExperimentFeedbackDetailsResultApi {
+  feedback: ExperimentFeedbackDetailItemApi[];
+  total_count: number;
+}
+
+export interface ExperimentFeedbackDetailsResponseApi {
+  status: boolean;
+  result: ExperimentFeedbackDetailsResultApi;
+}
+
+export interface ExperimentFeedbackTemplateResultApi {
+  /** @minLength 1 */
+  output_type?: string;
+  eval_description?: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  user_eval_name: string;
+  choices?: string[];
+  multi_choice?: boolean;
+}
+
+export interface ExperimentFeedbackTemplateResponseApi {
+  status: boolean;
+  result: ExperimentFeedbackTemplateResultApi;
+}
+
 export type ExperimentFeedbackSubmitRequestApiActionType = typeof ExperimentFeedbackSubmitRequestApiActionType[keyof typeof ExperimentFeedbackSubmitRequestApiActionType];
 
 
@@ -8788,6 +9835,27 @@ export interface ExperimentFeedbackSubmitRequestApi {
   explanation?: string;
 }
 
+export interface ExperimentFeedbackSubmitResultApi {
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  action_type: string;
+  user_eval_metric_id: string;
+  workflow_id?: string;
+}
+
+export interface ExperimentFeedbackSubmitResponseApi {
+  status: boolean;
+  result: ExperimentFeedbackSubmitResultApi;
+}
+
+export type ExperimentJsonSchemaResponseApiResult = {[key: string]: JsonColumnSchemaEntryApi};
+
+export interface ExperimentJsonSchemaResponseApi {
+  status: boolean;
+  result: ExperimentJsonSchemaResponseApiResult;
+}
+
 export interface RerunCellEntryApi {
   column_id: string;
   row_id: string;
@@ -8800,8 +9868,136 @@ export interface ExperimentRerunCellsApi {
   failed_only?: boolean;
 }
 
+export interface ExperimentWorkflowResultApi {
+  /** @minLength 1 */
+  message: string;
+  workflow_id?: string;
+}
+
+export interface ExperimentWorkflowResponseApi {
+  status: boolean;
+  result: ExperimentWorkflowResultApi;
+}
+
+export type ExperimentTableRowsColumnConfigApiGroup = { [key: string]: unknown };
+
+export type ExperimentTableRowsColumnConfigApiAverageScore = { [key: string]: unknown };
+
+export type ExperimentTableRowsColumnConfigApiChoicesMap = { [key: string]: unknown };
+
+export interface ExperimentTableRowsColumnConfigApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  origin_type?: string;
+  data_type?: string;
+  status?: string;
+  group?: ExperimentTableRowsColumnConfigApiGroup;
+  average_score?: ExperimentTableRowsColumnConfigApiAverageScore;
+  dataset_id?: string;
+  choices_map?: ExperimentTableRowsColumnConfigApiChoicesMap;
+  is_base_column?: boolean;
+  output_type?: string;
+  eval_template_id?: string;
+  source_id?: string;
+  is_agent?: boolean;
+  is_final?: boolean;
+}
+
+export type ExperimentTableRowsMetadataApiDescription = {[key: string]: string};
+
+export interface ExperimentTableRowsMetadataApi {
+  total_rows?: number;
+  dataset?: string;
+  dataset_name?: string;
+  column?: string;
+  total_pages?: number;
+  description?: ExperimentTableRowsMetadataApiDescription;
+}
+
+export type ExperimentTableRowsResultApiTableItem = { [key: string]: unknown };
+
+export interface ExperimentTableRowsResultApi {
+  column_config: ExperimentTableRowsColumnConfigApi[];
+  table?: ExperimentTableRowsResultApiTableItem[];
+  metadata?: ExperimentTableRowsMetadataApi;
+  output_format?: string;
+  status?: string;
+  next_row_ids?: string[];
+}
+
+export interface ExperimentTableRowsResponseApi {
+  status: boolean;
+  result: ExperimentTableRowsResultApi;
+}
+
+export interface ExperimentStatsColumnConfigApi {
+  status?: string;
+  /** @minLength 1 */
+  name: string;
+  reverse_output?: boolean;
+  output_type?: string;
+  eval_template_id?: string;
+}
+
+export interface ExperimentStatsMetadataApi {
+  is_winner_chosen: boolean;
+}
+
+export type ExperimentStatsResultApiTableDataItem = { [key: string]: unknown };
+
+export interface ExperimentStatsResultApi {
+  column_config: ExperimentStatsColumnConfigApi[];
+  table_data: ExperimentStatsResultApiTableDataItem[];
+  metadata: ExperimentStatsMetadataApi;
+}
+
+export interface ExperimentStatsResponseApi {
+  status: boolean;
+  result: ExperimentStatsResultApi;
+}
+
+export interface ExperimentStopWorkflowsCancelledApi {
+  main: boolean;
+  reruns: boolean;
+}
+
+export interface ExperimentStopResultApi {
+  /** @minLength 1 */
+  message: string;
+  experiment_id: string;
+  workflows_cancelled: ExperimentStopWorkflowsCancelledApi;
+}
+
+export interface ExperimentStopResponseApi {
+  status: boolean;
+  result: ExperimentStopResultApi;
+}
+
+export interface ExperimentAddEvalResultApi {
+  /** @minLength 1 */
+  message: string;
+  eval_id: string;
+}
+
+export interface ExperimentAddEvalResponseApi {
+  status: boolean;
+  result: ExperimentAddEvalResultApi;
+}
+
 export interface ExperimentAdditionalEvaluationsRequestApi {
   eval_template_ids: string[];
+}
+
+export interface ExperimentMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface ExperimentMessageResponseApi {
+  status: boolean;
+  result: ExperimentMessageResultApi;
 }
 
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };
@@ -15190,52 +16386,6 @@ export interface DashboardDetailApi {
   readonly widgets?: string;
 }
 
-export type DatasetApiModelType = typeof DatasetApiModelType[keyof typeof DatasetApiModelType];
-
-
-export const DatasetApiModelType = {
-  Numeric: 'Numeric',
-  ScoreCategorical: 'ScoreCategorical',
-  Ranking: 'Ranking',
-  BinaryClassification: 'BinaryClassification',
-  Regression: 'Regression',
-  ObjectDetection: 'ObjectDetection',
-  Segmentation: 'Segmentation',
-  GenerativeLLM: 'GenerativeLLM',
-  GenerativeImage: 'GenerativeImage',
-  GenerativeVideo: 'GenerativeVideo',
-  TTS: 'TTS',
-  STT: 'STT',
-  MultiModal: 'MultiModal',
-} as const;
-
-export type DatasetApiSource = typeof DatasetApiSource[keyof typeof DatasetApiSource];
-
-
-export const DatasetApiSource = {
-  demo: 'demo',
-  build: 'build',
-  sdk: 'sdk',
-  observe: 'observe',
-  knowledge_base: 'knowledge_base',
-  scenario: 'scenario',
-  experiment_snapshot: 'experiment_snapshot',
-  graph: 'graph',
-} as const;
-
-export interface DatasetApi {
-  readonly id?: string;
-  /**
-     * @minLength 1
-     * @maxLength 2000
-     */
-  name: string;
-  organization: string;
-  model_type?: DatasetApiModelType;
-  source?: DatasetApiSource;
-  user?: string;
-}
-
 export type EvalTaskApiFiltersSpanAttributesFiltersItemFilterConfig = {
   /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
   filter_type: string;
@@ -18317,6 +19467,11 @@ export interface UsageWorkspaceBreakdownResultApi {
 export interface UsageWorkspaceBreakdownResponseApi {
   status: boolean;
   result: UsageWorkspaceBreakdownResultApi;
+}
+
+export interface StripeWebhookLegacyResponseApi {
+  status: boolean;
+  result?: StripeWebhookResultApi;
 }
 
 export type AccountsAwsMarketplaceVerifyTokenCreateBody = {

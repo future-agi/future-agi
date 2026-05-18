@@ -56,7 +56,6 @@ from model_hub.serializers.contracts import (
     CustomEvalTemplateCreateResponseSerializer,
     DatasetEvalStatsResponseSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
     ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import UserEvalMetricSerializer

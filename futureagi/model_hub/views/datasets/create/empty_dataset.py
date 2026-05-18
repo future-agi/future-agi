@@ -17,7 +17,9 @@ from model_hub.models.develop_dataset import Dataset
 from model_hub.serializers.contracts import (
     CreateEmptyDatasetRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreateStartedResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.validators.dataset_validators import (
@@ -45,7 +47,10 @@ class CreateEmptyDatasetView(APIView):
 
     @swagger_auto_schema(
         request_body=CreateEmptyDatasetRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:

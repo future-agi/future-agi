@@ -230,10 +230,16 @@ import type {
   ClickHouseHealthResponseApi,
   CloneDatasetRequestApi,
   ColumnConfigResponseApi,
+  ColumnTypeConversionResponseApi,
   ColumnValuesRequestApi,
   ColumnValuesResponseApi,
   CompareDatasetApi,
+  CompareDatasetDeleteResponseApi,
+  CompareDatasetResponseApi,
+  CompareDatasetRowResponseApi,
   CompareDatasetStatsRequestApi,
+  CompareDatasetStatsResponseApi,
+  CompareEvalListResponseApi,
   CompareEvalsListRequestApi,
   ComparePreviewRunEvalRequestApi,
   CompareStartEvalsRequestApi,
@@ -293,19 +299,32 @@ import type {
   DatasetApi,
   DatasetBehaviorRequestApi,
   DatasetCellDataRequestApi,
+  DatasetCellDataResponseApi,
   DatasetColumnDetailResponseApi,
+  DatasetColumnsMutationResponseApi,
+  DatasetCopyResponseApi,
+  DatasetCreateStartedResponseApi,
+  DatasetCreationProgressResponseApi,
+  DatasetDerivedVariablesResponseApi,
   DatasetEvalStatsResponseApi,
   DatasetExplanationSummaryResponseApi,
   DatasetJsonSchemaResponseApi,
+  DatasetListResponseApi,
   DatasetMultipleStaticColumnsRequestApi,
+  DatasetNamesResponseApi,
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
   DatasetOptimizationDetailApi,
   DatasetRowDataRequestApi,
+  DatasetRowDataResponseApi,
   DatasetRowDiffRequestApi,
+  DatasetRowsImportMessageResponseApi,
+  DatasetRowsImportedResponseApi,
   DatasetRunPromptStatsResponseApi,
   DatasetSdkRowsRequestApi,
+  DatasetSdkRowsResponseApi,
   DatasetStaticColumnRequestApi,
+  DatasetTableResponseApi,
   DatasetUpdateCellValueRequestApi,
   DatasetUpdateColumnNameRequestApi,
   DatasetUpdateColumnTypeRequestApi,
@@ -323,15 +342,20 @@ import type {
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
   DevelopAnnotationsUserApi,
+  DevelopDatasetMessageResponseApi,
   DiscussionCommentRequestApi,
   DiscussionReactionRequestApi,
   DiscussionThreadStatusRequestApi,
   DownloadInvoiceRequestApi,
   DownloadInvoiceResponseApi,
   DuplicateDatasetRequestApi,
+  DuplicateDatasetResponseApi,
   DuplicateEvalTemplateApi,
   DuplicateEvalTemplateResponseApi,
   DuplicateRowsRequestApi,
+  DuplicateRowsResponseApi,
+  DynamicColumnCreateResponseApi,
+  DynamicColumnMessageResponseApi,
   EELicenseCreateRequestApi,
   EELicenseCreateResponseApi,
   EELicenseListResponseApi,
@@ -352,13 +376,17 @@ import type {
   EvalExplanationSummaryRefreshResponseApi,
   EvalExplanationSummaryResponseApi,
   EvalFeedbackListResponseApi,
+  EvalFunctionListResponseApi,
   EvalGroupApi,
   EvalListRequestApi,
+  EvalListResponseApi,
   EvalMetricRequestApi,
   EvalMetricResponseApi,
   EvalPlayGroundApi,
   EvalPlayGroundFeedbackApi,
   EvalPlaygroundFeedbackResponseApi,
+  EvalPreviewResponseApi,
+  EvalStructureResponseApi,
   EvalSummaryComparisonResponseApi,
   EvalSummaryResponseApi,
   EvalSummaryTemplateDeleteResponseApi,
@@ -389,13 +417,34 @@ import type {
   ExecutePromptSimulationResponseApi,
   ExecuteRequestApi,
   ExecuteRunTestApi,
+  ExperimentAddEvalResponseApi,
   ExperimentAdditionalEvaluationsRequestApi,
+  ExperimentComparisonDetailsResponseApi,
   ExperimentComparisonWeightsRequestApi,
   ExperimentCreateV2Api,
+  ExperimentDatasetComparisonResponseApi,
+  ExperimentDerivedVariablesResponseApi,
+  ExperimentEvaluationStatsResponseApi,
+  ExperimentFeedbackCreateResponseApi,
+  ExperimentFeedbackDetailsResponseApi,
   ExperimentFeedbackSubmitRequestApi,
+  ExperimentFeedbackSubmitResponseApi,
+  ExperimentFeedbackTemplateResponseApi,
+  ExperimentJsonSchemaResponseApi,
+  ExperimentLegacyDetailResponseApi,
+  ExperimentMessageResponseApi,
+  ExperimentNameSuggestionResponseApi,
+  ExperimentNameValidationResponseApi,
   ExperimentRerunCellsApi,
   ExperimentRerunRequestApi,
+  ExperimentRowDiffResponseApi,
+  ExperimentStatsResponseApi,
+  ExperimentStopResponseApi,
+  ExperimentStringResultResponseApi,
+  ExperimentTableRowsResponseApi,
   ExperimentUpdateV2Api,
+  ExperimentV2DetailResponseApi,
+  ExperimentWorkflowResponseApi,
   ExperimentsTableApi,
   ExtractEntitiesRequestApi,
   ExtractJsonColumnRequestApi,
@@ -469,6 +518,7 @@ import type {
   HealthCheckResponseApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
+  HuggingFaceDatasetConfigResponseApi,
   HuggingFaceDatasetCreateRequestApi,
   HuggingFaceDatasetDetailRequestApi,
   HuggingFaceDatasetDetailResponseApi,
@@ -519,6 +569,7 @@ import type {
   LiveKitTemporalSignalRequestApi,
   LiveKitTranscriptCreatedResponseApi,
   LiveKitTranscriptsRequestApi,
+  LocalFileDatasetCreateStartedResponseApi,
   MCPAnalyticsSummaryResponseApi,
   MCPAnalyticsTimelineResponseApi,
   MCPAnalyticsToolsResponseApi,
@@ -549,12 +600,14 @@ import type {
   MCPToolGroupsResponseApi,
   MCPToolListResponseApi,
   ManualDatasetCreateRequestApi,
+  ManualDatasetCreateResponseApi,
   MemberListResponseApi,
   MemberRemoveApi,
   MemberRoleUpdateApi,
   MemberRoleUpdateResponseApi,
   MemberUserMutationResponseApi,
   MergeDatasetRequestApi,
+  MergeDatasetResponseApi,
   MessageFeedbackApi,
   MessageFeedbackResponseApi,
   MetricTagOptionApi,
@@ -598,7 +651,6 @@ import type {
   ModelHubFeedbackGetTemplateParams,
   ModelHubFeedbackList200,
   ModelHubFeedbackListParams,
-  ModelHubJSONResponseApi,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
   ModelHubOptimisationList200,
@@ -724,6 +776,7 @@ import type {
   PersonaDuplicateResponseApi,
   PlanResponseApi,
   PreviewDatasetOperationRequestApi,
+  PreviewDatasetOperationResponseApi,
   PreviewRunEvalRequestApi,
   PreviewRunPromptApi,
   PricingCalculationResponseApi,
@@ -746,6 +799,7 @@ import type {
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  ProviderStatusResponseApi,
   PublicConfigResponseApi,
   QueueAddItemsResponseApi,
   QueueAddLabelResponseApi,
@@ -803,6 +857,7 @@ import type {
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
+  RunPromptColumnPreviewResponseApi,
   RunPromptForRowsRequestApi,
   RunPromptOptionsResponseApi,
   RunTestAnalyticsApi,
@@ -927,6 +982,7 @@ import type {
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
   StreamStatusResponseApi,
+  StripeWebhookLegacyResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
   SubmitAnnotationsApi,
@@ -939,7 +995,10 @@ import type {
   SyncLogApi,
   SyntheticDataApi,
   SyntheticDatasetConfigApi,
+  SyntheticDatasetConfigResponseApi,
+  SyntheticDatasetCreateStartedResponseApi,
   SyntheticDatasetCreationApi,
+  SyntheticDatasetUpdateResponseApi,
   TOTPConfirmApi,
   TOTPConfirmResponseApi,
   TOTPDisableApi,
@@ -23794,7 +23853,7 @@ export const modelHubDatasetRunPromptStatsList = async (datasetId: string, optio
 
 
 export type modelHubDatasetsCompareGetEvalsListCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareEvalListResponseApi
   status: 200
 }
 
@@ -23855,7 +23914,7 @@ export const modelHubDatasetsCompareGetEvalsListCreate = async (compareEvalsList
 
 
 export type modelHubDatasetsComparePreviewRunEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EvalPreviewResponseApi
   status: 200
 }
 
@@ -23916,7 +23975,7 @@ export const modelHubDatasetsComparePreviewRunEvalCreate = async (comparePreview
 
 
 export type modelHubDatasetsDeleteCompareReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetRowResponseApi
   status: 200
 }
 
@@ -23976,7 +24035,7 @@ export const modelHubDatasetsDeleteCompareRead = async (compareId: string, optio
 
 
 export type modelHubDatasetsDeleteCompareDeleteResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetDeleteResponseApi
   status: 200
 }
 
@@ -24218,7 +24277,7 @@ export const modelHubDatasetsGetBaseColumnsList = async ( options?: RequestInit)
 
 
 export type modelHubDatasetsGetCompareRowReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetRowResponseApi
   status: 200
 }
 
@@ -24280,7 +24339,7 @@ export const modelHubDatasetsGetCompareRowRead = async (compareId: string,
 
 
 export type modelHubDatasetsGetCompareRowDeleteResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetDeleteResponseApi
   status: 200
 }
 
@@ -24464,7 +24523,7 @@ export const modelHubDatasetsHuggingfaceListCreate = async (huggingFaceDatasetLi
 
 
 export type modelHubDatasetsAddApiColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnCreateResponseApi
   status: 200
 }
 
@@ -24526,7 +24585,7 @@ export const modelHubDatasetsAddApiColumnCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsAddVectorDbColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnCreateResponseApi
   status: 200
 }
 
@@ -24588,7 +24647,7 @@ export const modelHubDatasetsAddVectorDbColumnCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsClassifyColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnCreateResponseApi
   status: 200
 }
 
@@ -24650,7 +24709,7 @@ export const modelHubDatasetsClassifyColumnCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsCompareDatasetsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetResponseApi
   status: 200
 }
 
@@ -24712,7 +24771,7 @@ export const modelHubDatasetsCompareDatasetsCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsCompareDatasetsAddEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -24774,7 +24833,7 @@ export const modelHubDatasetsCompareDatasetsAddEvalCreate = async (datasetId: st
 
 
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: Blob
   status: 200
 }
 
@@ -24836,7 +24895,7 @@ export const modelHubDatasetsCompareDatasetsDownloadCreate = async (datasetId: s
 
 
 export type modelHubDatasetsCompareDatasetsStartEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -24898,7 +24957,7 @@ export const modelHubDatasetsCompareDatasetsStartEvalCreate = async (datasetId: 
 
 
 export type modelHubDatasetsCompareStatsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: CompareDatasetStatsResponseApi
   status: 200
 }
 
@@ -24960,7 +25019,7 @@ export const modelHubDatasetsCompareStatsCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsConditionalColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnCreateResponseApi
   status: 200
 }
 
@@ -25022,7 +25081,7 @@ export const modelHubDatasetsConditionalColumnCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsDerivedVariablesListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetDerivedVariablesResponseApi
   status: 200
 }
 
@@ -25091,7 +25150,7 @@ export const modelHubDatasetsDerivedVariablesList = async (datasetId: string, op
 
 
 export type modelHubDatasetsDuplicateRowsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DuplicateRowsResponseApi
   status: 200
 }
 
@@ -25153,7 +25212,7 @@ export const modelHubDatasetsDuplicateRowsCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsDuplicateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DuplicateDatasetResponseApi
   status: 200
 }
 
@@ -25215,7 +25274,7 @@ export const modelHubDatasetsDuplicateCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsExtractEntitiesCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnMessageResponseApi
   status: 200
 }
 
@@ -25277,7 +25336,7 @@ export const modelHubDatasetsExtractEntitiesCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsMergeCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: MergeDatasetResponseApi
   status: 200
 }
 
@@ -25339,7 +25398,7 @@ export const modelHubDatasetsMergeCreate = async (datasetId: string,
 
 
 export type modelHubDatasetsPreviewCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: PreviewDatasetOperationResponseApi
   status: 200
 }
 
@@ -25464,7 +25523,7 @@ export const modelHubDeleteEvalTemplateCreate = async (deleteEvalTemplateApi: De
 
 
 export type modelHubDevelopsAddAsNewCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCopyResponseApi
   status: 200
 }
 
@@ -25525,7 +25584,7 @@ export const modelHubDevelopsAddAsNewCreate = async (addAsNewDatasetRequestApi: 
 
 
 export type modelHubDevelopsAddRowsFromFileCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -25586,7 +25645,7 @@ export const modelHubDevelopsAddRowsFromFileCreate = async (addRowsFromFileReque
 
 
 export type modelHubDevelopsAddRowsSdkCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetSdkRowsResponseApi
   status: 200
 }
 
@@ -25647,7 +25706,7 @@ export const modelHubDevelopsAddRowsSdkCreate = async (datasetSdkRowsRequestApi:
 
 
 export type modelHubDevelopsAddRunPromptColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -25708,7 +25767,7 @@ export const modelHubDevelopsAddRunPromptColumnCreate = async (addRunPromptApi: 
 
 
 export type modelHubDevelopsCloneDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCopyResponseApi
   status: 200
 }
 
@@ -25770,7 +25829,7 @@ export const modelHubDevelopsCloneDatasetCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCreateStartedResponseApi
   status: 200
 }
 
@@ -25831,7 +25890,7 @@ export const modelHubDevelopsCreateDatasetFromHuggingfaceCreate = async (hugging
 
 
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: LocalFileDatasetCreateStartedResponseApi
   status: 200
 }
 
@@ -25892,7 +25951,7 @@ export const modelHubDevelopsCreateDatasetFromLocalFileCreate = async (createDat
 
 
 export type modelHubDevelopsCreateDatasetManuallyCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ManualDatasetCreateResponseApi
   status: 200
 }
 
@@ -25953,7 +26012,7 @@ export const modelHubDevelopsCreateDatasetManuallyCreate = async (manualDatasetC
 
 
 export type modelHubDevelopsCreateEmptyDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCreateStartedResponseApi
   status: 200
 }
 
@@ -26014,7 +26073,7 @@ export const modelHubDevelopsCreateEmptyDatasetCreate = async (createEmptyDatase
 
 
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: SyntheticDatasetCreateStartedResponseApi
   status: 200
 }
 
@@ -26075,7 +26134,7 @@ export const modelHubDevelopsCreateSyntheticDatasetCreate = async (syntheticData
 
 
 export type modelHubDevelopsDatasetCreationProgressReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCreationProgressResponseApi
   status: 200
 }
 
@@ -26171,7 +26230,7 @@ export const modelHubDevelopsDeleteDatasetDelete = async ( options?: RequestInit
 
 
 export type modelHubDevelopsEditRunPromptColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -26232,7 +26291,7 @@ export const modelHubDevelopsEditRunPromptColumnCreate = async (editRunPromptCol
 
 
 export type modelHubDevelopsGetCellDataCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetCellDataResponseApi
   status: 200
 }
 
@@ -26293,7 +26352,7 @@ export const modelHubDevelopsGetCellDataCreate = async (datasetCellDataRequestAp
 
 
 export type modelHubDevelopsGetDatasetsNamesListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetNamesResponseApi
   status: 200
 }
 
@@ -26353,7 +26412,7 @@ export const modelHubDevelopsGetDatasetsNamesList = async ( options?: RequestIni
 
 
 export type modelHubDevelopsGetDatasetsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetListResponseApi
   status: 200
 }
 
@@ -26473,7 +26532,7 @@ export const modelHubDevelopsGetDerivedDatasetsRead = async (datasetId: string, 
 
 
 export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: HuggingFaceDatasetConfigResponseApi
   status: 200
 }
 
@@ -26534,7 +26593,7 @@ export const modelHubDevelopsGetHuggingfaceDatasetConfigCreate = async (huggingF
 
 
 export type modelHubDevelopsGetRowDiffCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentRowDiffResponseApi
   status: 200
 }
 
@@ -26595,7 +26654,7 @@ export const modelHubDevelopsGetRowDiffCreate = async (datasetRowDiffRequestApi:
 
 
 export type modelHubDevelopsGetFunctionListListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EvalFunctionListResponseApi
   status: 200
 }
 
@@ -26655,7 +26714,7 @@ export const modelHubDevelopsGetFunctionListList = async ( options?: RequestInit
 
 
 export type modelHubDevelopsPreviewRunPromptColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: RunPromptColumnPreviewResponseApi
   status: 200
 }
 
@@ -26716,7 +26775,7 @@ export const modelHubDevelopsPreviewRunPromptColumnCreate = async (previewRunPro
 
 
 export type modelHubDevelopsProviderStatusListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ProviderStatusResponseApi
   status: 200
 }
 
@@ -26896,7 +26955,7 @@ export const modelHubDevelopsRetrieveRunPromptOptionsList = async ( options?: Re
 
 
 export type modelHubDevelopsAddColumnsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetColumnsMutationResponseApi
   status: 200
 }
 
@@ -26958,7 +27017,7 @@ export const modelHubDevelopsAddColumnsCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddEmptyColumnsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetColumnsMutationResponseApi
   status: 200
 }
 
@@ -27020,7 +27079,7 @@ export const modelHubDevelopsAddEmptyColumnsCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddEmptyRowsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27082,7 +27141,7 @@ export const modelHubDevelopsAddEmptyRowsCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddMultipleStaticColumnsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27162,7 +27221,7 @@ export const modelHubDevelopsAddMultipleStaticColumnsCreate = async (datasetId: 
 
 
 export type modelHubDevelopsAddRowsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27224,7 +27283,7 @@ export const modelHubDevelopsAddRowsCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetRowsImportedResponseApi
   status: 200
 }
 
@@ -27286,7 +27345,7 @@ export const modelHubDevelopsAddRowsFromExistingDatasetCreate = async (datasetId
 
 
 export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetRowsImportMessageResponseApi
   status: 200
 }
 
@@ -27348,7 +27407,7 @@ export const modelHubDevelopsAddRowsFromHuggingfaceCreate = async (datasetId: st
 
 
 export type modelHubDevelopsAddStaticColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27410,7 +27469,7 @@ export const modelHubDevelopsAddStaticColumnCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddSyntheticDataCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27472,7 +27531,7 @@ export const modelHubDevelopsAddSyntheticDataCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsAddUserEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27672,7 +27731,7 @@ export const modelHubDevelopsDeleteUserEvalDelete = async (datasetId: string,
 
 
 export type modelHubDevelopsDownloadDatasetListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: Blob
   status: 200
 }
 
@@ -27732,7 +27791,7 @@ export const modelHubDevelopsDownloadDatasetList = async (datasetId: string, opt
 
 
 export type modelHubDevelopsEditAndRunUserEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27796,7 +27855,7 @@ export const modelHubDevelopsEditAndRunUserEvalCreate = async (datasetId: string
 
 
 export type modelHubDevelopsEditDatasetBehaviorUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -27858,7 +27917,7 @@ export const modelHubDevelopsEditDatasetBehaviorUpdate = async (datasetId: strin
 
 
 export type modelHubDevelopsExtractJsonColumnCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DynamicColumnCreateResponseApi
   status: 200
 }
 
@@ -27920,7 +27979,7 @@ export const modelHubDevelopsExtractJsonColumnCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsGetDatasetTableListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetTableResponseApi
   status: 200
 }
 
@@ -27980,7 +28039,7 @@ export const modelHubDevelopsGetDatasetTableList = async (datasetId: string, opt
 
 
 export type modelHubDevelopsGetRowDataCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetRowDataResponseApi
   status: 200
 }
 
@@ -28042,7 +28101,7 @@ export const modelHubDevelopsGetRowDataCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsGetEvalStructureReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EvalStructureResponseApi
   status: 200
 }
 
@@ -28104,7 +28163,7 @@ export const modelHubDevelopsGetEvalStructureRead = async (datasetId: string,
 
 
 export type modelHubDevelopsGetEvalsListListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EvalListResponseApi
   status: 200
 }
 
@@ -28164,7 +28223,7 @@ export const modelHubDevelopsGetEvalsListList = async (datasetId: string, option
 
 
 export type modelHubDevelopsPreviewRunEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EvalPreviewResponseApi
   status: 200
 }
 
@@ -28226,7 +28285,7 @@ export const modelHubDevelopsPreviewRunEvalCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsStartEvalsProcessCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -28288,7 +28347,7 @@ export const modelHubDevelopsStartEvalsProcessCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsStopUserEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -28360,7 +28419,7 @@ export const modelHubDevelopsStopUserEvalCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsSyntheticConfigListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: SyntheticDatasetConfigResponseApi
   status: 200
 }
 
@@ -28420,7 +28479,7 @@ export const modelHubDevelopsSyntheticConfigList = async (datasetId: string, opt
 
 
 export type modelHubDevelopsUpdateSyntheticConfigUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: SyntheticDatasetUpdateResponseApi
   status: 200
 }
 
@@ -28482,7 +28541,7 @@ export const modelHubDevelopsUpdateSyntheticConfigUpdate = async (datasetId: str
 
 
 export type modelHubDevelopsUpdateCellValueCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -28544,7 +28603,7 @@ export const modelHubDevelopsUpdateCellValueCreate = async (datasetId: string,
 
 
 export type modelHubDevelopsUpdateColumnNameUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -28608,7 +28667,7 @@ export const modelHubDevelopsUpdateColumnNameUpdate = async (datasetId: string,
 
 
 export type modelHubDevelopsUpdateColumnTypeUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ColumnTypeConversionResponseApi
   status: 200
 }
 
@@ -28672,7 +28731,7 @@ export const modelHubDevelopsUpdateColumnTypeUpdate = async (datasetId: string,
 
 
 export type modelHubDevelopsCreateDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DevelopDatasetMessageResponseApi
   status: 200
 }
 
@@ -28734,7 +28793,7 @@ export const modelHubDevelopsCreateDatasetCreate = async (expDatasetId: string,
 
 
 export type modelHubDevelopsGetExperimentDatasetTableListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DatasetTableResponseApi
   status: 200
 }
 
@@ -31317,7 +31376,7 @@ export const modelHubExperimentDetailList = async (params?: ModelHubExperimentDe
 
 
 export type modelHubExperimentsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentLegacyDetailResponseApi
   status: 200
 }
 
@@ -31377,7 +31436,7 @@ export const modelHubExperimentsList = async ( options?: RequestInit): Promise<m
 
 
 export type modelHubExperimentsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStringResultResponseApi
   status: 200
 }
 
@@ -31438,7 +31497,7 @@ export const modelHubExperimentsCreate = async (experimentsTableApi: Experiments
 
 
 export type modelHubExperimentsUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStringResultResponseApi
   status: 200
 }
 
@@ -31572,7 +31631,7 @@ export const modelHubExperimentsDeleteDelete = async ( options?: RequestInit): P
 
 
 export type modelHubExperimentsReRunCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStringResultResponseApi
   status: 200
 }
 
@@ -31633,7 +31692,7 @@ export const modelHubExperimentsReRunCreate = async (experimentRerunRequestApi: 
 
 
 export type modelHubExperimentsV2CreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStringResultResponseApi
   status: 200
 }
 
@@ -31773,7 +31832,7 @@ export const modelHubExperimentsV2ListList = async (params?: ModelHubExperiments
 
 
 export type modelHubExperimentsV2ReRunCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStringResultResponseApi
   status: 200
 }
 
@@ -31840,7 +31899,7 @@ export const modelHubExperimentsV2ReRunCreate = async (experimentRerunRequestApi
 
 
 export type modelHubExperimentsV2RowDiffCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentRowDiffResponseApi
   status: 200
 }
 
@@ -31901,7 +31960,7 @@ export const modelHubExperimentsV2RowDiffCreate = async (datasetRowDiffRequestAp
 
 
 export type modelHubExperimentsV2SuggestNameReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentNameSuggestionResponseApi
   status: 200
 }
 
@@ -31964,7 +32023,7 @@ export const modelHubExperimentsV2SuggestNameRead = async (datasetId: string, op
 
 
 export type modelHubExperimentsV2ValidateNameListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentNameValidationResponseApi
   status: 200
 }
 
@@ -32027,7 +32086,7 @@ export const modelHubExperimentsV2ValidateNameList = async ( options?: RequestIn
 
 
 export type modelHubExperimentsV2ReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentV2DetailResponseApi
   status: 200
 }
 
@@ -32087,7 +32146,7 @@ export const modelHubExperimentsV2Read = async (experimentId: string, options?: 
 
 
 export type modelHubExperimentsV2UpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentV2DetailResponseApi
   status: 200
 }
 
@@ -32158,7 +32217,7 @@ export const modelHubExperimentsV2Update = async (experimentId: string,
 
 
 export type modelHubExperimentsV2CompareExperimentsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentDatasetComparisonResponseApi
   status: 200
 }
 
@@ -32223,7 +32282,7 @@ export const modelHubExperimentsV2CompareExperimentsCreate = async (experimentId
 
 
 export type modelHubExperimentsV2ComparisonsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentComparisonDetailsResponseApi
   status: 200
 }
 
@@ -32283,7 +32342,7 @@ export const modelHubExperimentsV2ComparisonsList = async (experimentId: string,
 
 
 export type modelHubExperimentsV2DerivedVariablesListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentDerivedVariablesResponseApi
   status: 200
 }
 
@@ -32347,7 +32406,7 @@ export const modelHubExperimentsV2DerivedVariablesList = async (experimentId: st
 
 
 export type modelHubExperimentsV2DownloadListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: Blob
   status: 200
 }
 
@@ -32407,7 +32466,7 @@ export const modelHubExperimentsV2DownloadList = async (experimentId: string, op
 
 
 export type modelHubExperimentsV2EvaluationsStatsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentEvaluationStatsResponseApi
   status: 200
 }
 
@@ -32469,7 +32528,7 @@ export const modelHubExperimentsV2EvaluationsStatsList = async (experimentId: st
 
 
 export type modelHubExperimentsV2FeedbackCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentFeedbackCreateResponseApi
   status: 200
 }
 
@@ -32534,7 +32593,7 @@ export const modelHubExperimentsV2FeedbackCreate = async (experimentId: string,
 
 
 export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentFeedbackDetailsResponseApi
   status: 200
 }
 
@@ -32597,7 +32656,7 @@ export const modelHubExperimentsV2FeedbackGetFeedbackDetailsList = async (experi
 
 
 export type modelHubExperimentsV2FeedbackGetTemplateListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentFeedbackTemplateResponseApi
   status: 200
 }
 
@@ -32660,7 +32719,7 @@ export const modelHubExperimentsV2FeedbackGetTemplateList = async (experimentId:
 
 
 export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentFeedbackSubmitResponseApi
   status: 200
 }
 
@@ -32725,7 +32784,7 @@ export const modelHubExperimentsV2FeedbackSubmitFeedbackCreate = async (experime
 
 
 export type modelHubExperimentsV2JsonSchemaListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentJsonSchemaResponseApi
   status: 200
 }
 
@@ -32789,7 +32848,7 @@ export const modelHubExperimentsV2JsonSchemaList = async (experimentId: string, 
 
 
 export type modelHubExperimentsV2RerunCellsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentWorkflowResponseApi
   status: 200
 }
 
@@ -32858,7 +32917,7 @@ export const modelHubExperimentsV2RerunCellsCreate = async (experimentId: string
 
 
 export type modelHubExperimentsV2RowsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentTableRowsResponseApi
   status: 200
 }
 
@@ -32918,7 +32977,7 @@ export const modelHubExperimentsV2RowsList = async (experimentId: string, option
 
 
 export type modelHubExperimentsV2RowsReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentTableRowsResponseApi
   status: 200
 }
 
@@ -32980,7 +33039,7 @@ export const modelHubExperimentsV2RowsRead = async (experimentId: string,
 
 
 export type modelHubExperimentsV2StatsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStatsResponseApi
   status: 200
 }
 
@@ -33043,7 +33102,7 @@ export const modelHubExperimentsV2StatsList = async (experimentId: string, optio
 
 
 export type modelHubExperimentsV2StopCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStopResponseApi
   status: 200
 }
 
@@ -33112,7 +33171,7 @@ export const modelHubExperimentsV2StopCreate = async (experimentId: string,
 
 
 export type modelHubExperimentsReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentTableRowsResponseApi
   status: 200
 }
 
@@ -33174,7 +33233,7 @@ export const modelHubExperimentsRead = async (experimentId: string,
 
 
 export type modelHubExperimentsAddEvalCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentAddEvalResponseApi
   status: 200
 }
 
@@ -33236,7 +33295,7 @@ export const modelHubExperimentsAddEvalCreate = async (experimentId: string,
 
 
 export type modelHubExperimentsCompareExperimentsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentDatasetComparisonResponseApi
   status: 200
 }
 
@@ -33298,7 +33357,7 @@ export const modelHubExperimentsCompareExperimentsCreate = async (experimentId: 
 
 
 export type modelHubExperimentsComparisonsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentComparisonDetailsResponseApi
   status: 200
 }
 
@@ -33358,7 +33417,7 @@ export const modelHubExperimentsComparisonsList = async (experimentId: string, o
 
 
 export type modelHubExperimentsDownloadListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: Blob
   status: 200
 }
 
@@ -33418,7 +33477,7 @@ export const modelHubExperimentsDownloadList = async (experimentId: string, opti
 
 
 export type modelHubExperimentsEvaluationsStatsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentEvaluationStatsResponseApi
   status: 200
 }
 
@@ -33480,7 +33539,7 @@ export const modelHubExperimentsEvaluationsStatsList = async (experimentId: stri
 
 
 export type modelHubExperimentsRunEvaluationsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentMessageResponseApi
   status: 200
 }
 
@@ -33548,7 +33607,7 @@ export const modelHubExperimentsRunEvaluationsCreate = async (experimentId: stri
 
 
 export type modelHubExperimentsStatsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ExperimentStatsResponseApi
   status: 200
 }
 
@@ -65544,7 +65603,7 @@ export const usageV2UsageWorkspaceBreakdownList = async (params: UsageV2UsageWor
 
 
 export type usageWebhookCreateResponse200 = {
-  data: StripeWebhookResponseApi
+  data: StripeWebhookLegacyResponseApi
   status: 200
 }
 

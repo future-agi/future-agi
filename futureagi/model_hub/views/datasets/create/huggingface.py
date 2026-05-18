@@ -27,7 +27,10 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     HuggingFaceDatasetConfigRequestSerializer,
     HuggingFaceDatasetCreateRequestSerializer,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreateStartedResponseSerializer,
+    HuggingFaceDatasetConfigResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer, UploadFileForm
 from model_hub.utils.utils import (
@@ -67,7 +70,10 @@ class GetHuggingFaceDatasetConfigView(APIView):
 
     @swagger_auto_schema(
         request_body=HuggingFaceDatasetConfigRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: HuggingFaceDatasetConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -151,7 +157,10 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
 
     @swagger_auto_schema(
         request_body=HuggingFaceDatasetCreateRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:

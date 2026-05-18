@@ -42,13 +42,17 @@ from model_hub.serializers.contracts import (
     ConditionalColumnRequestSerializer,
     ExtractEntitiesRequestSerializer,
     ExtractJsonColumnRequestSerializer,
-    ModelHubJSONResponseSerializer,
     OperationConfigResponseSerializer,
     PreviewDatasetOperationRequestSerializer,
     PythonCodeColumnRequestSerializer,
     RerunOperationRequestSerializer,
     RerunOperationResponseSerializer,
     VectorDBColumnRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DynamicColumnCreateResponseSerializer,
+    DynamicColumnMessageResponseSerializer,
+    PreviewDatasetOperationResponseSerializer,
 )
 from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
 from model_hub.utils.utils import (
@@ -388,7 +392,10 @@ class AddVectorDBColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=VectorDBColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -527,7 +534,10 @@ class ExtractJsonColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=ExtractJsonColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -680,7 +690,10 @@ class ClassifyColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=ClassifyColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -858,7 +871,10 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
 
     @swagger_auto_schema(
         request_body=ExtractEntitiesRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -1068,7 +1084,10 @@ class AddApiColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=AddApiColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -1243,7 +1262,10 @@ class ExecutePythonCodeView(APIView):
 
     @swagger_auto_schema(
         request_body=PythonCodeColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -1565,7 +1587,10 @@ class ConditionalColumnView(APIView):
 
     @swagger_auto_schema(
         request_body=ConditionalColumnRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -3078,7 +3103,10 @@ class PreviewDatasetOperationView(APIView):
 
     @swagger_auto_schema(
         request_body=PreviewDatasetOperationRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: PreviewDatasetOperationResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, operation_type):
         try:

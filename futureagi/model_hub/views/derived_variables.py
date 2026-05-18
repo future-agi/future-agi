@@ -13,8 +13,10 @@ from model_hub.serializers.contracts import (
     DerivedVariableDetailResponseSerializer,
     DerivedVariableExtractRequestSerializer,
     DerivedVariablePreviewRequestSerializer,
-    ModelHubJSONResponseSerializer,
     PromptDerivedVariablesResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetDerivedVariablesResponseSerializer,
 )
 from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
@@ -291,7 +293,10 @@ def preview_derived_variables(request):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={
+        200: DatasetDerivedVariablesResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

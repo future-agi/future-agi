@@ -36,7 +36,10 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
     CreateDatasetFromLocalFileRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreationProgressResponseSerializer,
+    LocalFileDatasetCreateStartedResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import UploadFileForm
 from model_hub.utils.file_reader import FileProcessor
@@ -934,7 +937,10 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
 
     @swagger_auto_schema(
         request_body=CreateDatasetFromLocalFileRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: LocalFileDatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -1085,7 +1091,10 @@ class DatasetCreationProgressView(APIView):
     parser_classes = (JSONParser,)
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: DatasetCreationProgressResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
