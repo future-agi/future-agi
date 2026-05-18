@@ -1753,3 +1753,44 @@ class TestGetMultiDatasetsColumnConfigs:
         )
 
         assert_unknown_field_error(response, "legacyFilter")
+
+
+@pytest.mark.django_db
+class TestGetDatasetsNamesRowCount:
+    """Regression for the FE picker — the dataset-names endpoint must
+    include ``row_count`` on every dataset entry so the scenario import
+    picker can warn when a source dataset is below the row floor."""
+
+    def test_row_count_returned_per_dataset(
+        self, auth_client, organization, workspace, user
+    ):
+        from model_hub.models.choices import DatasetSourceChoices
+        from model_hub.models.develop_dataset import Dataset, Row
+
+        small = Dataset.no_workspace_objects.create(
+            name="Small ds",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Row.objects.bulk_create([Row(dataset=small, order=i) for i in range(3)])
+
+        big = Dataset.no_workspace_objects.create(
+            name="Big ds",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Row.objects.bulk_create([Row(dataset=big, order=i) for i in range(15)])
+
+        response = auth_client.get("/model-hub/develops/get-datasets-names/")
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        datasets = body.get("result", body).get("datasets", [])
+        by_id = {d["dataset_id"]: d for d in datasets}
+
+        assert "row_count" in by_id[str(small.id)]
+        assert by_id[str(small.id)]["row_count"] == 3
+        assert by_id[str(big.id)]["row_count"] == 15

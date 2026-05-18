@@ -43,29 +43,24 @@ import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
 
 // ----------------------------------------------------------------------
-const extractErrorMessage = (result) => {
-  if (result == null) return "Something went wrong";
+const _extractParts = (result) => {
+  if (result == null || result === "") return "";
   if (typeof result === "string") return result;
   if (Array.isArray(result)) {
-    return [...new Set(result.map(extractErrorMessage).filter(Boolean))].join(
-      ", ",
-    );
+    return [...new Set(result.map(_extractParts).filter(Boolean))].join(", ");
   }
   if (typeof result === "object") {
     if (result.details && typeof result.details === "object") {
-      return extractErrorMessage(result.details);
+      return _extractParts(result.details);
     }
-    // The axios interceptor adds camelCase aliases (e.g. `datasetId` for
-    // `dataset_id`) so `Object.values` would yield each message twice.
-    // Dedupe after extraction.
     return [
-      ...new Set(
-        Object.values(result).map(extractErrorMessage).filter(Boolean),
-      ),
+      ...new Set(Object.values(result).map(_extractParts).filter(Boolean)),
     ].join(", ");
   }
   return String(result);
 };
+
+const extractErrorMessage = (result) => _extractParts(result) || "Something went wrong";
 
 const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
