@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    MetricSortParamListField,
     StrictInputSerializer,
     filter_list_field,
     filter_list_query_param_field,
@@ -35,11 +36,13 @@ class ProjectNameUpdateSerializer(serializers.Serializer):
     sampling_rate = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
 
 
-class ProjectVersionExportSerializer(serializers.Serializer):
+class ProjectVersionExportSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=True)
     runs_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_null=True
     )
+    filters = filter_list_field(required=False, default=list)
+    sort_params = MetricSortParamListField(required=False, default=list)
 
 
 class ProjectGraphDataQuerySerializer(StrictInputSerializer):

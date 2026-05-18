@@ -348,6 +348,45 @@ class SortParamListQueryParamField(serializers.CharField):
         return serializers.ListField(child=SortParamField()).run_validation(sort_params)
 
 
+class MetricSortParamField(SortParamField):
+    ALLOWED_KEYS = {"column_id", "direction", "col_type"}
+
+    class Meta:
+        swagger_schema_fields = {
+            "type": "object",
+            "properties": {
+                "column_id": {"type": "string"},
+                "direction": {"type": "string", "enum": ["asc", "desc"]},
+                "col_type": {"type": "string"},
+            },
+            "required": ["column_id"],
+            "additionalProperties": False,
+        }
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        raw = data if isinstance(data, dict) else {}
+        if raw.get("col_type"):
+            value["col_type"] = raw["col_type"]
+        return value
+
+
+class MetricSortParamListField(serializers.ListField):
+    child = MetricSortParamField()
+
+
+class MetricSortParamListQueryParamField(serializers.CharField):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "string",
+            "description": "JSON-encoded list of metric sort params.",
+        }
+
+    def to_internal_value(self, data):
+        sort_params = parse_filter_list_payload(data)
+        return MetricSortParamListField().run_validation(sort_params)
+
+
 class ObserveGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = FilterListField(required=False, default=list)

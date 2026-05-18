@@ -26,7 +26,9 @@ from tracer.serializers.project import (
     ProjectGraphDataQuerySerializer,
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
+    ProjectVersionExportSerializer,
 )
+from tracer.serializers.project_version import ProjectVersionRunsQuerySerializer
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceExportQuerySerializer,
@@ -555,6 +557,35 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "projectId" in serializer.errors
+
+    def test_project_version_runs_query_rejects_legacy_aliases(self):
+        serializer = ProjectVersionRunsQuerySerializer(
+            data={
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "sortParams": json.dumps(
+                    [{"column_id": "avg_latency", "direction": "desc"}]
+                ),
+                "pageNumber": "1",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "projectId" in serializer.errors
+        assert "sortParams" in serializer.errors
+        assert "pageNumber" in serializer.errors
+
+    def test_project_version_export_request_rejects_legacy_sort_shape(self):
+        serializer = ProjectVersionExportSerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "runs_ids": [],
+                "sort_params": [{"columnId": "avg_latency", "sort": "desc"}],
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "sort_params" in serializer.errors
 
     def test_project_user_metrics_request_rejects_legacy_filters(self):
         serializer = ProjectUserMetricsRequestSerializer(

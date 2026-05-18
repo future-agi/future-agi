@@ -46,7 +46,10 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion, ProjectVersionWinner
 from tracer.models.trace import Trace
 from tracer.serializers.project import ProjectVersionExportSerializer
-from tracer.serializers.project_version import ProjectVersionSerializer
+from tracer.serializers.project_version import (
+    ProjectVersionRunsQuerySerializer,
+    ProjectVersionSerializer,
+)
 from tracer.utils.filters import ColType, FilterEngine
 from tracer.utils.helper import (
     get_default_project_version_config,
@@ -385,7 +388,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         try:
             serializer = ProjectVersionExportSerializer(data=request.data)
             if serializer.is_valid():
-                validated_data = serializer.data
+                validated_data = serializer.validated_data
                 project_id = validated_data["project_id"]
                 project_version_ids = validated_data["runs_ids"]
 
@@ -717,7 +720,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Apply filters
-            filter_params = self.request.data.get("filters", [])
+            filter_params = validated_data.get("filters", [])
             if filter_params:
                 combined_filter_conditions = Q()
 
@@ -771,7 +774,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     base_query = base_query.filter(combined_filter_conditions)
 
             # Apply sorting
-            sort_params = self.request.data.get("sort_params", [])
+            sort_params = validated_data.get("sort_params", [])
             if sort_params:
                 sort_conditions = []
                 for sort_param in sort_params:
@@ -1341,11 +1344,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         Get a paginated list of all projects for the organization.
         """
         try:
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
+            query_serializer = ProjectVersionRunsQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+            project_id = str(query_data["project_id"])
 
             request_organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -1692,11 +1697,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Apply filters at database level
-            filter_params = self.request.query_params.get("filters", "[]")
-            try:
-                filter_params = json.loads(filter_params)
-            except json.JSONDecodeError:
-                filter_params = []
+            filter_params = query_data.get("filters", [])
 
             if filter_params:
                 combined_filter_conditions = Q()
@@ -1751,7 +1752,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     base_query = base_query.filter(combined_filter_conditions)
 
             # Apply sorting at database level
-            sort_params = self.request.data.get("sort_params", [])
+            sort_params = query_data.get("sort_params", [])
             sort_conditions = []
             post_process_sorts = []  # For sorts that need post-processing
 
@@ -1831,8 +1832,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             total_count = base_query.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 30))
+            page_number = query_data.get("page_number", 0)
+            page_size = query_data.get("page_size", 30)
             start = page_number * page_size
             end = start + page_size
 
