@@ -1873,7 +1873,7 @@ const EvalDetailPage = () => {
                       variant="contained"
                       size="small"
                       onClick={handleSaveVersion}
-                      disabled={isSaving}
+                      disabled={isSaving || !isDirty}
                       startIcon={
                         isSaving ? (
                           <CircularProgress size={14} />
